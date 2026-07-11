@@ -9759,12 +9759,22 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
   // 3. 案件変更ガード: 納品済み / force_delivered / 確定済み請求書に紐付く
   //    担当者変更ガード（バグ報告 #3138fd6f）: 「納品するまでは変更可能」仕様のため同じ条件でブロックする。
   //    報酬・本数カウントは creative_assignments を正としているので、納品後・請求確定後の付け替えは集計を壊す。
+  //
+  //    ただし「案件変更」だけは admin に限り納品後も許可する（バグ報告 #fbc06b29）。
+  //    リサイズCRを通常CRとして登録してしまった等の取り違え救済で、請求前なら実害がないため。
+  //    請求確定済み（下記 invoice ガード）に紐付く場合は admin でもブロックする。
+  //    担当者変更は帰属が壊れるため引き続き納品後は全ロールでブロックする。
   const DELIVERED_STATUSES = ['納品', '完納', '納品済'];
+  const isDelivered = DELIVERED_STATUSES.includes(c.status) || c.force_delivered === true;
+  const isAdmin = userRole === 'admin';
   let canChangeAssignee = true;
   let assigneeChangeBlockedReason = null;
-  if (DELIVERED_STATUSES.includes(c.status) || c.force_delivered === true) {
-    canChangeProject = false;
-    projectChangeBlockedReason = '納品済みのため案件を変更できません（その他項目は変更可）';
+  if (isDelivered) {
+    if (!isAdmin) {
+      canChangeProject = false;
+      projectChangeBlockedReason = '納品済みのため案件を変更できません（案件変更は管理者のみ／その他項目は変更可）';
+    }
+    // admin は canChangeProject=true のまま（下の請求ガードで確定済みなら弾かれる）
     canChangeAssignee = false;
     assigneeChangeBlockedReason = '納品済みのため担当者を変更できません（担当者の変更は納品前まで）';
   }
