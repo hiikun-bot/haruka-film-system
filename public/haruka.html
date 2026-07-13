@@ -8705,7 +8705,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <div id="fp-tc-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:22px;flex-wrap:wrap">
             <span id="fp-timecode-badge" style="display:none;background:#78350f;color:#fbbf24;font-size:13px;font-weight:700;padding:3px 12px;border-radius:6px;font-family:monospace;cursor:pointer;letter-spacing:0.06em;border:1px solid #92400e" onclick="fpClearTimecode()" title="クリックで削除">00:00:00:00</span>
             <span id="fp-bbox-badge" style="display:none;background:#78350f;color:#fbbf24;font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer;border:1px solid #f5c518;letter-spacing:0.04em" onclick="fpClearBbox()" title="クリックで範囲選択を解除">📍 範囲選択中 ×</span>
-            <span id="fp-drawing-badge" style="display:none;background:#1e3a8a;color:#93c5fd;font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer;border:1px solid #3b82f6;letter-spacing:0.04em" onclick="fpOpenPaintFromBadge()" title="クリックで再編集（右クリックで削除）" oncontextmenu="event.preventDefault();fpClearDrawing();return false">🎨 ペイント有 ×</span>
+            <span id="fp-drawing-badge" style="display:none;align-items:center;gap:6px;background:#1e3a8a;color:#93c5fd;font-size:11px;font-weight:700;padding:3px 6px 3px 10px;border-radius:6px;border:1px solid #3b82f6;letter-spacing:0.04em"><span onclick="fpOpenPaintFromBadge()" style="cursor:pointer" title="クリックで再編集">🎨 ペイント有</span><span onclick="event.stopPropagation();fpClearDrawingConfirm()" style="cursor:pointer;font-weight:900;font-size:13px;line-height:1;padding:0 3px;border-radius:4px;color:#bfdbfe" title="ペイントを消してリセット" onmouseover="this.style.background='#ef4444';this.style.color='#fff'" onmouseout="this.style.background='transparent';this.style.color='#bfdbfe'">×</span></span>
             <span id="fp-timecode-hint" style="font-size:11px;color:#3f3f46">— 一時停止でタイムコードを記録 / 葉を引いて範囲指定 —</span>
             <span id="fp-bbox-hint" style="display:none;font-size:11px;color:#3f3f46">— 画像をドラッグして範囲を選択 —</span>
           </div>
@@ -37447,6 +37447,14 @@ function fpOpenPaintFromBadge() {
   fpOpenPaintOverlay();
 }
 
+function fpClearDrawingConfirm() {
+  if (!_fpPendingDrawing) { fpClearDrawing(); return; }
+  if (confirm('ペイント（描き込み）を消してリセットします。よろしいですか？')) {
+    fpClearDrawing();
+    showToast('ペイントをリセットしました', 'success');
+  }
+}
+
 function fpClearDrawing() {
   _fpPendingDrawing = null;
   const badge = document.getElementById('fp-drawing-badge');
@@ -37625,7 +37633,7 @@ function fpPaintConfirm() {
   _fpPendingDrawing = { dataUrl, w: s.canvas.width, h: s.canvas.height };
   // バッジ表示
   const badge = document.getElementById('fp-drawing-badge');
-  if (badge) badge.style.display = '';
+  if (badge) badge.style.display = 'inline-flex';
   const btn = document.getElementById('fp-paint-btn');
   if (btn) {
     btn.dataset.has = '1';
