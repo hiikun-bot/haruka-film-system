@@ -32777,7 +32777,13 @@ function _cdRenderReplyThreadInner(source, sourceId) {
 // 修正依頼カードの「↩ 引用」ボタンから呼ばれる。
 // 右カラムの返信先 textarea に Markdown 引用ブロック (> ...) でコメントを挿入し、
 // その下にカーソルを置いた状態でフォーカスする。
-// 返信先の優先順位: 表示中の cd-editor-reply > 表示中の cd-comment-field > いずれかが存在するもの。
+// 返信先の優先順位（表示中を優先、無ければ存在するもの）:
+//   1) cd-director-note (CL/D/P チェック画面の「修正依頼・承認」欄)
+//   2) cd-editor-reply  (編集者の返信欄)
+//   3) cd-comment-field (連絡・確認事項)
+// バグ報告(引用が効いていない): Dチェック等で表示中の欄は cd-director-note だが、以前は候補に
+// 含めておらず、非表示の cd-editor-reply/cd-comment-field へ挿入され「引用しても何も表示されない」事故が
+// 起きていた。Frame.io 版 quoteCommentToEditorReply と挿入先候補を揃える。
 window.cdQuoteReviseComment = function(btn) {
   try {
     const comment  = btn?.dataset?.cdComment  || '';
@@ -32785,7 +32791,7 @@ window.cdQuoteReviseComment = function(btn) {
     const fromRole = btn?.dataset?.cdFrom     || '';
 
     // 表示中の入力先を優先して選ぶ
-    const ids = ['cd-editor-reply', 'cd-comment-field'];
+    const ids = ['cd-director-note', 'cd-editor-reply', 'cd-comment-field'];
     let ta = null;
     for (const id of ids) {
       const el = document.getElementById(id);
