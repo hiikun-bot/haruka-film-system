@@ -38337,14 +38337,14 @@ function renderComments(list) {
   el.scrollTop = 0;
 }
 
-// Frame.io レビューコメントを「裏のクリエイティブ詳細モーダル」の連絡・確認事項系 textarea に引用挿入する。
-// 挿入先の優先順位（表示中のものを優先、無ければ存在するもの）:
-//   1) cd-director-note  (CL/D/P チェック画面のコメント欄)
-//   2) cd-editor-reply   (編集者の返信欄)
-//   3) cd-comment-field  (連絡・確認事項)
-//   4) fp-comment-text   (Frame.io レビューパネル自身の入力欄 — 最終フォールバック)
-// PR #553 で fp-comment-text 固定にしたが、Frame.io パネルを閉じて裏画面に戻ったときに引用が消えたように見える事故が起きたため、
-// 裏画面側の textarea を優先する形に戻す（PR #553 の動機だった「連絡・確認事項が非表示」のケースは fp-comment-text フォールバックでカバー）。
+// Frame.io レビューコメントの「💬 引用」から呼ばれ、コメント本文を textarea に引用挿入する。
+// 挿入先は「今ユーザーの目に見えている入力欄」を最優先にする（＝レビューオーバーレイの開閉で切替）:
+//   - レビューオーバーレイ (#modal-file-preview) が開いている間 … fp-comment-text（目の前のレビューコメント入力欄）を最優先。
+//     ボタン title「レビューコメント入力欄に引用」の通りの挙動。裏の cd-* 欄はオーバーレイに隠れて見えないため後回し。
+//   - オーバーレイが閉じている場合 … 裏画面（クリエイティブ詳細）の cd-director-note > cd-editor-reply > cd-comment-field を優先。
+// 履歴（振動注意）: PR #553 で fp-comment-text 固定 → 裏画面に戻ると引用が消えて見える事故で cd-* 優先へ戻した。
+//   だが今度はオーバーレイ表示中に引用しても目の前の fp-comment-text ではなく裏の cd-director-note へ入り
+//   「引用しても何も表示されない」バグに（本修正）。両者を満たすため「見えている欄に入れる」= 開閉で優先を切替える形に変更。
 // フォーマットは「タイムコード or 日時（あれば）→ コメント本文 → 空行」のシンプル構成。
 // 投稿者名・役職・> プレフィックスは付けない（PR #393 で簡素化）。
 // 返信コメント（parent_comment_id あり）を引用したときは、自身の timecode/bbox は無いので親から継承する。
@@ -38358,7 +38358,12 @@ function quoteCommentToEditorReply(commentId) {
     else alert('コメント情報が取得できませんでした');
     return;
   }
-  const candidateIds = ['cd-director-note', 'cd-editor-reply', 'cd-comment-field', 'fp-comment-text'];
+  // レビューオーバーレイが開いているか（modal-file-preview は position:fixed のため offsetParent では判定不可。inline display で判定）
+  const fpModal = document.getElementById('modal-file-preview');
+  const fpOverlayOpen = !!(fpModal && fpModal.style.display !== 'none');
+  const candidateIds = fpOverlayOpen
+    ? ['fp-comment-text', 'cd-director-note', 'cd-editor-reply', 'cd-comment-field']
+    : ['cd-director-note', 'cd-editor-reply', 'cd-comment-field', 'fp-comment-text'];
   let ta = null;
   for (const id of candidateIds) {
     const el = document.getElementById(id);
