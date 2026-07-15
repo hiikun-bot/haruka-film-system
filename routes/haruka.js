@@ -5313,7 +5313,8 @@ async function aggregateFilenameExport({ client_id, statusFilter }) {
     .select(`
       id, file_name, status, creative_type, project_id, final_deadline, created_at,
       projects!inner(id, name, client_id, clients(id, name)),
-      creative_assignments(role, users(id, full_name, nickname, role))
+      creative_assignments(role, users(id, full_name, nickname, role)),
+      creative_files(drive_file_id, generated_name, version, uploaded_at)
     `);
   if (statusFilter === 'delivered')        query = query.eq('status', '納品');
   else if (statusFilter === 'in_progress') query = query.neq('status', '納品');
@@ -5337,6 +5338,15 @@ async function aggregateFilenameExport({ client_id, statusFilter }) {
     const assignees = (c.creative_assignments || [])
       .filter(a => a.users && ['editor', 'designer', 'director_as_editor'].includes(a.role))
       .map(a => ({ id: a.users.id, full_name: a.users.full_name, nickname: a.users.nickname, role: a.users.role }));
+    // プレビュー用: アップ済みファイルの最新版（version 最大、無ければ uploaded_at 最新）の
+    // Drive file id を代表サムネにする。base64 は返さず id 文字列のみ（一覧の軽量性を維持）。
+    const files = (c.creative_files || []).filter(f => f && f.drive_file_id);
+    files.sort((a, b) =>
+      (Number(b.version) || 0) - (Number(a.version) || 0) ||
+      String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || '')));
+    const topFile = files[0] || null;
+    const thumbName = topFile?.generated_name || '';
+    const thumbIsImage = /\.(jpg|jpeg|png|gif|webp|svg|heic|heif)$/i.test(thumbName);
     projectMap.get(pid).creatives.push({
       id: c.id,
       file_name: c.file_name || '',
@@ -5346,6 +5356,8 @@ async function aggregateFilenameExport({ client_id, statusFilter }) {
       final_deadline: c.final_deadline,
       created_at: c.created_at,
       assignees,
+      thumb_drive_file_id: topFile?.drive_file_id || null,
+      thumb_is_image: thumbIsImage,
     });
   }
 
