@@ -6910,6 +6910,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 
 <style>
 .an-menu-btn{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:13px;padding:9px 10px;border:none;border-radius:7px;background:transparent;color:var(--text);cursor:pointer;margin-bottom:3px;transition:background .15s}
+/* 案件別ファイル名一覧: ファイル名インライン編集の入力欄（普段は素のテキスト風、ホバー/フォーカスで編集可能と分かる） */
+.fn-edit-input{transition:border-color .12s, background .12s, box-shadow .12s}
+.fn-edit-input:hover{border-color:var(--border) !important;background:#fff !important;cursor:text}
+.fn-edit-input:focus{border-color:var(--em) !important;background:#fff !important;outline:none;box-shadow:0 0 0 2px rgba(62,207,202,0.15)}
+.fn-edit-input:disabled{opacity:0.6}
 /* Frame.io レビューパネルの返信ボタン: ティールアウトライン → ホバーで塗り */
 .fp-reply-btn{background:transparent;color:#3ECFCA;border:0.5px solid #3ECFCA;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;line-height:1.2;transition:background .15s,color .15s}
 .fp-reply-btn:hover{background:#3ECFCA;color:#0a0a0a}
@@ -38980,11 +38985,25 @@ function setFilenameCopyMode(mode) {
 }
 
 // 担当者名（ニックネーム優先）を「、」区切りで返す。未設定は "(担当未設定)"
-function fnAssigneeNames(assignees) {
+// 担当の画面表示: 本名（ニックネーム）。本名を主・ニックネームを併記（HTML を返す）。
+// ニックネーム未設定 or 本名と同一なら本名のみ。担当なしは '' を返す（呼び出し側で「(担当未設定)」）。
+function fnAssigneeDisplayHtml(assignees) {
+  const arr = (assignees || []).map(a => {
+    const full = String(a.full_name || '').trim();
+    const nick = String(a.nickname || '').trim();
+    const primary = full || nick || '(名前未設定)';
+    if (nick && full && nick !== full) {
+      return `${esc(primary)}<span style="color:var(--text-muted);font-size:11px;margin-left:1px">（${esc(nick)}）</span>`;
+    }
+    return esc(primary);
+  });
+  return arr.join('、');
+}
+
+// 担当のコピー用テキスト: 本名のみ（本名が無ければニックネームで代替）。担当なしは '(担当未設定)'。
+function fnAssigneeCopy(assignees) {
   const arr = (assignees || [])
-    .map(a => (typeof window !== 'undefined' && window.NameDisplay)
-      ? window.NameDisplay.short(a)
-      : (a.nickname || a.full_name || ''))
+    .map(a => String(a.full_name || a.nickname || '').trim())
     .filter(Boolean);
   return arr.length ? arr.join('、') : '(担当未設定)';
 }
@@ -38994,8 +39013,57 @@ function buildFilenameCopyText(project, mode) {
   return (project.creatives || []).map(c => {
     const name = c.file_name || '(ファイル名未設定)';
     if (mode === 'name_only') return name;
-    return name + '\t' + fnAssigneeNames(c.assignees);
+    return name + '\t' + fnAssigneeCopy(c.assignees);
   }).join('\n');
+}
+
+// ===== ファイル名インライン編集 =====
+// この一覧のファイル名セルを直接編集して PUT /creatives/:id で保存する。
+// （既存のクリエイティブ詳細モーダルと同じ endpoint。変更時は案件Slackへ通知が飛ぶ）
+function fnEditFocus(el) {
+  el.dataset.orig = el.value;
+}
+function fnEditKey(e, el) {
+  if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+  else if (e.key === 'Escape') { e.preventDefault(); el.value = el.dataset.orig || ''; el.blur(); }
+}
+async function fnEditSave(el) {
+  const cid  = el.dataset.cid;
+  const orig = el.dataset.orig != null ? el.dataset.orig : '';
+  const next = el.value.trim();
+  if (next === orig) return;              // 変更なし
+  if (!next) {                            // 空は不可（誤消去防止）
+    el.value = orig;
+    showToast('ファイル名を空にはできません', 'warn');
+    return;
+  }
+  el.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/creatives/${cid}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_name: next }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('保存に失敗しました: ' + translateError(e?.error || res.status), 'error');
+      el.value = orig;
+      return;
+    }
+    // キャッシュ更新（コピー結果にも反映されるように）
+    const c = (_filenameExportData?.projects || [])
+      .flatMap(p => p.creatives || [])
+      .find(x => String(x.id) === String(cid));
+    if (c) c.file_name = next;
+    el.value = next;
+    el.dataset.orig = next;
+    showToast('ファイル名を保存しました', 'success');
+  } catch (err) {
+    showToast('保存に失敗しました: ' + (err?.message || err), 'error');
+    el.value = orig;
+  } finally {
+    el.disabled = false;
+  }
 }
 
 async function fnCopyToClipboard(text, okMsg) {
@@ -39053,6 +39121,7 @@ function renderFilenameExport() {
       ${modeBtn('name_only', 'ファイル名のみ')}
     </div>
     <button class="btn-primary" onclick="copyFilenameAll()" style="font-size:12px;padding:9px 16px;height:auto">📋 全案件をまとめてコピー</button>
+    <div style="width:100%;font-size:11px;color:var(--text-muted);margin-top:2px">✏️ ファイル名は直接クリックして編集できます（Enterで保存 / Escで取消）。担当は「本名（ニックネーム）」表示、コピーは本名のみです。</div>
   `;
 
   if (!projects.length) {
@@ -39071,12 +39140,17 @@ function renderFilenameExport() {
 
   const blocks = projects.map(p => {
     const rows = (p.creatives || []).map(c => {
-      const who = fnAssigneeNames(c.assignees);
-      const noWho = who === '(担当未設定)';
+      const whoHtml = fnAssigneeDisplayHtml(c.assignees);
+      const noWho = !whoHtml;
       return `<tr style="border-bottom:1px solid var(--border-light)">
-        <td style="padding:7px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--text);word-break:break-all">${esc(c.file_name || '(ファイル名未設定)')}</td>
+        <td style="padding:5px 14px">
+          <input type="text" class="fn-edit-input" data-cid="${esc(c.id)}" value="${esc(c.file_name || '')}"
+            onfocus="fnEditFocus(this)" onblur="fnEditSave(this)" onkeydown="fnEditKey(event,this)"
+            title="クリックして編集 ／ Enterで保存 ／ Escで取消"
+            style="width:100%;box-sizing:border-box;border:1px solid transparent;border-radius:5px;background:transparent;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--text);padding:4px 6px">
+        </td>
         <td style="padding:7px 8px;text-align:center;white-space:nowrap">${statusChip(c.status)}</td>
-        <td style="padding:7px 14px;font-size:12px;color:${noWho ? 'var(--text-muted)' : 'var(--text)'};white-space:nowrap">${esc(who)}</td>
+        <td style="padding:7px 14px;font-size:12px;color:${noWho ? 'var(--text-muted)' : 'var(--text)'};white-space:nowrap">${noWho ? '(担当未設定)' : whoHtml}</td>
       </tr>`;
     }).join('');
     return `<div style="border:1px solid var(--border);border-radius:10px;margin:0 0 14px;overflow:hidden;background:#fff">
