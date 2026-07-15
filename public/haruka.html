@@ -6835,6 +6835,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <button class="an-menu-btn" data-view="project-assignee" data-an-perm="analytics.view" onclick="switchAnalyticsView('project-assignee')">
         <span style="font-size:14px">📋</span><span>案件×担当者集計</span>
       </button>
+      <div class="an-menu-section" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">抽出・コピペ</div>
+      <button class="an-menu-btn" data-view="filename-export" data-an-perm="analytics.view" onclick="switchAnalyticsView('filename-export')">
+        <span style="font-size:14px">📄</span><span>案件別ファイル名一覧</span>
+      </button>
       <div class="an-menu-section" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">データ品質</div>
       <button class="an-menu-btn" data-view="cost-coverage" data-an-perm="analytics.view" onclick="switchAnalyticsView('cost-coverage')">
         <span style="font-size:14px">⚠️</span><span>単価未設定チェッカー</span>
@@ -6879,6 +6883,14 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
             <select id="an-status-filter" class="form-select" style="font-size:13px;padding:8px 10px">
               <option value="delivered">納品のみ</option>
               <option value="all">全件（作業中含む）</option>
+            </select>
+          </div>
+          <div id="an-fn-status-wrap" style="display:none">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">対象</div>
+            <select id="an-fn-status" class="form-select" style="font-size:13px;padding:8px 10px">
+              <option value="all">全件（納品済み含む）</option>
+              <option value="in_progress">進行中のみ（未納品）</option>
+              <option value="delivered">納品済みのみ</option>
             </select>
           </div>
           <button class="btn-primary" id="an-load-btn" onclick="loadAnalytics()" style="font-size:13px;padding:8px 16px;height:38px">集計</button>
@@ -38700,11 +38712,14 @@ function switchAnalyticsView(view, skipReset) {
   const descEl = document.getElementById('an-view-desc');
   const clientWrap = document.getElementById('an-client-wrap');
   const statusFilterWrap = document.getElementById('an-status-filter')?.parentElement;
+  const fnStatusWrap = document.getElementById('an-fn-status-wrap');
   // 月セレクタとスプレッドシート出力ボタンは cost-coverage では非表示
   const monthWrap   = document.getElementById('an-month')?.closest('div')?.parentElement;
   const sheetBtn    = document.getElementById('an-sheet-btn');
   const loadBtn     = document.getElementById('an-load-btn');
   const reloadBtn   = document.getElementById('an-reload-coverage-btn');
+  // ファイル名一覧専用フィルタは既定で隠し、当該ビューのみで表示する
+  if (fnStatusWrap) fnStatusWrap.style.display = 'none';
   if (view === 'monthly-revenue') {
     if (titleEl) titleEl.textContent = '💰 月次売上・粗利';
     if (descEl)  descEl.textContent  = '当月の売上（確定+見込み）/原価/粗利/粗利率をクライアント別に集計します。';
@@ -38741,6 +38756,16 @@ function switchAnalyticsView(view, skipReset) {
     if (sheetBtn)  sheetBtn.style.display  = '';
     if (loadBtn)   loadBtn.style.display   = '';
     if (reloadBtn) reloadBtn.style.display = 'none';
+  } else if (view === 'filename-export') {
+    if (titleEl) titleEl.textContent = '📄 案件別ファイル名一覧';
+    if (descEl)  descEl.textContent  = '案件ごとに、作成中のクリエイティブのファイル名（＝素材名・管理番号）と担当を一覧化します。スプレッドシートへコピペできます。';
+    if (clientWrap) clientWrap.style.display = '';
+    if (statusFilterWrap) statusFilterWrap.style.display = 'none';
+    if (fnStatusWrap) fnStatusWrap.style.display = '';
+    if (monthWrap) monthWrap.style.display = 'none';   // 全件が既定なので月では絞らない
+    if (sheetBtn)  sheetBtn.style.display  = 'none';   // 出力はコピペ（画面内ボタン）に集約
+    if (loadBtn)   loadBtn.style.display   = '';
+    if (reloadBtn) reloadBtn.style.display = 'none';
   } else {
     if (titleEl) titleEl.textContent = '📋 案件×担当者集計';
     if (descEl)  descEl.textContent  = '案件 × 担当者ごとのクリエイティブ作成本数を集計します。「納品のみ」は納品完了日（月末23:59 JSTまでに納品完了にしたか）で対象月を判定します。';
@@ -38761,12 +38786,20 @@ function switchAnalyticsView(view, skipReset) {
   if (view === 'cost-coverage') {
     loadCostCoverage();
   }
+  // filename-export も対象月不要なので即ロード
+  if (view === 'filename-export') {
+    loadFilenameExport();
+  }
 }
 
 async function loadAnalytics() {
   // cost-coverage は月不要なので専用ロードに委譲
   if (_analyticsView === 'cost-coverage') {
     return loadCostCoverage();
+  }
+  // filename-export も月不要（全件が既定）なので専用ロードに委譲
+  if (_analyticsView === 'filename-export') {
+    return loadFilenameExport();
   }
   const ym = document.getElementById('an-month').value;
   if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
@@ -38913,6 +38946,164 @@ function renderCostCoverage() {
     </thead>
     <tbody>${tbody}</tbody>
   </table>`;
+}
+
+// =============== 案件別ファイル名一覧（コピペ用）===============
+// クリエイティブの file_name（＝素材名・管理番号）と担当を案件ごとに束ね、
+// スプレッドシートへコピペできるテキスト（ファイル名＋担当の2列タブ区切り）を提供する。
+let _filenameExportData = null;
+let _filenameCopyMode = 'name_assignee'; // 'name_assignee'（ファイル名＋担当2列） | 'name_only'
+
+async function loadFilenameExport() {
+  const wrap = document.getElementById('an-table-content');
+  wrap.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">読み込み中...</div>';
+  document.getElementById('an-summary').innerHTML = '';
+  const client_id = document.getElementById('an-client')?.value || '';
+  const status    = document.getElementById('an-fn-status')?.value || 'all';
+  const url = `${API}/analytics/filename-export?status=${encodeURIComponent(status)}` +
+              (client_id ? `&client_id=${client_id}` : '');
+  const res = await apiFetch(url);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    wrap.innerHTML = `<div style="padding:20px;text-align:center;color:#E24B4A">エラー: ${esc(e?.error || res.status)}</div>`;
+    return;
+  }
+  const data = await res.json();
+  _filenameExportData = data;
+  _analyticsLastResult = data;
+  renderFilenameExport();
+}
+
+function setFilenameCopyMode(mode) {
+  _filenameCopyMode = (mode === 'name_only') ? 'name_only' : 'name_assignee';
+  renderFilenameExport();
+}
+
+// 担当者名（ニックネーム優先）を「、」区切りで返す。未設定は "(担当未設定)"
+function fnAssigneeNames(assignees) {
+  const arr = (assignees || [])
+    .map(a => (typeof window !== 'undefined' && window.NameDisplay)
+      ? window.NameDisplay.short(a)
+      : (a.nickname || a.full_name || ''))
+    .filter(Boolean);
+  return arr.length ? arr.join('、') : '(担当未設定)';
+}
+
+// 案件1件分のコピー用テキスト（1行1ファイル）
+function buildFilenameCopyText(project, mode) {
+  return (project.creatives || []).map(c => {
+    const name = c.file_name || '(ファイル名未設定)';
+    if (mode === 'name_only') return name;
+    return name + '\t' + fnAssigneeNames(c.assignees);
+  }).join('\n');
+}
+
+async function fnCopyToClipboard(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(okMsg, 'success');
+  } catch (e) {
+    // clipboard API 不可の環境向けフォールバック
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showToast(okMsg, 'success'); }
+    catch (_) { alert('クリップボードへのコピーに失敗しました'); }
+    finally { ta.remove(); }
+  }
+}
+
+function copyFilenameProject(pid) {
+  const p = (_filenameExportData?.projects || []).find(x => String(x.id) === String(pid));
+  if (!p) return;
+  const text = buildFilenameCopyText(p, _filenameCopyMode);
+  fnCopyToClipboard(text, `「${p.name}」${p.creatives.length}件をコピーしました`);
+}
+
+function copyFilenameAll() {
+  const projects = _filenameExportData?.projects || [];
+  if (!projects.length) { showToast('コピーする内容がありません', 'warn'); return; }
+  const text = projects.map(p => buildFilenameCopyText(p, _filenameCopyMode)).join('\n');
+  const n = projects.reduce((s, p) => s + (p.creatives?.length || 0), 0);
+  fnCopyToClipboard(text, `全${projects.length}案件 ${n}件をコピーしました`);
+}
+
+function renderFilenameExport() {
+  const data = _filenameExportData;
+  if (!data) return;
+  const sumEl = document.getElementById('an-summary');
+  const wrap  = document.getElementById('an-table-content');
+  const projects = data.projects || [];
+  const totalCreatives = data.creatives_count || 0;
+
+  const modeBtn = (mode, label) => {
+    const active = _filenameCopyMode === mode;
+    return `<button onclick="setFilenameCopyMode('${mode}')" style="font-size:12px;padding:5px 11px;border-radius:6px;border:1px solid ${active ? 'var(--em)' : 'var(--border)'};background:${active ? 'var(--em)' : '#fff'};color:${active ? '#fff' : 'var(--text)'};cursor:pointer">${label}</button>`;
+  };
+
+  sumEl.innerHTML = `
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px">
+      <span style="color:var(--text-muted)">案件</span> <strong>${projects.length}</strong> 件 /
+      <span style="color:var(--text-muted)">ファイル</span> <strong>${totalCreatives}</strong> 件
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:7px 12px">
+      <span style="font-size:11px;color:var(--text-muted)">コピー形式</span>
+      ${modeBtn('name_assignee', 'ファイル名＋担当')}
+      ${modeBtn('name_only', 'ファイル名のみ')}
+    </div>
+    <button class="btn-primary" onclick="copyFilenameAll()" style="font-size:12px;padding:9px 16px;height:auto">📋 全案件をまとめてコピー</button>
+  `;
+
+  if (!projects.length) {
+    wrap.innerHTML = `<div style="padding:32px 20px;text-align:center;color:var(--text-muted)">
+      該当するクリエイティブがありません。<br><span style="font-size:12px">クライアントや「対象」の絞り込みを変えてみてください。</span>
+    </div>`;
+    return;
+  }
+
+  const statusChip = (s) => {
+    const delivered = s === '納品';
+    const bg = delivered ? '#F0FDF4' : '#FEF3C7';
+    const fg = delivered ? '#15803D' : '#92400E';
+    return `<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:${bg};color:${fg};white-space:nowrap">${esc(s || '-')}</span>`;
+  };
+
+  const blocks = projects.map(p => {
+    const rows = (p.creatives || []).map(c => {
+      const who = fnAssigneeNames(c.assignees);
+      const noWho = who === '(担当未設定)';
+      return `<tr style="border-bottom:1px solid var(--border-light)">
+        <td style="padding:7px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--text);word-break:break-all">${esc(c.file_name || '(ファイル名未設定)')}</td>
+        <td style="padding:7px 8px;text-align:center;white-space:nowrap">${statusChip(c.status)}</td>
+        <td style="padding:7px 14px;font-size:12px;color:${noWho ? 'var(--text-muted)' : 'var(--text)'};white-space:nowrap">${esc(who)}</td>
+      </tr>`;
+    }).join('');
+    return `<div style="border:1px solid var(--border);border-radius:10px;margin:0 0 14px;overflow:hidden;background:#fff">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--em-pale);padding:10px 14px;border-bottom:1px solid var(--border)">
+        <div style="min-width:0">
+          <div style="font-size:11px;color:var(--text-muted)">${esc(p.client_name)}</div>
+          <div style="font-size:14px;font-weight:700;color:var(--text)">${esc(p.name)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+          <span style="font-size:11px;color:var(--text-muted)">${(p.creatives || []).length}件</span>
+          <button class="btn-sm" onclick="copyFilenameProject('${p.id}')" style="font-size:11px;padding:6px 12px;white-space:nowrap">📋 この案件をコピー</button>
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="padding:6px 14px;text-align:left;font-size:10px;color:var(--text-muted);font-weight:600">ファイル名（素材名・管理番号）</th>
+            <th style="padding:6px 8px;text-align:center;font-size:10px;color:var(--text-muted);font-weight:600;white-space:nowrap">状態</th>
+            <th style="padding:6px 14px;text-align:left;font-size:10px;color:var(--text-muted);font-weight:600;white-space:nowrap">担当</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = `<div style="padding:14px 14px 2px">${blocks}</div>`;
 }
 
 function renderMonthlyRevenueTable(data) {

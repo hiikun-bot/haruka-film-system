@@ -5301,6 +5301,85 @@ router.get('/analytics/creative-by-assignee', requireAuth, requirePermission('an
   }
 });
 
+// ==================== 案件別ファイル名一覧（コピペ用エクスポート）====================
+// 分析タブの「📄 案件別ファイル名一覧」ビュー用。
+// クリエイティブの file_name（＝素材名・管理番号）と担当（editor/designer）を
+// 案件ごとにまとめて返し、フロントでスプレッドシートへコピペできるテキストにする。
+// creative-by-assignee と違い月では絞らず（scope=全件が既定）、
+// クライアント + status（all / in_progress / delivered）だけで絞り込む。
+async function aggregateFilenameExport({ client_id, statusFilter }) {
+  let query = supabase
+    .from('creatives')
+    .select(`
+      id, file_name, status, creative_type, project_id, final_deadline, created_at,
+      projects!inner(id, name, client_id, clients(id, name)),
+      creative_assignments(role, users(id, full_name, nickname, role))
+    `);
+  if (statusFilter === 'delivered')        query = query.eq('status', '納品');
+  else if (statusFilter === 'in_progress') query = query.neq('status', '納品');
+  if (client_id) query = query.eq('projects.client_id', client_id);
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const projectMap = new Map(); // pid -> { id, name, client_name, creatives: [] }
+  for (const c of (data || [])) {
+    const pid = c.project_id;
+    if (!projectMap.has(pid)) {
+      projectMap.set(pid, {
+        id: pid,
+        name: c.projects?.name || '(不明な案件)',
+        client_name: c.projects?.clients?.name || '-',
+        creatives: [],
+      });
+    }
+    const isVideo = c.creative_type?.startsWith('video') || (!c.creative_type?.startsWith('design'));
+    const assignees = (c.creative_assignments || [])
+      .filter(a => a.users && ['editor', 'designer', 'director_as_editor'].includes(a.role))
+      .map(a => ({ id: a.users.id, full_name: a.users.full_name, nickname: a.users.nickname, role: a.users.role }));
+    projectMap.get(pid).creatives.push({
+      id: c.id,
+      file_name: c.file_name || '',
+      status: c.status,
+      creative_type: c.creative_type,
+      is_video: isVideo,
+      final_deadline: c.final_deadline,
+      created_at: c.created_at,
+      assignees,
+    });
+  }
+
+  const projects = Array.from(projectMap.values())
+    .sort((a, b) => a.client_name.localeCompare(b.client_name, 'ja') || a.name.localeCompare(b.name, 'ja'));
+  // 各案件内は file_name の自然順（末尾連番を数値として扱う）
+  for (const p of projects) {
+    p.creatives.sort((a, b) => (a.file_name || '').localeCompare(b.file_name || '', 'ja', { numeric: true }));
+  }
+
+  return {
+    client_id: client_id || null,
+    status: statusFilter,
+    projects,
+    creatives_count: (data || []).length,
+  };
+}
+
+router.get('/analytics/filename-export', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  try {
+    const statusRaw = req.query.status;
+    const statusFilter = statusRaw === 'delivered' ? 'delivered'
+                       : statusRaw === 'in_progress' ? 'in_progress'
+                       : 'all';
+    const result = await aggregateFilenameExport({
+      client_id: req.query.client_id || null,
+      statusFilter,
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || '集計に失敗しました' });
+  }
+});
+
 // 月次売上・粗利ダッシュボード（ADR 002+005 per-line 公式）
 //
 // 売上(確定):   invoice_type='client' の当月 invoices.total_amount 合計
