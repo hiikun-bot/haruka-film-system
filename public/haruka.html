@@ -38791,10 +38791,8 @@ function switchAnalyticsView(view, skipReset) {
   if (view === 'cost-coverage') {
     loadCostCoverage();
   }
-  // filename-export も対象月不要なので即ロード
-  if (view === 'filename-export') {
-    loadFilenameExport();
-  }
+  // filename-export は全件対象で重くなり得るため自動ロードしない。
+  // 「集計」ボタン（loadAnalytics → loadFilenameExport）を押したときだけ集計する。
 }
 
 async function loadAnalytics() {
