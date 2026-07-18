@@ -262,12 +262,16 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="mock">
       <span class="mock-fieldlabel">Dチェック　ディレクターからの修正指示・承認コメント <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600">必須</span></span>
       <div class="mock-textarea">修正依頼・承認の理由やコメントを入力してください...</div>
+      <div style="margin:6px 0 10px;font-size:12px;color:#6b7280">📎 画像を添付　<span style="color:#9ca3af">Ctrl+V で貼り付け／ドラッグ＆ドロップも可</span></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="mock-btn amber">修正依頼</button>
         <button class="mock-btn indigo">Pスキップ → CL確認</button>
         <button class="mock-btn green">承認（Pチェック）→</button>
       </div>
     </div>
+    <ul style="margin-top:10px">
+      <li><b>🖼 参考画像を添えられます</b>：コメント欄の下の <b>「📎 画像を添付」</b> か、コメント欄で <b>Ctrl+V（⌘+V）</b> でクリップボードの画像をそのまま貼り付けできます。「イメージこれでお願いします！」のように、言葉だけでなく画像で修正指示を伝えられます。貼った画像はこの修正指示ラウンドに紐づき、制作担当の「前回」欄にも表示されます。各ラウンドの <b>「💬 補足」</b> の返信にも同じように画像を添付できます。</li>
+    </ul>
     <ul style="margin-top:10px">
       <li><b>承認（Pチェック）→</b>：OKなら次の段階へ。案件に<b>プロデューサーがいない場合</b>はボタンが「承認（クライアントチェック中）→」になり、直接クライアント確認へ進みます。</li>
       <li><b>Pスキップ → CL確認</b>：Pがいる案件でも、Pチェックを飛ばしてクライアント確認へ直行できます（Dチェック中のみ表示）。</li>
