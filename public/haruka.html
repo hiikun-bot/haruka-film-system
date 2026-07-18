@@ -23032,10 +23032,16 @@ function whRowIsDirty(tr) {
   return !!(b.project_id || b.end_time || b.minutes || b.description || b.expense_amount || b.expense_note);
 }
 
+// tbody 内の「実データ行」（プレースホルダを除く、保存済み＋新規の両方）を返す
+function whDataRows(tbody) {
+  return Array.from(tbody.querySelectorAll('tr')).filter((tr) => tr.querySelector('[data-f="work_date"]'));
+}
+
 function whHasUnsaved() {
   const tbody = document.getElementById('wh-tbody');
   if (!tbody) return false;
-  return Array.from(tbody.querySelectorAll('tr[data-id]')).some(whRowIsDirty);
+  // 保存済みで変更ありの行だけでなく、入力途中の新規行も未保存として扱う（別画面へ移る前に取りこぼさない）
+  return whDataRows(tbody).some(whRowIsDirty);
 }
 
 // 作業時間ページが表示中で未保存行があるか（ページ移動ガード用）
@@ -23058,7 +23064,8 @@ async function whSaveAll(opts) {
   const refetch = !(opts && opts.refetch === false);
   const tbody = document.getElementById('wh-tbody');
   if (!tbody) return true;
-  const trs = Array.from(tbody.querySelectorAll('tr[data-id]')).filter(whRowIsDirty);
+  // 保存済みで変更ありの行＋入力途中の新規行をまとめて保存（新規行は POST 扱い）
+  const trs = whDataRows(tbody).filter(whRowIsDirty);
   if (!trs.length) { showToast('未保存の変更はありません', 'success'); return true; }
   const btn = document.getElementById('wh-save-all-btn');
   if (btn) btn.disabled = true;
@@ -23067,8 +23074,10 @@ async function whSaveAll(opts) {
     const id = tr.dataset.id;
     const body = whCollectRow(tr);
     if (!body.work_date) { errors.push('日付が未入力の行があります'); continue; }
-    if (body.minutes === null && !(body.start_time && body.end_time) && !body.expense_amount) {
-      errors.push(`${body.work_date}: 開始・終了時刻か稼働分、または立替経費を入力してください`); continue;
+    // 下書き保存を許容: 開始時刻だけ入れて退勤前に離席するケース等も保存できるよう、
+    // 「開始/終了/稼働分/立替経費/業務内容」のどれか1つでも入っていれば保存する（あとで本人が確認）
+    if (body.minutes === null && !body.start_time && !body.end_time && !body.expense_amount && !body.description) {
+      errors.push(`${body.work_date}: 開始時刻・稼働分・立替経費・業務内容のいずれかを入力してください`); continue;
     }
     if (!id && !whViewingSelf()) body.user_id = _whUserId;
     try {
@@ -23148,8 +23157,9 @@ async function whSaveRow(btn) {
   const id = tr.dataset.id;
   const body = whCollectRow(tr);
   if (!body.work_date) { showToast('日付を入力してください', 'warn'); return; }
-  if (body.minutes === null && !(body.start_time && body.end_time) && !body.expense_amount) {
-    showToast('開始・終了時刻か稼働分、または立替経費を入力してください', 'warn'); return;
+  // 下書き保存を許容: 開始時刻だけ・業務内容だけでも保存できる（終了/稼働分は退勤時に追記）
+  if (body.minutes === null && !body.start_time && !body.end_time && !body.expense_amount && !body.description) {
+    showToast('開始時刻・稼働分・立替経費・業務内容のいずれかを入力してください', 'warn'); return;
   }
   // admin/秘書が他メンバーのシートに行を代理追加するケース
   if (!id && !whViewingSelf()) body.user_id = _whUserId;
