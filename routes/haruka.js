@@ -18053,7 +18053,8 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
       try {
         const { data: cfRows } = await supabase
           .from('creative_files')
-          .select('id, version, drive_url, drive_file_id, generated_name, created_at')
+          // NOTE: creative_files の時刻列は uploaded_at（created_at は存在しない）。
+          .select('id, version, drive_url, drive_file_id, generated_name, uploaded_at')
           .eq('creative_id', creativeId)
           .order('version', { ascending: true });
         (cfRows || []).forEach(f => {
