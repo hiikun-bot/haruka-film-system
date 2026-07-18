@@ -9040,7 +9040,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         ? (updateData.editor_comment ?? null)
         : (beforeRow.editor_comment ?? null);
 
-      const { error: cstErr } = await supabase
+      const { data: cstRow, error: cstErr } = await supabase
         .from('creative_status_transitions')
         .insert({
           creative_id: req.params.id,
@@ -9052,9 +9052,29 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
           client_comment_at_change:   clientCommentAtChange,
           editor_comment_at_change:   editorCommentAtChange,
           version_at_change: versionAtChange,
-        });
+        })
+        .select('id')
+        .single();
       if (cstErr) {
         console.warn('[creative_status_transitions] insert failed:', cstErr.message);
+      } else if (cstRow?.id) {
+        // コメント欄（Dチェック指示等）に添付したライブ画像を、この遷移ラウンドへ再キーする。
+        //   入力中は source='live'/'live-<creativeId>' にステージングされているため、
+        //   ここで transition へ付け替えて「前回」ラウンド表示に永続的に紐づける。
+        //   返信への添付（reply_id IS NOT NULL）は対象外。失敗しても本処理は止めない。
+        try {
+          const { error: rekeyErr } = await supabase
+            .from('creative_comment_images')
+            .update({ source: 'transition', source_id: cstRow.id })
+            .eq('creative_id', req.params.id)
+            .eq('source', 'live')
+            .eq('source_id', `live-${req.params.id}`)
+            .is('reply_id', null)
+            .is('deleted_at', null);
+          if (rekeyErr) console.warn('[creative_comment_images] rekey failed:', rekeyErr.message);
+        } catch (rekeyBlockErr) {
+          console.warn('[creative_comment_images] rekey block failed:', rekeyBlockErr?.message || rekeyBlockErr);
+        }
       }
     } catch (cstBlockErr) {
       console.warn('[creative_status_transitions] block failed:', cstBlockErr?.message || cstBlockErr);
@@ -18768,6 +18788,160 @@ router.delete('/round-replies/:replyId', requireAuth, async (req, res) => {
     .eq('id', replyId);
   if (upErr) return res.status(500).json({ error: upErr.message });
   res.json({ ok: true, id: replyId });
+});
+
+// ============================================================
+// コメント画像（Dチェック指示欄 / ラウンド返信 へのクリップボード画像添付）
+//   creative_comment_images テーブル。image_data=base64 data URL。
+//   - 返信への添付: reply_id で紐づく
+//   - 指示欄(director_note)への添付: (source, source_id) で紐づく。
+//     入力中は source='live'/source_id='live-<creativeId>' にステージングし、
+//     ステータス遷移時に PUT /creatives/:id 側で transition へ再キーする。
+//   一覧は image_data を返さず、GET /comment-images/:id/image で遅延配信する。
+// ============================================================
+
+// base64 data URL 後 1.2MB 上限（クライアント側で長辺 1280px / JPEG 0.8 前後に圧縮して送る）
+const CD_COMMENT_IMAGE_MAX_BYTES = 1.2 * 1024 * 1024;
+
+// クリエイティブ単位で添付画像メタを一括取得（image_data 本体は含めない）。
+router.get('/creatives/:creativeId/comment-images', requireAuth, async (req, res) => {
+  const { creativeId } = req.params;
+  if (!creativeId) return res.status(400).json({ error: 'creativeId は必須です' });
+  const { data, error } = await supabase
+    .from('creative_comment_images')
+    .select('id, creative_id, reply_id, source, source_id, mime, created_by, created_at')
+    .eq('creative_id', creativeId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(Array.isArray(data) ? data : []);
+});
+
+// 添付画像を 1 枚追加。source/source_id（指示欄）か reply_id（返信）のいずれかで紐づける。
+router.post('/creatives/:creativeId/comment-images', requireAuth, async (req, res) => {
+  const { creativeId } = req.params;
+  if (!creativeId) return res.status(400).json({ error: 'creativeId は必須です' });
+
+  const imageData = req.body?.image_data;
+  if (typeof imageData !== 'string' || !/^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(imageData)) {
+    return res.status(400).json({ error: 'image_data（画像の data URL）は必須です' });
+  }
+  if (imageData.length > CD_COMMENT_IMAGE_MAX_BYTES) {
+    return res.status(400).json({ error: '画像サイズが大きすぎます（縮小してから貼り付けてください）' });
+  }
+  const mimeMatch = /^data:([^;,]+);base64,/.exec(imageData);
+  const mime = mimeMatch ? mimeMatch[1] : null;
+
+  // 親クリエイティブの存在確認
+  const { data: cRow, error: cErr } = await supabase
+    .from('creatives').select('id').eq('id', creativeId).maybeSingle();
+  if (cErr) return res.status(500).json({ error: cErr.message });
+  if (!cRow) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+  const replyId  = req.body?.reply_id;
+  const source   = req.body?.source;
+  const sourceId = req.body?.source_id;
+
+  const insertRow = {
+    creative_id: creativeId,
+    image_data:  imageData,
+    mime,
+    created_by:  req.user?.id || null,
+  };
+
+  if (replyId != null && replyId !== '') {
+    // 返信への添付: 返信が当該 creative に属するか確認
+    if (typeof replyId !== 'string') return res.status(400).json({ error: 'reply_id が不正です' });
+    const { data: rRow, error: rErr } = await supabase
+      .from('creative_round_replies')
+      .select('id, creative_id')
+      .eq('id', replyId)
+      .eq('creative_id', creativeId)
+      .maybeSingle();
+    if (rErr) return res.status(500).json({ error: rErr.message });
+    if (!rRow) return res.status(404).json({ error: '返信が見つかりません' });
+    insertRow.reply_id = replyId;
+  } else {
+    // 指示欄への添付: (source, source_id) で紐づける（round-replies と同じ体系）
+    if (typeof source !== 'string' || !_CD_REPLY_SOURCES.has(source)) {
+      return res.status(400).json({ error: 'source は version|transition|live のいずれか、または reply_id を指定してください' });
+    }
+    if (typeof sourceId !== 'string' || sourceId.length < 1 || sourceId.length > 128) {
+      return res.status(400).json({ error: 'source_id（1〜128字の文字列）は必須です' });
+    }
+    if (source === 'version') {
+      const { data: vRow, error: vErr } = await supabase
+        .from('creative_version_history').select('id, creative_id')
+        .eq('id', sourceId).eq('creative_id', creativeId).maybeSingle();
+      if (vErr) return res.status(500).json({ error: vErr.message });
+      if (!vRow) return res.status(404).json({ error: 'バージョンが見つかりません' });
+    } else if (source === 'transition') {
+      const { data: tRow, error: tErr } = await supabase
+        .from('creative_status_transitions').select('id, creative_id')
+        .eq('id', sourceId).eq('creative_id', creativeId).maybeSingle();
+      if (tErr) return res.status(500).json({ error: tErr.message });
+      if (!tRow) return res.status(404).json({ error: '対象の遷移が見つかりません' });
+    } else if (source === 'live') {
+      if (sourceId !== `live-${creativeId}`) {
+        return res.status(400).json({ error: 'source_id は live-<creativeId> 形式である必要があります' });
+      }
+    }
+    insertRow.source = source;
+    insertRow.source_id = sourceId;
+  }
+
+  const { data, error } = await supabase
+    .from('creative_comment_images')
+    .insert(insertRow)
+    .select('id, creative_id, reply_id, source, source_id, mime, created_by, created_at')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 添付画像本体をバイナリ配信（つぶやき画像 /tweets/:id/image と同じパターン）。
+router.get('/comment-images/:id/image', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('creative_comment_images')
+    .select('image_data, deleted_at')
+    .eq('id', req.params.id)
+    .single();
+  if (error || !data || data.deleted_at || !data.image_data) return res.status(404).end();
+  const m = /^data:([^;,]+);base64,(.+)$/s.exec(data.image_data);
+  if (!m) return res.status(404).end();
+  const buf = Buffer.from(m[2], 'base64');
+  res.setHeader('Content-Type', m[1]);
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.setHeader('Content-Length', buf.length);
+  return res.end(buf);
+});
+
+// 添付画像を論理削除（投稿者本人 or admin）。
+router.delete('/comment-images/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { data: row, error: rErr } = await supabase
+    .from('creative_comment_images')
+    .select('id, created_by, deleted_at')
+    .eq('id', id)
+    .maybeSingle();
+  if (rErr) return res.status(500).json({ error: rErr.message });
+  if (!row) return res.status(404).json({ error: '画像が見つかりません' });
+  if (row.deleted_at) return res.json({ ok: true, id, already_deleted: true });
+
+  let effectiveCodes = [];
+  try { effectiveCodes = await getEffectiveRoleCodes(req); } catch (_) {}
+  const isAdminEffective = effectiveCodes.includes('admin');
+  const isOwner = !!(req.user?.id && row.created_by && req.user.id === row.created_by);
+  if (!isAdminEffective && !isOwner) {
+    return res.status(403).json({ error: '自分が添付した画像のみ削除できます' });
+  }
+
+  const { error: upErr } = await supabase
+    .from('creative_comment_images')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id);
+  if (upErr) return res.status(500).json({ error: upErr.message });
+  res.json({ ok: true, id });
 });
 
 // バージョン履歴保存

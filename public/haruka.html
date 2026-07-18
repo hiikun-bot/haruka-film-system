@@ -6988,6 +6988,39 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 #cd-round-left .cd-round-edited-mark{
   margin-left:6px; font-size:10px; font-weight:500; color:var(--text-muted); letter-spacing:0; text-transform:none;
 }
+/* ===== コメント画像（Dチェック指示欄 / 返信スレッドへの貼り付け画像） ===== */
+.cd-cimg-strip{ display:flex; flex-wrap:wrap; gap:6px; }
+.cd-cimg-strip:not(:empty){ margin-top:8px; }
+.cd-cimg-thumb{
+  position:relative; display:inline-block; width:72px; height:72px; border-radius:8px;
+  overflow:hidden; border:0.5px solid var(--border); background:#fff; flex-shrink:0;
+}
+.cd-cimg-thumb img{ width:100%; height:100%; object-fit:cover; display:block; cursor:zoom-in; }
+.cd-cimg-thumb .cd-cimg-del{
+  position:absolute; top:2px; right:2px; width:18px; height:18px; line-height:16px; text-align:center;
+  border:none; border-radius:50%; background:rgba(0,0,0,.55); color:#fff; font-size:13px; cursor:pointer;
+  padding:0; display:none;
+}
+.cd-cimg-thumb:hover .cd-cimg-del{ display:block; }
+/* Dチェック指示欄などの入力欄下に置く添付コントロール */
+.cd-note-image-zone{ margin-top:8px; }
+.cd-note-image-zone.drag-over{ outline:2px dashed var(--em); outline-offset:3px; border-radius:8px; }
+.cd-note-image-actions{ display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap; }
+.cd-note-image-btn{
+  display:inline-flex; align-items:center; gap:4px; font-size:12px; font-weight:600; color:var(--em-dark);
+  background:var(--em-pale); border:0.5px solid var(--border); border-radius:7px; padding:5px 11px; cursor:pointer;
+}
+.cd-note-image-btn:hover{ background:var(--em); color:#fff; }
+.cd-note-image-hint{ font-size:11px; color:var(--text-muted); }
+/* 返信入力欄の添付コントロール（コンパクト） */
+.cd-round-reply-input-tools{ display:flex; align-items:center; gap:6px; margin-top:4px; }
+.cd-round-reply-attach-btn{
+  font-size:11px; font-weight:600; color:var(--em-dark); background:var(--em-pale);
+  border:0.5px solid var(--border); border-radius:6px; padding:3px 8px; cursor:pointer; white-space:nowrap;
+}
+.cd-round-reply-attach-btn:hover{ background:var(--em); color:#fff; }
+.cd-round-reply-pending{ display:flex; flex-wrap:wrap; gap:6px; }
+.cd-round-reply-pending:not(:empty){ margin-top:6px; }
 /* From/To pill 行の右端に表示する発言日時。
    pill 行は flex-wrap:wrap なので margin-left:auto で安全に右寄せ。 */
 .cd-fromto-time{ margin-left:auto; font-size:11px; color:var(--text-muted); white-space:nowrap; padding-left:6px; }
@@ -8426,6 +8459,21 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <div class="form-group" id="cd-director-note-group" style="display:none;margin-bottom:18px">
         <label class="form-label" id="cd-director-note-label" style="color:var(--em-dark)">ディレクターからの修正指示・承認コメント <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;margin-left:4px">必須</span></label>
         <textarea class="form-input" id="cd-director-note" rows="5" style="resize:vertical;border-color:var(--em-dark)" placeholder="修正依頼・承認の理由やコメントを入力してください..."></textarea>
+        <!-- クリップボード画像の添付（「イメージこれでお願いします」用）。
+             貼り付けた画像はこの指示ラウンドに紐づき、次工程の担当者にも表示される。 -->
+        <div id="cd-note-image-zone" class="cd-note-image-zone"
+             ondragover="event.preventDefault();this.classList.add('drag-over')"
+             ondragleave="this.classList.remove('drag-over')"
+             ondrop="cdOnNoteImageDrop(event)">
+          <div id="cd-note-image-strip" class="cd-cimg-strip"></div>
+          <div class="cd-note-image-actions">
+            <button type="button" class="cd-note-image-btn" onclick="document.getElementById('cd-note-image-input').click()">📎 画像を添付</button>
+            <span class="cd-note-image-hint">Ctrl+V で貼り付け／ドラッグ＆ドロップも可</span>
+            <input type="file" id="cd-note-image-input" accept="image/*" multiple style="display:none" onchange="cdOnNoteImageInput(this)">
+            <!-- 返信スレッド共通の画像選択 input（対象スレッドは cdReplyAttachClick で退避） -->
+            <input type="file" id="cd-reply-image-input" accept="image/*" multiple style="display:none">
+          </div>
+        </div>
       </div>
 
       <!-- アップロードセクション。タイトルはステータスに応じて updateCreativeCommentLabel() で
@@ -32500,6 +32548,310 @@ async function cdLoadRoundReplies(creativeId) {
   }
 }
 
+// ============================================================
+// コメント画像（Dチェック指示欄 / ラウンド返信 へのクリップボード画像）
+//   - Dチェック等「修正指示・承認コメント」欄: 貼り付けた画像を即アップロードし
+//     source='live'/'live-<creativeId>' にステージング。ステータス遷移時に
+//     サーバ側で transition ラウンドへ再キーされ「前回」表示に残る。
+//   - 返信スレッド: 送信前にクライアント側で溜め、返信作成後に reply_id で添付。
+//   一覧は image_data を持たず GET /comment-images/:id/image で <img> 遅延取得する。
+// ============================================================
+let _cdCommentImagesByParent = {};   // `${source}::${source_id}` → images[]（reply_id なし）
+let _cdCommentImagesByReply  = {};   // reply_id → images[]
+let _cdReplyPendingImages    = {};   // parentKey → [{ localId, dataUrl }]（送信前ステージング）
+let _cdPendingSeq            = 0;
+let _cdReplyAttachKey        = null; // 返信用の共有ファイル input が対象とする parentKey
+
+function _cdLiveImageKey(creativeId) {
+  return { source: 'live', source_id: `live-${creativeId}` };
+}
+function _cdCommentImageUrl(id) { return `${API}/comment-images/${id}/image`; }
+
+function _cdBlobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+// 画像ファイルを長辺 1280px / JPEG に圧縮し、data URL が ~1.1MB に収まるよう段階的に縮小する。
+async function _cdFileToCompressedDataUrl(file) {
+  if (!file || !(file.type || '').startsWith('image/')) {
+    throw new Error('画像ファイルを選択してください');
+  }
+  if (typeof resizeImageContainToBlob !== 'function') {
+    throw new Error('画像処理関数が見つかりません');
+  }
+  const LIMIT = 1.1 * 1024 * 1024;
+  const steps = [[1280, 0.8], [1000, 0.72], [800, 0.62]];
+  let dataUrl = null;
+  for (const [px, q] of steps) {
+    const blob = await resizeImageContainToBlob(file, px, px, q);
+    dataUrl = await _cdBlobToDataUrl(blob);
+    if (dataUrl.length <= LIMIT) return dataUrl;
+  }
+  if (dataUrl && dataUrl.length > 1.15 * 1024 * 1024) {
+    throw new Error('画像サイズが大きすぎます。別の画像でお試しください');
+  }
+  return dataUrl;
+}
+
+function _cdExtractClipboardImage(e) {
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  for (const item of items) {
+    if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+      const f = item.getAsFile();
+      if (f) return f;
+    }
+  }
+  return null;
+}
+
+// クリエイティブ単位で添付画像メタを一括取得（image_data 本体は引かない）。
+async function cdLoadCommentImages(creativeId) {
+  _cdReplyPendingImages = {};
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/comment-images`);
+    if (!res.ok) { _cdCommentImagesByParent = {}; _cdCommentImagesByReply = {}; return; }
+    const list = await res.json();
+    const byParent = {}, byReply = {};
+    if (Array.isArray(list)) {
+      for (const im of list) {
+        if (!im || !im.id) continue;
+        if (im.reply_id) {
+          (byReply[im.reply_id] ||= []).push(im);
+        } else if (im.source && im.source_id) {
+          (byParent[_cdReplyParentKey(im.source, im.source_id)] ||= []).push(im);
+        }
+      }
+    }
+    _cdCommentImagesByParent = byParent;
+    _cdCommentImagesByReply  = byReply;
+  } catch (e) {
+    console.warn('[cd-comment-images] fetch failed:', e?.message || e);
+    _cdCommentImagesByParent = {};
+    _cdCommentImagesByReply  = {};
+  }
+}
+
+// 保存済み画像サムネ列の HTML。deletable=true なら本人/adminに削除ボタンを出す。
+function _cdRenderCommentImageStrip(images, opts) {
+  const deletable = !!(opts && opts.deletable);
+  if (!Array.isArray(images) || images.length === 0) return '';
+  const myId = (typeof currentUser !== 'undefined' && currentUser?.id) ? currentUser.id : null;
+  const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
+  const isAdmin = role === 'admin';
+  return images.map(im => {
+    const url = _cdCommentImageUrl(im.id);
+    const canDel = deletable && (isAdmin || (myId && im.created_by && im.created_by === myId));
+    const delBtn = canDel
+      ? `<button type="button" class="cd-cimg-del" title="削除" onclick="cdDeleteCommentImage('${esc(im.id)}', event)">×</button>`
+      : '';
+    return `<span class="cd-cimg-thumb"><img src="${url}" alt="添付画像" onclick="openTweetLightbox('${url}')">${delBtn}</span>`;
+  }).join('');
+}
+
+// Dチェック指示欄下のサムネ列を最新状態で描き直す。
+function cdRenderNoteImageStrip() {
+  const strip = document.getElementById('cd-note-image-strip');
+  const creativeId = currentCreativeDetail?.id;
+  if (!strip || !creativeId) { if (strip) strip.innerHTML = ''; return; }
+  const key = _cdReplyParentKey('live', `live-${creativeId}`);
+  const images = _cdCommentImagesByParent[key] || [];
+  strip.innerHTML = _cdRenderCommentImageStrip(images, { deletable: true });
+}
+
+// 指示欄への画像アップロード（即時）。source='live' にステージングする。
+async function cdUploadNoteImage(file) {
+  const creativeId = currentCreativeDetail?.id;
+  if (!creativeId) { showToast('クリエイティブが特定できません', 'warn'); return; }
+  let dataUrl;
+  try {
+    dataUrl = await _cdFileToCompressedDataUrl(file);
+  } catch (e) { showToast(e?.message || '画像の処理に失敗しました', 'warn'); return; }
+  try {
+    const { source, source_id } = _cdLiveImageKey(creativeId);
+    const res = await apiFetch(`${API}/creatives/${creativeId}/comment-images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source, source_id, image_data: dataUrl, mime: 'image/jpeg' }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j?.error || `HTTP ${res.status}`);
+    }
+    const created = await res.json();
+    const key = _cdReplyParentKey(source, source_id);
+    (_cdCommentImagesByParent[key] ||= []).push(created);
+    cdRenderNoteImageStrip();
+    showToast('画像を添付しました 🖼️', 'success');
+  } catch (e) {
+    console.error('[cdUploadNoteImage] failed', e);
+    showToast(`画像の添付に失敗: ${e?.message || e}`, 'error');
+  }
+}
+
+// 指示欄: ファイル選択 / ドロップ から複数画像を順にアップロード。
+async function cdOnNoteImageInput(input) {
+  const files = Array.from(input?.files || []);
+  input.value = '';
+  for (const f of files) { if (f.type && f.type.startsWith('image/')) await cdUploadNoteImage(f); }
+}
+async function cdOnNoteImageDrop(e) {
+  e.preventDefault();
+  const zone = document.getElementById('cd-note-image-zone');
+  if (zone) zone.classList.remove('drag-over');
+  const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+  for (const f of files) { if (f.type && f.type.startsWith('image/')) await cdUploadNoteImage(f); }
+}
+
+// 添付画像の削除（本人 / admin）。指示欄・返信どちらの画像でも共通。
+window.cdDeleteCommentImage = async function(id, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  if (!id) return;
+  if (!confirm('この画像を削除しますか？')) return;
+  try {
+    const res = await apiFetch(`${API}/comment-images/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j?.error || `HTTP ${res.status}`);
+    }
+    // ローカルキャッシュから除去
+    for (const k of Object.keys(_cdCommentImagesByParent)) {
+      _cdCommentImagesByParent[k] = _cdCommentImagesByParent[k].filter(x => x.id !== id);
+    }
+    let touchedReply = null;
+    for (const k of Object.keys(_cdCommentImagesByReply)) {
+      if (_cdCommentImagesByReply[k].some(x => x.id === id)) touchedReply = k;
+      _cdCommentImagesByReply[k] = _cdCommentImagesByReply[k].filter(x => x.id !== id);
+    }
+    cdRenderNoteImageStrip();
+    // 返信画像だった場合は該当スレッドを再描画
+    try {
+      const threads = document.querySelectorAll('#cd-round-left .cd-round-reply-thread[data-cd-source][data-cd-source-id]');
+      threads.forEach(t => {
+        const s = t.getAttribute('data-cd-source');
+        const sid = t.getAttribute('data-cd-source-id');
+        if (s && sid) _cdRefreshReplyThreadForParent(s, sid);
+      });
+    } catch (_) {}
+    showToast('画像を削除しました', 'success');
+  } catch (e) {
+    console.error('[cdDeleteCommentImage] failed', e);
+    showToast(`画像の削除に失敗: ${e?.message || e}`, 'error');
+  }
+};
+
+// ===== 返信スレッドの画像添付（送信前ステージング） =====
+
+// 送信前のサムネ列（× で個別除去）。parentKey ごとに描画。
+function _cdRenderReplyPendingStrip(parentKey) {
+  const pend = _cdReplyPendingImages[parentKey] || [];
+  if (pend.length === 0) return '';
+  return pend.map(p =>
+    `<span class="cd-cimg-thumb"><img src="${p.dataUrl}" alt="添付予定" onclick="openTweetLightbox('${p.dataUrl}')"><button type="button" class="cd-cimg-del" title="取り消し" onclick="cdRemovePendingReplyImage('${esc(parentKey)}','${p.localId}',event)">×</button></span>`
+  ).join('');
+}
+function _cdRefreshReplyPendingDom(parentKey) {
+  const el = document.querySelector(`#cd-round-left .cd-round-reply-pending[data-cd-pending-key="${parentKey}"]`);
+  if (el) el.innerHTML = _cdRenderReplyPendingStrip(parentKey);
+}
+window.cdRemovePendingReplyImage = function(parentKey, localId, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const arr = _cdReplyPendingImages[parentKey];
+  if (arr) _cdReplyPendingImages[parentKey] = arr.filter(p => String(p.localId) !== String(localId));
+  _cdRefreshReplyPendingDom(parentKey);
+};
+
+// 返信スレッドに画像をステージング（圧縮のみ・送信は返信送信時）。
+async function _cdStageReplyImage(parentKey, file) {
+  if (!parentKey || !file) return;
+  let dataUrl;
+  try { dataUrl = await _cdFileToCompressedDataUrl(file); }
+  catch (e) { showToast(e?.message || '画像の処理に失敗しました', 'warn'); return; }
+  (_cdReplyPendingImages[parentKey] ||= []).push({ localId: ++_cdPendingSeq, dataUrl });
+  _cdRefreshReplyPendingDom(parentKey);
+}
+
+// 返信の「📎 画像」ボタン: 共有ファイル input を開く（対象 parentKey を退避）。
+window.cdReplyAttachClick = function(btn) {
+  const source   = btn?.dataset?.cdSource;
+  const sourceId = btn?.dataset?.cdSourceId;
+  if (!source || !sourceId) return;
+  _cdReplyAttachKey = _cdReplyParentKey(source, sourceId);
+  const input = document.getElementById('cd-reply-image-input');
+  if (input) { input.value = ''; input.click(); }
+};
+
+// 返信送信後、ステージング済み画像を reply_id で添付する。
+async function _cdUploadPendingReplyImages(parentKey, replyId, creativeId) {
+  const pend = _cdReplyPendingImages[parentKey] || [];
+  if (pend.length === 0) return;
+  const uploaded = [];
+  for (const p of pend) {
+    try {
+      const res = await apiFetch(`${API}/creatives/${creativeId}/comment-images`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reply_id: replyId, image_data: p.dataUrl, mime: 'image/jpeg' }),
+      });
+      if (res.ok) uploaded.push(await res.json());
+    } catch (e) { console.warn('[reply image upload]', e?.message || e); }
+  }
+  if (uploaded.length) (_cdCommentImagesByReply[replyId] ||= []).push(...uploaded);
+  _cdReplyPendingImages[parentKey] = [];
+}
+
+// 返信用の共有ファイル input が選ばれたら、退避しておいた parentKey にステージングする。
+function _cdWireReplyImageInput() {
+  const input = document.getElementById('cd-reply-image-input');
+  if (!input || input.dataset.cdWired === '1') return;
+  input.dataset.cdWired = '1';
+  input.addEventListener('change', async () => {
+    const key = _cdReplyAttachKey;
+    const files = Array.from(input.files || []);
+    input.value = '';
+    if (!key) return;
+    for (const f of files) { if (f.type && f.type.startsWith('image/')) await _cdStageReplyImage(key, f); }
+  });
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _cdWireReplyImageInput);
+} else {
+  _cdWireReplyImageInput();
+}
+
+// クリエイティブ詳細モーダルが開いている間、クリップボード画像の貼り付けを拾う。
+//   1) 返信入力欄にフォーカスがあれば → その返信へステージング
+//   2) Dチェック指示欄が表示中なら → 指示欄へ即アップロード
+document.addEventListener('paste', async (e) => {
+  const modal = document.getElementById('modal-creative-detail');
+  if (!modal || !modal.classList.contains('open')) return;
+  const imgFile = _cdExtractClipboardImage(e);
+  if (!imgFile) return;
+
+  const active = document.activeElement;
+  const replyInput = (active && active.classList && active.classList.contains('cd-round-reply-input')) ? active : null;
+  if (replyInput) {
+    const source   = replyInput.dataset?.cdSource;
+    const sourceId = replyInput.dataset?.cdSourceId;
+    if (source && sourceId) {
+      e.preventDefault();
+      await _cdStageReplyImage(_cdReplyParentKey(source, sourceId), imgFile);
+    }
+    return;
+  }
+
+  const noteGroup = document.getElementById('cd-director-note-group');
+  const noteVisible = noteGroup && noteGroup.style.display !== 'none' && noteGroup.offsetParent !== null;
+  if (noteVisible) {
+    e.preventDefault();
+    await cdUploadNoteImage(imgFile);
+  }
+});
+
 // ===== スレッド再描画ヘルパー =====
 // 表示中のページに対応するスレッド DOM を取り出し、最新の _cdRoundRepliesByParent から
 // HTML を作り直す。ページ全体を作り直すと textarea 入力中の内容が消えるため、
@@ -32721,6 +33073,14 @@ function _cdRenderPageHtml(page) {
        </div>`
     : bodyHtml;
 
+  // コメント欄（Dチェック指示等）に添付された画像 — このページの (source, source_id) に紐づくもの。
+  const pageImgs = canReply
+    ? (_cdCommentImagesByParent[_cdReplyParentKey(page.source, page.source_id)] || [])
+    : [];
+  const pageImgHtml = pageImgs.length
+    ? `<div class="cd-cimg-strip" style="margin-top:8px">${_cdRenderCommentImageStrip(pageImgs, { deletable: true })}</div>`
+    : '';
+
   // スレッド（返信エリア）— source/source_id が解決できているページのみ描画
   const threadHtml = canReply
     ? `<div class="cd-round-reply-thread" data-cd-source="${esc(page.source)}" data-cd-source-id="${esc(page.source_id)}">${_cdRenderReplyThreadInner(page.source, page.source_id)}</div>`
@@ -32734,6 +33094,7 @@ function _cdRenderPageHtml(page) {
     </div>
     ${fromToHtml ? `<div class="cd-round-fromto" style="margin:6px 0 8px">${fromToHtml}</div>` : ''}
     ${bodyRowHtml}
+    ${pageImgHtml}
     ${threadHtml}
   </div>`;
 }
@@ -32769,6 +33130,10 @@ function _cdRenderReplyThreadInner(source, sourceId) {
                <button type="button" data-cd-reply-id="${esc(r.id)}" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" onclick="cdDeleteRoundReply(this)" title="削除">🗑 削除</button>
              </span>`
           : '';
+        const replyImgs = _cdCommentImagesByReply[r.id] || [];
+        const replyImgHtml = replyImgs.length
+          ? `<div class="cd-cimg-strip" style="margin-top:6px">${_cdRenderCommentImageStrip(replyImgs, { deletable: canMutate })}</div>`
+          : '';
         return `<div class="cd-round-reply-item" data-cd-reply-id="${esc(r.id)}">
           <div class="cd-round-reply-head">
             ${avHtml}
@@ -32778,14 +33143,22 @@ function _cdRenderReplyThreadInner(source, sourceId) {
             ${actionsHtml}
           </div>
           <div class="cd-round-reply-body" data-cd-reply-body>${escWithLinks(r.body || '')}</div>
+          ${replyImgHtml}
         </div>`;
       }).join('');
 
   // 入力欄は初期は折りたたみ。「💬 補足」ボタンを押すまで前回コメントを広く見せる。
   const inputHtml = `
-    <div class="cd-round-reply-input-row" style="display:none">
-      <textarea class="cd-round-reply-input" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" placeholder="補足を書く..." rows="2"></textarea>
-      <button type="button" class="cd-round-reply-send-btn" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" onclick="cdSubmitRoundReply(this)">💬 補足を送る</button>
+    <div class="cd-round-reply-compose" style="display:none">
+      <div class="cd-round-reply-input-row">
+        <textarea class="cd-round-reply-input" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" placeholder="補足を書く..." rows="2"></textarea>
+        <button type="button" class="cd-round-reply-send-btn" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" onclick="cdSubmitRoundReply(this)">💬 補足を送る</button>
+      </div>
+      <div class="cd-round-reply-input-tools">
+        <button type="button" class="cd-round-reply-attach-btn" data-cd-source="${esc(source)}" data-cd-source-id="${esc(sourceId)}" onclick="cdReplyAttachClick(this)">📎 画像</button>
+        <span style="font-size:10px;color:var(--text-muted)">Ctrl+V 貼り付け可</span>
+      </div>
+      <div class="cd-round-reply-pending" data-cd-pending-key="${esc(key)}">${_cdRenderReplyPendingStrip(key)}</div>
     </div>`;
 
   return `${itemsHtml}${inputHtml}`;
@@ -32889,8 +33262,8 @@ window.cdFocusReplyInput = function(btn) {
       `#cd-round-left .cd-round-reply-thread[data-cd-source="${source}"][data-cd-source-id="${sourceId}"]`
     );
     if (!thread) return;
-    const inputRow = thread.querySelector('.cd-round-reply-input-row');
-    if (inputRow) inputRow.style.display = '';
+    const compose = thread.querySelector('.cd-round-reply-compose');
+    if (compose) compose.style.display = '';
     const ta = thread.querySelector('.cd-round-reply-input');
     if (ta) {
       ta.focus();
@@ -32913,8 +33286,11 @@ window.cdSubmitRoundReply = async function(btn) {
     const thread = btn.closest('.cd-round-reply-thread');
     const ta = thread?.querySelector('.cd-round-reply-input');
     const body = (ta?.value || '').trim();
-    if (!body) {
-      if (typeof showToast === 'function') showToast('補足内容を入力してください', 'warn');
+    const key = _cdReplyParentKey(source, sourceId);
+    const hasPending = (_cdReplyPendingImages[key] || []).length > 0;
+    // 画像だけ添付して本文なしでも送れるようにする（「イメージこれで」用途）。
+    if (!body && !hasPending) {
+      if (typeof showToast === 'function') showToast('補足内容または画像を入力してください', 'warn');
       return;
     }
     if (body.length > 4000) {
@@ -32925,15 +33301,16 @@ window.cdSubmitRoundReply = async function(btn) {
     const res = await apiFetch(`${API}/creatives/${creativeId}/round-replies`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source, source_id: sourceId, body }),
+      body: JSON.stringify({ source, source_id: sourceId, body: body || '（画像を添付しました）' }),
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       throw new Error(j?.error || `HTTP ${res.status}`);
     }
     const created = await res.json();
-    const key = _cdReplyParentKey(source, sourceId);
     (_cdRoundRepliesByParent[key] ||= []).push(created);
+    // ステージング済み画像を reply_id で添付
+    try { await _cdUploadPendingReplyImages(key, created.id, creativeId); } catch (_) {}
     if (ta) ta.value = '';
     _cdRefreshReplyThreadForParent(source, sourceId);
     if (typeof showToast === 'function') showToast('補足を投稿しました', 'success');
@@ -34601,19 +34978,28 @@ async function openCreativeDetail(id) {
     .finally(_cdBumpExtras);
   // スレッド返信は描画ブロッキングしない（_cdRoundRepliesByParent が空でもページHTMLは出る）。
   // 取得完了したら現在表示中のスレッド DOM があれば差し替えるが、無くても次回再描画で反映される。
-  cdLoadRoundReplies(id)
+  // スレッド返信・コメント画像を並行取得（描画ブロッキングしない）。両方揃ってから
+  // 左カラム各スレッドを再描画し、Dチェック指示欄のサムネ列も反映する。
+  Promise.allSettled([cdLoadRoundReplies(id), cdLoadCommentImages(id)])
     .then(() => {
-      // 既に左カラムが描画済みなら、各スレッド DOM を差し替えて即時反映する。
+      // 指示欄画像（ページ本文に紐づく）はスレッド差し替えでは出ないため、その場合だけ
+      // 左カラム全体を再描画する。無ければ従来どおりスレッド部分のみ差し替え（軽量）。
+      const hasParentImages = Object.keys(_cdCommentImagesByParent || {}).length > 0;
       try {
-        const threads = document.querySelectorAll('#cd-round-left .cd-round-reply-thread[data-cd-source][data-cd-source-id]');
-        threads.forEach(t => {
-          const source   = t.getAttribute('data-cd-source');
-          const sourceId = t.getAttribute('data-cd-source-id');
-          if (source && sourceId) _cdRefreshReplyThreadForParent(source, sourceId);
-        });
+        if (hasParentImages && typeof cdRenderRoundCompare === 'function') {
+          cdRenderRoundCompare();
+        } else {
+          const threads = document.querySelectorAll('#cd-round-left .cd-round-reply-thread[data-cd-source][data-cd-source-id]');
+          threads.forEach(t => {
+            const source   = t.getAttribute('data-cd-source');
+            const sourceId = t.getAttribute('data-cd-source-id');
+            if (source && sourceId) _cdRefreshReplyThreadForParent(source, sourceId);
+          });
+        }
       } catch (_) {}
+      try { cdRenderNoteImageStrip(); } catch (_) {}
     })
-    .catch(e => console.warn('[cdLoadRoundReplies]', e));
+    .catch(e => console.warn('[cdLoadRoundReplies/Images]', e));
   const _visibilityP = applyCreativeDetailFieldVisibility(
     c.category_id || c.projects?.primary_category_id || null, id, _cdCustomValuesP
   )
