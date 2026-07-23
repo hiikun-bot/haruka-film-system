@@ -2577,6 +2577,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             try { if (window.__addBreadcrumb) window.__addBreadcrumb('resource_error_suppressed', 'avatar img fallback'); } catch (_) {}
             return;
           }
+          // 作品ギャラリーのサムネ <img> も graceful fallback する設計（pfOnThumbError）。
+          // Drive が動画サムネを持たないファイルはサーバー側 ffmpeg 生成待ちのあいだ 404 になり、
+          // フロントは数秒後に取り直す → それでも駄目ならプレースホルダ表示、と実害が無い。
+          // 中間状態の 404 まで Slack へ飛ぶとノイズになるのでここで抑制する。
+          if (t.tagName && t.tagName.toLowerCase() === 'img'
+              && /\/api\/haruka\/portfolio\/thumbnail\//.test(_src)) {
+            try { if (window.__addBreadcrumb) window.__addBreadcrumb('resource_error_suppressed', 'portfolio thumbnail fallback'); } catch (_) {}
+            return;
+          }
           // 外部注入スクリプトの読込失敗は通知しない。アドウェア／ブラウザ拡張／マルウェアが
           // ページに後から差し込む <script>/<img>/<link>（例: https://infird.com/cdn/<uuid>?uuid=...）は
           // 当方のコードに存在せず直せない外部要因。自オリジン or 既知CDN 以外のホストは Slack 通知から除外する。
@@ -22682,7 +22691,7 @@ function pfCardHtml(item, idx) {
   const isVideo = pfIsVideo(item);
   const media = item.file_id
     ? `<img loading="lazy" decoding="async" src="/api/haruka/portfolio/thumbnail/${esc(item.file_id)}" alt=""
-           onload="pfOnThumbLoad(${idx}, this)" onerror="this.style.display='none'">`
+           onload="pfOnThumbLoad(${idx}, this)" onerror="pfOnThumbError(this, '${esc(item.file_id)}')">`
     : `<div class="pf-ph"><span>${isVideo ? '🎬' : '🎨'}</span><span class="pf-ph-label">ファイル未登録</span></div>`;
   // 説明が未入力ならオーバーレイ自体を出さない（ポートフォリオ画面なので空欄を目立たせない）
   const note = item.note
@@ -22959,6 +22968,34 @@ function pfOnThumbLoad(idx, img) {
   // 1枚ずつ再描画すると重いのでまとめて1回だけ
   clearTimeout(_pfAspectFixTimer);
   _pfAspectFixTimer = setTimeout(() => { pfRenderGallery(); pfFlushSizeSync(); }, 400);
+}
+
+// サムネが出せなかったときの受け皿。
+// Drive が動画のサムネを作っていない（大きい mp4 でよく起きる）ファイルは、サーバー側で
+// ffmpeg から代表フレームを起こしている。その生成枠が埋まっていると一時的に 404 が返るので、
+// 数秒あけて取り直す。取り直しても駄目なときだけプレースホルダに落とす（＝黒枠のままにしない）。
+const PF_THUMB_MAX_RETRY = 2;
+function pfOnThumbError(img, fileId) {
+  if (!img) return;
+  const tries = parseInt(img.dataset.thumbRetry || '0', 10);
+  if (fileId && tries < PF_THUMB_MAX_RETRY) {
+    img.dataset.thumbRetry = String(tries + 1);
+    // 一斉に取り直すとサーバーが再び詰まるので、回数で伸ばす＋ばらつかせる
+    const wait = 4000 * (tries + 1) + Math.floor(Math.random() * 1500);
+    setTimeout(() => {
+      if (!img.isConnected) return;   // 再描画で消えたカードは追わない
+      img.src = `/api/haruka/portfolio/thumbnail/${encodeURIComponent(fileId)}?r=${tries + 1}`;
+    }, wait);
+    return;
+  }
+  img.style.display = 'none';
+  const holder = img.parentElement;
+  if (holder && !holder.querySelector('.pf-ph')) {
+    const ph = document.createElement('div');
+    ph.className = 'pf-ph';
+    ph.innerHTML = '<span>🎬</span><span class="pf-ph-label">サムネ準備中</span>';
+    holder.appendChild(ph);
+  }
 }
 
 // 読み取った実寸を creative_files にキャッシュしておく（次回は最初から正しい枠で描画される）
