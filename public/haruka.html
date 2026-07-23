@@ -7939,8 +7939,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     position: relative; width: 100%; border-radius: 8px; overflow: hidden;
     background: #111; border: 0.5px solid var(--border);
   }
+  /* 実サイズどおりに見せる: 枠は実寸の比率で作るので contain でぴったり収まる。
+     実測が届く前の一瞬だけ枠と実物がズレうるが、contain なら見切れずレターボックスで済む */
   #page-portfolio .pf-media img,
-  #page-portfolio .pf-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #page-portfolio .pf-media video { width: 100%; height: 100%; object-fit: contain; display: block; }
   #page-portfolio .pf-media .pf-ph {
     width: 100%; height: 100%; display: flex; flex-direction: column; gap: 6px;
     align-items: center; justify-content: center;
@@ -22554,7 +22556,7 @@ function pfHoverIn(cardEl, idx) {
     v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
     v.preload = 'metadata';
     v.setAttribute('playsinline', '');
-    v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover';
+    v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
     v.src = src;
     // 直リンクが失敗したら stream にフォールバック（詳細画面と同じ方式）
     v.onerror = () => { v.onerror = null; v.src = `/api/haruka/files/${item.drive_file_id}/stream`; };
@@ -22587,9 +22589,12 @@ async function pfResolvePlaybackUrl(item) {
 // 40件ずつ・最大3バッチ（=120件）まで。取得できた分から再描画してレーンを正しくする。
 async function pfMeasureMissingAspects() {
   const seq = pfLoadSeq;
-  const targets = pfItems.filter(it => it.file_id && !it.aspect_w && !it.measured);
+  // 実寸（aspect_source==='drive'）がまだ無いカードはすべて対象。マスターのサイズ区分で
+  // 仮の比率が入っているものも実測しに行く（申告値と実物がズレていると枠から見切れるため）。
+  // 実測済みは creative_files にキャッシュされるので、2回目以降このループは空になる。
+  const targets = pfItems.filter(it => it.file_id && it.aspect_source !== 'drive' && !it.measured);
   if (!targets.length) return;
-  for (let i = 0; i < targets.length && i < 120; i += 40) {
+  for (let i = 0; i < targets.length; i += 40) {
     const batch = targets.slice(i, i + 40);
     try {
       const res = await apiFetch('/api/haruka/portfolio/media-meta', {
