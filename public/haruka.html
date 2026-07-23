@@ -22622,7 +22622,8 @@ function pfToggleLane(key) {
 function pfCardHtml(item, idx) {
   const isVideo = pfIsVideo(item);
   const media = item.file_id
-    ? `<img loading="lazy" decoding="async" src="/api/haruka/portfolio/thumbnail/${esc(item.file_id)}" alt="" onerror="this.style.display='none'">`
+    ? `<img loading="lazy" decoding="async" src="/api/haruka/portfolio/thumbnail/${esc(item.file_id)}" alt=""
+           onload="pfOnThumbLoad(${idx}, this)" onerror="this.style.display='none'">`
     : `<div class="pf-ph"><span>${isVideo ? '🎬' : '🎨'}</span><span class="pf-ph-label">ファイル未登録</span></div>`;
   // 説明が未入力ならオーバーレイ自体を出さない（ポートフォリオ画面なので空欄を目立たせない）
   const note = item.note
@@ -22729,6 +22730,46 @@ async function pfResolvePlaybackUrl(item) {
   } catch (_) {
     return `/api/haruka/files/${item.drive_file_id}/stream`;
   }
+}
+
+// サムネが読み込めたら、その画像の実寸から比率を確定させる。
+// Drive の imageMediaMetadata / videoMediaMetadata は返らないことがあり（大きい PNG や
+// 未処理の動画）、その場合サイズ区分マスターの申告値で枠を作ってしまい実物とズレる。
+// サムネは元画像を縮小したものなので比率は必ず一致する ＝ これが一番確実な情報源。
+let _pfAspectFixTimer = null;
+const _pfPendingSizeSync = new Map();  // file_id -> {w,h}（DBへ書き戻す分）
+
+function pfOnThumbLoad(idx, img) {
+  const item = pfItems[idx];
+  if (!item || !img?.naturalWidth || !img?.naturalHeight) return;
+  const real = img.naturalWidth / img.naturalHeight;
+  const shown = (item.aspect_w && item.aspect_h) ? (item.aspect_w / item.aspect_h) : null;
+  // 2%以上ズレていたら（＝枠と実物が違う）実寸で置き換える
+  if (shown && Math.abs(real - shown) / shown < 0.02) return;
+
+  item.aspect_w = img.naturalWidth;
+  item.aspect_h = img.naturalHeight;
+  item.aspect_source = 'thumb';
+  item.orientation = real <= 0.9 ? 'portrait' : (real < 1.15 ? 'square' : 'landscape');
+  if (item.file_id) _pfPendingSizeSync.set(item.file_id, { w: img.naturalWidth, h: img.naturalHeight });
+
+  // 1枚ずつ再描画すると重いのでまとめて1回だけ
+  clearTimeout(_pfAspectFixTimer);
+  _pfAspectFixTimer = setTimeout(() => { pfRenderGallery(); pfFlushSizeSync(); }, 400);
+}
+
+// 読み取った実寸を creative_files にキャッシュしておく（次回は最初から正しい枠で描画される）
+async function pfFlushSizeSync() {
+  if (_pfPendingSizeSync.size === 0) return;
+  const sizes = [..._pfPendingSizeSync.entries()].map(([file_id, v]) => ({ file_id, width: v.w, height: v.h }));
+  _pfPendingSizeSync.clear();
+  try {
+    await apiFetch('/api/haruka/portfolio/media-size', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sizes }),
+    });
+  } catch (_) { /* キャッシュできなくても表示は正しいので握りつぶす */ }
 }
 
 // 比率が未解決のカードだけ Drive 実寸を取りに行く（サイズ区分マスター未設定分の補完）。
