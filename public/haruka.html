@@ -12752,6 +12752,19 @@ async function loadMembers() {
     console.error('[loadMembers]', e);
   }
   _renderMembersView();
+  // allMembers に依存する他画面の追い描画。
+  // 初期ロードは loadMembers() / loadTeams() を並列で撃つため、/teams が先に返ると
+  // チームカードは allMembers 空のまま描かれ「0名 / メンバー未設定」で固定されてしまう
+  // （renderTeamsList は team_members.user_id を allMembers から実体解決するため）。
+  // メンバー到着時に必ず描き直してレースを打ち消す。
+  try {
+    if (Array.isArray(allTeams) && allTeams.length && typeof renderTeamsList === 'function') renderTeamsList();
+  } catch (e) { console.warn('[loadMembers] re-render teams failed', e); }
+  // チーム編集モーダルを開いたままメンバーが届いたケース（「(不明なメンバー: <id>)」表示）も解消する
+  try {
+    const tModal = document.getElementById('modal-team');
+    if (tModal && tModal.classList.contains('open') && typeof renderTeamMemberChips === 'function') renderTeamMemberChips();
+  } catch (e) { console.warn('[loadMembers] re-render team chips failed', e); }
 }
 
 // allMembers からメンバータブを描画する（fetch しない純粋な描画部）
@@ -15463,6 +15476,11 @@ function showCreativeAddedNextActionModal({ createdId, createdName, onContinue, 
 
 function openTeamModal(team) {
   const isEdit = !!team;
+  // メンバー未取得のまま開くと選択済みメンバーが「(不明なメンバー: <id>)」になるため取り直す。
+  // 完了後に loadMembers() 側から renderTeamMemberChips() が呼ばれて実名に置き換わる。
+  if (!Array.isArray(allMembers) || !allMembers.length) {
+    try { if (typeof loadMembers === 'function') loadMembers(); } catch (_) {}
+  }
 
   // モーダルタイトル・ボタンテキスト
   document.getElementById('t-modal-title').childNodes[0].textContent = isEdit ? 'チーム編集' : 'チーム追加';
