@@ -21630,6 +21630,10 @@ router.get('/portfolio/thumbnail/:fileId', requireAuth, async (req, res) => {
       const drive = await getDriveService();
       const generated = await poster.generatePoster({ drive, driveFileId: srcId, cacheKey: fileRowId });
       if (generated) return sendPoster(generated);
+      // 生成枠が埋まっていて作れなかった場合。Drive サムネも無い（buf が null）と
+      // ここで 404 になり、カードのサムネが永久に欠けたままになるので、
+      // 背景で作らせておいてフロントの再取得（pfOnThumbError）で拾わせる。
+      if (!buf) poster.queuePoster({ drive, driveFileId: srcId, cacheKey: fileRowId });
     }
 
     if (!buf) return res.status(404).end();
