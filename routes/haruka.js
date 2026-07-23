@@ -21424,6 +21424,151 @@ router.post('/portfolio/media-size', requireAuth, async (req, res) => {
   }
 });
 
+// ==================== 作品のダウンロード ====================
+//
+// 単体は creative_files.id ひとつ、複数選択は ZIP でまとめて返す。
+// どちらも Drive から streaming で受けてそのままレスポンスへ流す（サーバーに溜めない）。
+// ZIP は store（無圧縮）: 動画も画像も既に圧縮済みで、CPU を使っても縮まないため。
+
+const PORTFOLIO_DL_MAX_FILES = 50;
+const PORTFOLIO_DL_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
+
+// Content-Disposition 用（日本語ファイル名は RFC5987 で渡す）
+function portfolioDispositionName(name) {
+  const safeAscii = String(name).replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+  return `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
+// zip 内のパスに使えない文字を落とす
+function portfolioSafePath(name) {
+  return String(name || '').replace(/[\\/:*?"<>|]/g, '_').trim() || 'file';
+}
+
+// creative_files.id 群 → ダウンロードに必要な情報（作品名・案件名つき）
+async function loadPortfolioDownloadTargets(ids) {
+  const { data: files, error } = await supabase
+    .from('creative_files')
+    .select('id, creative_id, drive_file_id, generated_name, original_name, mime_type, file_size, version')
+    .in('id', ids)
+    .not('drive_file_id', 'is', null);
+  if (error) throw new Error(error.message);
+  const creativeIds = [...new Set((files || []).map(f => f.creative_id))];
+  const { data: creatives } = await supabase
+    .from('creatives')
+    .select('id, file_name, status, projects(name, clients(name))')
+    .in('id', creativeIds);
+  const byCreative = new Map((creatives || []).map(c => [c.id, c]));
+  return (files || []).map(f => {
+    const c = byCreative.get(f.creative_id) || {};
+    const ext = (f.generated_name || f.original_name || '').match(/\.[a-zA-Z0-9]+$/)?.[0] || '';
+    return {
+      ...f,
+      creative: c,
+      // 表示名（file_name）を優先し、拡張子は実ファイル名から借りる
+      downloadName: `${portfolioSafePath(c.file_name || f.generated_name || 'file')}${ext}`,
+      folder: portfolioSafePath(
+        [c.projects?.clients?.name, c.projects?.name].filter(Boolean).join('_') || '作品'
+      ),
+    };
+  });
+}
+
+// GET /api/haruka/portfolio/download/:fileId — 1件ダウンロード
+router.get('/portfolio/download/:fileId', requireAuth, async (req, res) => {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
+  try {
+    const [target] = await loadPortfolioDownloadTargets([req.params.fileId]);
+    if (!target) return res.status(404).json({ error: 'ファイルが見つかりません' });
+
+    const drive = await getDriveService();
+    const stream = await drive.files.get(
+      { fileId: target.drive_file_id, alt: 'media', supportsAllDrives: true },
+      { responseType: 'stream' }
+    );
+    res.setHeader('Content-Type', target.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', portfolioDispositionName(target.downloadName));
+    if (target.file_size) res.setHeader('Content-Length', String(target.file_size));
+    stream.data.on('error', e => {
+      console.warn('[portfolio/download] stream error:', e.message);
+      if (!res.headersSent) res.status(502).end(); else res.destroy();
+    });
+    stream.data.pipe(res);
+  } catch (e) {
+    console.error('[portfolio/download] failed:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/haruka/portfolio/download-zip?ids=id1,id2,... — 複数まとめてダウンロード
+// POST ではなく GET なのは、ブラウザのナビゲーションで直接ディスクへ流したいため
+// （fetch → blob だと数百MBがメモリに載る）。
+router.get('/portfolio/download-zip', requireAuth, async (req, res) => {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
+  try {
+    const ids = String(req.query.ids || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!ids.length) return res.status(400).json({ error: 'ダウンロードする作品が選択されていません' });
+    if (ids.length > PORTFOLIO_DL_MAX_FILES) {
+      return res.status(400).json({ error: `一度にダウンロードできるのは ${PORTFOLIO_DL_MAX_FILES} 件までです` });
+    }
+
+    const targets = await loadPortfolioDownloadTargets(ids);
+    if (!targets.length) return res.status(404).json({ error: 'ダウンロードできるファイルがありません' });
+
+    const totalBytes = targets.reduce((s, t) => s + (Number(t.file_size) || 0), 0);
+    if (totalBytes > PORTFOLIO_DL_MAX_BYTES) {
+      const gb = (totalBytes / 1024 / 1024 / 1024).toFixed(1);
+      return res.status(400).json({ error: `選択した作品の合計が ${gb}GB あります。2GB 以下に分けてダウンロードしてください` });
+    }
+
+    const stamp = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace(/-/g, '');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', portfolioDispositionName(`作品_${stamp}.zip`));
+
+    const archiver = require('archiver');
+    // store（無圧縮）: 動画・画像は既に圧縮済みなので CPU を使っても縮まない
+    const archive = archiver('zip', { zlib: { level: 0 }, store: true });
+    archive.on('warning', err => console.warn('[portfolio/download-zip] warning:', err.message));
+    archive.on('error', err => {
+      console.error('[portfolio/download-zip] archive error:', err.message);
+      res.destroy();
+    });
+    archive.pipe(res);
+
+    const drive = await getDriveService();
+    const used = new Set();
+    for (const t of targets) {
+      // 同名衝突は連番で回避（同じ作品の別バージョン等）
+      let entry = `${t.folder}/${t.downloadName}`;
+      if (used.has(entry)) {
+        const m = t.downloadName.match(/^(.*?)(\.[a-zA-Z0-9]+)?$/);
+        let i = 2;
+        while (used.has(entry)) { entry = `${t.folder}/${m[1]}_${i}${m[2] || ''}`; i += 1; }
+      }
+      used.add(entry);
+      try {
+        const stream = await drive.files.get(
+          { fileId: t.drive_file_id, alt: 'media', supportsAllDrives: true },
+          { responseType: 'stream' }
+        );
+        archive.append(stream.data, { name: entry });
+        // 1件ずつ流し終えてから次へ（同時に何本も Drive から引かない）
+        await new Promise((resolve, reject) => {
+          stream.data.on('end', resolve);
+          stream.data.on('error', reject);
+        });
+      } catch (e) {
+        console.warn('[portfolio/download-zip] 取得失敗（スキップ）:', t.drive_file_id, e.message);
+        archive.append(`このファイルは取得できませんでした: ${t.downloadName}\n${e.message}\n`,
+          { name: `${t.folder}/_取得失敗_${portfolioSafePath(t.downloadName)}.txt` });
+      }
+    }
+    await archive.finalize();
+  } catch (e) {
+    console.error('[portfolio/download-zip] failed:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/haruka/portfolio/thumbnail/:fileId — creative_files.id のサムネ画像を代理配信。
 // Drive の thumbnailLink をそのままフロントに返さないのは、URL が短命で
 // 失効すると画像が壊れるため（サーバー側で再取得して隠蔽する）。
