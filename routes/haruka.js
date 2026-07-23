@@ -21323,22 +21323,39 @@ function _rememberThumbLink(fileRowId, url) {
 
 // Drive から 1 ファイル分のメタ（実寸 + サムネURL）を取る。取れなければ null 埋め。
 async function fetchPortfolioMediaMeta(drive, row) {
-  try {
-    const meta = await drive.files.get({
-      fileId: row.drive_file_id,
-      fields: 'id, thumbnailLink, videoMediaMetadata(width,height), imageMediaMetadata(width,height)',
-      supportsAllDrives: true,
-    });
-    const d = meta.data || {};
-    const dim = d.videoMediaMetadata || d.imageMediaMetadata || {};
-    // サムネは =s220 等のサイズ指定が付いてくるので、ギャラリー用に大きめへ差し替える
-    const thumb = d.thumbnailLink ? String(d.thumbnailLink).replace(/=s\d+$/, '=s800') : null;
-    _rememberThumbLink(row.id, thumb);
-    return { width: dim.width || null, height: dim.height || null, has_thumb: !!thumb };
-  } catch (e) {
-    console.warn('[portfolio] Drive メタ取得失敗:', row.drive_file_id, e.message);
-    return { width: null, height: null, has_thumb: false };
+  // 大きい動画は Drive 側の処理が終わっておらず、原本に thumbnailLink も
+  // videoMediaMetadata も付かないことがある（本番の 130MB 級はほぼこれ）。
+  // 一方 faststart 版（こちらで再アップした軽い mp4）には両方付いているので、
+  // faststart → 原本 の順に見て、先に中身が取れた方を採用する。
+  const candidates = [];
+  if (row.faststart_drive_file_id && row.faststart_status === 'done') candidates.push(row.faststart_drive_file_id);
+  if (row.drive_file_id) candidates.push(row.drive_file_id);
+
+  let result = { width: null, height: null, has_thumb: false };
+  for (const fileId of candidates) {
+    try {
+      const meta = await drive.files.get({
+        fileId,
+        fields: 'id, thumbnailLink, videoMediaMetadata(width,height), imageMediaMetadata(width,height)',
+        supportsAllDrives: true,
+      });
+      const d = meta.data || {};
+      const dim = d.videoMediaMetadata || d.imageMediaMetadata || {};
+      // サムネは =s220 等のサイズ指定が付いてくるので、ギャラリー用に大きめへ差し替える
+      const thumb = d.thumbnailLink ? String(d.thumbnailLink).replace(/=s\d+$/, '=s800') : null;
+      if (thumb) _rememberThumbLink(row.id, thumb);
+      result = {
+        width:  dim.width  || result.width,
+        height: dim.height || result.height,
+        has_thumb: result.has_thumb || !!thumb,
+      };
+      // 実寸もサムネも揃ったら次の候補は見に行かない
+      if (result.width && result.height && result.has_thumb) break;
+    } catch (e) {
+      console.warn('[portfolio] Drive メタ取得失敗:', fileId, e.message);
+    }
   }
+  return result;
 }
 
 // POST /api/haruka/portfolio/media-meta — 実寸とサムネの有無をまとめて解決する。
@@ -21352,7 +21369,8 @@ router.post('/portfolio/media-meta', requireAuth, async (req, res) => {
 
     const { data: rows, error } = await supabase
       .from('creative_files')
-      .select('id, drive_file_id, media_width, media_height')
+      // faststart 版も候補に入れる（大きい動画は原本に thumbnailLink / 実寸が付かない）
+      .select('id, drive_file_id, media_width, media_height, faststart_drive_file_id, faststart_status')
       .in('id', ids)
       .not('drive_file_id', 'is', null);
     if (error) return res.status(500).json({ error: error.message });
