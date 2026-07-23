@@ -21118,6 +21118,12 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const latestOnly  = String(req.query.latest_only ?? '1') !== '0';
     // 納品物ファイルが無い作品を出すか（既定 OFF＝ギャラリーには絵のある作品だけ並べる）
     const includeNoFile = String(req.query.include_no_file || '') === '1';
+    // マイベスト（⭐）の持ち主。担当者フィルタで1名に絞り込まれているときだけ成立する。
+    // best_mode: auto = 持ち主に⭐が1件でもあればベストのみ・無ければ全体（既定）
+    //            best = ベストのみ固定 / all = 全体固定（見る側の切り替え用）
+    const bestOf = String(req.query.best_of || '').trim() || null;
+    const bestModeRaw = String(req.query.best_mode || 'auto').toLowerCase();
+    const bestMode = ['auto', 'best', 'all'].includes(bestModeRaw) ? bestModeRaw : 'auto';
     const from        = req.query.from || null;   // 納品日 (YYYY-MM-DD) 以降
     const to          = req.query.to   || null;   // 納品日 (YYYY-MM-DD) 以前
 
@@ -21175,6 +21181,16 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const roleCodes = await getEffectiveRoleCodes(req);
     const userId = req.user?.id;
 
+    // マイベスト（⭐）の集合。持ち主のぶんだけ引けばよいので 1 クエリで済む
+    const bestSet = new Set();
+    if (bestOf) {
+      const { data: favs } = await supabase
+        .from('portfolio_favorites').select('creative_id').eq('user_id', bestOf);
+      (favs || []).forEach(f => bestSet.add(f.creative_id));
+    }
+    // auto は「持ち主に⭐があればベストのみ、無ければ全体」。見る側が best/all を選んだらそれに従う
+    const bestOnly = bestOf ? (bestMode === 'best' || (bestMode === 'auto' && bestSet.size > 0)) : false;
+
     const items = [];
     let noFileCount = 0;   // ファイル未登録だった納品物の件数（非表示にしても件数は返す）
     for (const c of (creatives || [])) {
@@ -21187,6 +21203,9 @@ router.get('/portfolio', requireAuth, async (req, res) => {
       // 外部リンクだけで納品されたケース。本番では納品済みの約1/4がこれに該当）は
       // 見せる絵が無く真っ黒なカードになるため、既定ではギャラリーから外す。
       // include_no_file=1 で「ファイル未登録も表示」に切り替えられ、件数は常に返す。
+      // マイベスト表示のときは、持ち主が⭐を付けた作品だけに絞る
+      const isBest = bestSet.has(c.id);
+      if (bestOnly && !isBest) continue;
       if (all.length === 0) {
         noFileCount += 1;
         if (!includeNoFile) continue;
@@ -21197,6 +21216,9 @@ router.get('/portfolio', requireAuth, async (req, res) => {
         ? (sizeAspectMap[String(c.creative_size)] || parsePortfolioAspect(c.creative_size))
         : null;
       const editable = canEditPortfolioNote({ roleCodes, userId, creative: c });
+      // ⭐ を操作できるのは本人（この作品の担当者）だけ。ロールに依らない本人判定なので
+      // VIEW AS の影響を受けない（他人のベストを勝手に編集させない）
+      const canStar = (c.creative_assignments || []).some(a => a.users?.id === userId);
 
       for (const f of targets) {
         const cacheAspect = (f?.media_width && f?.media_height)
@@ -21223,6 +21245,8 @@ router.get('/portfolio', requireAuth, async (req, res) => {
           delivered_at:  c.delivered_at || c.final_deadline || null,
           note:          c.portfolio_note || '',
           can_edit_note: editable,
+          is_best:       isBest,      // 表示中の持ち主のマイベストか
+          can_star:      canStar,     // ⭐ を操作できるか（本人のみ）
           assignees: (c.creative_assignments || [])
             .filter(a => a.users?.id)
             .map(a => ({ id: a.users.id, role: a.role, full_name: a.users.full_name, nickname: a.users.nickname })),
@@ -21262,6 +21286,9 @@ router.get('/portfolio', requireAuth, async (req, res) => {
       total: items.length,
       no_file_count: noFileCount,
       no_file_hidden: includeNoFile ? 0 : noFileCount,
+      best_of: bestOf,
+      best_total: bestSet.size,   // 持ち主が⭐を付けた総数（0 なら「ベストなし」＝全体表示）
+      best_applied: bestOnly,     // 実際にマイベストで絞ったか（auto の結果をフロントに返す）
       truncated: (creatives || []).length >= PORTFOLIO_MAX_ITEMS,
     });
   } catch (e) {
@@ -21370,6 +21397,45 @@ router.get('/portfolio/thumbnail/:fileId', requireAuth, async (req, res) => {
   } catch (e) {
     console.warn('[portfolio/thumbnail] failed:', e.message);
     res.status(500).end();
+  }
+});
+
+// PUT /api/haruka/portfolio/favorites/:creativeId — マイベスト（⭐）の ON / OFF
+// body: { on: true | false }
+// 付けられるのは本人（その作品の担当者）だけ。ロール判定ではなく本人判定なので
+// VIEW AS の影響を受けない（＝プレビュー中に他人のベストを書き換えられない）。
+router.put('/portfolio/favorites/:creativeId', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const creativeId = req.params.creativeId;
+    const on = req.body?.on !== false;
+
+    const { data: creative, error } = await supabase
+      .from('creatives')
+      .select('id, file_name, creative_assignments(users(id))')
+      .eq('id', creativeId)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!creative) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+    const isOwner = (creative.creative_assignments || []).some(a => a.users?.id === userId);
+    if (!isOwner) return res.status(403).json({ error: '担当した本人だけがマイベストに追加できます' });
+
+    if (on) {
+      const { error: uErr } = await supabase
+        .from('portfolio_favorites')
+        .upsert({ user_id: userId, creative_id: creativeId }, { onConflict: 'user_id,creative_id' });
+      if (uErr) return res.status(500).json({ error: uErr.message });
+    } else {
+      const { error: dErr } = await supabase
+        .from('portfolio_favorites')
+        .delete().eq('user_id', userId).eq('creative_id', creativeId);
+      if (dErr) return res.status(500).json({ error: dErr.message });
+    }
+    res.json({ ok: true, is_best: on, file_name: creative.file_name });
+  } catch (e) {
+    console.error('[portfolio/favorites] failed:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 

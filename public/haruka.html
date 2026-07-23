@@ -7955,9 +7955,20 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     font-size: 10.5px; padding: 2px 6px; border-radius: 5px; letter-spacing: .02em;
   }
   #page-portfolio .pf-ver {
-    position: absolute; right: 6px; top: 6px; background: rgba(0,0,0,.6); color: #fff;
+    position: absolute; left: 6px; top: 30px; background: rgba(0,0,0,.6); color: #fff;
     font-size: 10.5px; padding: 2px 6px; border-radius: 5px;
   }
+  /* ⭐ マイベスト（カード右上）。本人だけがクリックでき、他の人には印としてだけ見える */
+  #page-portfolio .pf-star {
+    position: absolute; right: 5px; top: 5px; width: 28px; height: 28px; border: 0;
+    border-radius: 50%; background: rgba(0,0,0,.45); color: #FFD24A; font-size: 15px;
+    line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: transform .12s, background-color .12s;
+  }
+  #page-portfolio .pf-star:hover { background: rgba(0,0,0,.7); transform: scale(1.12); }
+  #page-portfolio .pf-star.pf-star-static { cursor: default; background: rgba(0,0,0,.35); }
+  #page-portfolio .pf-star.pf-star-static:hover { transform: none; background: rgba(0,0,0,.35); }
+  #page-portfolio .pf-star.pf-star-off { color: rgba(255,255,255,.85); }
   /* ホバーで下からせり上がる説明（未入力なら要素自体を出さない） */
   #page-portfolio .pf-note {
     position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 8px 8px;
@@ -8017,6 +8028,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <input type="date" id="pf-to" class="form-select" style="width:140px" onchange="pfOnFilterChange()" aria-label="納品日（終了）">
       <label class="pf-check"><input type="checkbox" id="pf-latest-only" checked onchange="pfOnFilterChange()">最新の納品物のみ</label>
       <label class="pf-check" title="納品物のファイルがシステムに登録されていない作品（外部リンクのみで納品されたもの）も表示します"><input type="checkbox" id="pf-include-nofile" onchange="pfOnFilterChange()">ファイル未登録も表示</label>
+      <!-- マイベスト切替（担当者を1名に絞っているときだけ出る）。既定は「本人のマイベスト」 -->
+      <span class="pf-seg" id="pf-best-seg" role="group" aria-label="マイベスト表示" style="display:none">
+        <button type="button" id="pf-best-best" onclick="pfSetBestMode('best')">⭐ マイベスト</button>
+        <button type="button" id="pf-best-all" onclick="pfSetBestMode('all')">すべて</button>
+      </span>
       <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px">
         <select id="pf-lane-sort" class="form-select" style="width:170px" onchange="pfSetLaneSort(this.value)" aria-label="レーン内の並び順">
           <option value="delivered">レーン内：納品日が新しい順</option>
@@ -22265,6 +22281,7 @@ let pfLaneSort = 'delivered';
 let pfCardSize = 'm';
 let pfCollapsedLanes = new Set(); // `${project_id}:${lane}` で畳み状態を保持
 let pfLoadSeq = 0;                // 古いレスポンス破棄用
+let pfBestMode = 'auto';          // auto: ⭐があればベストのみ / best: ベストのみ / all: 全体
 let pfLightboxIdx = -1;           // ライトボックスで表示中の pfItems index
 let pfHoverTimer = null;          // ホバー再生の遅延タイマー
 
@@ -22342,6 +22359,7 @@ function pfOpenAssigneePicker(ev) {
     value: [...pfAssigneeIds],
     onChange: (ids) => {
       pfAssigneeIds = new Set(Array.isArray(ids) ? ids.filter(Boolean) : []);
+      pfBestMode = 'auto';   // 見る人が変わったら「その人のマイベスト」を初期表示に戻す
       pfRefreshAssigneeLabel();
       pfReload();
     },
@@ -22396,6 +22414,27 @@ function pfSetLaneSort(v) {
 
 function pfOnFilterChange() { pfReload(); }
 
+// 見る側の切り替え（マイベストのみ / すべて）。担当者を変えたら auto に戻す
+function pfSetBestMode(mode) {
+  pfBestMode = (mode === 'best' || mode === 'all') ? mode : 'auto';
+  pfReload();
+}
+
+// マイベスト切替の表示状態を、直近のレスポンスに合わせて更新する
+function pfSyncBestSeg(json) {
+  const seg = document.getElementById('pf-best-seg');
+  if (!seg) return;
+  // 担当者1名 かつ その人に⭐が1件以上あるときだけ意味がある
+  const show = !!json.best_of && json.best_total > 0;
+  seg.style.display = show ? 'inline-flex' : 'none';
+  if (!show) return;
+  const bestBtn = document.getElementById('pf-best-best');
+  const allBtn  = document.getElementById('pf-best-all');
+  if (bestBtn) bestBtn.classList.toggle('active', !!json.best_applied);
+  if (allBtn)  allBtn.classList.toggle('active', !json.best_applied);
+  if (bestBtn) bestBtn.textContent = `⭐ マイベスト ${json.best_total}`;
+}
+
 async function pfReload() {
   const seq = ++pfLoadSeq;
   const summary = document.getElementById('pf-summary');
@@ -22414,6 +22453,13 @@ async function pfReload() {
   if (to)   params.set('to', to);
   params.set('latest_only', document.getElementById('pf-latest-only')?.checked === false ? '0' : '1');
   if (document.getElementById('pf-include-nofile')?.checked) params.set('include_no_file', '1');
+  // マイベストの持ち主は「担当者を1名に絞っているとき」のその人。
+  // best_mode=auto はサーバー側で「⭐が1件でもあればベストのみ / 無ければ全体」を判定する。
+  const bestOwner = pfAssigneeIds.size === 1 ? [...pfAssigneeIds][0] : null;
+  if (bestOwner) {
+    params.set('best_of', bestOwner);
+    params.set('best_mode', pfBestMode);
+  }
 
   try {
     const res = await apiFetch(`/api/haruka/portfolio?${params.toString()}`);
@@ -22422,6 +22468,7 @@ async function pfReload() {
     if (!res.ok) throw new Error(json.error || '作品一覧の取得に失敗しました');
     pfItems = json.items || [];
     pfGroups = json.groups || [];
+    pfSyncBestSeg(json);
     pfRenderSummary(json);
     pfRenderGallery();
     pfMeasureMissingAspects();
@@ -22441,7 +22488,8 @@ function pfRenderSummary(json) {
   const hidden = json.no_file_hidden
     ? `　※ ファイル未登録の納品物 ${json.no_file_hidden}件は非表示`
     : '';
-  el.textContent = `${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（納品済のみ）${truncated}${hidden}`;
+  const best = json.best_applied ? '⭐ マイベストのみ表示中　' : '';
+  el.textContent = `${best}${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（納品済のみ）${truncated}${hidden}`;
 }
 
 function pfRenderGallery() {
@@ -22532,6 +22580,7 @@ function pfCardHtml(item, idx) {
         ${media}
         <span class="pf-badge">${isVideo ? '🎬' : '🎨'}</span>
         ${verBadge}
+        ${pfStarHtml(item, idx)}
         ${note}
       </div>
       <div class="pf-cap">
@@ -22539,6 +22588,42 @@ function pfCardHtml(item, idx) {
         <span class="pf-cap-sub">${esc(pfFormatDate(item.delivered_at))}</span>
       </div>
     </div>`;
+}
+
+// ⭐ マイベスト。本人（can_star）はクリックで ON / OFF、他の人には印としてだけ見せる。
+// カードのクリック（ライトボックスを開く）に伝播させないので stopPropagation する。
+function pfStarHtml(item, idx) {
+  if (item.can_star) {
+    const on = !!item.is_best;
+    return `<button type="button" class="pf-star${on ? '' : ' pf-star-off'}"
+      title="${on ? 'マイベストから外す' : 'マイベストに追加'}"
+      aria-pressed="${on}"
+      onclick="event.stopPropagation();pfToggleBest(${idx})">${on ? '⭐' : '☆'}</button>`;
+  }
+  // 他の人のカード: ベストのときだけ印を出す（操作不可）
+  return item.is_best
+    ? `<span class="pf-star pf-star-static" title="本人のマイベスト">⭐</span>` : '';
+}
+
+async function pfToggleBest(idx) {
+  const item = pfItems[idx];
+  if (!item || !item.can_star) return;
+  const next = !item.is_best;
+  try {
+    const res = await apiFetch(`/api/haruka/portfolio/favorites/${item.creative_id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: next }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'マイベストの更新に失敗しました');
+    // 同じクリエイティブの全カード（過去版が並んでいる場合）に反映
+    pfItems.forEach(it => { if (it.creative_id === item.creative_id) it.is_best = next; });
+    pfRenderGallery();
+    showToast(`${item.file_name} をマイベスト${next ? 'に追加' : 'から削除'}しました`, 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
 }
 
 // ホバー: 動画なら 400ms 後に無音ループ再生を差し込む（連続ホバーで無駄に取得しない）
