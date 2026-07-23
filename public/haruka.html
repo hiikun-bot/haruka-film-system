@@ -7984,31 +7984,87 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   #page-portfolio .pf-cap-sub { display: block; color: var(--text-muted); font-size: 10.5px; margin-top: 1px; }
   #page-portfolio .pf-empty { padding: 48px 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
 
-  /* ライトボックス（大きく見る） */
-  .pf-lightbox { display: none; position: fixed; inset: 0; z-index: 1200; background: rgba(0,0,0,.92); }
-  .pf-lightbox.open { display: flex; flex-direction: column; }
-  .pf-lb-top { display: flex; align-items: center; gap: 10px; padding: 10px 14px; color: #fff; }
-  .pf-lb-top .pf-lb-x { margin-left: auto; }
-  .pf-lightbox button.pf-lb-btn {
-    background: rgba(255,255,255,.12); color: #fff; border: 0; border-radius: 8px;
-    padding: 6px 12px; font-size: 13px; cursor: pointer;
+  /* ライトボックス（作品詳細）
+     左＝メディア（映像の周りだけ黒）／右＝白いインフォカード。
+     全面黒だと「見る画面」になってしまうので、作品を語るページとして白基調にする。 */
+  .pf-lightbox { display: none; position: fixed; inset: 0; z-index: 1200; background: rgba(20,22,26,.55); backdrop-filter: blur(3px); }
+  .pf-lightbox.open { display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .pf-lb-shell {
+    width: min(1360px, 100%); max-height: calc(100vh - 48px);
+    display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px;
   }
-  .pf-lightbox button.pf-lb-btn:hover { background: rgba(255,255,255,.24); }
-  .pf-lb-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0 12px; }
-  .pf-lb-stage video, .pf-lb-stage img { max-width: 100%; max-height: 100%; object-fit: contain; background: #000; }
-  .pf-lb-info { color: #fff; padding: 12px 18px 18px; max-width: 1000px; margin: 0 auto; width: 100%; }
-  .pf-lb-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .pf-lb-sub { font-size: 12px; color: rgba(255,255,255,.65); margin-top: 3px; }
-  .pf-lb-note { font-size: 13px; line-height: 1.6; margin-top: 8px; white-space: pre-wrap; }
-  .pf-lb-note.empty { color: rgba(255,255,255,.45); }
+  .pf-lb-mediacol { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .pf-lb-stage {
+    flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+    background: #0b0c0e; border-radius: 14px; overflow: hidden;
+  }
+  .pf-lb-stage video, .pf-lb-stage img { max-width: 100%; max-height: calc(100vh - 130px); object-fit: contain; display: block; }
+  .pf-lb-nav { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .pf-lb-nav .pf-lb-x { margin-left: auto; }
+  .pf-lightbox button.pf-lb-btn {
+    background: rgba(255,255,255,.14); color: #fff; border: 0; border-radius: 999px;
+    padding: 7px 15px; font-size: 12.5px; cursor: pointer; backdrop-filter: blur(4px);
+  }
+  .pf-lightbox button.pf-lb-btn:hover { background: rgba(255,255,255,.28); }
+  .pf-lightbox button.pf-lb-btn:disabled { opacity: .35; cursor: default; }
+
+  /* 右カラム: 白いインフォカード */
+  .pf-lb-card {
+    background: #fff; border-radius: 16px; padding: 26px 26px 22px; overflow-y: auto;
+    box-shadow: 0 18px 50px rgba(0,0,0,.28); color: #1f2328; min-width: 0;
+  }
+  .pf-lb-card h3 { font-size: 21px; font-weight: 800; line-height: 1.45; letter-spacing: .01em; color: #14171a; margin: 0; word-break: break-word; }
+  .pf-lb-project { font-size: 12.5px; color: #6B7280; margin-top: 8px; line-height: 1.6; }
+  .pf-lb-note {
+    font-size: 13.5px; line-height: 1.95; color: #374151; margin-top: 16px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .pf-lb-note.clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 8; overflow: hidden; }
+  .pf-lb-note.empty { color: #9CA3AF; }
+  .pf-lb-more { background: none; border: 0; padding: 4px 0 0; color: #2563EB; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+  .pf-lb-sec { border-top: 1px solid #EDEFF2; margin-top: 20px; padding-top: 16px; }
+  .pf-lb-sec-title { font-size: 12px; font-weight: 800; color: #111827; letter-spacing: .06em; margin-bottom: 10px; }
+  .pf-lb-credit { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+  .pf-lb-credit:last-child { margin-bottom: 0; }
+  .pf-lb-credit .pf-lb-avatar {
+    width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; object-fit: cover;
+    background: linear-gradient(135deg,#A8EDEA,#3ECFCA); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
+  }
+  .pf-lb-credit-name { font-size: 13.5px; font-weight: 700; color: #14171a; }
+  .pf-lb-chip {
+    display: inline-block; background: #F1F3F5; color: #4B5563; border-radius: 6px;
+    font-size: 11px; padding: 2px 9px; margin: 5px 5px 0 0;
+  }
+  .pf-lb-meta { display: grid; grid-template-columns: auto 1fr; gap: 7px 16px; font-size: 12.5px; }
+  .pf-lb-meta dt { color: #9CA3AF; }
+  .pf-lb-meta dd { color: #374151; margin: 0; }
+  .pf-lb-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+  .pf-lb-action {
+    border: 1px solid #E5E7EB; background: #fff; color: #374151; border-radius: 999px;
+    padding: 8px 16px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  }
+  .pf-lb-action:hover { background: #F9FAFB; }
+  .pf-lb-action.primary { background: #14171a; border-color: #14171a; color: #fff; }
+  .pf-lb-action.primary:hover { background: #2b2f36; }
+  .pf-lb-action.starred { background: #FFF7E0; border-color: #F5D682; color: #8A6100; }
   .pf-lb-note-edit textarea {
-    width: 100%; min-height: 84px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25);
-    background: rgba(255,255,255,.08); color: #fff; padding: 8px 10px; font-size: 13px; line-height: 1.6;
+    width: 100%; min-height: 120px; border-radius: 10px; border: 1px solid #E5E7EB;
+    background: #fff; color: #1f2328; padding: 10px 12px; font-size: 13.5px; line-height: 1.9;
     font-family: inherit; resize: vertical;
+  }
+  .pf-lb-note-edit textarea:focus { outline: 2px solid #C7D2FE; border-color: #A5B4FC; }
+
+  @media (max-width: 1024px) {
+    .pf-lightbox.open { padding: 12px; align-items: stretch; }
+    .pf-lb-shell { grid-template-columns: 1fr; overflow-y: auto; }
+    .pf-lb-stage video, .pf-lb-stage img { max-height: 52vh; }
   }
   @media (max-width: 768px) {
     #page-portfolio { --pf-unit: 130px; }
     #page-portfolio .pf-group-meta { margin-left: 0; }
+    .pf-lb-card { padding: 20px 18px; }
+    .pf-lb-card h3 { font-size: 18px; }
   }
 </style>
 <div id="page-portfolio" class="page">
@@ -8052,16 +8108,16 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 
 <!-- 作品ライトボックス（大きく見る + 説明の編集） -->
 <div id="portfolio-lightbox" class="pf-lightbox" onclick="pfLightboxBackdrop(event)">
-  <div class="pf-lb-top">
-    <button type="button" class="pf-lb-btn" onclick="pfLightboxStep(-1)">‹ 前の作品</button>
-    <button type="button" class="pf-lb-btn" onclick="pfLightboxStep(1)">次の作品 ›</button>
-    <button type="button" class="pf-lb-btn pf-lb-x" onclick="pfCloseLightbox()">✕ 閉じる</button>
-  </div>
-  <div class="pf-lb-stage" id="pf-lb-stage"></div>
-  <div class="pf-lb-info">
-    <div class="pf-lb-title"><span id="pf-lb-title"></span><span id="pf-lb-edit-wrap" style="margin-left:auto"></span></div>
-    <div class="pf-lb-sub" id="pf-lb-sub"></div>
-    <div id="pf-lb-note-area"></div>
+  <div class="pf-lb-shell">
+    <div class="pf-lb-mediacol">
+      <div class="pf-lb-stage" id="pf-lb-stage"></div>
+      <div class="pf-lb-nav">
+        <button type="button" class="pf-lb-btn" id="pf-lb-prev" onclick="pfLightboxStep(-1)">‹ 前の作品</button>
+        <button type="button" class="pf-lb-btn" id="pf-lb-next" onclick="pfLightboxStep(1)">次の作品 ›</button>
+        <button type="button" class="pf-lb-btn pf-lb-x" onclick="pfCloseLightbox()">✕ 閉じる</button>
+      </div>
+    </div>
+    <div class="pf-lb-card" id="pf-lb-card"></div>
   </div>
 </div>
 
@@ -22620,6 +22676,8 @@ async function pfToggleBest(idx) {
     // 同じクリエイティブの全カード（過去版が並んでいる場合）に反映
     pfItems.forEach(it => { if (it.creative_id === item.creative_id) it.is_best = next; });
     pfRenderGallery();
+    // ライトボックスから押した場合は右カラムのボタン表示も更新する
+    if (pfLightboxIdx >= 0) pfRenderLightboxCard();
     showToast(`${item.file_name} をマイベスト${next ? 'に追加' : 'から削除'}しました`, 'success');
   } catch (e) {
     showToast(e.message, 'error');
@@ -22777,30 +22835,21 @@ function pfLightboxStep(delta) {
 async function pfRenderLightbox() {
   const item = pfItems[pfLightboxIdx];
   if (!item) return;
+  pfRenderLightboxCard();
+
+  // 前後ボタンの活性/非活性（端では押せないことを見た目で伝える）
+  const order = pfVisualOrder();
+  const pos = order.indexOf(pfLightboxIdx);
+  const prevBtn = document.getElementById('pf-lb-prev');
+  const nextBtn = document.getElementById('pf-lb-next');
+  if (prevBtn) prevBtn.disabled = pos <= 0;
+  if (nextBtn) nextBtn.disabled = pos === -1 || pos >= order.length - 1;
+
   const stage = document.getElementById('pf-lb-stage');
-  const titleEl = document.getElementById('pf-lb-title');
-  const subEl = document.getElementById('pf-lb-sub');
-  const editWrap = document.getElementById('pf-lb-edit-wrap');
-
-  if (titleEl) titleEl.textContent = item.file_name || '';
-  const names = (item.assignees || []).map(a =>
-    (window.NameDisplay && NameDisplay.short(a)) || a.nickname || a.full_name || '').filter(Boolean);
-  const ratio = (item.aspect_w && item.aspect_h) ? `${item.aspect_w}×${item.aspect_h}` : '比率不明';
-  const clientPart = item.client_name ? `${item.client_name} ／ ` : '';
-  if (subEl) {
-    subEl.textContent = [`${clientPart}${item.project_name}`, ratio, pfFormatDate(item.delivered_at), names.join('、')]
-      .filter(Boolean).join(' ・ ');
-  }
-  if (editWrap) {
-    editWrap.innerHTML = item.can_edit_note
-      ? `<button type="button" class="pf-lb-btn" onclick="pfStartNoteEdit()">✏️ 説明を編集</button>` : '';
-  }
-  pfRenderNoteView();
-
   if (!stage) return;
-  stage.innerHTML = '<div style="color:rgba(255,255,255,.6);font-size:13px">読み込み中…</div>';
+  stage.innerHTML = '<div style="color:rgba(255,255,255,.55);font-size:13px">読み込み中…</div>';
   if (!item.file_id) {
-    stage.innerHTML = '<div style="color:rgba(255,255,255,.6);font-size:13px">この作品にはファイルが登録されていません</div>';
+    stage.innerHTML = '<div style="color:rgba(255,255,255,.55);font-size:13px">この作品にはファイルが登録されていません</div>';
     return;
   }
   const openIdx = pfLightboxIdx;
@@ -22816,17 +22865,84 @@ async function pfRenderLightbox() {
   }
 }
 
+// 右カラム（白いインフォカード）。タイトル → 案件 → 説明 → クレジット → 情報 → 操作。
+function pfRenderLightboxCard() {
+  const card = document.getElementById('pf-lb-card');
+  const item = pfItems[pfLightboxIdx];
+  if (!card || !item) return;
+
+  const clientPart = item.client_name ? `${esc(item.client_name)} ／ ` : '';
+  const ratio = (item.aspect_w && item.aspect_h) ? `${item.aspect_w} × ${item.aspect_h}` : '—';
+  const kind = pfIsVideo(item) ? '動画' : '静止画';
+
+  const credits = (item.assignees || []).map(a => {
+    const name = (window.NameDisplay && NameDisplay.full(a)) || a.nickname || a.full_name || 'メンバー';
+    const initial = String(a.nickname || a.full_name || '?').trim().charAt(0);
+    const avatar = a.avatar_url
+      ? `<img class="pf-lb-avatar" src="${esc(a.avatar_url)}" alt="">`
+      : `<span class="pf-lb-avatar">${esc(initial)}</span>`;
+    const roleLbl = (typeof roleLabel === 'function' && a.role) ? (roleLabel(a.role) || a.role) : a.role;
+    return `<div class="pf-lb-credit">
+      ${avatar}
+      <div style="min-width:0">
+        <div class="pf-lb-credit-name">${esc(name)}</div>
+        ${roleLbl ? `<span class="pf-lb-chip">${esc(roleLbl)}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const starBtn = item.can_star
+    ? `<button type="button" class="pf-lb-action${item.is_best ? ' starred' : ''}" onclick="pfToggleBest(${pfLightboxIdx})">
+         ${item.is_best ? '⭐ マイベスト' : '☆ マイベストに追加'}
+       </button>`
+    : (item.is_best ? `<span class="pf-lb-action starred" style="cursor:default">⭐ 本人のマイベスト</span>` : '');
+
+  card.innerHTML = `
+    <h3>${esc(item.file_name || '')}</h3>
+    <div class="pf-lb-project">${clientPart}${esc(item.project_name || '')}</div>
+    <div id="pf-lb-note-area"></div>
+    ${credits ? `<div class="pf-lb-sec">
+      <div class="pf-lb-sec-title">クレジット</div>
+      ${credits}
+    </div>` : ''}
+    <div class="pf-lb-sec">
+      <div class="pf-lb-sec-title">情報</div>
+      <dl class="pf-lb-meta">
+        <dt>納品日</dt><dd>${esc(pfFormatDate(item.delivered_at))}</dd>
+        <dt>種別</dt><dd>${esc(kind)}</dd>
+        <dt>サイズ</dt><dd>${esc(ratio)}</dd>
+        ${item.version ? `<dt>バージョン</dt><dd>v${esc(item.version)}</dd>` : ''}
+      </dl>
+    </div>
+    <div class="pf-lb-actions">
+      ${starBtn}
+      ${item.can_edit_note ? `<button type="button" class="pf-lb-action" onclick="pfStartNoteEdit()">✏️ 説明を編集</button>` : ''}
+    </div>`;
+  pfRenderNoteView();
+}
+
 function pfRenderNoteView() {
   const area = document.getElementById('pf-lb-note-area');
   const item = pfItems[pfLightboxIdx];
   if (!area || !item) return;
   if (item.note) {
-    area.innerHTML = `<div class="pf-lb-note">${esc(item.note)}</div>`;
+    // 長い説明は8行でたたみ、「…もっとみる」で全文表示
+    const long = String(item.note).split('\n').length > 8 || item.note.length > 320;
+    area.innerHTML = `<div class="pf-lb-note${long ? ' clamped' : ''}" id="pf-lb-note-body">${esc(item.note)}</div>`
+      + (long ? `<button type="button" class="pf-lb-more" id="pf-lb-more" onclick="pfToggleNoteClamp()">…もっとみる</button>` : '');
   } else if (item.can_edit_note) {
-    area.innerHTML = `<div class="pf-lb-note empty" style="cursor:pointer" onclick="pfStartNoteEdit()">＋ 説明を追加</div>`;
+    area.innerHTML = `<div class="pf-lb-note empty" style="cursor:pointer" onclick="pfStartNoteEdit()">＋ 説明を追加する</div>`;
   } else {
     area.innerHTML = `<div class="pf-lb-note empty">説明は未入力です</div>`;
   }
+}
+
+function pfToggleNoteClamp() {
+  const body = document.getElementById('pf-lb-note-body');
+  const more = document.getElementById('pf-lb-more');
+  if (!body || !more) return;
+  const clamped = body.classList.toggle('clamped');
+  more.textContent = clamped ? '…もっとみる' : '閉じる';
 }
 
 function pfStartNoteEdit() {

@@ -21181,6 +21181,14 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const roleCodes = await getEffectiveRoleCodes(req);
     const userId = req.user?.id;
 
+    // クレジット表示用のアバター（users.avatar_url は base64 なので select には含めず、
+    // 配信URL の参照キャッシュから注入する。#947 / #940 と同じ方式）
+    const avatarMap = await getAvatarRefMap(supabase).catch(e => {
+      console.warn('[portfolio] avatar 参照キャッシュ取得失敗 → イニシャル表示にフォールバック:', e.message);
+      return new Map();
+    });
+    (creatives || []).forEach(c => (c.creative_assignments || []).forEach(a => applyAvatarRef(a.users, avatarMap)));
+
     // マイベスト（⭐）の集合。持ち主のぶんだけ引けばよいので 1 クエリで済む
     const bestSet = new Set();
     if (bestOf) {
@@ -21249,7 +21257,11 @@ router.get('/portfolio', requireAuth, async (req, res) => {
           can_star:      canStar,     // ⭐ を操作できるか（本人のみ）
           assignees: (c.creative_assignments || [])
             .filter(a => a.users?.id)
-            .map(a => ({ id: a.users.id, role: a.role, full_name: a.users.full_name, nickname: a.users.nickname })),
+            .map(a => ({
+              id: a.users.id, role: a.role,
+              full_name: a.users.full_name, nickname: a.users.nickname,
+              avatar_url: a.users.avatar_url || null,
+            })),
           aspect_w:      aspect?.w || null,
           aspect_h:      aspect?.h || null,
           // フロントが「実寸取得が必要か」を判断するためのヒント。
