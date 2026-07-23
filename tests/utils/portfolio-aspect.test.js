@@ -7,6 +7,17 @@ describe('parsePortfolioAspect', () => {
     expect(parsePortfolioAspect('バナー 1200x628')).toEqual({ w: 1200, h: 628 });
   });
 
+  test('アンダースコア区切りを読む（本番 creatives.creative_size の形式）', () => {
+    expect(parsePortfolioAspect('1080_1920')).toEqual({ w: 1080, h: 1920 });
+    expect(parsePortfolioAspect('1080_1080')).toEqual({ w: 1080, h: 1080 });
+    expect(parsePortfolioAspect('1920-1080')).toEqual({ w: 1920, h: 1080 });
+  });
+
+  test('連番付きの文字列を誤って比率と読まない', () => {
+    // 「ap003_1080」のような2桁以下の数字は拾わない（3桁以上のペアのみ）
+    expect(parsePortfolioAspect('ap003_15')).toBeNull();
+  });
+
   test('比率表記を読む（半角/全角コロン）', () => {
     expect(parsePortfolioAspect('9:16')).toEqual({ w: 9, h: 16 });
     expect(parsePortfolioAspect('16：9')).toEqual({ w: 16, h: 9 });

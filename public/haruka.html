@@ -7942,9 +7942,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   #page-portfolio .pf-media img,
   #page-portfolio .pf-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
   #page-portfolio .pf-media .pf-ph {
-    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%; display: flex; flex-direction: column; gap: 6px;
+    align-items: center; justify-content: center;
     color: #666; font-size: 22px; background: #1b1b1b;
   }
+  #page-portfolio .pf-media .pf-ph-label { font-size: 10.5px; color: #8a8a8a; letter-spacing: .04em; }
   #page-portfolio .pf-card:hover .pf-media { box-shadow: 0 4px 16px rgba(0,0,0,.18); }
   #page-portfolio .pf-badge {
     position: absolute; left: 6px; top: 6px; background: rgba(0,0,0,.6); color: #fff;
@@ -8012,6 +8014,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <span style="font-size:12px;color:var(--text-muted)">〜</span>
       <input type="date" id="pf-to" class="form-select" style="width:140px" onchange="pfOnFilterChange()" aria-label="納品日（終了）">
       <label class="pf-check"><input type="checkbox" id="pf-latest-only" checked onchange="pfOnFilterChange()">最新の納品物のみ</label>
+      <label class="pf-check" title="納品物のファイルがシステムに登録されていない作品（外部リンクのみで納品されたもの）も表示します"><input type="checkbox" id="pf-include-nofile" onchange="pfOnFilterChange()">ファイル未登録も表示</label>
       <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px">
         <select id="pf-lane-sort" class="form-select" style="width:170px" onchange="pfSetLaneSort(this.value)" aria-label="レーン内の並び順">
           <option value="delivered">レーン内：納品日が新しい順</option>
@@ -22408,6 +22411,7 @@ async function pfReload() {
   if (from) params.set('from', from);
   if (to)   params.set('to', to);
   params.set('latest_only', document.getElementById('pf-latest-only')?.checked === false ? '0' : '1');
+  if (document.getElementById('pf-include-nofile')?.checked) params.set('include_no_file', '1');
 
   try {
     const res = await apiFetch(`/api/haruka/portfolio?${params.toString()}`);
@@ -22431,7 +22435,11 @@ function pfRenderSummary(json) {
   if (!el) return;
   const who = pfAssigneeIds.size ? (document.getElementById('pf-assignee-label')?.textContent || '') + ' の' : '';
   const truncated = json.truncated ? '（上限400件まで表示。期間や担当者で絞り込んでください）' : '';
-  el.textContent = `${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（納品済のみ）${truncated}`;
+  // 非表示にした分は必ず件数を出す（黙って減らさない）
+  const hidden = json.no_file_hidden
+    ? `　※ ファイル未登録の納品物 ${json.no_file_hidden}件は非表示`
+    : '';
+  el.textContent = `${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（納品済のみ）${truncated}${hidden}`;
 }
 
 function pfRenderGallery() {
@@ -22506,7 +22514,7 @@ function pfCardHtml(item, idx) {
   const isVideo = pfIsVideo(item);
   const media = item.file_id
     ? `<img loading="lazy" decoding="async" src="/api/haruka/portfolio/thumbnail/${esc(item.file_id)}" alt="" onerror="this.style.display='none'">`
-    : `<div class="pf-ph">${isVideo ? '🎬' : '🎨'}</div>`;
+    : `<div class="pf-ph"><span>${isVideo ? '🎬' : '🎨'}</span><span class="pf-ph-label">ファイル未登録</span></div>`;
   // 説明が未入力ならオーバーレイ自体を出さない（ポートフォリオ画面なので空欄を目立たせない）
   const note = item.note
     ? `<div class="pf-note">${esc(item.note)}</div>`
