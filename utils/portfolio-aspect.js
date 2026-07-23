@@ -19,6 +19,10 @@ function parsePortfolioAspect(text) {
   // 1920x1080 / 1080×1350 / 1080＊1920
   let m = s.match(/(\d{2,5})\s*[x×✕*＊]\s*(\d{2,5})/i);
   if (m) return { w: Number(m[1]), h: Number(m[2]) };
+  // 1080_1920 / 1080-1920 — 本番の creatives.creative_size はこの形式（アンダースコア区切り）。
+  // 3桁以上に限定しているのは「ap003_1080」のような連番との誤マッチを避けるため。
+  m = s.match(/(\d{3,5})\s*[_\-]\s*(\d{3,5})/);
+  if (m) return { w: Number(m[1]), h: Number(m[2]) };
   // 9:16 / 16：9
   m = s.match(/(\d{1,2})\s*[:：]\s*(\d{1,2})/);
   if (m) return { w: Number(m[1]), h: Number(m[2]) };

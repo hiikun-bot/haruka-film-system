@@ -21116,6 +21116,8 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const tab         = (tabRaw === 'video' || tabRaw === 'design') ? tabRaw : null;
     // 既定 ON: 同一クリエイティブは最新バージョンだけを 1 カードにする（ユーザー判断 2026-07-23）
     const latestOnly  = String(req.query.latest_only ?? '1') !== '0';
+    // 納品物ファイルが無い作品を出すか（既定 OFF＝ギャラリーには絵のある作品だけ並べる）
+    const includeNoFile = String(req.query.include_no_file || '') === '1';
     const from        = req.query.from || null;   // 納品日 (YYYY-MM-DD) 以降
     const to          = req.query.to   || null;   // 納品日 (YYYY-MM-DD) 以前
 
@@ -21174,13 +21176,21 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const userId = req.user?.id;
 
     const items = [];
+    let noFileCount = 0;   // ファイル未登録だった納品物の件数（非表示にしても件数は返す）
     for (const c of (creatives || [])) {
       const all = (filesByCreative.get(c.id) || []).slice().sort((a, b) => {
         const dv = (b.version || 0) - (a.version || 0);
         if (dv !== 0) return dv;
         return String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || ''));
       });
-      // ファイル未登録の納品物もカード 1 枚として出す（メディアなしのプレースホルダ）
+      // ファイル未登録の納品物（納品物が Drive にアップされず、スプレッドシート等の
+      // 外部リンクだけで納品されたケース。本番では納品済みの約1/4がこれに該当）は
+      // 見せる絵が無く真っ黒なカードになるため、既定ではギャラリーから外す。
+      // include_no_file=1 で「ファイル未登録も表示」に切り替えられ、件数は常に返す。
+      if (all.length === 0) {
+        noFileCount += 1;
+        if (!includeNoFile) continue;
+      }
       const targets = all.length === 0 ? [null] : (latestOnly ? [all[0]] : all);
 
       const masterAspect = c.creative_size
@@ -21245,6 +21255,8 @@ router.get('/portfolio', requireAuth, async (req, res) => {
       items,
       groups,
       total: items.length,
+      no_file_count: noFileCount,
+      no_file_hidden: includeNoFile ? 0 : noFileCount,
       truncated: (creatives || []).length >= PORTFOLIO_MAX_ITEMS,
     });
   } catch (e) {
