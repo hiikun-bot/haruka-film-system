@@ -3820,6 +3820,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="members" onclick="showPage('members',this)">メンバー</button>
     <button class="nav-btn" data-page="invoices" onclick="showPage('invoices',this)">請求書</button>
     <button class="nav-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
+    <button class="nav-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">学び広場</button>
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
@@ -3993,6 +3994,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="members" onclick="showPage('members',this)">👤 メンバー</button>
     <button class="nav-drawer-btn" data-page="invoices" onclick="showPage('invoices',this)">🧾 請求書</button>
     <button class="nav-drawer-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
+    <button class="nav-drawer-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
@@ -7886,6 +7888,159 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <button class="btn" id="wh-save-all-btn" onclick="whSaveAll()" style="font-size:13px;padding:8px 16px">💾 すべて保存</button>
       <span style="font-size:11px;color:var(--text-muted)">稼働分は開始・終了から自動計算されます（手修正可）。「💾 すべて保存」で未保存の行をまとめて保存できます。</span>
     </div>
+  </div>
+</div>
+
+<!-- 🏆 作品（ポートフォリオ・ギャラリー）
+     納品済みクリエイティブを「案件 → 向き（縦 / 正方 / 横）レーン」で並べるギャラリー。
+     ・カードはホバーで無音ループ再生 ＋ 説明文を下からオーバーレイ
+     ・クリックでライトボックス（大きく再生 ＋ 説明の編集）
+     ・比率はサイズ区分マスター優先 → Drive 実寸で補完（POST /portfolio/media-meta） -->
+<style>
+  /* スタイル: 作品ギャラリー固有（局所スコープ。既存スタイルに影響しない） */
+  #page-portfolio .pf-wrap { max-width: 1400px; margin: 0 auto; padding: 0 4px; }
+  #page-portfolio .pf-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  #page-portfolio .pf-toolbar .form-select,
+  #page-portfolio .pf-toolbar input[type="date"] { height: 30px; font-size: 12px; padding: 3px 8px; }
+  #page-portfolio .pf-seg { display: inline-flex; border: 0.5px solid var(--border); border-radius: 8px; overflow: hidden; }
+  #page-portfolio .pf-seg button { border: 0; background: #fff; padding: 5px 12px; font-size: 12px; cursor: pointer; color: var(--text-muted); }
+  #page-portfolio .pf-seg button.active { background: var(--em-dark); color: #fff; }
+  #page-portfolio .pf-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); cursor: pointer; }
+  #page-portfolio .pf-summary { font-size: 13px; color: var(--text-muted); margin: 6px 0 14px; }
+
+  /* 案件グループ（見出しはスクロール追従） */
+  #page-portfolio .pf-group { margin-bottom: 26px; }
+  #page-portfolio .pf-group-head {
+    /* ヘッダー（.hfs-header, height:60px, sticky top:0）の下に貼り付く */
+    position: sticky; top: 60px; z-index: 3; background: var(--em-bg);
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 8px 2px; border-bottom: 1.5px solid var(--border); margin-bottom: 10px;
+  }
+  #page-portfolio .pf-group-title { font-size: 14px; font-weight: 700; }
+  #page-portfolio .pf-group-meta { font-size: 11.5px; color: var(--text-muted); margin-left: auto; }
+
+  /* 向きレーン */
+  #page-portfolio .pf-lane { margin-bottom: 12px; }
+  #page-portfolio .pf-lane-head {
+    font-size: 12px; color: var(--text-muted); margin: 0 0 6px; cursor: pointer;
+    display: flex; align-items: center; gap: 6px; user-select: none;
+  }
+  #page-portfolio .pf-lane-body { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+  #page-portfolio .pf-lane.collapsed .pf-lane-body { display: none; }
+
+  /* カード（幅は向き別・高さは aspect-ratio で決まる） */
+  #page-portfolio { --pf-unit: 200px; }
+  #page-portfolio.pf-size-s { --pf-unit: 150px; }
+  #page-portfolio.pf-size-l { --pf-unit: 260px; }
+  #page-portfolio .pf-card { width: var(--pf-unit); cursor: pointer; }
+  #page-portfolio .pf-card.pf-o-square    { width: calc(var(--pf-unit) * 1.25); }
+  #page-portfolio .pf-card.pf-o-landscape { width: calc(var(--pf-unit) * 1.65); }
+  #page-portfolio .pf-media {
+    position: relative; width: 100%; border-radius: 8px; overflow: hidden;
+    background: #111; border: 0.5px solid var(--border);
+  }
+  #page-portfolio .pf-media img,
+  #page-portfolio .pf-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #page-portfolio .pf-media .pf-ph {
+    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    color: #666; font-size: 22px; background: #1b1b1b;
+  }
+  #page-portfolio .pf-card:hover .pf-media { box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+  #page-portfolio .pf-badge {
+    position: absolute; left: 6px; top: 6px; background: rgba(0,0,0,.6); color: #fff;
+    font-size: 10.5px; padding: 2px 6px; border-radius: 5px; letter-spacing: .02em;
+  }
+  #page-portfolio .pf-ver {
+    position: absolute; right: 6px; top: 6px; background: rgba(0,0,0,.6); color: #fff;
+    font-size: 10.5px; padding: 2px 6px; border-radius: 5px;
+  }
+  /* ホバーで下からせり上がる説明（未入力なら要素自体を出さない） */
+  #page-portfolio .pf-note {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 8px 8px;
+    color: #fff; font-size: 11.5px; line-height: 1.45;
+    background: linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,.55) 55%, rgba(0,0,0,0));
+    opacity: 0; transition: opacity .15s;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  }
+  #page-portfolio.pf-size-s .pf-note { -webkit-line-clamp: 2; font-size: 11px; }
+  #page-portfolio .pf-card:hover .pf-note { opacity: 1; }
+  #page-portfolio .pf-cap { margin-top: 5px; font-size: 11.5px; line-height: 1.35; }
+  #page-portfolio .pf-cap-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #page-portfolio .pf-cap-sub { display: block; color: var(--text-muted); font-size: 10.5px; margin-top: 1px; }
+  #page-portfolio .pf-empty { padding: 48px 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+  /* ライトボックス（大きく見る） */
+  .pf-lightbox { display: none; position: fixed; inset: 0; z-index: 1200; background: rgba(0,0,0,.92); }
+  .pf-lightbox.open { display: flex; flex-direction: column; }
+  .pf-lb-top { display: flex; align-items: center; gap: 10px; padding: 10px 14px; color: #fff; }
+  .pf-lb-top .pf-lb-x { margin-left: auto; }
+  .pf-lightbox button.pf-lb-btn {
+    background: rgba(255,255,255,.12); color: #fff; border: 0; border-radius: 8px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  .pf-lightbox button.pf-lb-btn:hover { background: rgba(255,255,255,.24); }
+  .pf-lb-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0 12px; }
+  .pf-lb-stage video, .pf-lb-stage img { max-width: 100%; max-height: 100%; object-fit: contain; background: #000; }
+  .pf-lb-info { color: #fff; padding: 12px 18px 18px; max-width: 1000px; margin: 0 auto; width: 100%; }
+  .pf-lb-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pf-lb-sub { font-size: 12px; color: rgba(255,255,255,.65); margin-top: 3px; }
+  .pf-lb-note { font-size: 13px; line-height: 1.6; margin-top: 8px; white-space: pre-wrap; }
+  .pf-lb-note.empty { color: rgba(255,255,255,.45); }
+  .pf-lb-note-edit textarea {
+    width: 100%; min-height: 84px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25);
+    background: rgba(255,255,255,.08); color: #fff; padding: 8px 10px; font-size: 13px; line-height: 1.6;
+    font-family: inherit; resize: vertical;
+  }
+  @media (max-width: 768px) {
+    #page-portfolio { --pf-unit: 130px; }
+    #page-portfolio .pf-group-meta { margin-left: 0; }
+  }
+</style>
+<div id="page-portfolio" class="page">
+  <div class="pf-wrap">
+    <div class="pf-toolbar">
+      <button type="button" id="pf-assignee-btn" class="form-select" onclick="pfOpenAssigneePicker(event)" style="width:200px;text-align:left">
+        <span id="pf-assignee-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">担当者でフィルタ</span>
+      </button>
+      <select id="pf-client" class="form-select" style="width:190px" onchange="pfOnFilterChange()"><option value="">クライアント：すべて</option></select>
+      <div class="pf-seg" role="tablist" aria-label="種別">
+        <button type="button" id="pf-tab-all" class="active" onclick="pfSetTab('all')">共通</button>
+        <button type="button" id="pf-tab-video" onclick="pfSetTab('video')">🎬 動画</button>
+        <button type="button" id="pf-tab-design" onclick="pfSetTab('design')">🎨 静止画</button>
+      </div>
+      <input type="date" id="pf-from" class="form-select" style="width:140px" onchange="pfOnFilterChange()" aria-label="納品日（開始）">
+      <span style="font-size:12px;color:var(--text-muted)">〜</span>
+      <input type="date" id="pf-to" class="form-select" style="width:140px" onchange="pfOnFilterChange()" aria-label="納品日（終了）">
+      <label class="pf-check"><input type="checkbox" id="pf-latest-only" checked onchange="pfOnFilterChange()">最新の納品物のみ</label>
+      <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px">
+        <select id="pf-lane-sort" class="form-select" style="width:170px" onchange="pfSetLaneSort(this.value)" aria-label="レーン内の並び順">
+          <option value="delivered">レーン内：納品日が新しい順</option>
+          <option value="name">レーン内：名前順</option>
+        </select>
+        <span class="pf-seg" role="group" aria-label="カードサイズ">
+          <button type="button" id="pf-size-s" onclick="pfSetSize('s')">小</button>
+          <button type="button" id="pf-size-m" class="active" onclick="pfSetSize('m')">中</button>
+          <button type="button" id="pf-size-l" onclick="pfSetSize('l')">大</button>
+        </span>
+      </span>
+    </div>
+    <div id="pf-summary" class="pf-summary">読み込み中…</div>
+    <div id="pf-gallery"></div>
+  </div>
+</div>
+
+<!-- 作品ライトボックス（大きく見る + 説明の編集） -->
+<div id="portfolio-lightbox" class="pf-lightbox" onclick="pfLightboxBackdrop(event)">
+  <div class="pf-lb-top">
+    <button type="button" class="pf-lb-btn" onclick="pfLightboxStep(-1)">‹ 前の作品</button>
+    <button type="button" class="pf-lb-btn" onclick="pfLightboxStep(1)">次の作品 ›</button>
+    <button type="button" class="pf-lb-btn pf-lb-x" onclick="pfCloseLightbox()">✕ 閉じる</button>
+  </div>
+  <div class="pf-lb-stage" id="pf-lb-stage"></div>
+  <div class="pf-lb-info">
+    <div class="pf-lb-title"><span id="pf-lb-title"></span><span id="pf-lb-edit-wrap" style="margin-left:auto"></span></div>
+    <div class="pf-lb-sub" id="pf-lb-sub"></div>
+    <div id="pf-lb-note-area"></div>
   </div>
 </div>
 
@@ -16748,6 +16903,9 @@ function setPreviewRole(role) {
   if (document.getElementById('page-knowledge')?.classList.contains('active') && typeof loadKnowledgePage === 'function') loadKnowledgePage();
   // 作業時間報告: 実効ロールで単価マスク・メンバー切替可否が変わるため、キャッシュ破棄＋表示中なら再取得（ADR 015 / ADR 028）
   if (typeof whOnViewAsChange === 'function') whOnViewAsChange();
+  // 作品ギャラリー: 説明の編集可否（can_edit_note）を実効ロールでサーバー判定しているため、
+  // VIEW AS 切替で前ロールの編集ボタンが残らないよう再取得する（ADR 015）
+  if (document.getElementById('page-portfolio')?.classList.contains('active') && typeof pfReload === 'function') pfReload();
   // 一括納品（月次消込）: admin/secretary 限定ページ。VIEW AS 切替で前ロールの表示が残らないよう再描画（ADR 015）
   if (document.getElementById('page-bulk-deliver')?.classList.contains('active') && typeof loadBulkDeliverPage === 'function') loadBulkDeliverPage();
   // 分析ページ表示中に VIEW AS でロールが変わると、サイドバーから消えた項目が main にだけ残る不整合があるため再初期化
@@ -22058,6 +22216,7 @@ function showPage(name, btn) {
   if(name==='knowledge') initKnowledgePage();
   if(name==='analytics') initAnalyticsPage();
   if(name==='tweets')   loadTweetsPage();
+  if(name==='portfolio') loadPortfolioPage();
   if(name==='work-hours') loadWorkHoursPage();
   if(name==='bulk-deliver') loadBulkDeliverPage();
   if(name==='material-square') loadMaterialSquarePage();
@@ -22075,6 +22234,547 @@ function openNavDrawer() {
 function closeNavDrawer() {
   document.getElementById('nav-drawer').classList.remove('open');
   document.body.style.overflow = '';
+}
+
+// ==================== 🏆 作品ギャラリー（ポートフォリオ） ====================
+//
+// 納品済みクリエイティブを「案件グループ → 向きレーン（縦 / 正方 / 横）」で並べる。
+// データは GET /portfolio（1リクエスト完結）。比率が未解決のカードだけ
+// POST /portfolio/media-meta で Drive 実寸を取りに行き、埋まった順に再描画する。
+//
+// 権限（ADR 015）: ページ自体は全ロール閲覧可。説明の編集可否はサーバーが
+// item.can_edit_note で返す（実効ロール判定）ため、フロントでロール直書きしない。
+
+const PF_LANES = [
+  { key: 'portrait',  label: '縦型 9:16 / 4:5' },
+  { key: 'square',    label: '正方 1:1' },
+  { key: 'landscape', label: '横型 16:9' },
+];
+const PF_LS_KEY = 'pf-view-prefs';
+
+let pfItems = [];                 // API から返った作品カード
+let pfGroups = [];                // 案件グループ（最終納品が新しい順）
+let pfAssigneeIds = new Set();    // 担当者フィルタ
+let pfTab = 'all';
+let pfLaneSort = 'delivered';
+let pfCardSize = 'm';
+let pfCollapsedLanes = new Set(); // `${project_id}:${lane}` で畳み状態を保持
+let pfLoadSeq = 0;                // 古いレスポンス破棄用
+let pfLightboxIdx = -1;           // ライトボックスで表示中の pfItems index
+let pfHoverTimer = null;          // ホバー再生の遅延タイマー
+
+function pfSavePrefs() {
+  try {
+    localStorage.setItem(PF_LS_KEY, JSON.stringify({
+      size: pfCardSize, laneSort: pfLaneSort, collapsed: [...pfCollapsedLanes],
+    }));
+  } catch (_) {}
+}
+function pfLoadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PF_LS_KEY) || '{}');
+    if (p.size) pfCardSize = p.size;
+    if (p.laneSort) pfLaneSort = p.laneSort;
+    if (Array.isArray(p.collapsed)) pfCollapsedLanes = new Set(p.collapsed);
+  } catch (_) {}
+}
+
+function pfIsVideo(item) {
+  if (item.mime_type) return String(item.mime_type).startsWith('video/');
+  return String(item.creative_type || '').startsWith('video');
+}
+
+function pfFormatDate(iso) {
+  if (!iso) return '—';
+  // 納品日は JST で表示する（サーバーは timestamptz。UTC のまま出すと日付がずれる）
+  try {
+    return new Date(iso).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' });
+  } catch (_) { return String(iso).slice(0, 10); }
+}
+
+function pfAspectStyle(item) {
+  const w = item.aspect_w, h = item.aspect_h;
+  // 比率未解決のカードは既定 16:9 の箱で先に描画し、実寸が届いたら差し替える
+  return `aspect-ratio:${(w && h) ? `${w}/${h}` : '16/9'}`;
+}
+
+let pfInitialized = false;
+async function loadPortfolioPage() {
+  // 初回だけ「自分の作品」を既定に（ロール判定ではなく本人判定なので currentUser.id 直参照でよい）
+  if (!pfInitialized) {
+    pfInitialized = true;
+    if (currentUser?.id) pfAssigneeIds = new Set([currentUser.id]);
+  }
+  pfLoadPrefs();
+  pfApplySizeClass();
+  const laneSel = document.getElementById('pf-lane-sort');
+  if (laneSel) laneSel.value = pfLaneSort;
+  pfSyncSizeButtons();
+  pfRefreshAssigneeLabel();
+  pfFillClientOptions();
+  await pfReload();
+}
+
+// クライアント select を allClients から埋める（未ロードなら loadClients を待つ）
+async function pfFillClientOptions() {
+  const sel = document.getElementById('pf-client');
+  if (!sel) return;
+  if (!Array.isArray(allClients) || allClients.length === 0) {
+    try { if (typeof loadClients === 'function') await loadClients(); } catch (_) {}
+  }
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">クライアント：すべて</option>'
+    + (allClients || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  sel.value = cur;
+}
+
+function pfOpenAssigneePicker(ev) {
+  if (ev) ev.stopPropagation();
+  if (!window.MemberPicker || typeof MemberPicker.open !== 'function') return;
+  MemberPicker.open(document.getElementById('pf-assignee-btn'), {
+    mode: 'multi',
+    title: '担当者でフィルタ',
+    value: [...pfAssigneeIds],
+    onChange: (ids) => {
+      pfAssigneeIds = new Set(Array.isArray(ids) ? ids.filter(Boolean) : []);
+      pfRefreshAssigneeLabel();
+      pfReload();
+    },
+  });
+}
+
+function pfRefreshAssigneeLabel() {
+  const el = document.getElementById('pf-assignee-label');
+  if (!el) return;
+  if (pfAssigneeIds.size === 0) { el.textContent = '担当者でフィルタ'; return; }
+  const names = [...pfAssigneeIds].map(id => {
+    const m = (allMembers || []).find(u => u.id === id)
+           || (currentUser?.id === id ? currentUser : null);
+    return m ? ((window.NameDisplay && NameDisplay.short(m)) || m.nickname || m.full_name || '') : '';
+  }).filter(Boolean);
+  el.textContent = names.length ? `担当：${names.join('、')}` : `担当者 ${pfAssigneeIds.size}名`;
+}
+
+function pfSetTab(tab) {
+  pfTab = tab;
+  ['all', 'video', 'design'].forEach(t => {
+    const b = document.getElementById(`pf-tab-${t}`);
+    if (b) b.classList.toggle('active', t === tab);
+  });
+  pfReload();
+}
+
+function pfSetSize(size) {
+  pfCardSize = size;
+  pfApplySizeClass();
+  pfSyncSizeButtons();
+  pfSavePrefs();
+}
+function pfApplySizeClass() {
+  const page = document.getElementById('page-portfolio');
+  if (!page) return;
+  page.classList.remove('pf-size-s', 'pf-size-m', 'pf-size-l');
+  page.classList.add(`pf-size-${pfCardSize}`);
+}
+function pfSyncSizeButtons() {
+  ['s', 'm', 'l'].forEach(s => {
+    const b = document.getElementById(`pf-size-${s}`);
+    if (b) b.classList.toggle('active', s === pfCardSize);
+  });
+}
+
+function pfSetLaneSort(v) {
+  pfLaneSort = v === 'name' ? 'name' : 'delivered';
+  pfSavePrefs();
+  pfRenderGallery();
+}
+
+function pfOnFilterChange() { pfReload(); }
+
+async function pfReload() {
+  const seq = ++pfLoadSeq;
+  const summary = document.getElementById('pf-summary');
+  const gallery = document.getElementById('pf-gallery');
+  if (summary) summary.textContent = '読み込み中…';
+  if (gallery) gallery.innerHTML = '';
+
+  const params = new URLSearchParams();
+  if (pfAssigneeIds.size) params.set('assignee_id', [...pfAssigneeIds].join(','));
+  const clientId = document.getElementById('pf-client')?.value || '';
+  if (clientId) params.set('client_id', clientId);
+  if (pfTab !== 'all') params.set('tab', pfTab);
+  const from = document.getElementById('pf-from')?.value || '';
+  const to   = document.getElementById('pf-to')?.value || '';
+  if (from) params.set('from', from);
+  if (to)   params.set('to', to);
+  params.set('latest_only', document.getElementById('pf-latest-only')?.checked === false ? '0' : '1');
+
+  try {
+    const res = await apiFetch(`/api/haruka/portfolio?${params.toString()}`);
+    const json = await res.json();
+    if (seq !== pfLoadSeq) return; // 古いレスポンスは破棄
+    if (!res.ok) throw new Error(json.error || '作品一覧の取得に失敗しました');
+    pfItems = json.items || [];
+    pfGroups = json.groups || [];
+    pfRenderSummary(json);
+    pfRenderGallery();
+    pfMeasureMissingAspects();
+  } catch (e) {
+    if (seq !== pfLoadSeq) return;
+    if (summary) summary.textContent = '';
+    if (gallery) gallery.innerHTML = `<div class="pf-empty">作品一覧の取得に失敗しました：${esc(e.message)}</div>`;
+  }
+}
+
+function pfRenderSummary(json) {
+  const el = document.getElementById('pf-summary');
+  if (!el) return;
+  const who = pfAssigneeIds.size ? (document.getElementById('pf-assignee-label')?.textContent || '') + ' の' : '';
+  const truncated = json.truncated ? '（上限400件まで表示。期間や担当者で絞り込んでください）' : '';
+  el.textContent = `${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（納品済のみ）${truncated}`;
+}
+
+function pfRenderGallery() {
+  const wrap = document.getElementById('pf-gallery');
+  if (!wrap) return;
+  if (!pfItems.length) {
+    wrap.innerHTML = '<div class="pf-empty">条件に合う納品済みの作品がありません。</div>';
+    return;
+  }
+  const byProject = new Map();
+  pfItems.forEach((item, idx) => {
+    if (!byProject.has(item.project_id)) byProject.set(item.project_id, []);
+    byProject.get(item.project_id).push(idx);
+  });
+
+  const html = pfGroups.map(g => {
+    const idxs = byProject.get(g.project_id) || [];
+    if (!idxs.length) return '';
+    // 向きレーンに振り分け（縦 → 正方 → 横）。0件のレーンは見出しごと出さない
+    const lanes = PF_LANES.map(lane => ({
+      ...lane,
+      idxs: pfSortLane(idxs.filter(i => (pfItems[i].orientation || 'landscape') === lane.key)),
+    })).filter(l => l.idxs.length > 0);
+    // レーンが1本だけならレーン見出しは省く（見出しがうるさくならないように）
+    const single = lanes.length <= 1;
+
+    const lanesHtml = lanes.map(lane => {
+      const collapseKey = `${g.project_id}:${lane.key}`;
+      const collapsed = pfCollapsedLanes.has(collapseKey);
+      const cards = lane.idxs.map(i => pfCardHtml(pfItems[i], i)).join('');
+      if (single) return `<div class="pf-lane"><div class="pf-lane-body">${cards}</div></div>`;
+      return `
+        <div class="pf-lane${collapsed ? ' collapsed' : ''}" id="pf-lane-${esc(collapseKey)}">
+          <div class="pf-lane-head" onclick="pfToggleLane('${esc(collapseKey)}')">
+            <span>${collapsed ? '▸' : '▾'}</span><span>${esc(lane.label)}</span>
+            <span style="opacity:.7">${lane.idxs.length}件</span>
+          </div>
+          <div class="pf-lane-body">${cards}</div>
+        </div>`;
+    }).join('');
+
+    const clientPart = g.client_name ? `${esc(g.client_name)} ／ ` : '';
+    return `
+      <div class="pf-group">
+        <div class="pf-group-head">
+          <span class="pf-group-title">${clientPart}${esc(g.project_name)}</span>
+          <span class="pf-group-meta">${g.count}件 ・ 最終納品 ${esc(pfFormatDate(g.latest_delivered_at))}</span>
+        </div>
+        ${lanesHtml}
+      </div>`;
+  }).join('');
+  wrap.innerHTML = html;
+}
+
+function pfSortLane(idxs) {
+  const arr = idxs.slice();
+  if (pfLaneSort === 'name') {
+    arr.sort((a, b) => String(pfItems[a].file_name || '').localeCompare(String(pfItems[b].file_name || ''), 'ja'));
+  } else {
+    arr.sort((a, b) => String(pfItems[b].delivered_at || '').localeCompare(String(pfItems[a].delivered_at || '')));
+  }
+  return arr;
+}
+
+function pfToggleLane(key) {
+  if (pfCollapsedLanes.has(key)) pfCollapsedLanes.delete(key); else pfCollapsedLanes.add(key);
+  pfSavePrefs();
+  pfRenderGallery();
+}
+
+function pfCardHtml(item, idx) {
+  const isVideo = pfIsVideo(item);
+  const media = item.file_id
+    ? `<img loading="lazy" decoding="async" src="/api/haruka/portfolio/thumbnail/${esc(item.file_id)}" alt="" onerror="this.style.display='none'">`
+    : `<div class="pf-ph">${isVideo ? '🎬' : '🎨'}</div>`;
+  // 説明が未入力ならオーバーレイ自体を出さない（ポートフォリオ画面なので空欄を目立たせない）
+  const note = item.note
+    ? `<div class="pf-note">${esc(item.note)}</div>`
+    : '';
+  // 過去版も出しているとき（最新のみ OFF）だけ version バッジを出す
+  const verBadge = (document.getElementById('pf-latest-only')?.checked === false && item.version)
+    ? `<span class="pf-ver">v${esc(item.version)}</span>` : '';
+  return `
+    <div class="pf-card pf-o-${esc(item.orientation || 'landscape')}" data-idx="${idx}"
+         onclick="pfOpenLightbox(${idx})"
+         onmouseenter="pfHoverIn(this, ${idx})" onmouseleave="pfHoverOut(this)">
+      <div class="pf-media" style="${pfAspectStyle(item)}">
+        ${media}
+        <span class="pf-badge">${isVideo ? '🎬' : '🎨'}</span>
+        ${verBadge}
+        ${note}
+      </div>
+      <div class="pf-cap">
+        <span class="pf-cap-name" title="${esc(item.file_name)}">${esc(item.file_name)}</span>
+        <span class="pf-cap-sub">${esc(pfFormatDate(item.delivered_at))}</span>
+      </div>
+    </div>`;
+}
+
+// ホバー: 動画なら 400ms 後に無音ループ再生を差し込む（連続ホバーで無駄に取得しない）
+function pfHoverIn(cardEl, idx) {
+  const item = pfItems[idx];
+  if (!item || !item.file_id || !pfIsVideo(item)) return;
+  clearTimeout(pfHoverTimer);
+  pfHoverTimer = setTimeout(async () => {
+    if (!cardEl.matches(':hover')) return;
+    const box = cardEl.querySelector('.pf-media');
+    if (!box || box.querySelector('video')) return;
+    const src = await pfResolvePlaybackUrl(item);
+    if (!src || !cardEl.matches(':hover')) return;
+    const v = document.createElement('video');
+    v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+    v.preload = 'metadata';
+    v.setAttribute('playsinline', '');
+    v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover';
+    v.src = src;
+    // 直リンクが失敗したら stream にフォールバック（詳細画面と同じ方式）
+    v.onerror = () => { v.onerror = null; v.src = `/api/haruka/files/${item.drive_file_id}/stream`; };
+    box.appendChild(v);
+  }, 400);
+}
+function pfHoverOut(cardEl) {
+  clearTimeout(pfHoverTimer);
+  const v = cardEl.querySelector('.pf-media video');
+  if (v) { try { v.pause(); } catch (_) {} v.remove(); }
+}
+
+// 再生URLの解決（direct-url → 失敗時 stream）。カード/ライトボックス共用。
+const _pfPlaybackUrlCache = new Map();
+async function pfResolvePlaybackUrl(item) {
+  if (!item.drive_file_id) return null;
+  if (_pfPlaybackUrlCache.has(item.drive_file_id)) return _pfPlaybackUrlCache.get(item.drive_file_id);
+  try {
+    const res = await apiFetch(`/api/haruka/files/${item.drive_file_id}/direct-url`);
+    const json = await res.json();
+    const url = res.ok && json.contentUrl ? json.contentUrl : `/api/haruka/files/${item.drive_file_id}/stream`;
+    _pfPlaybackUrlCache.set(item.drive_file_id, url);
+    return url;
+  } catch (_) {
+    return `/api/haruka/files/${item.drive_file_id}/stream`;
+  }
+}
+
+// 比率が未解決のカードだけ Drive 実寸を取りに行く（サイズ区分マスター未設定分の補完）。
+// 40件ずつ・最大3バッチ（=120件）まで。取得できた分から再描画してレーンを正しくする。
+async function pfMeasureMissingAspects() {
+  const seq = pfLoadSeq;
+  const targets = pfItems.filter(it => it.file_id && !it.aspect_w && !it.measured);
+  if (!targets.length) return;
+  for (let i = 0; i < targets.length && i < 120; i += 40) {
+    const batch = targets.slice(i, i + 40);
+    try {
+      const res = await apiFetch('/api/haruka/portfolio/media-meta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_ids: batch.map(b => b.file_id) }),
+      });
+      if (seq !== pfLoadSeq) return;
+      const json = await res.json();
+      if (!res.ok) return;
+      const byId = new Map((json.results || []).map(r => [r.file_id, r]));
+      let changed = false;
+      pfItems.forEach(it => {
+        const r = byId.get(it.file_id);
+        if (!r) return;
+        it.measured = true;
+        if (r.width && r.height) {
+          it.aspect_w = r.width; it.aspect_h = r.height;
+          it.aspect_source = 'drive';
+          const ratio = r.width / r.height;
+          it.orientation = ratio <= 0.9 ? 'portrait' : (ratio < 1.15 ? 'square' : 'landscape');
+          changed = true;
+        }
+      });
+      if (changed) pfRenderGallery();
+    } catch (_) { return; }
+  }
+}
+
+// ==================== 作品ライトボックス ====================
+
+function pfOpenLightbox(idx) {
+  const item = pfItems[idx];
+  if (!item) return;
+  pfLightboxIdx = idx;
+  const box = document.getElementById('portfolio-lightbox');
+  if (!box) return;
+  box.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  document.addEventListener('keydown', pfLightboxKey);
+  pfRenderLightbox();
+}
+
+function pfCloseLightbox() {
+  const box = document.getElementById('portfolio-lightbox');
+  if (!box) return;
+  const stage = document.getElementById('pf-lb-stage');
+  if (stage) stage.innerHTML = ''; // 再生を止める
+  box.classList.remove('open');
+  document.body.style.overflow = '';
+  document.removeEventListener('keydown', pfLightboxKey);
+  pfLightboxIdx = -1;
+}
+
+function pfLightboxBackdrop(ev) {
+  if (ev.target && ev.target.id === 'portfolio-lightbox') pfCloseLightbox();
+}
+
+function pfLightboxKey(ev) {
+  if (ev.key === 'Escape') { pfCloseLightbox(); return; }
+  // 説明を編集中は左右キーをテキスト入力に渡す
+  if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') return;
+  if (ev.key === 'ArrowLeft')  pfLightboxStep(-1);
+  if (ev.key === 'ArrowRight') pfLightboxStep(1);
+}
+
+// レーン分けした表示順のまま前後に送る（縦を見終わったら正方 → 横へ流れる）
+function pfVisualOrder() {
+  const order = [];
+  const byProject = new Map();
+  pfItems.forEach((item, idx) => {
+    if (!byProject.has(item.project_id)) byProject.set(item.project_id, []);
+    byProject.get(item.project_id).push(idx);
+  });
+  pfGroups.forEach(g => {
+    const idxs = byProject.get(g.project_id) || [];
+    PF_LANES.forEach(lane => {
+      pfSortLane(idxs.filter(i => (pfItems[i].orientation || 'landscape') === lane.key))
+        .forEach(i => order.push(i));
+    });
+  });
+  return order;
+}
+
+function pfLightboxStep(delta) {
+  const order = pfVisualOrder();
+  const pos = order.indexOf(pfLightboxIdx);
+  if (pos === -1) return;
+  const next = order[pos + delta];
+  if (next === undefined) return;
+  pfLightboxIdx = next;
+  pfRenderLightbox();
+}
+
+async function pfRenderLightbox() {
+  const item = pfItems[pfLightboxIdx];
+  if (!item) return;
+  const stage = document.getElementById('pf-lb-stage');
+  const titleEl = document.getElementById('pf-lb-title');
+  const subEl = document.getElementById('pf-lb-sub');
+  const editWrap = document.getElementById('pf-lb-edit-wrap');
+
+  if (titleEl) titleEl.textContent = item.file_name || '';
+  const names = (item.assignees || []).map(a =>
+    (window.NameDisplay && NameDisplay.short(a)) || a.nickname || a.full_name || '').filter(Boolean);
+  const ratio = (item.aspect_w && item.aspect_h) ? `${item.aspect_w}×${item.aspect_h}` : '比率不明';
+  const clientPart = item.client_name ? `${item.client_name} ／ ` : '';
+  if (subEl) {
+    subEl.textContent = [`${clientPart}${item.project_name}`, ratio, pfFormatDate(item.delivered_at), names.join('、')]
+      .filter(Boolean).join(' ・ ');
+  }
+  if (editWrap) {
+    editWrap.innerHTML = item.can_edit_note
+      ? `<button type="button" class="pf-lb-btn" onclick="pfStartNoteEdit()">✏️ 説明を編集</button>` : '';
+  }
+  pfRenderNoteView();
+
+  if (!stage) return;
+  stage.innerHTML = '<div style="color:rgba(255,255,255,.6);font-size:13px">読み込み中…</div>';
+  if (!item.file_id) {
+    stage.innerHTML = '<div style="color:rgba(255,255,255,.6);font-size:13px">この作品にはファイルが登録されていません</div>';
+    return;
+  }
+  const openIdx = pfLightboxIdx;
+  if (pfIsVideo(item)) {
+    const src = await pfResolvePlaybackUrl(item);
+    if (openIdx !== pfLightboxIdx) return; // 送っている間に切り替わった
+    stage.innerHTML = `<video src="${esc(src)}" controls autoplay playsinline preload="metadata"
+      onerror="this.onerror=null;this.src='/api/haruka/files/${esc(item.drive_file_id)}/stream'"></video>`;
+  } else {
+    // 静止画は原本を出す（サムネは =s800 なので拡大すると粗い）。失敗時のみサムネへ退避
+    stage.innerHTML = `<img src="/api/haruka/files/${esc(item.drive_file_id)}/stream" alt="${esc(item.file_name)}"
+      onerror="this.onerror=null;this.src='/api/haruka/portfolio/thumbnail/${esc(item.file_id)}'">`;
+  }
+}
+
+function pfRenderNoteView() {
+  const area = document.getElementById('pf-lb-note-area');
+  const item = pfItems[pfLightboxIdx];
+  if (!area || !item) return;
+  if (item.note) {
+    area.innerHTML = `<div class="pf-lb-note">${esc(item.note)}</div>`;
+  } else if (item.can_edit_note) {
+    area.innerHTML = `<div class="pf-lb-note empty" style="cursor:pointer" onclick="pfStartNoteEdit()">＋ 説明を追加</div>`;
+  } else {
+    area.innerHTML = `<div class="pf-lb-note empty">説明は未入力です</div>`;
+  }
+}
+
+function pfStartNoteEdit() {
+  const area = document.getElementById('pf-lb-note-area');
+  const item = pfItems[pfLightboxIdx];
+  if (!area || !item || !item.can_edit_note) return;
+  area.innerHTML = `
+    <div class="pf-lb-note-edit">
+      <textarea id="pf-note-input" maxlength="500" placeholder="この作品をどう語るか（狙い・工夫・成果など）">${esc(item.note || '')}</textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <button type="button" class="pf-lb-btn" onclick="pfSaveNote()">保存</button>
+        <button type="button" class="pf-lb-btn" onclick="pfRenderNoteView()">キャンセル</button>
+        <span style="font-size:11px;color:rgba(255,255,255,.5)">⌘/Ctrl + Enter で保存・500文字まで</span>
+      </div>
+    </div>`;
+  const ta = document.getElementById('pf-note-input');
+  if (ta) {
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    ta.addEventListener('keydown', (ev) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') { ev.preventDefault(); pfSaveNote(); }
+    });
+  }
+}
+
+async function pfSaveNote() {
+  const item = pfItems[pfLightboxIdx];
+  const ta = document.getElementById('pf-note-input');
+  if (!item || !ta) return;
+  const note = ta.value.trim();
+  try {
+    const res = await apiFetch(`/api/haruka/creatives/${item.creative_id}/portfolio-note`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || '保存に失敗しました');
+    // 同じクリエイティブの全カード（過去版も並んでいる場合）に反映
+    pfItems.forEach(it => { if (it.creative_id === item.creative_id) it.note = json.note || ''; });
+    pfRenderNoteView();
+    pfRenderGallery();   // 背後のカードのホバー文言も更新
+    showToast('説明を保存しました', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
 }
 
 // ==================== 📦 一括納品完了（月次消込） ====================
