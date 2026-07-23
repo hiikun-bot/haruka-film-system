@@ -21384,27 +21384,62 @@ router.post('/portfolio/media-meta', requireAuth, async (req, res) => {
 // 失効すると画像が壊れるため（サーバー側で再取得して隠蔽する）。
 router.get('/portfolio/thumbnail/:fileId', requireAuth, async (req, res) => {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).end();
+  const poster = require('../lib/portfolio-poster');
+  const sendPoster = (p) => {
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    require('fs').createReadStream(p).pipe(res);
+  };
   try {
     const fileRowId = req.params.fileId;
+
+    // 1. 生成済みポスターがあれば最優先（Drive へ行かずに済む）
+    const cachedPoster = poster.getCachedPoster(fileRowId);
+    if (cachedPoster) return sendPoster(cachedPoster);
+
+    const { data: row } = await supabase
+      .from('creative_files')
+      .select('id, drive_file_id, mime_type, faststart_drive_file_id, faststart_status')
+      .eq('id', fileRowId).maybeSingle();
+    if (!row?.drive_file_id) return res.status(404).end();
+
+    // 2. Drive のサムネURL（短命なのでキャッシュしつつ失効したら取り直す）
     let cached = _portfolioThumbLinks.get(fileRowId);
     if (!cached || cached.expiresAt <= Date.now()) {
-      const { data: row } = await supabase
-        .from('creative_files').select('id, drive_file_id').eq('id', fileRowId).maybeSingle();
-      if (!row?.drive_file_id) return res.status(404).end();
       const drive = await getDriveService();
       await fetchPortfolioMediaMeta(drive, row);
       cached = _portfolioThumbLinks.get(fileRowId);
     }
-    if (!cached?.url) return res.status(404).end();
 
-    const upstream = await fetch(cached.url);
-    if (!upstream.ok) {
-      _portfolioThumbLinks.delete(fileRowId); // 失効していた → 次回再取得
-      return res.status(502).end();
+    let buf = null;
+    if (cached?.url) {
+      const upstream = await fetch(cached.url);
+      if (upstream.ok) {
+        buf = Buffer.from(await upstream.arrayBuffer());
+      } else {
+        _portfolioThumbLinks.delete(fileRowId); // 失効していた → 次回再取得
+      }
     }
-    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'image/jpeg');
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    const buf = Buffer.from(await upstream.arrayBuffer());
+
+    // 3. ffmpeg で作り直すべきケース:
+    //    (a) Drive がサムネを生成していない（thumbnailLink が無い。アップ直後や大きい動画で起きる）
+    //    (b) サムネがほぼ単色＝冒頭が黒フェードの動画で真っ黒になっている
+    //    どちらも「絵が無い / 黒い」ので、代表フレームを抜き直す。
+    //    生成が混んでいる・失敗するときは元のまま返し、次のリクエストで差し替わる。
+    const needsPoster = !buf || poster.looksBlank(buf);
+    if (needsPoster && poster.isAvailable() && String(row.mime_type || '').startsWith('video/')) {
+      // faststart 版があればそちらを使う（moov が先頭にあるので先頭だけ落とせば解析できる）
+      const srcId = (row.faststart_drive_file_id && row.faststart_status === 'done')
+        ? row.faststart_drive_file_id : row.drive_file_id;
+      const drive = await getDriveService();
+      const generated = await poster.generatePoster({ drive, driveFileId: srcId, cacheKey: fileRowId });
+      if (generated) return sendPoster(generated);
+    }
+
+    if (!buf) return res.status(404).end();
+    res.setHeader('Content-Type', 'image/jpeg');
+    // 黒いまま返した場合は次回すぐ作り直せるようキャッシュを短くする
+    res.setHeader('Cache-Control', poster.looksBlank(buf) ? 'private, max-age=60' : 'private, max-age=3600');
     res.end(buf);
   } catch (e) {
     console.warn('[portfolio/thumbnail] failed:', e.message);
