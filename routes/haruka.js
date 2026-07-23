@@ -21050,6 +21050,341 @@ router.delete('/bug-reports/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ==================== 🏆 作品ギャラリー（ポートフォリオ） ====================
+//
+// クリエイターの「納品済み作品」を、案件ごと → 向き（縦 / 正方 / 横）ごとのレーンに
+// 並べて見せるためのエンドポイント群。
+//
+// 抽出単位は creative_files（＝納品物のファイル）。creatives 1件に v1/v2/v3 と
+// 版が重なるため、既定（latest_only=1）では creative ごとに最大 version の 1 件だけを返す。
+// latest_only=0 にすると過去版も個別カードとして並ぶ。
+//
+// 縦横比の解決順（ADR なし・本コメントが正）:
+//   1. creatives.creative_size（サイズ区分マスター）から比率を読む  ← 追加コストゼロ
+//   2. creative_files.media_width / media_height のキャッシュ
+//   3. どちらも無ければ null で返し、フロントが POST /portfolio/media-meta を叩いて
+//      Drive の videoMediaMetadata / imageMediaMetadata から実寸を取得＆キャッシュする
+// 「マスター優先・Drive で補完」はユーザー判断（2026-07-23）。マスター未設定の作品が
+// 多い場合でも初回表示は待たされず、実寸が埋まった分から順にレーンが正確になる。
+
+const PORTFOLIO_MAX_ITEMS = 400;   // 1リクエストで返す作品カードの上限
+const PORTFOLIO_ID_CHUNK  = 100;   // .in() の URL 長超過を避ける分割サイズ（#919 の教訓）
+
+// 比率のパース / レーン判定は純関数として utils/portfolio-aspect.js に切り出している
+const { parsePortfolioAspect, portfolioOrientation } = require('../utils/portfolio-aspect');
+
+// サイズ区分マスター（master_categories.code='sizes'）の id → 比率 Map。
+// creatives.creative_size には master_items.code が入る運用だが、過去データには
+// name がそのまま入っている行もあるため code / name の双方をキーにする。
+async function getPortfolioSizeAspectMap() {
+  return ttlCache('portfolio:size-aspect', MASTER_CACHE_TTL_MS, async () => {
+    const map = {};
+    const { data: cat } = await supabase
+      .from('master_categories').select('id').eq('code', 'sizes').maybeSingle();
+    if (!cat?.id) return map;
+    const { data: items } = await supabase
+      .from('master_items').select('code, name').eq('category_id', cat.id);
+    for (const it of (items || [])) {
+      const aspect = parsePortfolioAspect(it.code) || parsePortfolioAspect(it.name);
+      if (!aspect) continue;
+      if (it.code) map[String(it.code)] = aspect;
+      if (it.name) map[String(it.name)] = aspect;
+    }
+    return map;
+  });
+}
+
+// 説明文を編集できるか（実効ロールで判定 — ADR 015）。
+//   - admin / secretary: 全作品
+//   - producer / director: 自分が担当（assignment）または案件の director / producer
+//   - editor / designer: 自分が担当している作品のみ
+function canEditPortfolioNote({ roleCodes, userId, creative }) {
+  if (roleCodes.includes('admin') || roleCodes.includes('secretary')) return true;
+  const assigned = (creative.creative_assignments || []).some(a => a.users?.id === userId);
+  if (assigned) return true;
+  const proj = creative.projects || {};
+  return proj.director_id === userId || proj.producer_id === userId;
+}
+
+// GET /api/haruka/portfolio — 納品済み作品の一覧（案件グループ + レーン用の比率つき）
+router.get('/portfolio', requireAuth, async (req, res) => {
+  try {
+    const csv = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
+    const assigneeIds = csv(req.query.assignee_id);
+    const clientIds   = csv(req.query.client_id);
+    const tabRaw      = String(req.query.tab || '').toLowerCase();
+    const tab         = (tabRaw === 'video' || tabRaw === 'design') ? tabRaw : null;
+    // 既定 ON: 同一クリエイティブは最新バージョンだけを 1 カードにする（ユーザー判断 2026-07-23）
+    const latestOnly  = String(req.query.latest_only ?? '1') !== '0';
+    const from        = req.query.from || null;   // 納品日 (YYYY-MM-DD) 以降
+    const to          = req.query.to   || null;   // 納品日 (YYYY-MM-DD) 以前
+
+    const assigneeRel = assigneeIds.length ? ',\n      ca_filter:creative_assignments!inner(user_id)' : '';
+    let q = supabase
+      .from('creatives')
+      .select(`
+        id, file_name, creative_type, creative_size, delivered_at, final_deadline,
+        portfolio_note, project_id,
+        projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
+        creative_assignments(role, users(id, full_name, nickname))${assigneeRel}
+      `)
+      .eq('status', '納品');
+
+    if (clientIds.length > 1)       q = q.in('projects.client_id', clientIds);
+    else if (clientIds.length === 1) q = q.eq('projects.client_id', clientIds[0]);
+    if (tab === 'video') {
+      q = q.like('creative_type', 'video_%');
+    } else if (tab === 'design') {
+      // 一覧 API と同じ扱い: design_% に加えて lp / hp / line（プレフィックス無し）も静止画側に含める
+      q = q.or('creative_type.like.design_%,creative_type.eq.lp,creative_type.eq.hp,creative_type.eq.line');
+    }
+    if (from) q = q.gte('delivered_at', `${from}T00:00:00+09:00`);
+    if (to)   q = q.lte('delivered_at', `${to}T23:59:59+09:00`);
+    if (assigneeIds.length) {
+      q = assigneeIds.length > 1
+        ? q.in('ca_filter.user_id', assigneeIds)
+        : q.eq('ca_filter.user_id', assigneeIds[0]);
+    }
+    // 納品日が NULL の旧データも拾えるよう nullsFirst:false（末尾に回す）
+    q = q.order('delivered_at', { ascending: false, nullsFirst: false }).limit(PORTFOLIO_MAX_ITEMS);
+
+    const { data: creatives, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    (creatives || []).forEach(c => { delete c.ca_filter; });
+
+    // 納品物ファイルを分割取得（.in() の URL 長超過回避）
+    const creativeIds = (creatives || []).map(c => c.id);
+    const filesByCreative = new Map();
+    for (let i = 0; i < creativeIds.length; i += PORTFOLIO_ID_CHUNK) {
+      const chunk = creativeIds.slice(i, i + PORTFOLIO_ID_CHUNK);
+      const { data: files, error: fErr } = await supabase
+        .from('creative_files')
+        .select('id, creative_id, drive_file_id, version, mime_type, uploaded_at, media_width, media_height, media_meta_checked_at')
+        .in('creative_id', chunk)
+        .not('drive_file_id', 'is', null);
+      if (fErr) return res.status(500).json({ error: fErr.message });
+      for (const f of (files || [])) {
+        if (!filesByCreative.has(f.creative_id)) filesByCreative.set(f.creative_id, []);
+        filesByCreative.get(f.creative_id).push(f);
+      }
+    }
+
+    const sizeAspectMap = await getPortfolioSizeAspectMap();
+    const roleCodes = await getEffectiveRoleCodes(req);
+    const userId = req.user?.id;
+
+    const items = [];
+    for (const c of (creatives || [])) {
+      const all = (filesByCreative.get(c.id) || []).slice().sort((a, b) => {
+        const dv = (b.version || 0) - (a.version || 0);
+        if (dv !== 0) return dv;
+        return String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || ''));
+      });
+      // ファイル未登録の納品物もカード 1 枚として出す（メディアなしのプレースホルダ）
+      const targets = all.length === 0 ? [null] : (latestOnly ? [all[0]] : all);
+
+      const masterAspect = c.creative_size
+        ? (sizeAspectMap[String(c.creative_size)] || parsePortfolioAspect(c.creative_size))
+        : null;
+      const editable = canEditPortfolioNote({ roleCodes, userId, creative: c });
+
+      for (const f of targets) {
+        const cacheAspect = (f?.media_width && f?.media_height)
+          ? { w: f.media_width, h: f.media_height }
+          : null;
+        const aspect = masterAspect || cacheAspect;
+        items.push({
+          creative_id:   c.id,
+          file_id:       f?.id || null,
+          drive_file_id: f?.drive_file_id || null,
+          version:       f?.version ?? null,
+          mime_type:     f?.mime_type || null,
+          file_name:     c.file_name,
+          creative_type: c.creative_type,
+          project_id:    c.project_id,
+          project_name:  c.projects?.name || '(案件なし)',
+          client_id:     c.projects?.client_id || null,
+          client_name:   c.projects?.clients?.name || '',
+          delivered_at:  c.delivered_at || c.final_deadline || null,
+          note:          c.portfolio_note || '',
+          can_edit_note: editable,
+          assignees: (c.creative_assignments || [])
+            .filter(a => a.users?.id)
+            .map(a => ({ id: a.users.id, role: a.role, full_name: a.users.full_name, nickname: a.users.nickname })),
+          aspect_w:      aspect?.w || null,
+          aspect_h:      aspect?.h || null,
+          // フロントが「実寸取得が必要か」を判断するためのヒント。
+          // measured = 一度 Drive に問い合わせ済み（取れなかった場合も含む）→ 再取得しない
+          aspect_source: masterAspect ? 'master' : (cacheAspect ? 'drive' : null),
+          measured:      !!(f?.media_meta_checked_at),
+          orientation:   portfolioOrientation(aspect?.w, aspect?.h),
+        });
+      }
+    }
+
+    // 案件グループ（最終納品が新しい順）
+    const groupMap = new Map();
+    for (const it of items) {
+      if (!groupMap.has(it.project_id)) {
+        groupMap.set(it.project_id, {
+          project_id: it.project_id, project_name: it.project_name,
+          client_id: it.client_id, client_name: it.client_name,
+          count: 0, latest_delivered_at: null,
+        });
+      }
+      const g = groupMap.get(it.project_id);
+      g.count += 1;
+      if (it.delivered_at && (!g.latest_delivered_at || it.delivered_at > g.latest_delivered_at)) {
+        g.latest_delivered_at = it.delivered_at;
+      }
+    }
+    const groups = [...groupMap.values()].sort((a, b) =>
+      String(b.latest_delivered_at || '').localeCompare(String(a.latest_delivered_at || '')));
+
+    res.json({
+      items,
+      groups,
+      total: items.length,
+      truncated: (creatives || []).length >= PORTFOLIO_MAX_ITEMS,
+    });
+  } catch (e) {
+    console.error('[portfolio] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Drive のサムネイルURL（lh3.googleusercontent.com 系）の短命キャッシュ。
+// thumbnailLink は数時間で失効するため TTL を 30 分に抑え、失効したら再取得する。
+const _portfolioThumbLinks = new Map(); // creative_files.id -> { url, expiresAt }
+const _PORTFOLIO_THUMB_TTL_MS = 30 * 60 * 1000;
+const _PORTFOLIO_THUMB_MAX = 2000;
+
+function _rememberThumbLink(fileRowId, url) {
+  if (!url) return;
+  if (_portfolioThumbLinks.size >= _PORTFOLIO_THUMB_MAX) _portfolioThumbLinks.clear();
+  _portfolioThumbLinks.set(fileRowId, { url, expiresAt: Date.now() + _PORTFOLIO_THUMB_TTL_MS });
+}
+
+// Drive から 1 ファイル分のメタ（実寸 + サムネURL）を取る。取れなければ null 埋め。
+async function fetchPortfolioMediaMeta(drive, row) {
+  try {
+    const meta = await drive.files.get({
+      fileId: row.drive_file_id,
+      fields: 'id, thumbnailLink, videoMediaMetadata(width,height), imageMediaMetadata(width,height)',
+      supportsAllDrives: true,
+    });
+    const d = meta.data || {};
+    const dim = d.videoMediaMetadata || d.imageMediaMetadata || {};
+    // サムネは =s220 等のサイズ指定が付いてくるので、ギャラリー用に大きめへ差し替える
+    const thumb = d.thumbnailLink ? String(d.thumbnailLink).replace(/=s\d+$/, '=s800') : null;
+    _rememberThumbLink(row.id, thumb);
+    return { width: dim.width || null, height: dim.height || null, has_thumb: !!thumb };
+  } catch (e) {
+    console.warn('[portfolio] Drive メタ取得失敗:', row.drive_file_id, e.message);
+    return { width: null, height: null, has_thumb: false };
+  }
+}
+
+// POST /api/haruka/portfolio/media-meta — 実寸とサムネの有無をまとめて解決する。
+// body: { file_ids: [creative_files.id, ...] }（最大 40件）
+// 取得した実寸は creative_files にキャッシュするので、2回目以降は GET /portfolio で即返る。
+router.post('/portfolio/media-meta', requireAuth, async (req, res) => {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
+  try {
+    const ids = Array.isArray(req.body?.file_ids) ? req.body.file_ids.filter(Boolean).slice(0, 40) : [];
+    if (!ids.length) return res.json({ results: [] });
+
+    const { data: rows, error } = await supabase
+      .from('creative_files')
+      .select('id, drive_file_id, media_width, media_height')
+      .in('id', ids)
+      .not('drive_file_id', 'is', null);
+    if (error) return res.status(500).json({ error: error.message });
+
+    const drive = await getDriveService();
+    const results = [];
+    // Drive API のレート制限に配慮して 5 並列ずつ
+    for (let i = 0; i < (rows || []).length; i += 5) {
+      const batch = (rows || []).slice(i, i + 5);
+      const metas = await Promise.all(batch.map(r => fetchPortfolioMediaMeta(drive, r)));
+      for (let k = 0; k < batch.length; k++) {
+        const row = batch[k], meta = metas[k];
+        results.push({ file_id: row.id, width: meta.width, height: meta.height, has_thumb: meta.has_thumb });
+        // 実寸が取れた／取れなかったに関わらず checked_at は打つ（毎回叩き直さないため）
+        const patch = { media_meta_checked_at: new Date().toISOString() };
+        if (meta.width && meta.height) { patch.media_width = meta.width; patch.media_height = meta.height; }
+        supabase.from('creative_files').update(patch).eq('id', row.id).then(() => {}, () => {});
+      }
+    }
+    res.json({ results });
+  } catch (e) {
+    console.error('[portfolio/media-meta] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/haruka/portfolio/thumbnail/:fileId — creative_files.id のサムネ画像を代理配信。
+// Drive の thumbnailLink をそのままフロントに返さないのは、URL が短命で
+// 失効すると画像が壊れるため（サーバー側で再取得して隠蔽する）。
+router.get('/portfolio/thumbnail/:fileId', requireAuth, async (req, res) => {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).end();
+  try {
+    const fileRowId = req.params.fileId;
+    let cached = _portfolioThumbLinks.get(fileRowId);
+    if (!cached || cached.expiresAt <= Date.now()) {
+      const { data: row } = await supabase
+        .from('creative_files').select('id, drive_file_id').eq('id', fileRowId).maybeSingle();
+      if (!row?.drive_file_id) return res.status(404).end();
+      const drive = await getDriveService();
+      await fetchPortfolioMediaMeta(drive, row);
+      cached = _portfolioThumbLinks.get(fileRowId);
+    }
+    if (!cached?.url) return res.status(404).end();
+
+    const upstream = await fetch(cached.url);
+    if (!upstream.ok) {
+      _portfolioThumbLinks.delete(fileRowId); // 失効していた → 次回再取得
+      return res.status(502).end();
+    }
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.end(buf);
+  } catch (e) {
+    console.warn('[portfolio/thumbnail] failed:', e.message);
+    res.status(500).end();
+  }
+});
+
+// PATCH /api/haruka/creatives/:id/portfolio-note — 作品の説明文を保存
+router.patch('/creatives/:id/portfolio-note', requireAuth, async (req, res) => {
+  try {
+    const note = String(req.body?.note ?? '').trim().slice(0, 500);
+    const { data: creative, error } = await supabase
+      .from('creatives')
+      .select('id, status, projects(id, director_id, producer_id), creative_assignments(role, users(id))')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!creative) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+    const roleCodes = await getEffectiveRoleCodes(req);
+    if (!canEditPortfolioNote({ roleCodes, userId: req.user?.id, creative })) {
+      return res.status(403).json({ error: 'この作品の説明を編集する権限がありません' });
+    }
+
+    const { error: uErr } = await supabase
+      .from('creatives')
+      .update({ portfolio_note: note || null })
+      .eq('id', req.params.id);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    res.json({ ok: true, note });
+  } catch (e) {
+    console.error('[portfolio-note] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // router を主エクスポートにしつつ、ヘルパー関数も同じ object 経由で取り出せるようにする
 // 用途:
 //   const harukaRouter = require('./routes/haruka');                 // ルーター本体
