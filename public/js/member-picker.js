@@ -87,6 +87,38 @@
         || (m.nickname  || '').toLowerCase().includes(k);
   }
 
+  // ───────── 兼務ロール（users.role + job_type から派生）─────────
+  // users.role は単一値だが、実際には「ディレクターだがデザインもやる」人がいる
+  // （例: role='director' / job_type='design'）。ロールで絞り込むときに片方の
+  // chip でしか出てこないと担当者を選べないので、job_type から designer を派生させ、
+  // 「D」でも「デザイン」でも同じ人が出るようにする。
+  // ADR 003 の user_roles テーブルは未運用のため、現時点では job_type を根拠にする。
+  const JOB_TYPE_DERIVED_ROLE_TARGETS = ['producer_director', 'director', 'editor', 'designer'];
+  function memberRoles(m) {
+    if (!m) return [];
+    const roles = m.role ? [m.role] : [];
+    // 制作系ロールのみ対象（秘書・管理は job_type が実態と無関係なので派生させない）
+    if (JOB_TYPE_DERIVED_ROLE_TARGETS.includes(m.role)
+        && (m.job_type === 'design' || m.job_type === 'both')
+        && !roles.includes('designer')) {
+      roles.push('designer');
+    }
+    return roles;
+  }
+  function hasRole(m, role) {
+    return memberRoles(m).includes(role);
+  }
+  function hasAnyRole(m, roleList) {
+    const roles = memberRoles(m);
+    return roleList.some(r => roles.includes(r));
+  }
+
+  // ログイン中のユーザーID（VIEW AS でロールを変えても本人の id は変わらない）
+  function selfId() {
+    const u = (typeof window !== 'undefined') ? window.currentUser : null;
+    return (u && u.id != null) ? String(u.id) : null;
+  }
+
   // ───────── CSS 注入（一度だけ）─────────
   function ensureStyles() {
     if (document.getElementById('mp-styles')) return;
@@ -304,8 +336,9 @@
         .filter(m => opts.includeExternal || m.is_external !== true)
         // excludeIds: 指名できないユーザー（担当ディレクター・制作担当など）を除外
         .filter(m => !excludeSet.has(String(m.id)))
-        .filter(m => !allowedRoles || allowedRoles.includes(m.role))
-        .filter(m => session.activeRoles.size === 0 || session.activeRoles.has(m.role))
+        // 兼務ロール込みで判定（例: role=director / job_type=design の人は「デザイン」でも出る）
+        .filter(m => !allowedRoles || hasAnyRole(m, allowedRoles))
+        .filter(m => session.activeRoles.size === 0 || hasAnyRole(m, Array.from(session.activeRoles)))
         .filter(m => matchSearch(m, session.query));
 
       // chip selected state
@@ -318,6 +351,20 @@
       const activeMembers = filtered.filter(m => m.is_active !== false);
       const inactiveMembers = filtered.filter(m => m.is_active === false);
 
+      // ロール「全て」のときは自分を先頭に固定する（自分を選ぶ頻度が一番高いため）。
+      // ロール chip で絞り込んでいるときは、その絞り込み結果の並びを尊重して並べ替えない。
+      if (session.activeRoles.size === 0) {
+        const me = selfId();
+        if (me) {
+          const hoistSelf = (arr) => {
+            const i = arr.findIndex(m => String(m.id) === me);
+            if (i > 0) arr.unshift(arr.splice(i, 1)[0]);
+          };
+          hoistSelf(activeMembers);
+          hoistSelf(inactiveMembers);
+        }
+      }
+
       const avatarMarkup = (m) => {
         const url = m.avatar_url;
         const initial = (m.full_name || m.nickname || '?').trim().charAt(0).toUpperCase();
@@ -327,8 +374,11 @@
       const renderItem = (m) => {
         const sel = session.selectedIds.has(String(m.id));
         const inputType = opts.mode === 'multi' ? 'checkbox' : 'radio';
-        const roleDef = ROLE_BY_VALUE[m.role];
-        const roleShort = roleDef ? roleDef.short : (m.role || '');
+        // 兼務ロールも並べて表示（例: 「D・デザイン」）
+        const roleShort = memberRoles(m)
+          .map(r => (ROLE_BY_VALUE[r] ? ROLE_BY_VALUE[r].short : r))
+          .filter(Boolean)
+          .join('・');
         let note = '';
         if (typeof opts.itemNote === 'function') {
           try { note = opts.itemNote(m) || ''; } catch (e) { note = ''; }
@@ -501,6 +551,8 @@
     loadMembers,
     invalidateCache,
     memberLabel,
+    memberRoles,   // 兼務ロール込みのロール配列（他画面のロール絞り込みでも使えるよう公開）
+    hasRole,
     ROLE_DEFS,
   };
 })();
