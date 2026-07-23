@@ -21202,7 +21202,12 @@ router.get('/portfolio', requireAuth, async (req, res) => {
         const cacheAspect = (f?.media_width && f?.media_height)
           ? { w: f.media_width, h: f.media_height }
           : null;
-        const aspect = masterAspect || cacheAspect;
+        // 実ファイルの寸法を最優先にする（2026-07-23 ユーザー判断で master 優先から変更）。
+        // マスターのサイズ区分は「その枠で発注した」という申告値でしかなく、実物が
+        // 1080_1080 指定でも 1080x1350 で納品されている等のズレが普通にある。
+        // ズレた比率の枠に流し込むとカードが見切れる（文字が両端で切れる）ため、
+        // 実寸 → マスター → 未解決（フロントが Drive 実寸を取りに行く）の順で解決する。
+        const aspect = cacheAspect || masterAspect;
         items.push({
           creative_id:   c.id,
           file_id:       f?.id || null,
@@ -21225,7 +21230,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
           aspect_h:      aspect?.h || null,
           // フロントが「実寸取得が必要か」を判断するためのヒント。
           // measured = 一度 Drive に問い合わせ済み（取れなかった場合も含む）→ 再取得しない
-          aspect_source: masterAspect ? 'master' : (cacheAspect ? 'drive' : null),
+          aspect_source: cacheAspect ? 'drive' : (masterAspect ? 'master' : null),
           measured:      !!(f?.media_meta_checked_at),
           orientation:   portfolioOrientation(aspect?.w, aspect?.h),
         });
