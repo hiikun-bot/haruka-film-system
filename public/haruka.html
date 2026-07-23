@@ -7972,39 +7972,63 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   #page-portfolio .pf-star.pf-star-static { cursor: default; background: rgba(0,0,0,.35); }
   #page-portfolio .pf-star.pf-star-static:hover { transform: none; background: rgba(0,0,0,.35); }
   #page-portfolio .pf-star.pf-star-off { color: rgba(255,255,255,.85); }
-  /* 複数選択モード */
-  /* 選択モード: 未選択でも「選べる状態」が一目で分かるよう、白いチェックボックスを常時出す */
+  /* 複数選択（モードレス）
+     モード切替は持たない。カードにマウスを乗せると左下に ◯ が現れ、押した瞬間から
+     選択状態に入る（Google フォトと同じ操作感）。1件でも選ばれている間は全カードの
+     ◯ を出しっぱなしにして「いま選べる状態」を明示する。 */
   #page-portfolio .pf-pick {
     position: absolute; left: 6px; bottom: 6px; z-index: 4; width: 26px; height: 26px;
-    border-radius: 7px; background: rgba(255,255,255,.92); border: 2px solid rgba(0,0,0,.28);
+    border-radius: 50%; background: rgba(255,255,255,.92); border: 2px solid rgba(0,0,0,.28);
     box-shadow: 0 1px 4px rgba(0,0,0,.35);
     display: flex; align-items: center; justify-content: center;
     color: #14171a; font-size: 15px; font-weight: 800; line-height: 1; cursor: pointer;
+    opacity: 0; transform: scale(.85); transition: opacity .12s, transform .12s;
+  }
+  /* ◯ を出す条件: そのカードにホバー中 / そのカードが選択済み / どこかが選択中 */
+  #page-portfolio .pf-card:hover .pf-pick,
+  #page-portfolio .pf-pick.on,
+  #page-portfolio.pf-selecting .pf-pick { opacity: 1; transform: scale(1); }
+  #page-portfolio .pf-pick:hover { transform: scale(1.12); }
+  /* タッチ端末はホバーが無いので ◯ を常時出す（出さないと選ぶ手段が無くなる） */
+  @media (hover: none) {
+    #page-portfolio .pf-pick { opacity: 1; transform: scale(1); }
   }
   #page-portfolio .pf-pick.on { background: var(--em-dark); border-color: var(--em-dark); color: #fff; }
-  /* 選択モード中は未選択カードを少し沈ませ、選択済みを浮かせる */
+  /* 選択が1件でもある間は未選択カードを少し沈ませ、選択済みを浮かせる */
   #page-portfolio.pf-selecting .pf-card .pf-media { opacity: .62; transition: opacity .12s, box-shadow .12s; }
   #page-portfolio.pf-selecting .pf-card:hover .pf-media { opacity: .85; }
   #page-portfolio .pf-card.pf-picked .pf-media {
     outline: 3px solid var(--em-dark); outline-offset: 1px;
   }
   #page-portfolio.pf-selecting .pf-card.pf-picked .pf-media { opacity: 1; box-shadow: 0 4px 14px rgba(43,184,180,.35); }
-  /* ドラッグ範囲選択中に画像やテキストが掴まれないようにする（青い選択範囲が出るのを防ぐ） */
-  #page-portfolio.pf-selecting .pf-wrap { user-select: none; -webkit-user-select: none; }
+  /* ドラッグ範囲選択中・選択中に画像やテキストが掴まれないようにする（青い選択範囲が出るのを防ぐ） */
+  #page-portfolio.pf-selecting .pf-wrap,
+  #page-portfolio.pf-dragging .pf-wrap { user-select: none; -webkit-user-select: none; }
   #page-portfolio.pf-selecting .pf-media img,
-  #page-portfolio.pf-selecting .pf-media video { pointer-events: none; }
+  #page-portfolio.pf-selecting .pf-media video,
+  #page-portfolio.pf-dragging .pf-media img,
+  #page-portfolio.pf-dragging .pf-media video { pointer-events: none; }
   #pf-gallery { position: relative; }
   /* ドラッグ中の選択矩形 */
   .pf-rubber {
     position: absolute; z-index: 20; pointer-events: none;
     border: 1.5px solid var(--em-dark); background: rgba(62,207,202,.18); border-radius: 4px;
   }
+  /* 選択中バー: 画面下に浮かせて、どこまでスクロールしても操作できるようにする */
   #page-portfolio .pf-selbar {
     display: none; align-items: center; gap: 10px; flex-wrap: wrap;
-    background: #fff; border: 0.5px solid var(--border); border-radius: 10px;
-    padding: 8px 14px; margin-bottom: 12px; font-size: 13px;
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    z-index: 60; max-width: calc(100vw - 32px);
+    background: #fff; border: 0.5px solid var(--border); border-radius: 999px;
+    box-shadow: 0 8px 28px rgba(0,0,0,.18);
+    padding: 10px 18px; font-size: 13px;
+    animation: pfSelbarIn .16s ease-out;
   }
   #page-portfolio .pf-selbar.open { display: flex; }
+  @keyframes pfSelbarIn { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  @media (max-width: 768px) {
+    #page-portfolio .pf-selbar { border-radius: 14px; padding: 10px 14px; gap: 8px; }
+  }
   /* ホバーで下からせり上がる説明（未入力なら要素自体を出さない） */
   #page-portfolio .pf-note {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 22px 8px 8px;
@@ -8120,7 +8144,6 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <input type="date" id="pf-to" class="form-select" style="width:140px" onchange="pfOnFilterChange()" aria-label="納品日（終了）">
       <label class="pf-check"><input type="checkbox" id="pf-latest-only" checked onchange="pfOnFilterChange()">最新の納品物のみ</label>
       <label class="pf-check" title="納品物のファイルがシステムに登録されていない作品（外部リンクのみで納品されたもの）も表示します"><input type="checkbox" id="pf-include-nofile" onchange="pfOnFilterChange()">ファイル未登録も表示</label>
-      <label class="pf-check" title="カードを選んでまとめてダウンロードします"><input type="checkbox" id="pf-select-mode" onchange="pfToggleSelectMode(this.checked)">選択モード</label>
       <!-- マイベスト切替（担当者を1名に絞っているときだけ出る）。既定は「本人のマイベスト」 -->
       <span class="pf-seg" id="pf-best-seg" role="group" aria-label="マイベスト表示" style="display:none">
         <button type="button" id="pf-best-best" onclick="pfSetBestMode('best')">⭐ マイベスト</button>
@@ -8143,7 +8166,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <strong id="pf-sel-count">0件選択中</strong>
       <span id="pf-sel-size" style="color:var(--text-muted);font-size:12px"></span>
       <button type="button" class="btn-sm" onclick="pfDownloadSelected()" style="padding:6px 14px">⬇ まとめてダウンロード（ZIP）</button>
-      <button type="button" class="btn-sm" onclick="pfClearSelection()" style="padding:6px 12px">選択を解除</button>
+      <button type="button" class="btn-sm" onclick="pfClearSelection()" style="padding:6px 12px">選択を解除（Esc）</button>
       <span style="color:var(--text-muted);font-size:11px">ドラッグで範囲選択できます ／ 最大50件・合計2GBまで</span>
     </div>
     <div id="pf-gallery" onmousedown="pfOnGalleryMouseDown(event)"></div>
@@ -22559,6 +22582,8 @@ async function pfReload() {
   const gallery = document.getElementById('pf-gallery');
   if (summary) summary.textContent = '読み込み中…';
   if (gallery) gallery.innerHTML = '';
+  // 絞り込みを変えると一覧の中身が入れ替わるので、画面に無い作品を選んだままにしない
+  if (typeof pfClearSelection === 'function') pfClearSelection();
 
   const params = new URLSearchParams();
   if (pfAssigneeIds.size) params.set('assignee_id', [...pfAssigneeIds].join(','));
@@ -22607,7 +22632,9 @@ function pfRenderSummary(json) {
     ? `　※ ファイル未登録の納品物 ${json.no_file_hidden}件は非表示`
     : '';
   const best = json.best_applied ? '⭐ マイベストのみ表示中　' : '';
-  el.textContent = `${best}${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（納品済のみ）${truncated}${hidden}`;
+  // モード切替を廃止したので、選択のしかたはここで常時アナウンスする
+  const pickHint = pfItems.length ? '　｜ カード左下の ◯ を押す・ドラッグで囲むと、まとめてダウンロードできます' : '';
+  el.textContent = `${best}${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（納品済のみ）${truncated}${hidden}${pickHint}`;
 }
 
 function pfRenderGallery() {
@@ -22693,7 +22720,7 @@ function pfCardHtml(item, idx) {
     ? `<span class="pf-ver">v${esc(item.version)}</span>` : '';
   return `
     <div class="pf-card pf-o-${esc(item.orientation || 'landscape')}${pfSelected.has(item.file_id) ? ' pf-picked' : ''}" data-idx="${idx}"
-         onclick="pfSelectMode ? pfTogglePick(${idx}) : pfOpenLightbox(${idx})"
+         onclick="pfOnCardClick(${idx})"
          onmouseenter="pfHoverIn(this, ${idx})" onmouseleave="pfHoverOut(this)">
       <div class="pf-media" style="${pfAspectStyle(item)}">
         ${media}
@@ -22715,25 +22742,29 @@ function pfCardHtml(item, idx) {
 // 選択の単位は creative_files.id（＝実ファイル）。ZIP はサーバーが Drive から
 // streaming で受けてそのまま返すので、ブラウザは通常のダウンロードとして受け取る。
 
-let pfSelectMode = false;
+// モード切替は持たない（モードレス）。
+//   - カードにマウスを乗せると左下に ◯ が出る → 押した瞬間から選択状態
+//   - 1件でも選ばれていればカード本体のクリックも「選択のトグル」になる（＝Google フォトと同じ）
+//   - 何も選ばれていないときのカードクリックは従来どおりライトボックス
+//   - ドラッグでの範囲選択は常時有効
 const pfSelected = new Set();   // 選択中の file_id
 
-function pfToggleSelectMode(on) {
-  pfSelectMode = !!on;
-  if (!pfSelectMode) pfSelected.clear();
-  document.getElementById('pf-selbar')?.classList.toggle('open', pfSelectMode);
-  document.getElementById('page-portfolio')?.classList.toggle('pf-selecting', pfSelectMode);
-  pfUpdateSelBar();
-  pfRenderGallery();
+// 選択が1件でもあるか（旧 pfSelectMode の代わり）
+function pfIsSelecting() { return pfSelected.size > 0; }
+
+// カード本体のクリック: 選択中なら選択トグル、そうでなければ詳細を開く
+function pfOnCardClick(idx) {
+  if (pfIsSelecting()) pfTogglePick(idx);
+  else pfOpenLightbox(idx);
 }
 
 // ---- ドラッグで範囲選択 ----
-// 選択モード中にギャラリー上でドラッグすると矩形が出て、重なったカードをまとめて選ぶ。
+// ギャラリー上でドラッグすると矩形が出て、重なったカードをまとめて選ぶ（モード不要）。
 // ドラッグ中は DOM のクラスを直接付け替え（再描画しない）ので、枚数が多くても軽い。
 let _pfDrag = null;   // { startX, startY, box, baseline:Set, moved:boolean }
 
 function pfOnGalleryMouseDown(ev) {
-  if (!pfSelectMode || ev.button !== 0) return;
+  if (ev.button !== 0) return;
   const gallery = document.getElementById('pf-gallery');
   if (!gallery) return;
   // チェックボックス自身のクリックはドラッグ扱いにしない（従来どおりトグル）
@@ -22756,6 +22787,7 @@ function pfOnGalleryMouseMove(ev) {
   const dx = Math.abs(ev.clientX - _pfDrag.startX);
   const dy = Math.abs(ev.clientY - _pfDrag.startY);
   if (!_pfDrag.moved && dx < 5 && dy < 5) return;   // 微小な揺れはクリック扱い
+  if (!_pfDrag.moved) document.getElementById('page-portfolio')?.classList.add('pf-dragging');
   _pfDrag.moved = true;
 
   const gallery = document.getElementById('pf-gallery');
@@ -22793,6 +22825,7 @@ function pfOnGalleryMouseUp() {
   _pfDrag.box.remove();
   document.removeEventListener('mousemove', pfOnGalleryMouseMove);
   document.removeEventListener('mouseup', pfOnGalleryMouseUp);
+  document.getElementById('page-portfolio')?.classList.remove('pf-dragging');
   _pfDrag = null;
   if (moved) {
     // ドラッグ直後の click がカードに届くとライトボックスが開いてしまうので1回だけ握りつぶす
@@ -22804,11 +22837,27 @@ function pfOnGalleryMouseUp() {
   }
 }
 
+// ◯ は常に描いておき、表示/非表示は CSS（ホバー・選択中）に任せる
 function pfPickHtml(item, idx) {
-  if (!pfSelectMode || !item.file_id) return '';
+  if (!item.file_id) return '';
   const on = pfSelected.has(item.file_id);
   return `<span class="pf-pick${on ? ' on' : ''}" title="ダウンロード対象に${on ? 'しない' : 'する'}"
             onclick="event.stopPropagation();pfTogglePick(${idx})">${on ? '✓' : ''}</span>`;
+}
+
+// 1枚分の見た目だけ更新する（全体を pfRenderGallery で描き直すとサムネが再読込されてチラつくため）
+function pfSyncCardPick(idx) {
+  const item = pfItems[idx];
+  const card = document.querySelector(`#pf-gallery .pf-card[data-idx="${idx}"]`);
+  if (!item || !card) return;
+  const on = pfSelected.has(item.file_id);
+  card.classList.toggle('pf-picked', on);
+  const pick = card.querySelector('.pf-pick');
+  if (pick) {
+    pick.classList.toggle('on', on);
+    pick.textContent = on ? '✓' : '';
+    pick.title = `ダウンロード対象に${on ? 'しない' : 'する'}`;
+  }
 }
 
 function pfTogglePick(idx) {
@@ -22816,16 +22865,21 @@ function pfTogglePick(idx) {
   if (!item?.file_id) return;
   if (pfSelected.has(item.file_id)) pfSelected.delete(item.file_id);
   else pfSelected.add(item.file_id);
+  pfSyncCardPick(idx);
   pfUpdateSelBar();
-  pfRenderGallery();
 }
 
 function pfClearSelection() {
+  const wasSelected = new Set(pfSelected);
   pfSelected.clear();
+  document.querySelectorAll('#pf-gallery .pf-card').forEach(card => {
+    const idx = Number(card.dataset.idx);
+    if (wasSelected.has(pfItems[idx]?.file_id)) pfSyncCardPick(idx);
+  });
   pfUpdateSelBar();
-  pfRenderGallery();
 }
 
+// 選択件数の表示 + 「選択中かどうか」に連動する見た目（下部バー・カードの沈み）をまとめて反映する
 function pfUpdateSelBar() {
   const cnt = document.getElementById('pf-sel-count');
   const size = document.getElementById('pf-sel-size');
@@ -22835,7 +22889,18 @@ function pfUpdateSelBar() {
     const videos = pfItems.filter(it => pfSelected.has(it.file_id) && pfIsVideo(it)).length;
     size.textContent = videos ? `（うち動画 ${videos}件・容量が大きくなります）` : '';
   }
+  const selecting = pfIsSelecting();
+  document.getElementById('pf-selbar')?.classList.toggle('open', selecting);
+  document.getElementById('page-portfolio')?.classList.toggle('pf-selecting', selecting);
 }
+
+// Esc で選択解除（作品ページを開いていて、ライトボックスが閉じているときだけ）
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape' || !pfIsSelecting()) return;
+  if (!document.getElementById('page-portfolio')?.classList.contains('active')) return;
+  if (document.getElementById('portfolio-lightbox')?.classList.contains('open')) return;
+  pfClearSelection();
+});
 
 function pfDownloadSelected() {
   if (pfSelected.size === 0) { showToast('ダウンロードする作品を選んでください', 'error'); return; }
