@@ -21342,7 +21342,10 @@ async function fetchPortfolioMediaMeta(drive, row) {
       const d = meta.data || {};
       const dim = d.videoMediaMetadata || d.imageMediaMetadata || {};
       // サムネは =s220 等のサイズ指定が付いてくるので、ギャラリー用に大きめへ差し替える
-      const thumb = d.thumbnailLink ? String(d.thumbnailLink).replace(/=s\d+$/, '=s800') : null;
+      // サイズ指定（=s220 等）は剥がして「ベースURL」で覚え、配信時に必要なサイズを付ける。
+      // 一覧用に大きすぎるサムネを掴むと、PNG では1枚 500KB〜900KB になり
+      // 数十枚で数十MB になってブラウザの同時接続を食い潰す（#1001 の詰まりの原因）
+      const thumb = d.thumbnailLink ? String(d.thumbnailLink).replace(/=s\d+$/, '') : null;
       if (thumb) _rememberThumbLink(row.id, thumb);
       result = {
         width:  dim.width  || result.width,
@@ -21397,6 +21400,30 @@ router.post('/portfolio/media-meta', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/haruka/portfolio/media-size — フロントがサムネ画像から読み取った実寸を保存する。
+// body: { sizes: [{ file_id, width, height }, ...] }（最大 100件）
+// Drive が imageMediaMetadata / videoMediaMetadata を返さないファイルでも、
+// サムネの naturalWidth/Height は必ず実物の比率なので、これを正として保存する。
+router.post('/portfolio/media-size', requireAuth, async (req, res) => {
+  try {
+    const sizes = Array.isArray(req.body?.sizes) ? req.body.sizes.slice(0, 100) : [];
+    let saved = 0;
+    for (const s of sizes) {
+      const w = parseInt(s?.width, 10), h = parseInt(s?.height, 10);
+      if (!s?.file_id || !(w > 0) || !(h > 0)) continue;
+      const { error } = await supabase
+        .from('creative_files')
+        .update({ media_width: w, media_height: h, media_meta_checked_at: new Date().toISOString() })
+        .eq('id', s.file_id);
+      if (!error) saved += 1;
+    }
+    res.json({ ok: true, saved });
+  } catch (e) {
+    console.warn('[portfolio/media-size] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/haruka/portfolio/thumbnail/:fileId — creative_files.id のサムネ画像を代理配信。
 // Drive の thumbnailLink をそのままフロントに返さないのは、URL が短命で
 // 失効すると画像が壊れるため（サーバー側で再取得して隠蔽する）。
@@ -21429,9 +21456,13 @@ router.get('/portfolio/thumbnail/:fileId', requireAuth, async (req, res) => {
       cached = _portfolioThumbLinks.get(fileRowId);
     }
 
+    // 一覧のカードは実表示 200〜260px なので既定 480px（Retina 想定で約2倍）。
+    // ライトボックス等でもっと大きく要るときだけ ?s= で上げる。
+    const size = Math.min(Math.max(parseInt(req.query.s, 10) || 480, 120), 1600);
+
     let buf = null;
     if (cached?.url) {
-      const upstream = await fetch(cached.url);
+      const upstream = await fetch(`${cached.url}=s${size}`);
       if (upstream.ok) {
         buf = Buffer.from(await upstream.arrayBuffer());
       } else {
@@ -21444,7 +21475,9 @@ router.get('/portfolio/thumbnail/:fileId', requireAuth, async (req, res) => {
     //    (b) サムネがほぼ単色＝冒頭が黒フェードの動画で真っ黒になっている
     //    どちらも「絵が無い / 黒い」ので、代表フレームを抜き直す。
     //    生成が混んでいる・失敗するときは元のまま返し、次のリクエストで差し替わる。
-    const needsPoster = !buf || poster.looksBlank(buf);
+    // しきい値は面積比でスケール（=s800 基準の 9KB を size に換算）
+    const blankMax = Math.max(1200, Math.round(poster.BLACK_THUMB_MAX_BYTES * Math.pow(size / 800, 2)));
+    const needsPoster = !buf || poster.looksBlank(buf, blankMax);
     if (needsPoster && poster.isAvailable() && String(row.mime_type || '').startsWith('video/')) {
       // faststart 版があればそちらを使う（moov が先頭にあるので先頭だけ落とせば解析できる）
       const srcId = (row.faststart_drive_file_id && row.faststart_status === 'done')
@@ -21457,7 +21490,7 @@ router.get('/portfolio/thumbnail/:fileId', requireAuth, async (req, res) => {
     if (!buf) return res.status(404).end();
     res.setHeader('Content-Type', 'image/jpeg');
     // 黒いまま返した場合は次回すぐ作り直せるようキャッシュを短くする
-    res.setHeader('Cache-Control', poster.looksBlank(buf) ? 'private, max-age=60' : 'private, max-age=3600');
+    res.setHeader('Cache-Control', poster.looksBlank(buf, blankMax) ? 'private, max-age=60' : 'private, max-age=3600');
     res.end(buf);
   } catch (e) {
     console.warn('[portfolio/thumbnail] failed:', e.message);
