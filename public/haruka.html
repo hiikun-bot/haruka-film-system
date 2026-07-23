@@ -7972,6 +7972,20 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   #page-portfolio .pf-star.pf-star-static { cursor: default; background: rgba(0,0,0,.35); }
   #page-portfolio .pf-star.pf-star-static:hover { transform: none; background: rgba(0,0,0,.35); }
   #page-portfolio .pf-star.pf-star-off { color: rgba(255,255,255,.85); }
+  /* 複数選択モード */
+  #page-portfolio .pf-pick {
+    position: absolute; left: 5px; bottom: 5px; z-index: 4; width: 26px; height: 26px;
+    border-radius: 6px; background: rgba(0,0,0,.5); border: 1.5px solid rgba(255,255,255,.75);
+    display: flex; align-items: center; justify-content: center; color: #fff; font-size: 14px; cursor: pointer;
+  }
+  #page-portfolio .pf-pick.on { background: var(--em-dark); border-color: var(--em-dark); }
+  #page-portfolio .pf-card.pf-picked .pf-media { outline: 3px solid var(--em-dark); outline-offset: 1px; }
+  #page-portfolio .pf-selbar {
+    display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: #fff; border: 0.5px solid var(--border); border-radius: 10px;
+    padding: 8px 14px; margin-bottom: 12px; font-size: 13px;
+  }
+  #page-portfolio .pf-selbar.open { display: flex; }
   /* ホバーで下からせり上がる説明（未入力なら要素自体を出さない） */
   #page-portfolio .pf-note {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 22px 8px 8px;
@@ -8087,6 +8101,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <input type="date" id="pf-to" class="form-select" style="width:140px" onchange="pfOnFilterChange()" aria-label="納品日（終了）">
       <label class="pf-check"><input type="checkbox" id="pf-latest-only" checked onchange="pfOnFilterChange()">最新の納品物のみ</label>
       <label class="pf-check" title="納品物のファイルがシステムに登録されていない作品（外部リンクのみで納品されたもの）も表示します"><input type="checkbox" id="pf-include-nofile" onchange="pfOnFilterChange()">ファイル未登録も表示</label>
+      <label class="pf-check" title="カードを選んでまとめてダウンロードします"><input type="checkbox" id="pf-select-mode" onchange="pfToggleSelectMode(this.checked)">選択モード</label>
       <!-- マイベスト切替（担当者を1名に絞っているときだけ出る）。既定は「本人のマイベスト」 -->
       <span class="pf-seg" id="pf-best-seg" role="group" aria-label="マイベスト表示" style="display:none">
         <button type="button" id="pf-best-best" onclick="pfSetBestMode('best')">⭐ マイベスト</button>
@@ -8105,6 +8120,13 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </span>
     </div>
     <div id="pf-summary" class="pf-summary">読み込み中…</div>
+    <div id="pf-selbar" class="pf-selbar">
+      <strong id="pf-sel-count">0件選択中</strong>
+      <span id="pf-sel-size" style="color:var(--text-muted);font-size:12px"></span>
+      <button type="button" class="btn-sm" onclick="pfDownloadSelected()" style="padding:6px 14px">⬇ まとめてダウンロード（ZIP）</button>
+      <button type="button" class="btn-sm" onclick="pfClearSelection()" style="padding:6px 12px">選択を解除</button>
+      <span style="color:var(--text-muted);font-size:11px">最大50件・合計2GBまで</span>
+    </div>
     <div id="pf-gallery"></div>
   </div>
 </div>
@@ -22633,7 +22655,7 @@ function pfCardHtml(item, idx) {
   const verBadge = (document.getElementById('pf-latest-only')?.checked === false && item.version)
     ? `<span class="pf-ver">v${esc(item.version)}</span>` : '';
   return `
-    <div class="pf-card pf-o-${esc(item.orientation || 'landscape')}" data-idx="${idx}"
+    <div class="pf-card pf-o-${esc(item.orientation || 'landscape')}${pfSelected.has(item.file_id) ? ' pf-picked' : ''}" data-idx="${idx}"
          onclick="pfOpenLightbox(${idx})"
          onmouseenter="pfHoverIn(this, ${idx})" onmouseleave="pfHoverOut(this)">
       <div class="pf-media" style="${pfAspectStyle(item)}">
@@ -22641,6 +22663,7 @@ function pfCardHtml(item, idx) {
         <span class="pf-badge">${isVideo ? '🎬' : '🎨'}</span>
         ${verBadge}
         ${pfStarHtml(item, idx)}
+        ${pfPickHtml(item, idx)}
         ${note}
       </div>
       <div class="pf-cap">
@@ -22648,6 +22671,71 @@ function pfCardHtml(item, idx) {
         <span class="pf-cap-sub">${esc(pfFormatDate(item.delivered_at))}</span>
       </div>
     </div>`;
+}
+
+// ==================== 複数選択してまとめてダウンロード ====================
+//
+// 選択の単位は creative_files.id（＝実ファイル）。ZIP はサーバーが Drive から
+// streaming で受けてそのまま返すので、ブラウザは通常のダウンロードとして受け取る。
+
+let pfSelectMode = false;
+const pfSelected = new Set();   // 選択中の file_id
+
+function pfToggleSelectMode(on) {
+  pfSelectMode = !!on;
+  if (!pfSelectMode) pfSelected.clear();
+  document.getElementById('pf-selbar')?.classList.toggle('open', pfSelectMode);
+  pfUpdateSelBar();
+  pfRenderGallery();
+}
+
+function pfPickHtml(item, idx) {
+  if (!pfSelectMode || !item.file_id) return '';
+  const on = pfSelected.has(item.file_id);
+  return `<span class="pf-pick${on ? ' on' : ''}" title="ダウンロード対象に${on ? 'しない' : 'する'}"
+            onclick="event.stopPropagation();pfTogglePick(${idx})">${on ? '✓' : ''}</span>`;
+}
+
+function pfTogglePick(idx) {
+  const item = pfItems[idx];
+  if (!item?.file_id) return;
+  if (pfSelected.has(item.file_id)) pfSelected.delete(item.file_id);
+  else pfSelected.add(item.file_id);
+  pfUpdateSelBar();
+  pfRenderGallery();
+}
+
+function pfClearSelection() {
+  pfSelected.clear();
+  pfUpdateSelBar();
+  pfRenderGallery();
+}
+
+function pfUpdateSelBar() {
+  const cnt = document.getElementById('pf-sel-count');
+  const size = document.getElementById('pf-sel-size');
+  if (cnt) cnt.textContent = `${pfSelected.size}件選択中`;
+  if (size) {
+    // 動画は1本100MB級になるので、選んだ時点で目安を出す
+    const videos = pfItems.filter(it => pfSelected.has(it.file_id) && pfIsVideo(it)).length;
+    size.textContent = videos ? `（うち動画 ${videos}件・容量が大きくなります）` : '';
+  }
+}
+
+function pfDownloadSelected() {
+  if (pfSelected.size === 0) { showToast('ダウンロードする作品を選んでください', 'error'); return; }
+  if (pfSelected.size > 50) { showToast('一度にダウンロードできるのは50件までです', 'error'); return; }
+  // ブラウザのナビゲーションで直接ディスクへ流す（fetch→blob だと数百MBがメモリに載る）
+  const url = `/api/haruka/portfolio/download-zip?ids=${[...pfSelected].join(',')}`;
+  showToast(`${pfSelected.size}件のダウンロードを開始しました（ZIPの作成に少し時間がかかります）`, 'success');
+  window.location.href = url;
+}
+
+// 1件ダウンロード（ライトボックス／カードから共用）
+function pfDownloadOne(idx) {
+  const item = pfItems[idx];
+  if (!item?.file_id) { showToast('この作品にはファイルが登録されていません', 'error'); return; }
+  window.location.href = `/api/haruka/portfolio/download/${item.file_id}`;
 }
 
 // ⭐ マイベスト。本人（can_star）はクリックで ON / OFF、他の人には印としてだけ見せる。
@@ -22961,6 +23049,7 @@ function pfRenderLightboxCard() {
     <div class="pf-lb-actions">
       ${starBtn}
       ${item.can_edit_note ? `<button type="button" class="pf-lb-action" onclick="pfStartNoteEdit()">✏️ 説明を編集</button>` : ''}
+      ${item.file_id ? `<button type="button" class="pf-lb-action primary" onclick="pfDownloadOne(${pfLightboxIdx})">⬇ ダウンロード</button>` : ''}
     </div>`;
   pfRenderNoteView();
 }
