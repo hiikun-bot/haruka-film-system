@@ -4445,6 +4445,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
       <div id="member-action-group" style="display:flex;gap:8px">
         <button class="btn" id="btn-csv-export" onclick="exportMembersToSheet()">スプレッドシートへエクスポート</button>
+        <button class="btn" id="btn-csv-download" onclick="exportMembersToCsv()">CSVで出力</button>
         <button class="btn" id="btn-csv-import" onclick="openImportModal()" style="display:none">スプレッドシートからインポート</button>
         <button class="btn" onclick="openInviteModal()" id="btn-invite" style="display:none">＋ 招待リンク発行</button>
         <button class="btn-primary" id="btn-add-member" onclick="openAddMember()">＋ メンバー追加</button>
@@ -9624,6 +9625,9 @@ async function openErrorReport(options = {}) {
   });
 }
 let allCreatives = [], allProjects = [], allClients = [], allTeams = [], allMembers = [];
+// メンバー一覧で「現在の絞り込み・並び順で表示中」のメンバー配列（CSV エクスポート用）。
+// renderMemberList() が毎回更新する。
+let _memberListVisible = [];
 // 種別タブ（共通／動画／デザイン）のサーバー側 count 値。
 // allCreatives は現在のタブのみを保持するため、タブカウンタはこちらから引く。
 let creativeTabCounts = { all: 0, video: 0, design: 0 };
@@ -12107,6 +12111,9 @@ function renderMemberList() {
     list.innerHTML = `<div class="loading">${showResigned ? 'メンバーがいません' : 'アクティブなメンバーがいません'}</div>`;
     return;
   }
+  // CSV エクスポートは「現在の絞り込み・並び順で見えているメンバー」をそのまま出力する。
+  // ここでソート/フィルター済みの visibleMembers を保持しておき exportMembersToCsv() から参照する。
+  _memberListVisible = visibleMembers;
   // ビューモードで分岐:
   //   poster = Netflix風ポスター棚（ロール別グリッド、自分は左上ピン留め）
   //   table  = テーブル一覧（旧レイアウト）
@@ -12128,6 +12135,8 @@ function renderMemberList() {
 // 並び替えロジックは renderMemberList 内で適用済み。ここはレンダリングのみ。
 function renderMemberTable(list, visibleMembers) {
   const showRankCol = hasPermission('creative.rank_price_column');
+  // メール列は個人情報のため、メンバー管理権限（スプレッドシート出力と同じ member.edit_password）保持者のみに表示
+  const showEmailCol = hasPermission('member.edit_password');
   list.innerHTML = `
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <colgroup>
@@ -12136,6 +12145,7 @@ function renderMemberTable(list, visibleMembers) {
       ${showRankCol ? '<col style="width:72px">' : ''}
       <col style="width:88px">
       <col style="width:160px">
+      ${showEmailCol ? '<col style="width:210px">' : ''}
       <col style="width:200px">
       <col>
       <col style="width:160px">
@@ -12147,6 +12157,7 @@ function renderMemberTable(list, visibleMembers) {
         ${showRankCol ? memberSortHeaderHtml('rank','ランク','center') : ''}
         ${memberSortHeaderHtml('team','チーム','center')}
         ${memberSortHeaderHtml('name','名前','left')}
+        ${showEmailCol ? '<th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">メール</th>' : ''}
         <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">稼働（平日）</th>
         <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">稼働（土日祝）</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em">メモ</th>
@@ -12195,6 +12206,7 @@ function renderMemberTable(list, visibleMembers) {
             : m.leader_rank === 'sub_leader' ? ' <span style="font-size:10px;background:#BBDEFB;color:#0D47A1;padding:1px 6px;border-radius:6px;font-weight:600">🥈 サブリーダー</span>'
             : ''
           }</td>
+          ${showEmailCol ? `<td style="padding:8px 12px;text-align:left;vertical-align:middle" onclick="event.stopPropagation()">${m.email ? `<span style="display:inline-flex;align-items:center;gap:5px;max-width:200px"><span title="${esc(m.email)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text)">${esc(m.email)}</span><button class="btn-sm" title="メールアドレスをコピー" data-email="${esc(m.email)}" style="font-size:11px;padding:1px 6px;flex-shrink:0;line-height:1.4" onclick="copyMemberEmail(event, this.dataset.email)">📋</button></span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
           <td style="padding:8px 12px;text-align:center">${mkBar(m.weekday_hours,'var(--em)','平日')}</td>
           <td style="padding:8px 12px;text-align:center">${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<span style="font-size:11px;color:#bbb">休み</span>'}</td>
           <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;max-width:200px;vertical-align:middle">${m.note ? `<span title="${esc(m.note)}" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;word-break:break-word;white-space:normal">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
@@ -16698,6 +16710,92 @@ async function exportMembersToSheet() {
   }
 }
 
+// メンバー一覧のメールアドレスをクリップボードにコピー（一覧の📋ボタンから呼ばれる）。
+// 行 onclick（編集モーダル起動）に伝播しないよう、呼び出し元の onclick で event を渡し stopPropagation する。
+async function copyMemberEmail(ev, email) {
+  if (ev) { try { ev.stopPropagation(); ev.preventDefault(); } catch(_) {} }
+  const text = (email || '').trim();
+  if (!text) { showToast('メールアドレスが未登録です', 'warn'); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('メールアドレスをコピーしました', 'success');
+  } catch (_) {
+    // clipboard API が使えない環境向けフォールバック（手動コピー）
+    try { window.prompt('メールアドレスをコピーしてください', text); } catch(__) {
+      showToast('コピーに失敗しました', 'error');
+    }
+  }
+}
+
+// 稼働時間レンジ配列（[{from,to},...]）→「9:00〜18:00」等のテキスト。休みは「休み」。
+function _memberHoursRangeText(ranges) {
+  if (!Array.isArray(ranges) || ranges.length === 0) return '休み';
+  return ranges.map(r => `${r.from}:00〜${r.to}:00`).join(' / ');
+}
+// 稼働時間レンジ配列 → 合計時間（数値）。
+function _memberHoursTotal(ranges) {
+  if (!Array.isArray(ranges)) return 0;
+  return ranges.reduce((s, r) => s + (Number(r.to) - Number(r.from)), 0);
+}
+
+// メンバー一覧を CSV でダウンロード。
+// 「現在の絞り込み・並び順で表示中」のメンバー（_memberListVisible）をそのまま出力する。
+// Excel で文字化けしないよう UTF-8 BOM 付き。
+function exportMembersToCsv() {
+  const rows = Array.isArray(_memberListVisible) ? _memberListVisible : [];
+  if (!rows.length) { showToast('出力できるメンバーがいません', 'warn'); return; }
+
+  const showRankCol = hasPermission('creative.rank_price_column');
+  // CSV セル用エスケープ（ダブルクォート括り・改行/カンマ/引用符を安全化）
+  const cell = (v) => {
+    const s = (v == null ? '' : String(v));
+    return '"' + s.replace(/"/g, '""') + '"';
+  };
+
+  const header = ['ロール'];
+  if (showRankCol) header.push('ランク');
+  header.push('チーム', '名前', 'ニックネーム', 'メールアドレス',
+    '平日稼働時間', '平日稼働時間帯', '土日祝稼働時間', '土日祝稼働時間帯',
+    '在籍状況', 'メモ');
+
+  const lines = [header.map(cell).join(',')];
+  rows.forEach(m => {
+    const team = allTeams.find(t => t.id === m.team_id);
+    const teamName = team ? `${team.team_code}チーム` : '未所属';
+    const rec = [roleLabel(m.role)];
+    if (showRankCol) rec.push(m.rank || '');
+    rec.push(
+      teamName,
+      m.full_name || '',
+      m.nickname || '',
+      m.email || '',
+      String(_memberHoursTotal(m.weekday_hours)),
+      _memberHoursRangeText(m.weekday_hours),
+      String(_memberHoursTotal(m.weekend_hours)),
+      _memberHoursRangeText(m.weekend_hours),
+      m.is_active === false ? '退職' : '在籍',
+      m.note || ''
+    );
+    lines.push(rec.map(cell).join(','));
+  });
+
+  // \r\n 区切り + 先頭 BOM（Excel の UTF-8 判定用）
+  const csv = '﻿' + lines.join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  // ファイル名: メンバー一覧_動画_20260724.csv（JST の当日日付）
+  const tabLabel = currentMemberTab === 'design' ? 'デザイン' : '動画';
+  const ymd = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace(/-/g, '');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `メンバー一覧_${tabLabel}_${ymd}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast(`${rows.length}件をCSVで出力しました`, 'success');
+}
+
 function openImportModal() {
   const urlEl = document.getElementById('import-sheet-url');
   if (urlEl) urlEl.value = '';
@@ -17086,6 +17184,8 @@ function applyRoleBasedUI() {
   if (csvImportBtn) csvImportBtn.style.display = hasPermission('member.edit_password') ? '' : 'none';
   const csvExportBtn = document.getElementById('btn-csv-export');
   if (csvExportBtn) csvExportBtn.style.display = hasPermission('member.edit_password') ? '' : 'none';
+  const csvDownloadBtn = document.getElementById('btn-csv-download');
+  if (csvDownloadBtn) csvDownloadBtn.style.display = hasPermission('member.edit_password') ? '' : 'none';
   const addTeamBtn = document.getElementById('btn-add-team');
   if (addTeamBtn) addTeamBtn.style.display = hasPermission('team.manage') ? '' : 'none';
   const addClientBtn = document.getElementById('btn-add-client');
