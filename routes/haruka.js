@@ -9844,6 +9844,11 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
   let canChangeProject = true;
   let projectChangeBlockedReason = null;
 
+  // 納品後の「案件変更」救済を担ってよいリーダー格か（バグ報告 #931ac4d9）。
+  //   admin / 案件の director|producer 本人 / creative_assignments で director|producer 担当。
+  //   editor / designer 担当は編集はできるが、納品後の案件付け替えは不可（帰属操作の余地を絞る）。
+  let isProjectLeaderClass = false;
+
   if (ALLOW_ANY.includes(userRole)) {
     canEdit = true;
   } else {
@@ -9854,16 +9859,21 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
       (c.projects?.director_id && c.projects.director_id === userId) ||
       (c.projects?.producer_id && c.projects.producer_id === userId);
     let isAssigned = false;
-    if (!isProjectLeader) {
+    let isDpAssigned = false;
+    if (isProjectLeader) {
+      isAssigned = true;
+    } else {
       const { data: asn } = await supabase
         .from('creative_assignments')
-        .select('id')
+        .select('id, role')
         .eq('creative_id', creativeId)
-        .eq('user_id', userId)
-        .limit(1);
+        .eq('user_id', userId);
       isAssigned = (asn && asn.length > 0);
+      // director / producer 相当の担当行があるか（editor / designer は含めない）
+      isDpAssigned = (asn || []).some(a => ['director', 'producer', 'producer_director'].includes(a.role));
     }
     canEdit = isProjectLeader || isAssigned;
+    isProjectLeaderClass = isProjectLeader || isDpAssigned;
   }
 
   if (!canEdit) {
@@ -9874,21 +9884,24 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
   //    担当者変更ガード（バグ報告 #3138fd6f）: 「納品するまでは変更可能」仕様のため同じ条件でブロックする。
   //    報酬・本数カウントは creative_assignments を正としているので、納品後・請求確定後の付け替えは集計を壊す。
   //
-  //    ただし「案件変更」だけは admin に限り納品後も許可する（バグ報告 #fbc06b29）。
+  //    ただし「案件変更」だけは admin と 担当ディレクター/プロデューサー に限り納品後も許可する
+  //    （バグ報告 #fbc06b29 で admin を開放 → #931ac4d9 で担当D/Pにも拡大）。
   //    リサイズCRを通常CRとして登録してしまった等の取り違え救済で、請求前なら実害がないため。
-  //    請求確定済み（下記 invoice ガード）に紐付く場合は admin でもブロックする。
+  //    請求確定済み（下記 invoice ガード）に紐付く場合は admin / 担当D/P でもブロックする。
   //    担当者変更は帰属が壊れるため引き続き納品後は全ロールでブロックする。
   const DELIVERED_STATUSES = ['納品', '完納', '納品済'];
   const isDelivered = DELIVERED_STATUSES.includes(c.status) || c.force_delivered === true;
   const isAdmin = userRole === 'admin';
+  // 納品後の案件変更を許可する対象: admin または 担当ディレクター/プロデューサー
+  const canRelinkAfterDelivery = isAdmin || isProjectLeaderClass;
   let canChangeAssignee = true;
   let assigneeChangeBlockedReason = null;
   if (isDelivered) {
-    if (!isAdmin) {
+    if (!canRelinkAfterDelivery) {
       canChangeProject = false;
-      projectChangeBlockedReason = '納品済みのため案件を変更できません（案件変更は管理者のみ／その他項目は変更可）';
+      projectChangeBlockedReason = '納品済みのため案件を変更できません（案件変更は管理者・担当ディレクター/プロデューサーのみ／その他項目は変更可）';
     }
-    // admin は canChangeProject=true のまま（下の請求ガードで確定済みなら弾かれる）
+    // admin / 担当D/P は canChangeProject=true のまま（下の請求ガードで確定済みなら弾かれる）
     canChangeAssignee = false;
     assigneeChangeBlockedReason = '納品済みのため担当者を変更できません（担当者の変更は納品前まで）';
   }
