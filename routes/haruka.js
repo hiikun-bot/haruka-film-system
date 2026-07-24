@@ -9810,9 +9810,10 @@ router.post('/creatives/bulk-deliver', requireAuth, async (req, res) => {
 //
 // 権限:
 //   - admin / secretary は無条件で可
-//   - producer / producer_director / director は「自分が当該クリエイティブの旧 project の director_id / producer_id /
-//     creative_assignments(role='director' or 'producer') のいずれかに該当」する場合のみ可
-//   - editor / designer は不可（自分担当でも不可）
+//   - それ以外の全ロール（producer / producer_director / director / editor / designer …）は
+//     「自分が当該クリエイティブの旧 project の director_id / producer_id 本人、
+//      または creative_assignments に自分の担当行（role 問わず）がある」場合のみ可
+//     ＝「自分が担当しているクリエイティブ」だけ触れる（他人担当は不可）
 //
 // 整合性ガード:
 //   - status='納品' / force_delivered=true / 紐づく invoice_items の親 invoices.status != 'draft' → project_id 変更を禁止
@@ -9836,16 +9837,19 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
   if (!c) return { ok: false, status: 404, error: 'クリエイティブが見つかりません' };
 
   // 2. 権限判定
+  //   admin / secretary は無条件。それ以外の全ロールは「自分が担当のクリエイティブ」のみ可。
+  //   （旧仕様は editor / designer を完全に除外していたが、全員が自分担当なら事後修正できるよう開放）
   const ALLOW_ANY = ['admin', 'secretary'];
-  const ALLOW_OWN = ['producer', 'producer_director', 'director'];
   let canEdit = false;
   let canChangeProject = true;
   let projectChangeBlockedReason = null;
 
   if (ALLOW_ANY.includes(userRole)) {
     canEdit = true;
-  } else if (ALLOW_OWN.includes(userRole)) {
-    // 旧 project の director / producer 本人 OR creative_assignments(role='director'|'producer') 本人
+  } else {
+    // 旧 project の director / producer 本人 OR creative_assignments に自分の担当行（role 問わず）
+    //   editor / designer は creative_assignments に role='editor'|'designer'|'director_as_editor' 等で入るため、
+    //   role で絞らず「自分がこのクリエイティブの担当者か」だけを見る。
     const isProjectLeader =
       (c.projects?.director_id && c.projects.director_id === userId) ||
       (c.projects?.producer_id && c.projects.producer_id === userId);
@@ -9856,7 +9860,6 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
         .select('id')
         .eq('creative_id', creativeId)
         .eq('user_id', userId)
-        .in('role', ['director', 'producer'])
         .limit(1);
       isAssigned = (asn && asn.length > 0);
     }
@@ -9864,7 +9867,7 @@ async function evaluateCreativeEditEligibility(creativeId, userId, userRole) {
   }
 
   if (!canEdit) {
-    return { ok: false, status: 403, error: '事後修正モードを使用する権限がありません（admin / secretary / 担当プロデューサー / 担当ディレクター のみ操作可能）' };
+    return { ok: false, status: 403, error: '事後修正モードを使用する権限がありません（admin / secretary、または自分が担当しているクリエイティブのみ操作可能）' };
   }
 
   // 3. 案件変更ガード: 納品済み / force_delivered / 確定済み請求書に紐付く
