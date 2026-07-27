@@ -39935,7 +39935,7 @@ function _renderFpCommentHtml(c, isReply) {
           ${resolvedBtn}
         </div>
       </div>
-      <div id="fp-comment-text-${c.id}" style="${textStyle}">${esc(c.comment)}</div>
+      <div id="fp-comment-text-${c.id}" style="${textStyle}">${linkifyText(c.comment)}</div>
       ${resolvedFooter}
     </div>
   `;
@@ -40226,7 +40226,8 @@ function cancelEditComment(id) {
   const textEl = document.getElementById(`fp-comment-text-${id}`);
   if (!textEl) return;
   const original = textEl.dataset.original || '';
-  textEl.textContent = original;
+  // textContent 復元だと linkify 済みの <a> が消えるため、表示時と同じく linkifyText で戻す
+  textEl.innerHTML = linkifyText(original);
   delete textEl.dataset.editing;
   delete textEl.dataset.original;
 }
@@ -40255,7 +40256,7 @@ async function submitEditComment(id) {
       // 最低限：本文だけ書き換え
       const textEl = document.getElementById(`fp-comment-text-${id}`);
       if (textEl) {
-        textEl.textContent = newText;
+        textEl.innerHTML = linkifyText(newText);
         delete textEl.dataset.editing;
         delete textEl.dataset.original;
       }
