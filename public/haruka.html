@@ -14005,6 +14005,16 @@ function renderCreativesGantt(filtered, warningSource) {
     }
   });
 
+  // グループ内の行順はクリエイティブ名（file_name）順に統一する。
+  // 先頭に管理番号（001, 002…）を付ける運用が多いため、numeric:true で
+  // 001→002→…→010 の自然な数値順に並べる（001→010→002 のような辞書順崩れを防ぐ）。
+  // ※ グループ見出しの並び（Map の挿入順＝上の rows.sort による 遅延→締切→CL名）は
+  //   維持したいので、ここでは各グループ内の items だけを並べ替える。
+  const _cvNameCollator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+  groups.forEach(grp => {
+    grp.items.sort((a, b) => _cvNameCollator.compare(a.c.file_name || '', b.c.file_name || ''));
+  });
+
   // ── 共通ロジック: 1行のタイムライン描画（案件別/担当者別 共通）
   // 同日重複時の優先順: 最終納品 > CL確認 > 初稿締切 > 着手開始 > Pチェック > Dチェック
   const MS_PRIORITY = { final: 6, client: 5, draft: 4, start: 3, p: 2, d: 1 };
