@@ -1127,6 +1127,9 @@ ON CONFLICT (role, permission_key) DO UPDATE SET allowed = EXCLUDED.allowed;
 
 -- ==================== 請求書明細：自由編集対応（Step 1） ====================
 -- invoice_items に明細行として必要な列を追加（既存の creative_id 紐付け行とも共存）
+-- 「その他の明細（クリエイティブ非紐付けの自由行）」を許可するため creative_id は nullable。
+-- 旧DBに NOT NULL 制約が残っていると自由行の保存が失敗するため明示的に外す（冪等）。
+ALTER TABLE invoice_items ALTER COLUMN creative_id DROP NOT NULL;
 ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS label TEXT;
 ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS quantity NUMERIC DEFAULT 1;
 ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS unit TEXT DEFAULT '式';
