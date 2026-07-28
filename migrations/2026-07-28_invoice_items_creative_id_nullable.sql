@@ -1,0 +1,14 @@
+-- ==================== invoice_items.creative_id を nullable 化 ====================
+-- 背景:
+--   請求書明細は「その他の明細（クリエイティブ非紐付けの自由行）」を許可する設計。
+--   フロント/バックエンド（routes/haruka.js の PATCH /invoices/:id）は creative_id を
+--   null で INSERT するが、本番DBの invoice_items.creative_id に古い NOT NULL 制約が
+--   残っており、自由行の保存が
+--     null value in column "creative_id" of relation "invoice_items" violates not-null constraint
+--   で失敗していた（バグ報告 0585b40d）。
+--
+--   supabase_schema.sql の CREATE TABLE では既に nullable（`creative_id UUID REFERENCES creatives(id)`）
+--   だが、CREATE TABLE IF NOT EXISTS は既存テーブルの制約を変更しないため本番だけ乖離していた。
+--
+-- 対応: NOT NULL 制約を明示的に外す（既に nullable なら no-op）。冪等。
+ALTER TABLE invoice_items ALTER COLUMN creative_id DROP NOT NULL;
