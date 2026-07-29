@@ -8137,7 +8137,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <button type="button" id="pf-best-all" onclick="pfSetBestMode('all')">すべて</button>
       </span>
       <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px">
-        <select id="pf-lane-sort" class="form-select" style="width:170px" onchange="pfSetLaneSort(this.value)" aria-label="レーン内の並び順">
+        <select id="pf-lane-sort" class="form-select" style="width:auto;min-width:210px" onchange="pfSetLaneSort(this.value)" aria-label="レーン内の並び順">
           <option value="delivered">レーン内：納品日が新しい順</option>
           <option value="name">レーン内：名前順</option>
         </select>
