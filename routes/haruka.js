@@ -21134,6 +21134,8 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const latestOnly  = String(req.query.latest_only ?? '1') !== '0';
     // 納品物ファイルが無い作品を出すか（既定 OFF＝ギャラリーには絵のある作品だけ並べる）
     const includeNoFile = String(req.query.include_no_file || '') === '1';
+    // 制作途中（納品未完了）のクリエイティブも出すか（既定 OFF＝納品済みのみ）
+    const includeWip = String(req.query.include_wip || '') === '1';
     // マイベスト（⭐）の持ち主。担当者フィルタで1名に絞り込まれているときだけ成立する。
     // best_mode: auto = 持ち主に⭐が1件でもあればベストのみ・無ければ全体（既定）
     //            best = ベストのみ固定 / all = 全体固定（見る側の切り替え用）
@@ -21147,12 +21149,13 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     let q = supabase
       .from('creatives')
       .select(`
-        id, file_name, creative_type, creative_size, delivered_at, final_deadline,
+        id, file_name, creative_type, creative_size, status, delivered_at, final_deadline,
         portfolio_note, project_id,
         projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
         creative_assignments(role, users(id, full_name, nickname))${assigneeRel}
-      `)
-      .eq('status', '納品');
+      `);
+    // 既定は納品済みのみ。include_wip=1 のときだけ制作途中（status≠納品）も含める。
+    if (!includeWip) q = q.eq('status', '納品');
 
     if (clientIds.length > 1)       q = q.in('projects.client_id', clientIds);
     else if (clientIds.length === 1) q = q.eq('projects.client_id', clientIds[0]);
@@ -21262,6 +21265,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
           mime_type:     f?.mime_type || null,
           file_name:     c.file_name,
           creative_type: c.creative_type,
+          status:        c.status || null,   // 制作途中カードの目印用（納品済みは '納品'）
           project_id:    c.project_id,
           project_name:  c.projects?.name || '(案件なし)',
           client_id:     c.projects?.client_id || null,
