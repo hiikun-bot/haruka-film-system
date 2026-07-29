@@ -7968,6 +7968,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     position: absolute; left: 6px; top: 30px; z-index: 3; background: rgba(0,0,0,.6); color: #fff;
     font-size: 10.5px; padding: 2px 6px; border-radius: 5px;
   }
+  /* 制作途中（納品未完了）の目印。左上に段積みする琥珀色チップ */
+  #page-portfolio .pf-wip {
+    position: absolute; left: 6px; z-index: 3; background: rgba(240,180,41,.95); color: #4A2F00;
+    font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 5px; letter-spacing: .02em;
+  }
   /* ⭐ マイベスト（カード右上）。本人だけがクリックでき、他の人には印としてだけ見える */
   #page-portfolio .pf-star {
     /* z-index: ホバーで差し込む <video>（z-index:1）より必ず上に置く。
@@ -8130,6 +8135,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <input type="date" id="pf-to" class="form-select" style="width:140px" onchange="pfOnFilterChange()" aria-label="納品日（終了）">
       <label class="pf-check"><input type="checkbox" id="pf-latest-only" checked onchange="pfOnFilterChange()">最新の納品物のみ</label>
       <label class="pf-check" title="納品物のファイルがシステムに登録されていない作品（外部リンクのみで納品されたもの）も表示します"><input type="checkbox" id="pf-include-nofile" onchange="pfOnFilterChange()">ファイル未登録も表示</label>
+      <label class="pf-check" title="まだ納品完了していない制作途中のクリエイティブ（初稿・修正中など）も表示します。既定は納品済みのみ"><input type="checkbox" id="pf-include-wip" onchange="pfOnFilterChange()">🚧 制作途中も表示</label>
       <label class="pf-check" title="カードを選んでまとめてダウンロードします"><input type="checkbox" id="pf-select-mode" onchange="pfToggleSelectMode(this.checked)">選択モード</label>
       <!-- マイベスト切替（担当者を1名に絞っているときだけ出る）。既定は「本人のマイベスト」 -->
       <span class="pf-seg" id="pf-best-seg" role="group" aria-label="マイベスト表示" style="display:none">
@@ -22697,6 +22703,7 @@ async function pfReload() {
   if (to)   params.set('to', to);
   params.set('latest_only', document.getElementById('pf-latest-only')?.checked === false ? '0' : '1');
   if (document.getElementById('pf-include-nofile')?.checked) params.set('include_no_file', '1');
+  if (document.getElementById('pf-include-wip')?.checked) params.set('include_wip', '1');
   // マイベストの持ち主は「担当者を1名に絞っているとき」のその人。
   // best_mode=auto はサーバー側で「⭐が1件でもあればベストのみ / 無ければ全体」を判定する。
   const bestOwner = pfAssigneeIds.size === 1 ? [...pfAssigneeIds][0] : null;
@@ -22730,17 +22737,21 @@ function pfRenderSummary(json) {
   const truncated = json.truncated ? '（上限400件まで表示。期間や担当者で絞り込んでください）' : '';
   // 非表示にした分は必ず件数を出す（黙って減らさない）
   const hidden = json.no_file_hidden
-    ? `　※ ファイル未登録の納品物 ${json.no_file_hidden}件は非表示`
+    ? `　※ ファイル未登録の作品 ${json.no_file_hidden}件は非表示`
     : '';
   const best = json.best_applied ? '⭐ マイベストのみ表示中　' : '';
-  el.textContent = `${best}${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（納品済のみ）${truncated}${hidden}`;
+  const scope = document.getElementById('pf-include-wip')?.checked ? '制作途中を含む' : '納品済のみ';
+  el.textContent = `${best}${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（${scope}）${truncated}${hidden}`;
 }
 
 function pfRenderGallery() {
   const wrap = document.getElementById('pf-gallery');
   if (!wrap) return;
   if (!pfItems.length) {
-    wrap.innerHTML = '<div class="pf-empty">条件に合う納品済みの作品がありません。</div>';
+    const emptyMsg = document.getElementById('pf-include-wip')?.checked
+      ? '条件に合う作品がありません。'
+      : '条件に合う納品済みの作品がありません。';
+    wrap.innerHTML = `<div class="pf-empty">${emptyMsg}</div>`;
     return;
   }
   const byProject = new Map();
@@ -22817,6 +22828,11 @@ function pfCardHtml(item, idx) {
   // 過去版も出しているとき（最新のみ OFF）だけ version バッジを出す
   const verBadge = (document.getElementById('pf-latest-only')?.checked === false && item.version)
     ? `<span class="pf-ver">v${esc(item.version)}</span>` : '';
+  // 制作途中（納品未完了）のカードにだけ付く目印。正確なステータスは tooltip で。
+  // 絵文字バッジ(top:6px)・verバッジ(top:30px) と重ならない位置に段積みする。
+  const isDelivered = !item.status || item.status === '納品';
+  const wipBadge = isDelivered ? ''
+    : `<span class="pf-wip" style="top:${verBadge ? 54 : 30}px" title="制作途中のステータス：${esc(item.status)}">🚧 制作中</span>`;
   return `
     <div class="pf-card pf-o-${esc(item.orientation || 'landscape')}${pfSelected.has(item.file_id) ? ' pf-picked' : ''}" data-idx="${idx}"
          onclick="pfSelectMode ? pfTogglePick(${idx}) : pfOpenLightbox(${idx})"
@@ -22825,6 +22841,7 @@ function pfCardHtml(item, idx) {
         ${media}
         <span class="pf-badge">${isVideo ? '🎬' : '🎨'}</span>
         ${verBadge}
+        ${wipBadge}
         ${pfStarHtml(item, idx)}
         ${pfPickHtml(item, idx)}
         ${note}
