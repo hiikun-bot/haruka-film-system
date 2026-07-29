@@ -27836,7 +27836,9 @@ function _eiRenderLines(lines, editable) {
       <div class="ei-group" data-creative-id="${g.creative_id}"
            style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
         <div style="background:#f0fafa;padding:8px 12px;font-size:12px;font-weight:600;color:#226;border-bottom:1px solid #d6ecec">
-          ${dateBlock}<span>${g.creative_label || '(無題)'}</span>
+          ${dateBlock}${g.creative_id
+            ? `<span style="cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;text-underline-offset:2px" onclick="closeModal('modal-edit-invoice'); openCreativeDetail('${esc(g.creative_id)}')" title="クリックでクリエイティブ詳細を開く">${esc(g.creative_label || '(無題)')}</span>`
+            : `<span>${esc(g.creative_label || '(無題)')}</span>`}
         </div>
         ${colHeader}
         ${g.indices.map(i => _eiRowHTML(lines[i], i, editable)).join('')}
