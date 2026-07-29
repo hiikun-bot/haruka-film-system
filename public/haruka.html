@@ -8121,6 +8121,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 <div id="page-portfolio" class="page">
   <div class="pf-wrap">
     <div class="pf-toolbar">
+      <span class="pf-seg" role="group" aria-label="表示範囲">
+        <button type="button" id="pf-scope-me" onclick="pfSetScope('me')" title="自分が担当した作品だけを表示">👤 自分</button>
+        <button type="button" id="pf-scope-all" onclick="pfSetScope('all')" title="担当者で絞らず、チーム全員の作品を表示">👥 全員</button>
+      </span>
       <button type="button" id="pf-assignee-btn" class="form-select" onclick="pfOpenAssigneePicker(event)" style="width:200px;flex:0 0 200px;text-align:left;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="担当者でフィルタ">
         <span id="pf-assignee-label">担当者でフィルタ</span>
       </button>
@@ -22614,8 +22618,10 @@ function pfRefreshAssigneeLabel() {
   if (!el) return;
   const btn = document.getElementById('pf-assignee-btn');
   if (pfAssigneeIds.size === 0) {
-    el.textContent = '担当者でフィルタ';
-    if (btn) btn.title = '担当者でフィルタ';
+    // 担当者未選択＝サーバーは全担当者ぶんを返す。「全員（チーム全体）」だと分かるよう明示する
+    el.textContent = '担当：全員（チーム全体）';
+    if (btn) btn.title = '担当者で絞り込んでいません（チーム全員の作品を表示中）。クリックで担当者を選べます';
+    pfSyncScopeSeg();
     return;
   }
   const names = [...pfAssigneeIds].map(id => {
@@ -22626,6 +22632,33 @@ function pfRefreshAssigneeLabel() {
   const text = names.length ? `担当：${names.join('、')}` : `担当者 ${pfAssigneeIds.size}名`;
   el.textContent = text;
   if (btn) btn.title = text;   // ボタン枠は省略表示なので、全担当者名はホバーで確認できるようにする
+  pfSyncScopeSeg();
+}
+
+// 「👤 自分 / 👥 全員」ワンクリック切替。
+//   me  = 自分（currentUser）1名に絞る
+//   all = 担当者フィルタを空にする（＝サーバーはチーム全員の作品を返す）
+function pfSetScope(scope) {
+  if (scope === 'me') {
+    pfAssigneeIds = currentUser?.id ? new Set([currentUser.id]) : new Set();
+  } else {
+    pfAssigneeIds = new Set();   // 全員
+  }
+  pfBestMode = 'auto';           // 見る対象が変わったのでマイベスト判定も初期化
+  pfRefreshAssigneeLabel();
+  pfReload();
+}
+
+// 現在の担当者フィルタ状態からセグメントの active を同期する。
+//   空 → 全員 / 自分1名だけ → 自分 / それ以外（複数・他人）→ どちらも非アクティブ
+function pfSyncScopeSeg() {
+  const meBtn  = document.getElementById('pf-scope-me');
+  const allBtn = document.getElementById('pf-scope-all');
+  if (!meBtn || !allBtn) return;
+  const isAll = pfAssigneeIds.size === 0;
+  const isMe  = pfAssigneeIds.size === 1 && !!currentUser?.id && pfAssigneeIds.has(currentUser.id);
+  meBtn.classList.toggle('active', isMe);
+  allBtn.classList.toggle('active', isAll);
 }
 
 function pfSetTab(tab) {
