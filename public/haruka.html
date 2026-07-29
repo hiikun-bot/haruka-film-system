@@ -26994,7 +26994,7 @@ async function loadMyInvoices() {
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div>
-          <div style="font-weight:600;font-size:15px">${inv.invoice_number}</div>
+          <div style="font-weight:600;font-size:15px">${inv.invoice_number ? `<span style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px" onclick="editInvoice('${inv.id}')" title="クリックで明細を表示">${esc(inv.invoice_number)}</span>` : ''}</div>
           <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${inv.year || ''}年${inv.month || ''}月 / ${inv.projects?.name || '全案件'}</div>
         </div>
         <div style="text-align:right">
