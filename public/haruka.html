@@ -8116,8 +8116,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 <div id="page-portfolio" class="page">
   <div class="pf-wrap">
     <div class="pf-toolbar">
-      <button type="button" id="pf-assignee-btn" class="form-select" onclick="pfOpenAssigneePicker(event)" style="width:200px;text-align:left">
-        <span id="pf-assignee-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">担当者でフィルタ</span>
+      <button type="button" id="pf-assignee-btn" class="form-select" onclick="pfOpenAssigneePicker(event)" style="width:200px;flex:0 0 200px;text-align:left;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="担当者でフィルタ">
+        <span id="pf-assignee-label">担当者でフィルタ</span>
       </button>
       <select id="pf-client" class="form-select" style="width:190px" onchange="pfOnFilterChange()"><option value="">クライアント：すべて</option></select>
       <div class="pf-seg" role="tablist" aria-label="種別">
@@ -22606,13 +22606,20 @@ function pfOpenAssigneePicker(ev) {
 function pfRefreshAssigneeLabel() {
   const el = document.getElementById('pf-assignee-label');
   if (!el) return;
-  if (pfAssigneeIds.size === 0) { el.textContent = '担当者でフィルタ'; return; }
+  const btn = document.getElementById('pf-assignee-btn');
+  if (pfAssigneeIds.size === 0) {
+    el.textContent = '担当者でフィルタ';
+    if (btn) btn.title = '担当者でフィルタ';
+    return;
+  }
   const names = [...pfAssigneeIds].map(id => {
     const m = (allMembers || []).find(u => u.id === id)
            || (currentUser?.id === id ? currentUser : null);
     return m ? ((window.NameDisplay && NameDisplay.short(m)) || m.nickname || m.full_name || '') : '';
   }).filter(Boolean);
-  el.textContent = names.length ? `担当：${names.join('、')}` : `担当者 ${pfAssigneeIds.size}名`;
+  const text = names.length ? `担当：${names.join('、')}` : `担当者 ${pfAssigneeIds.size}名`;
+  el.textContent = text;
+  if (btn) btn.title = text;   // ボタン枠は省略表示なので、全担当者名はホバーで確認できるようにする
 }
 
 function pfSetTab(tab) {
