@@ -5126,24 +5126,42 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   // 単価（＝この担当者が 1 本あたり受け取る原価）を creator-summary と同じロジックで解決する。
   // computeCreatorCreativeBreakdown / resolvePayee を共有することで、本モーダルの「単価合計」と
   // クリエイター別集計（/creator-summary）の金額が必ず一致する（silent な二重定義を作らない）。
+  // ADR 030: 単価は締め月末時点で有効な成果物グループ(line)から解決する。
+  //   baseLineById       : 元 line_id -> 元 line（project_id/category_id/rank 判定用）
+  //   linesByProjCatRank : `${pid}|${cat}|${rank}` -> line[]（applies 付き・解決候補）
+  //   lineById/lineCostsByLine : 解決対象になりうる全 line をロード（解決後 id で必ず引ける）
+  const monthEndStr = jstMonthEndStr(year, month);
   const lineIds = Array.from(new Set((data || []).map(c => c.line_id).filter(Boolean)));
-  const lineById = new Map();        // line_id -> line
-  const lineCostsByLine = new Map(); // line_id -> line_costs[]
+  const lineById = new Map();          // line_id -> line
+  const lineCostsByLine = new Map();   // line_id -> line_costs[]
+  const baseLineById = new Map();      // 元 line_id -> 元 line
+  const linesByProjCatRank = new Map();
   if (lineIds.length) {
-    const [linesRes, lineCostsRes] = await Promise.all([
-      supabase
-        .from('project_estimate_lines')
-        .select('id, project_id, planned_count, client_unit_price, status')
-        .in('id', lineIds),
-      supabase
-        .from('project_estimate_line_costs')
-        .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
-        .in('line_id', lineIds),
-    ]);
-    if (linesRes.error)     console.warn('[aggregateCreativeByAssignee] lines load failed:', linesRes.error.message);
-    if (lineCostsRes.error) console.warn('[aggregateCreativeByAssignee] line_costs load failed:', lineCostsRes.error.message);
-    for (const l of (linesRes.data || [])) lineById.set(l.id, l);
-    for (const lc of (lineCostsRes.data || [])) {
+    // 1) 元 line を取得（project_id/category_id/rank 判定用）
+    const baseLines = await loadEstimateLinesForPricing({ ids: lineIds }, 'aggregateCreativeByAssignee');
+    for (const l of baseLines) baseLineById.set(l.id, l);
+    // 2) 元 line が属する project 群の全 line を追加ロード（applies 付き・解決候補）
+    const projectIds = Array.from(new Set(baseLines.map(l => l.project_id).filter(Boolean)));
+    const projLines = projectIds.length
+      ? await loadEstimateLinesForPricing({ projectIds }, 'aggregateCreativeByAssignee')
+      : [];
+    const allLineIds = new Set(lineIds);
+    for (const l of projLines) {
+      lineById.set(l.id, l);
+      allLineIds.add(l.id);
+      const key = `${l.project_id}|${l.category_id}|${l.rank ?? ''}`;
+      if (!linesByProjCatRank.has(key)) linesByProjCatRank.set(key, []);
+      linesByProjCatRank.get(key).push(l);
+    }
+    // 元 line が projLines に含まれない場合（project_id NULL 等）の保険
+    for (const l of baseLines) if (!lineById.has(l.id)) lineById.set(l.id, l);
+    // 3) 解決対象になりうる全 line の line_costs をロード（解決後 line_id で必ず単価が引ける）
+    const { data: lcData, error: lcErr } = await supabase
+      .from('project_estimate_line_costs')
+      .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
+      .in('line_id', Array.from(allLineIds));
+    if (lcErr) console.warn('[aggregateCreativeByAssignee] line_costs load failed:', lcErr.message);
+    for (const lc of (lcData || [])) {
       if (!lineCostsByLine.has(lc.line_id)) lineCostsByLine.set(lc.line_id, []);
       lineCostsByLine.get(lc.line_id).push(lc);
     }
@@ -5209,6 +5227,8 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
       });
     }
     const isVideo = c.creative_type?.startsWith('video') || (!c.creative_type?.startsWith('design'));
+    // ADR 030: 締め月末時点で有効な line に差し替えてから単価を解決する
+    c.line_id = resolveEffectiveLineId(baseLineById.get(c.line_id), linesByProjCatRank, monthEndStr);
     // この creative の担当者ごとの金額内訳（editor/designer/director_as_editor 分）を解決
     const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee, userById);
     const unitInfoFor = (uid) => {
@@ -5738,6 +5758,64 @@ router.post('/analytics/monthly-revenue/export-sheet', requireAuth, requirePermi
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// ADR 030: 作成本数集計・請求プレビューの単価を「締め月末時点で有効な成果物
+// グループ（line）」から解決する。creative.line_id 固定だと ADR 025 の適用期間
+// （applies_from/applies_to・停止/再開）を無視するため、単価変更（旧グループ停止＋
+// 新グループ作成）後の納品済みクリエイティブが旧単価のまま計上されてしまう問題を是正。
+// ─────────────────────────────────────────────────────────────────────────
+
+// 集計対象月の JST 月末日を 'YYYY-MM-DD' 文字列で返す。
+// applies_from/applies_to は DATE ('YYYY-MM-DD') 文字列なので、この文字列と辞書順比較する。
+// month は 1 始まり。Date.UTC(year, month, 0) は当月末日（翌月 0 日目）を指す。
+function jstMonthEndStr(year, month) {
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+}
+
+// project_estimate_lines を「単価解決に必要な列（category_id/rank/applies_from/applies_to 付き）」で
+// 取得する。applies_from/applies_to（ADR 025）や category_id/rank が未適用の環境では旧 select に
+// フォールバックし、その場合は分類キーが得られないので呼び出し側で従来どおり元 line_id を使う。
+//   filter: { ids: [line_id,...] } または { projectIds: [project_id,...] }
+async function loadEstimateLinesForPricing(filter, tag) {
+  const withApplies = 'id, project_id, category_id, rank, planned_count, client_unit_price, status, applies_from, applies_to';
+  const legacy      = 'id, project_id, planned_count, client_unit_price, status';
+  const applyFilter = (q) => filter.ids
+    ? q.in('id', filter.ids)
+    : q.in('project_id', filter.projectIds);
+  let res = await applyFilter(supabase.from('project_estimate_lines').select(withApplies));
+  if (res.error) {
+    // applies_from/applies_to（または category_id/rank）が未適用の環境 → 旧 select で再試行。
+    // フォールバックした line には category_id が入らないため resolveEffectiveLineId は元 line を返す。
+    console.warn(`[${tag}] lines load with applies columns failed, fallback to legacy select:`, res.error.message);
+    res = await applyFilter(supabase.from('project_estimate_lines').select(legacy));
+    if (res.error) {
+      console.warn(`[${tag}] lines legacy load failed:`, res.error.message);
+      return [];
+    }
+  }
+  return res.data || [];
+}
+
+// 元 line が属する (project_id, category_id, rank) の成果物グループ群から、締め月末時点で
+// 有効な line の id を1つ選ぶ（ADR 030）。
+//   - applies_from IS NULL OR applies_from <= 月末
+//   - applies_to   IS NULL OR applies_to   >= 月末
+//   - 複数該当時は applies_from が最新のもの（＝直近に有効化された単価）
+// 分類キーが取れない（category_id 未取得＝フォールバック環境や未設定）／有効 line が
+// 見つからない場合は、従来どおり元 line の id を返す（タブ・集計を壊さない）。
+function resolveEffectiveLineId(baseLine, linesByProjCatRank, monthEndStr) {
+  if (!baseLine) return null;
+  if (baseLine.category_id == null) return baseLine.id; // 分類キー不明 → 従来どおり
+  const key = `${baseLine.project_id}|${baseLine.category_id}|${baseLine.rank ?? ''}`;
+  const cands = (linesByProjCatRank.get(key) || []).filter(l =>
+    (!l.applies_from || l.applies_from <= monthEndStr) &&
+    (!l.applies_to   || l.applies_to   >= monthEndStr)
+  );
+  cands.sort((a, b) => String(b.applies_from || '').localeCompare(String(a.applies_from || '')));
+  return (cands[0] && cands[0].id) || baseLine.id;
+}
+
 // 単一の creative について、関わった各ユーザーごとの内訳を計算する純粋関数。
 // /api/analytics/creator-summary（集計）と /api/analytics/creator-detail（明細）の
 // 両方から呼び出すことで、ロジック分岐を撲滅する。
@@ -5941,24 +6019,42 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   if (error) throw new Error(error.message);
 
   // line_id ⇒ line + line_costs を一括取得
+  // ADR 030: 単価は締め月末時点で有効な成果物グループ(line)から解決する。
+  //   baseLineById       : 元 line_id -> 元 line（project_id/category_id/rank 判定用）
+  //   linesByProjCatRank : `${pid}|${cat}|${rank}` -> line[]（applies 付き・解決候補）
+  //   lineById/lineCostsByLine : 解決対象になりうる全 line をロード（解決後 id で必ず引ける）
+  const monthEndStr = jstMonthEndStr(year, month);
   const lineIds = Array.from(new Set((creatives || []).map(c => c.line_id).filter(Boolean)));
   const lineById = new Map();             // line_id -> line
   const lineCostsByLine = new Map();      // line_id -> line_costs[]
+  const baseLineById = new Map();         // 元 line_id -> 元 line
+  const linesByProjCatRank = new Map();
   if (lineIds.length) {
-    const [linesRes, lineCostsRes] = await Promise.all([
-      supabase
-        .from('project_estimate_lines')
-        .select('id, project_id, planned_count, client_unit_price, status')
-        .in('id', lineIds),
-      supabase
-        .from('project_estimate_line_costs')
-        .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
-        .in('line_id', lineIds),
-    ]);
-    if (linesRes.error)     console.warn('[aggregateCreatorSummary] lines load failed:', linesRes.error.message);
-    if (lineCostsRes.error) console.warn('[aggregateCreatorSummary] line_costs load failed:', lineCostsRes.error.message);
-    for (const l of (linesRes.data || [])) lineById.set(l.id, l);
-    for (const lc of (lineCostsRes.data || [])) {
+    // 1) 元 line を取得（project_id/category_id/rank 判定用）
+    const baseLines = await loadEstimateLinesForPricing({ ids: lineIds }, 'aggregateCreatorSummary');
+    for (const l of baseLines) baseLineById.set(l.id, l);
+    // 2) 元 line が属する project 群の全 line を追加ロード（applies 付き・解決候補）
+    const projectIds = Array.from(new Set(baseLines.map(l => l.project_id).filter(Boolean)));
+    const projLines = projectIds.length
+      ? await loadEstimateLinesForPricing({ projectIds }, 'aggregateCreatorSummary')
+      : [];
+    const allLineIds = new Set(lineIds);
+    for (const l of projLines) {
+      lineById.set(l.id, l);
+      allLineIds.add(l.id);
+      const key = `${l.project_id}|${l.category_id}|${l.rank ?? ''}`;
+      if (!linesByProjCatRank.has(key)) linesByProjCatRank.set(key, []);
+      linesByProjCatRank.get(key).push(l);
+    }
+    // 元 line が projLines に含まれない場合（project_id NULL 等）の保険
+    for (const l of baseLines) if (!lineById.has(l.id)) lineById.set(l.id, l);
+    // 3) 解決対象になりうる全 line の line_costs をロード（解決後 line_id で必ず単価が引ける）
+    const { data: lcData, error: lcErr } = await supabase
+      .from('project_estimate_line_costs')
+      .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
+      .in('line_id', Array.from(allLineIds));
+    if (lcErr) console.warn('[aggregateCreatorSummary] line_costs load failed:', lcErr.message);
+    for (const lc of (lcData || [])) {
       if (!lineCostsByLine.has(lc.line_id)) lineCostsByLine.set(lc.line_id, []);
       lineCostsByLine.get(lc.line_id).push(lc);
     }
@@ -6065,6 +6161,8 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   // 単一の creative に対する 1 ユーザーあたりの内訳算出は
   // computeCreatorCreativeBreakdown() に切り出している（/creator-detail と共有）。
   for (const c of (creatives || [])) {
+    // ADR 030: 締め月末時点で有効な line に差し替えてから単価を解決する
+    c.line_id = resolveEffectiveLineId(baseLineById.get(c.line_id), linesByProjCatRank, monthEndStr);
     const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee, userById);
     for (const b of perUser.values()) {
       const u = ensureUser(b.user);
@@ -6246,24 +6344,42 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
   const { data: creatives, error } = await q;
   if (error) throw new Error(error.message);
 
+  // ADR 030: 単価は締め月末時点で有効な成果物グループ(line)から解決する。
+  //   baseLineById       : 元 line_id -> 元 line（project_id/category_id/rank 判定用）
+  //   linesByProjCatRank : `${pid}|${cat}|${rank}` -> line[]（applies 付き・解決候補）
+  //   lineById/lineCostsByLine : 解決対象になりうる全 line をロード（解決後 id で必ず引ける）
+  const monthEndStr = jstMonthEndStr(year, month);
   const lineIds = Array.from(new Set((creatives || []).map(c => c.line_id).filter(Boolean)));
   const lineById = new Map();
   const lineCostsByLine = new Map();
+  const baseLineById = new Map();
+  const linesByProjCatRank = new Map();
   if (lineIds.length) {
-    const [linesRes, lineCostsRes] = await Promise.all([
-      supabase
-        .from('project_estimate_lines')
-        .select('id, project_id, planned_count, client_unit_price, status')
-        .in('id', lineIds),
-      supabase
-        .from('project_estimate_line_costs')
-        .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
-        .in('line_id', lineIds),
-    ]);
-    if (linesRes.error)     console.warn('[aggregateCreatorDetail] lines load failed:', linesRes.error.message);
-    if (lineCostsRes.error) console.warn('[aggregateCreatorDetail] line_costs load failed:', lineCostsRes.error.message);
-    for (const l of (linesRes.data || [])) lineById.set(l.id, l);
-    for (const lc of (lineCostsRes.data || [])) {
+    // 1) 元 line を取得（project_id/category_id/rank 判定用）
+    const baseLines = await loadEstimateLinesForPricing({ ids: lineIds }, 'aggregateCreatorDetail');
+    for (const l of baseLines) baseLineById.set(l.id, l);
+    // 2) 元 line が属する project 群の全 line を追加ロード（applies 付き・解決候補）
+    const projectIds = Array.from(new Set(baseLines.map(l => l.project_id).filter(Boolean)));
+    const projLines = projectIds.length
+      ? await loadEstimateLinesForPricing({ projectIds }, 'aggregateCreatorDetail')
+      : [];
+    const allLineIds = new Set(lineIds);
+    for (const l of projLines) {
+      lineById.set(l.id, l);
+      allLineIds.add(l.id);
+      const key = `${l.project_id}|${l.category_id}|${l.rank ?? ''}`;
+      if (!linesByProjCatRank.has(key)) linesByProjCatRank.set(key, []);
+      linesByProjCatRank.get(key).push(l);
+    }
+    // 元 line が projLines に含まれない場合（project_id NULL 等）の保険
+    for (const l of baseLines) if (!lineById.has(l.id)) lineById.set(l.id, l);
+    // 3) 解決対象になりうる全 line の line_costs をロード（解決後 line_id で必ず単価が引ける）
+    const { data: lcData, error: lcErr } = await supabase
+      .from('project_estimate_line_costs')
+      .select('id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, role:roles(id, code, label)')
+      .in('line_id', Array.from(allLineIds));
+    if (lcErr) console.warn('[aggregateCreatorDetail] line_costs load failed:', lcErr.message);
+    for (const lc of (lcData || [])) {
       if (!lineCostsByLine.has(lc.line_id)) lineCostsByLine.set(lc.line_id, []);
       lineCostsByLine.get(lc.line_id).push(lc);
     }
@@ -6321,6 +6437,8 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
   };
 
   for (const c of (creatives || [])) {
+    // ADR 030: 締め月末時点で有効な line に差し替えてから単価を解決する
+    c.line_id = resolveEffectiveLineId(baseLineById.get(c.line_id), linesByProjCatRank, monthEndStr);
     const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee, userById);
     const slot = perUser.get(userId);
     if (!slot) continue;
