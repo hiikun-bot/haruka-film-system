@@ -27756,6 +27756,7 @@ async function editInvoice(id) {
       lines.push({
         id: it.id,
         creative_id: it.creative_id || null,
+        creative_project_id: cr?.project_id || null,
         creative_label: creativeLabel,
         creative_date:  creativeDate,
         cost_type: it.cost_type || null,
@@ -27772,6 +27773,7 @@ async function editInvoice(id) {
       fb.forEach((f, idx) => lines.push({
         id: idx === 0 ? it.id : null,
         creative_id: it.creative_id || null,
+        creative_project_id: cr?.project_id || null,
         creative_label: creativeLabel,
         creative_date:  creativeDate,
         ...f,
@@ -27801,6 +27803,7 @@ function _eiRenderLines(lines, editable) {
         const g = {
           key,
           creative_id: l.creative_id,
+          creative_project_id: l.creative_project_id || null,
           creative_label: l.creative_label || '',
           creative_date:  l.creative_date  || '',
           indices: [],
@@ -27838,7 +27841,9 @@ function _eiRenderLines(lines, editable) {
         <div style="background:#f0fafa;padding:8px 12px;font-size:12px;font-weight:600;color:#226;border-bottom:1px solid #d6ecec">
           ${dateBlock}${g.creative_id
             ? `<span style="cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;text-underline-offset:2px" onclick="closeModal('modal-edit-invoice'); openCreativeDetail('${esc(g.creative_id)}')" title="クリックでクリエイティブ詳細を開く">${esc(g.creative_label || '(無題)')}</span>`
-            : `<span>${esc(g.creative_label || '(無題)')}</span>`}
+            : `<span>${esc(g.creative_label || '(無題)')}</span>`}${(g.creative_project_id && (typeof hasPermission==='function' && hasPermission('invoice.all_view')))
+            ? `<button type="button" class="btn btn-sm" style="font-size:10px;padding:2px 8px;margin-left:8px" onclick="closeModal('modal-edit-invoice'); openEditProjectById('${esc(g.creative_project_id)}')" title="この案件の支払単価を確認">💴 案件の価格</button>`
+            : ''}
         </div>
         ${colHeader}
         ${g.indices.map(i => _eiRowHTML(lines[i], i, editable)).join('')}

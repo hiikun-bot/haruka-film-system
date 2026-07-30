@@ -13612,7 +13612,7 @@ router.get('/invoices', async (req, res) => {
   //   3) 監査列 + 登録番号なし
   //   4) どちらもなし
   // migration 適用前後どちらでも 500 にならないようにする。
-  const select = ({ audit, regNo }) => `*, projects(id,name,clients(id,name${regNo ? ',invoice_registration_number' : ''})), issuer:issuer_id(id,full_name${regNo ? ',invoice_registration_number' : ''}), invoice_items(id,total_amount,is_special,special_reason${audit ? ',original_unit_price,price_change_reason' : ''},label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`;
+  const select = ({ audit, regNo }) => `*, projects(id,name,clients(id,name${regNo ? ',invoice_registration_number' : ''})), issuer:issuer_id(id,full_name${regNo ? ',invoice_registration_number' : ''}), invoice_items(id,total_amount,is_special,special_reason${audit ? ',original_unit_price,price_change_reason' : ''},label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,project_id,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`;
   let { data, error } = await buildQuery(select({ audit: true, regNo: true }));
   if (error && /invoice_registration_number/.test(error.message || '')) {
     console.warn('[invoices] invoice_registration_number 列未反映のためフォールバック:', error.message);
@@ -13933,7 +13933,7 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
         ${auditCols ? 'original_unit_price, price_change_reason,' : ''}
         label, quantity, unit, unit_price, sort_order,
         cost_type, creative_label, creative_id,
-        creatives(id, file_name, creative_type, final_deadline, draft_deadline, updated_at,
+        creatives(id, file_name, project_id, creative_type, final_deadline, draft_deadline, updated_at,
           projects(id, name, clients(id, name, client_code${withRegNo ? ', invoice_registration_number' : ''}))
         ),
         invoice_item_details(cost_type, unit_price, amount)
