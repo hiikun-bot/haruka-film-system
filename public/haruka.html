@@ -18589,6 +18589,7 @@ function renderProjectLines() {
           <div style="display:flex;gap:6px;flex-shrink:0">
             <button type="button" class="btn" onclick="toggleLineCostsAccordion('${esc(line.id)}')" style="padding:4px 10px;font-size:11px" title="ロール別の支払単価（ディレクション費など）を確認・追加">${_projectLineCostsOpen.has(line.id) ? '▾' : '▸'} 💰 内訳</button>
             ${toggleBtn}
+            <button type="button" class="btn" onclick="duplicateProjectLine('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}" title="この成果物グループを複製して、同じ内容の行をもう1つ作成します">⧉ 複製</button>
             <button type="button" class="btn" onclick="openProjectLineEdit('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">編集</button>
             <button type="button" class="btn" onclick="openProjectLineDeleteConfirm('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;color:#A32D2D;border-color:#F09595;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">削除</button>
           </div>
@@ -19214,6 +19215,30 @@ async function openProjectLineEdit(lineId) {
   }
   await prepareProjectLineEditModal(line, projectId);
   openModal('modal-project-line-edit');
+}
+
+// 既存 line を複製: 本体＋ロール別単価（line_costs）をまるごとコピーして元の直後に追加する。
+// サーバー側で名称に「（コピー）」を付与し、複製行は現役（停止状態は引き継がない）で作成される。
+async function duplicateProjectLine(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  const line = _projectLinesCache.find(l => l.id === lineId);
+  if (!projectId || !line) {
+    showToast('成果物グループが見つかりません', 'warn');
+    if (projectId) await loadProjectLines(projectId);
+    return;
+  }
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/duplicate`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || `複製に失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    showToast('成果物グループを複製しました', 'ok');
+    await loadProjectLines(projectId);
+  } catch (e) {
+    showToast(`複製に失敗しました: ${e?.message || ''}`, 'warn');
+  }
 }
 
 // 編集モーダルの初期化（line=null は新規）
