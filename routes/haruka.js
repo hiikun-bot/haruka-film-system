@@ -2897,6 +2897,108 @@ router.delete('/projects/:project_id/lines/:line_id', requireAuth, requirePermis
   res.json({ ok: true });
 });
 
+// POST /api/projects/:project_id/lines/:line_id/duplicate  複製
+// 元 line 本体（カテゴリ/ランク/名称/クライアント単価等）＋従属 line_costs
+// （制作者単価・ディレクター費・ロール別単価）を丸ごとコピーして新規 line を作る。
+// 名称は「元の名称（コピー）」。複製行は元の直後に並ぶよう案件内を 10刻みで再採番する。
+// 停止状態（applies_to）は引き継がず、複製は常に現役として作成する（すぐ使える行を作るのが目的）。
+router.post('/projects/:project_id/lines/:line_id/duplicate', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+
+  // 元 line 取得（applies 列フォールバック付き）
+  const { data: src, error: getErr } = await selectLineRowById(lineId);
+  if (getErr) {
+    if (isMissingPelTable(getErr)) return res.status(503).json({ error: 'project_estimate_lines テーブルが未作成です。' });
+    return res.status(500).json({ error: getErr.message });
+  }
+  if (!src) return res.status(404).json({ error: 'line が見つかりません' });
+  if (src.project_id !== projectId) {
+    return res.status(400).json({ error: 'project_id と line_id が一致しません' });
+  }
+
+  // クライアント請求単価は権限 project.client_price を持つロールのみコピー。無ければ 0（ADR 015）
+  const codes = await getEffectiveRoleCodes(req);
+  const canCopyClientPrice = await roleCodesHavePermission(codes, 'project.client_price');
+
+  // sort_order は一旦末尾（既存最大 + 10）で挿入し、その後まとめて再採番する
+  const { data: maxRow } = await supabase
+    .from('project_estimate_lines')
+    .select('sort_order')
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: false, nullsFirst: false })
+    .limit(1);
+  const currentMax = (maxRow && maxRow[0] && Number.isFinite(maxRow[0].sort_order)) ? maxRow[0].sort_order : 0;
+
+  const insertRow = {
+    project_id: projectId,
+    category_id: src.category_id || null,
+    rank: src.rank || null,
+    name: src.name ? `${src.name}（コピー）` : null,
+    planned_count: Math.max(0, parseInt(src.planned_count, 10) || 0),
+    client_unit_price: canCopyClientPrice ? (Number(src.client_unit_price) || 0) : 0,
+    sort_order: currentMax + 10,
+    currency: src.currency || 'JPY',
+    tax_included: src.tax_included === false ? false : true,
+    status: src.status || 'contracted',
+    status_changed_at: new Date().toISOString(),
+  };
+  const { data: inserted, error: insErr } = await supabase
+    .from('project_estimate_lines')
+    .insert(insertRow)
+    .select('id')
+    .single();
+  if (insErr) {
+    if (isMissingPelTable(insErr)) return res.status(503).json({ error: 'project_estimate_lines テーブルが未作成です。' });
+    return res.status(500).json({ error: insErr.message });
+  }
+  const newLineId = inserted.id;
+
+  // 従属 line_costs（制作者単価・ディレクター費・ロール別単価）を全コピー。
+  // これらは支払単価で client_unit_price とは別軸のため、編集権限があればそのまま引き継ぐ。
+  const { data: srcCosts } = await supabase
+    .from('project_estimate_line_costs')
+    .select('role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours')
+    .eq('line_id', lineId);
+  if (Array.isArray(srcCosts) && srcCosts.length) {
+    const costRows = srcCosts.map(c => ({
+      line_id: newLineId,
+      role_id: c.role_id,
+      user_id: c.user_id ?? null,
+      unit_price: c.unit_price,
+      currency: c.currency || 'JPY',
+      pricing_type: c.pricing_type || 'fixed_per_unit',
+      percentage: c.percentage ?? null,
+      actual_hours: c.actual_hours ?? null,
+    }));
+    const { error: costErr } = await supabase.from('project_estimate_line_costs').insert(costRows);
+    if (costErr) console.warn('[lines/duplicate] line_costs copy failed:', costErr.message);
+  }
+
+  // 複製行を元の直後に並べる: 案件内 lines を現在の順序で取得し、
+  // 新 line を元 line の直後へ移動した順で sort_order を 10, 20, 30... に再採番する（reorder と同手法）。
+  try {
+    const { data: allLines, error: listErr } = await supabase
+      .from('project_estimate_lines')
+      .select('id')
+      .eq('project_id', projectId)
+      .order('sort_order', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true });
+    if (!listErr && Array.isArray(allLines)) {
+      const ids = allLines.map(l => l.id).filter(id => id !== newLineId);
+      const srcIdx = ids.indexOf(lineId);
+      if (srcIdx >= 0) ids.splice(srcIdx + 1, 0, newLineId);
+      else ids.push(newLineId);
+      await Promise.all(ids.map((id, idx) =>
+        supabase.from('project_estimate_lines').update({ sort_order: (idx + 1) * 10 }).eq('id', id)
+      ));
+    }
+  } catch (e) { console.warn('[lines/duplicate] reorder after copy failed:', e?.message); }
+
+  const { data, error } = await selectLineRowById(newLineId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // GET /api/projects/:project_id/lines/:line_id/creatives  紐付くクリエイティブ一覧
 // 削除が 409 でブロックされたとき「どのクリエイティブが紐付いているのか」を
 // ポップアップで確認するために使う。project_id 不一致のデータ不整合も拾えるよう line_id のみで絞る。
