@@ -41144,6 +41144,44 @@ function renderCreatorSummaryTable(data) {
 // 「summary 行の合計 = モーダル内 row_total の合計」が自動的に一致する。
 // baseType を渡すと、その種別（'video'|'design'|'director'）の明細だけに絞り込んで表示する。
 // 数字セル（動画/デザイン/ディレクション本数）クリックの導線。省略時はクリエイター名クリックで全種別。
+let _creatorDetailExport = null;
+// クリエイター別作成本数モーダルの「表示中の内訳」を CSV で書き出す（Excel 用 BOM 付き UTF-8）
+function exportCreatorDetailCsv() {
+  const d = _creatorDetailExport;
+  if (!d || !Array.isArray(d.items) || !d.items.length) { showToast('出力できる内訳がありません', 'warn'); return; }
+  const roleLabelMap = { editor:'編集', designer:'デザイン', director:'ディレクター', sub_director:'サブディレクター', director_as_editor:'監督兼編集', producer:'プロデューサー', sub_producer:'サブプロデューサー' };
+  const roleLabel = (c) => roleLabelMap[c] || (c || '');
+  const cell = (v) => { const s = String(v == null ? '' : v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const header = ['案件', 'クライアント', 'クリエイティブ', '種別', '役割', '金額内訳', '行合計'];
+  const lines = [header.map(cell).join(',')];
+  d.items.forEach(it => {
+    const roles = (it.roles || []).filter(c => ['editor','designer','director','sub_director','director_as_editor'].includes(c)).map(roleLabel).join(' ');
+    const breakdown = (it.breakdown || []).filter(x => x.role_code !== 'producer' && x.role_code !== 'sub_producer').map(x => `${roleLabel(x.role_code)}:${Number(x.amount)||0}`).join(' / ');
+    const rec = [
+      it.project ? it.project.name : '',
+      it.project ? it.project.client_name : '',
+      it.file_name || '',
+      it.base_type === 'design' ? 'デザイン' : '動画',
+      (it.rate_unknown && !roles) ? '単価未設定' : roles,
+      breakdown,
+      Number(it.row_total) || 0,
+    ];
+    lines.push(rec.map(cell).join(','));
+  });
+  const csv = '﻿' + lines.join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const ymd = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace(/-/g, '');
+  const typePart = d.typeLabel ? '_' + d.typeLabel : '';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${d.uname}_${d.year}年${d.month}月_作成本数${typePart}_${ymd}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 async function openCreatorDetail(userId, baseType) {
   if (!userId || !_analyticsLastResult) {
     showToast('集計データが読み込まれていません', 'warn');
@@ -41183,7 +41221,11 @@ async function openCreatorDetail(userId, baseType) {
   // counted フラグは creator-summary の集計と同一判定なので、絞り込み件数 = クリックした数字に一致する。
   const _typeLabel = { video: '動画', design: 'デザイン', director: 'ディレクション' }[baseType] || null;
   const items = baseType ? (data.items || []).filter(it => it.counted && it.counted[baseType]) : (data.items || []);
-  titleEl.innerHTML = `📋 ${esc(uname)} — ${data.year}年${data.month}月 ${esc(data.status_label)}${_typeLabel ? '・' + _typeLabel + 'のみ' : ''}<button class="modal-close" onclick="closeModal('modal-creator-detail')">×</button>`;
+  // CSV出力用に現在表示中の内訳を保持
+  _creatorDetailExport = { uname, year: data.year, month: data.month, statusLabel: data.status_label, typeLabel: _typeLabel, items };
+  titleEl.innerHTML = `📋 ${esc(uname)} — ${data.year}年${data.month}月 ${esc(data.status_label)}${_typeLabel ? '・' + _typeLabel + 'のみ' : ''}`
+    + `<button class="btn btn-sm" style="font-size:11px;padding:3px 10px;margin-left:12px" onclick="exportCreatorDetailCsv()" title="表示中の内訳をCSVで書き出す">⬇ CSV出力</button>`
+    + `<button class="modal-close" onclick="closeModal('modal-creator-detail')">×</button>`;
 
   // 上部サマリーチップ（renderCreatorSummaryTable と同じ色味）
   sumEl.innerHTML = `
