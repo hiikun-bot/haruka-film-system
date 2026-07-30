@@ -5141,7 +5141,11 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
     const baseLines = await loadEstimateLinesForPricing({ ids: lineIds }, 'aggregateCreativeByAssignee');
     for (const l of baseLines) baseLineById.set(l.id, l);
     // 2) 元 line が属する project 群の全 line を追加ロード（applies 付き・解決候補）
-    const projectIds = Array.from(new Set(baseLines.map(l => l.project_id).filter(Boolean)));
+    // ADR 030 補強: 元 line の案件に加え、クリエイティブが所属する案件(project_id)も候補に含める
+    const projectIds = Array.from(new Set([
+      ...baseLines.map(l => l.project_id),
+      ...(data || []).map(c => c.project_id),
+    ].filter(Boolean)));
     const projLines = projectIds.length
       ? await loadEstimateLinesForPricing({ projectIds }, 'aggregateCreativeByAssignee')
       : [];
@@ -5228,7 +5232,7 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
     }
     const isVideo = c.creative_type?.startsWith('video') || (!c.creative_type?.startsWith('design'));
     // ADR 030: 締め月末時点で有効な line に差し替えてから単価を解決する
-    c.line_id = resolveEffectiveLineId(baseLineById.get(c.line_id), linesByProjCatRank, monthEndStr);
+    c.line_id = resolveEffectiveLineId(baseLineById.get(c.line_id), c.project_id, linesByProjCatRank, monthEndStr);
     // この creative の担当者ごとの金額内訳（editor/designer/director_as_editor 分）を解決
     const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee, userById);
     const unitInfoFor = (uid) => {
@@ -5804,10 +5808,13 @@ async function loadEstimateLinesForPricing(filter, tag) {
 //   - 複数該当時は applies_from が最新のもの（＝直近に有効化された単価）
 // 分類キーが取れない（category_id 未取得＝フォールバック環境や未設定）／有効 line が
 // 見つからない場合は、従来どおり元 line の id を返す（タブ・集計を壊さない）。
-function resolveEffectiveLineId(baseLine, linesByProjCatRank, monthEndStr) {
+function resolveEffectiveLineId(baseLine, creativeProjectId, linesByProjCatRank, monthEndStr) {
   if (!baseLine) return null;
   if (baseLine.category_id == null) return baseLine.id; // 分類キー不明 → 従来どおり
-  const key = `${baseLine.project_id}|${baseLine.category_id}|${baseLine.rank ?? ''}`;
+  // ADR 030 補強: クリエイティブが所属する案件(creativeProjectId)基準で解決する。
+  // line_id が隣の案件を指していても、所属案件の同カテゴリ・ランクの有効単価に寄せる。
+  const projectId = creativeProjectId || baseLine.project_id;
+  const key = `${projectId}|${baseLine.category_id}|${baseLine.rank ?? ''}`;
   const cands = (linesByProjCatRank.get(key) || []).filter(l =>
     (!l.applies_from || l.applies_from <= monthEndStr) &&
     (!l.applies_to   || l.applies_to   >= monthEndStr)
@@ -6034,7 +6041,11 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
     const baseLines = await loadEstimateLinesForPricing({ ids: lineIds }, 'aggregateCreatorSummary');
     for (const l of baseLines) baseLineById.set(l.id, l);
     // 2) 元 line が属する project 群の全 line を追加ロード（applies 付き・解決候補）
-    const projectIds = Array.from(new Set(baseLines.map(l => l.project_id).filter(Boolean)));
+    // ADR 030 補強: 元 line の案件に加え、クリエイティブが所属する案件(project_id)も候補に含める
+    const projectIds = Array.from(new Set([
+      ...baseLines.map(l => l.project_id),
+      ...(creatives || []).map(c => c.project_id),
+    ].filter(Boolean)));
     const projLines = projectIds.length
       ? await loadEstimateLinesForPricing({ projectIds }, 'aggregateCreatorSummary')
       : [];
@@ -6162,7 +6173,7 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   // computeCreatorCreativeBreakdown() に切り出している（/creator-detail と共有）。
   for (const c of (creatives || [])) {
     // ADR 030: 締め月末時点で有効な line に差し替えてから単価を解決する
-    c.line_id = resolveEffectiveLineId(baseLineById.get(c.line_id), linesByProjCatRank, monthEndStr);
+    c.line_id = resolveEffectiveLineId(baseLineById.get(c.line_id), c.project_id, linesByProjCatRank, monthEndStr);
     const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee, userById);
     for (const b of perUser.values()) {
       const u = ensureUser(b.user);
@@ -6359,7 +6370,11 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
     const baseLines = await loadEstimateLinesForPricing({ ids: lineIds }, 'aggregateCreatorDetail');
     for (const l of baseLines) baseLineById.set(l.id, l);
     // 2) 元 line が属する project 群の全 line を追加ロード（applies 付き・解決候補）
-    const projectIds = Array.from(new Set(baseLines.map(l => l.project_id).filter(Boolean)));
+    // ADR 030 補強: 元 line の案件に加え、クリエイティブが所属する案件(project_id)も候補に含める
+    const projectIds = Array.from(new Set([
+      ...baseLines.map(l => l.project_id),
+      ...(creatives || []).map(c => c.project_id),
+    ].filter(Boolean)));
     const projLines = projectIds.length
       ? await loadEstimateLinesForPricing({ projectIds }, 'aggregateCreatorDetail')
       : [];
@@ -6438,7 +6453,7 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
 
   for (const c of (creatives || [])) {
     // ADR 030: 締め月末時点で有効な line に差し替えてから単価を解決する
-    c.line_id = resolveEffectiveLineId(baseLineById.get(c.line_id), linesByProjCatRank, monthEndStr);
+    c.line_id = resolveEffectiveLineId(baseLineById.get(c.line_id), c.project_id, linesByProjCatRank, monthEndStr);
     const perUser = computeCreatorCreativeBreakdown(c, lineById, lineCostsByLine, resolvePayee, userById);
     const slot = perUser.get(userId);
     if (!slot) continue;
