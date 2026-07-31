@@ -462,6 +462,11 @@ tr.row-help td{background:#FFFBF2}
 .status-chip-clickable{cursor:pointer;transition:box-shadow .12s ease, filter .12s ease}
 .status-chip-clickable:hover{box-shadow:0 0 0 1.5px currentColor inset;filter:brightness(.96)}
 .status-chip-clickable .status-chip-caret{font-size:9px;margin-left:4px;opacity:.55}
+/* クリエイティブ一覧のセル内インライン編集（スプレッドシート風） */
+.cv-ed{cursor:pointer;position:relative}
+.cv-ed:hover{background:var(--em-pale,#f6f0ff);box-shadow:inset 0 0 0 1px var(--em,#2BB8B4)}
+.cv-ed:hover::after{content:'✎';position:absolute;top:2px;right:3px;font-size:9px;color:var(--em,#2BB8B4);opacity:.7}
+.cv-ed input,.cv-ed select{font-family:inherit}
 .s-gray{background:#F1EFE8;color:#5F5E5A}
 .s-pink{background:#FBEAF0;color:#993556}
 .s-teal{background:var(--em-pale);color:#0F6E56}
@@ -4311,6 +4316,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                 <th style="width:36px;text-align:center"><input type="checkbox" id="creative-check-all" onclick="toggleAllCreativeChecks(this)" style="cursor:pointer;width:14px;height:14px"></th>
                 <th>クライアント</th>
                 <th>ファイル名</th>
+                <th>訴求軸</th>
                 <th>編集者</th>
                 <th class="rank-col">ランク</th>
                 <th>チーム</th>
@@ -4319,13 +4325,15 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                 <th>ボール保持者</th>
                 <th>初稿提出日</th>
                 <th>最終納期</th>
+                <th>納品日</th>
+                <th>Frame.io</th>
                 <th>遅れ</th>
                 <th>SOS</th>
                 <th></th>
             </tr>
         </thead>
         <tbody id="creative-tbody">
-          <tr><td colspan="13" class="loading">読み込み中...</td></tr>
+          <tr><td colspan="16" class="loading">読み込み中...</td></tr>
         </tbody>
       </table>
     </div>
@@ -12825,7 +12833,7 @@ function _cvSetListRefreshing(tbody, on) {
     } else {
       tbody.classList.remove('is-refreshing');
       if (pill) pill.style.display = 'none';
-      const skelRow = '<tr class="cv-skel-tr"><td colspan="14" style="padding:12px 16px"><div class="skel-row"><div class="skel-circle"></div><span class="skel-line" style="max-width:34%"></span><span class="skel-line" style="max-width:22%"></span><span class="skel-line" style="max-width:16%"></span><span class="skel-line" style="max-width:12%"></span></div></td></tr>';
+      const skelRow = '<tr class="cv-skel-tr"><td colspan="17" style="padding:12px 16px"><div class="skel-row"><div class="skel-circle"></div><span class="skel-line" style="max-width:34%"></span><span class="skel-line" style="max-width:22%"></span><span class="skel-line" style="max-width:16%"></span><span class="skel-line" style="max-width:12%"></span></div></td></tr>';
       tbody.innerHTML = skelRow.repeat(6);
     }
   } else {
@@ -13231,7 +13239,7 @@ function renderCreatives() {
   try { renderAlerts(baseFiltered); } catch(e) { console.warn('[alerts] render error:', e); }
 
   if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="16" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
     renderCreativeLoadMore();
     return;
   }
@@ -13244,6 +13252,10 @@ function renderCreatives() {
   }));
 
   const today = new Date();
+  // ADR 026 / ADR 015: 納品完了日（delivered_at）の補正は admin / secretary / producer /
+  // producer_director のみ（サーバー PUT でも同権限を検証）。それ以外は納品日セルを閲覧専用にする。
+  const canFixDelivered = typeof effectiveRole === 'function' &&
+    ['admin', 'secretary', 'producer', 'producer_director'].includes(effectiveRole());
   // 1行分の <tr> HTML を生成する関数（フラット描画とグルーピング描画で共用）
   const renderCreativeRow = (c) => {
     const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
@@ -13296,22 +13308,31 @@ function renderCreatives() {
                 (!draftSubmitted && draftDiff !== null && draftDiff < 0 && c.status !== '納品');
     const clientName = c.projects?.clients?.name || '-';
 
+    // 納品日（delivered_at）の JST 表示
+    const deliveredTxt = c.delivered_at
+      ? new Date(c.delivered_at).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })
+      : '';
     return `<tr class="${isLate?'row-late':''} ${c.help_flag?'row-help':''}" data-id="${c.id}">
       <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="creative-row-check" data-id="${c.id}" onchange="updateCreativeDeleteBar()" style="cursor:pointer;width:14px;height:14px"></td>
       <td style="white-space:nowrap;font-size:13px;font-weight:500;color:var(--text)">${clientName}</td>
       <td style="font-size:13px;font-weight:500;cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;white-space:nowrap" onclick="openCreativeDetail('${c.id}')" title="${c.file_name}">${c.file_name}</td>
-      <td style="font-size:14px;font-weight:500">${editor?.users ? avatarWithName(editor.users, 36) : editorName}</td>
+      <td class="cv-ed" title="クリックで訴求軸を変更" onclick="cvEditAppeal(event,this,'${c.id}')" style="font-size:12px;white-space:nowrap">${c.appeal_name ? esc(c.appeal_name) : '<span style="color:#B4B2A9">—</span>'}</td>
+      <td class="cv-ed" title="クリックで担当編集者を変更" onclick="cvEditEditor(event,this,'${c.id}')" style="font-size:14px;font-weight:500">${editor?.users ? avatarWithName(editor.users, 36) : '<span style="color:#B4B2A9">未設定</span>'}</td>
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
       <td><span class="status-chip ${statusClass(c.status)} status-chip-clickable" role="button" tabindex="0" title="クリックしてステータスを変更" onclick="event.stopPropagation();openStatusModal('${c.id}')" onkeydown="if(event.key==='Enter'){event.stopPropagation();openStatusModal('${c.id}')}">${c.status}<span class="status-chip-caret">▾</span></span>${c.force_delivered ? `<span title="納品完了モードで登録: ${esc(c.force_delivered_reason||'')}" style="margin-left:4px;font-size:10px;padding:2px 6px;border-radius:6px;background:#DCFCE7;border:0.5px solid #16A34A;color:#15803D;font-weight:600">完了</span>` : ''}</td>
       <td title="${esc(c.memo || '')}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-muted)">${esc(c.memo || '—')}</td>
       <td><span class="ball-dot ${dotClass}"></span><span class="ball-name" title="${esc((ball.holders||[ball.holder]).join('、'))}">${esc(ball.holder)}${(ball.holders && ball.holders.length>1) ? `<span style="color:var(--text-muted);font-size:12px;font-weight:400;margin-left:4px">+${ball.holders.length-1}</span>` : ''}</span></td>
-      <td>
+      <td class="cv-ed" title="クリックで初稿締切を変更" onclick="cvEditDate(event,this,'${c.id}','draft_deadline')">
         ${draftDeadline ? `<div class="${draftDueClass}" style="font-size:13px;font-weight:500">${draftDeadline.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}</div><div style="font-size:11px;color:#B4B2A9;margin-top:2px">${draftLabel}</div>` : '<span style="color:#B4B2A9">-</span>'}
       </td>
-      <td>
+      <td class="cv-ed" title="クリックで最終納期を変更" onclick="cvEditDate(event,this,'${c.id}','final_deadline')">
         ${finalDeadline ? `<div class="${finalDueClass}" style="font-size:13px;font-weight:500">${finalDeadline.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})}</div><div style="font-size:11px;color:#B4B2A9;margin-top:2px">${finalLabel}</div>` : '<span style="color:#B4B2A9">-</span>'}
       </td>
+      ${canFixDelivered
+        ? `<td class="cv-ed" title="クリックで納品日を変更（この月で支払いカウント）" onclick="cvEditDelivered(event,this,'${c.id}')" style="font-size:13px;font-weight:500;color:#059669;white-space:nowrap">${deliveredTxt || '<span style="color:#B4B2A9">—</span>'}</td>`
+        : `<td style="font-size:13px;font-weight:500;color:#059669;white-space:nowrap">${deliveredTxt || '<span style="color:#B4B2A9">—</span>'}</td>`}
+      <td class="cv-ed" title="クリックでFrame.ioリンクを編集" onclick="cvEditFrameio(event,this,'${c.id}')" style="white-space:nowrap">${c.frameio_url ? `<a href="${esc(c.frameio_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--em-dark);font-size:12px;font-weight:600">🔗 開く</a>` : '<span style="color:#B4B2A9;font-size:14px">＋</span>'}</td>
       <td>${isLate?'<span class="late-flag">遅れ</span>':''}</td>
       <td style="white-space:nowrap">
         ${(() => {
@@ -13339,9 +13360,9 @@ function renderCreatives() {
   };
   const editorForCreative = (c) => c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
 
-  // colspan は常に 14（チェックボックス + 13カラム）。
+  // colspan は常に 17（チェックボックス + 16カラム）。
   // ランクは showRank=false でも CSS で非表示にしているだけで <td> は生成されるので colspan は変えない。
-  const GROUP_COLSPAN = 14;
+  const GROUP_COLSPAN = 17;
   const teamLabelFor = (team) => {
     if (!team) return 'チーム未設定';
     const code = team.team_code || '';
@@ -13403,6 +13424,199 @@ function renderCreatives() {
   renderCreativeLoadMore();
 }
 
+// =====================================================================
+// クリエイティブ一覧（リスト表示）のセル内インライン編集（スプレッドシート風）
+// -------------------------------------------------------------------
+// 対象セル（.cv-ed）をクリックすると入力/選択に変わり、変更確定で PUT /creatives/:id
+// を叩いてローカルキャッシュ（allCreatives）を更新 → renderCreatives() で再描画する。
+// 保存後の再描画で編集中セルは破棄されるため cell.dataset.editing の後始末は不要。
+// 対象フィールド: 訴求軸 / 編集者 / 初稿締切 / 最終納期 / 納品日 / Frame.io
+// =====================================================================
+
+// 共通: 1件を PUT。成功なら true、失敗ならトースト表示して false。
+async function _cvPutField(id, body) {
+  try {
+    const res = await apiFetch(`${API}/creatives/${id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      let e = {}; try { e = await res.json(); } catch (_) {}
+      showToast('保存エラー: ' + translateError(e?.error), 'error');
+      return false;
+    }
+    return true;
+  } catch (e) {
+    showToast('保存エラー: ' + (e?.message || '通信に失敗しました'), 'error');
+    return false;
+  }
+}
+
+// 初稿締切 / 最終納期（DATE）
+function cvEditDate(ev, cell, id, field) {
+  ev.stopPropagation();
+  if (cell.dataset.editing) return;
+  cell.dataset.editing = '1';
+  const c = (allCreatives || []).find(x => x && x.id === id);
+  const curDay = c && c[field] ? String(c[field]).slice(0, 10) : '';
+  cell.innerHTML = `<input type="date" value="${curDay}" style="font-size:12px;padding:2px 4px;border:1px solid var(--em);border-radius:5px">`;
+  const inp = cell.querySelector('input');
+  inp.focus();
+  let done = false;
+  const commit = async (cancel) => {
+    if (done) return; done = true;
+    if (cancel) { renderCreatives(); return; }
+    const nv = inp.value || null;
+    if ((nv || '') === (curDay || '')) { renderCreatives(); return; }
+    const ok = await _cvPutField(id, { [field]: nv });
+    if (ok && c) { c[field] = nv; showToast('保存しました', 'success'); }
+    renderCreatives();
+  };
+  inp.addEventListener('change', () => commit(false));
+  inp.addEventListener('blur', () => commit(false));
+  inp.addEventListener('keydown', e => { if (e.key === 'Escape') commit(true); });
+}
+
+// 納品日（delivered_at・TIMESTAMPTZ）。JST の日付として保存（正午 JST で月ズレを回避）。
+function cvEditDelivered(ev, cell, id) {
+  ev.stopPropagation();
+  if (cell.dataset.editing) return;
+  cell.dataset.editing = '1';
+  const c = (allCreatives || []).find(x => x && x.id === id);
+  const toJstDay = (iso) => iso ? new Date(new Date(iso).getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10) : '';
+  const curDay = c ? toJstDay(c.delivered_at) : '';
+  cell.innerHTML = `<input type="date" value="${curDay}" style="font-size:12px;padding:2px 4px;border:1px solid var(--em);border-radius:5px">`;
+  const inp = cell.querySelector('input');
+  inp.focus();
+  let done = false;
+  const commit = async (cancel) => {
+    if (done) return; done = true;
+    if (cancel) { renderCreatives(); return; }
+    const v = inp.value;
+    if ((v || '') === (curDay || '')) { renderCreatives(); return; }
+    const iso = v ? new Date(`${v}T12:00:00+09:00`).toISOString() : null;
+    const ok = await _cvPutField(id, { delivered_at: iso });
+    if (ok && c) { c.delivered_at = iso; showToast('納品日を保存しました（この月で支払いカウント）', 'success'); }
+    renderCreatives();
+  };
+  inp.addEventListener('change', () => commit(false));
+  inp.addEventListener('blur', () => commit(false));
+  inp.addEventListener('keydown', e => { if (e.key === 'Escape') commit(true); });
+}
+
+// Frame.io リンク（frameio_url・TEXT）
+function cvEditFrameio(ev, cell, id) {
+  ev.stopPropagation();
+  if (cell.dataset.editing) return;
+  cell.dataset.editing = '1';
+  const c = (allCreatives || []).find(x => x && x.id === id);
+  const cur = (c && c.frameio_url) || '';
+  cell.innerHTML = `<input type="url" value="${esc(cur)}" placeholder="https://f.io/..." style="font-size:12px;padding:2px 4px;border:1px solid var(--em);border-radius:5px;width:160px">`;
+  const inp = cell.querySelector('input');
+  inp.focus(); inp.select();
+  let done = false;
+  const commit = async (cancel) => {
+    if (done) return; done = true;
+    if (cancel) { renderCreatives(); return; }
+    const nv = inp.value.trim() || null;
+    if ((nv || '') === (cur || '')) { renderCreatives(); return; }
+    const ok = await _cvPutField(id, { frameio_url: nv });
+    if (ok && c) { c.frameio_url = nv; showToast('保存しました', 'success'); }
+    renderCreatives();
+  };
+  inp.addEventListener('blur', () => commit(false));
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { inp.blur(); }
+    else if (e.key === 'Escape') commit(true);
+  });
+}
+
+// 担当編集者（assignee_id）。PUT が role='editor' の assignment を入れ替え、rank をスナップする。
+function cvEditEditor(ev, cell, id) {
+  ev.stopPropagation();
+  if (cell.dataset.editing) return;
+  cell.dataset.editing = '1';
+  const c = (allCreatives || []).find(x => x && x.id === id);
+  const curAssign = (c?.creative_assignments || []).find(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
+  const curId = curAssign?.users?.id || '';
+  const members = (allMembers || []).filter(m => m.is_active !== false);
+  cell.innerHTML = `<select style="font-size:12px;padding:3px 4px;border:1px solid var(--em);border-radius:5px;max-width:150px">` +
+    `<option value="">（未設定）</option>` +
+    members.map(m => `<option value="${m.id}" ${m.id === curId ? 'selected' : ''}>${esc(NameDisplay.full(m))}</option>`).join('') +
+    `</select>`;
+  const sel = cell.querySelector('select');
+  sel.focus();
+  let done = false;
+  const commit = async (cancel) => {
+    if (done) return; done = true;
+    if (cancel) { renderCreatives(); return; }
+    const nv = sel.value || null;
+    if ((nv || '') === (curId || '')) { renderCreatives(); return; }
+    const ok = await _cvPutField(id, { assignee_id: nv });
+    if (ok && c) {
+      // サーバーと同挙動: role='editor' の assignment を差し替え（rank はメンバーの rank をスナップ）
+      c.creative_assignments = (c.creative_assignments || []).filter(a => a.role !== 'editor');
+      if (nv) {
+        const m = members.find(x => x.id === nv);
+        c.creative_assignments.push({
+          role: 'editor', rank_applied: m?.rank || null,
+          users: m ? { id: m.id, full_name: m.full_name, nickname: m.nickname, role: m.role, rank: m.rank, team_id: m.team_id, avatar_url: m.avatar_url } : null,
+        });
+      }
+      showToast('担当編集者を保存しました', 'success');
+    }
+    renderCreatives();
+  };
+  sel.addEventListener('change', () => commit(false));
+  sel.addEventListener('blur', () => commit(false));
+  sel.addEventListener('keydown', e => { if (e.key === 'Escape') commit(true); });
+}
+
+// 訴求軸（appeal_type_id）。案件ごとの候補は effective-appeal-axes から取得（案件単位でキャッシュ）。
+const _cvAppealAxesCache = {};
+async function _cvGetAppealAxes(projectId) {
+  if (_cvAppealAxesCache[projectId]) return _cvAppealAxesCache[projectId];
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/effective-appeal-axes`);
+    const axes = res.ok ? (sortByDisplayOrder(await res.json()) || []) : [];
+    _cvAppealAxesCache[projectId] = axes;
+    return axes;
+  } catch (_) { return []; }
+}
+async function cvEditAppeal(ev, cell, id) {
+  ev.stopPropagation();
+  if (cell.dataset.editing) return;
+  cell.dataset.editing = '1';
+  const c = (allCreatives || []).find(x => x && x.id === id);
+  const projectId = c?.project_id;
+  if (!projectId) { cell.dataset.editing = ''; return; }
+  cell.innerHTML = `<span style="font-size:11px;color:var(--text-muted)">読込中…</span>`;
+  const axes = await _cvGetAppealAxes(projectId);
+  const curId = c?.appeal_type_id || '';
+  cell.innerHTML = `<select style="font-size:12px;padding:3px 4px;border:1px solid var(--em);border-radius:5px;max-width:140px">` +
+    `<option value="">（未設定）</option>` +
+    axes.map(a => `<option value="${a.id}" ${a.id === curId ? 'selected' : ''}>${esc(a.name)}</option>`).join('') +
+    `</select>`;
+  const sel = cell.querySelector('select');
+  sel.focus();
+  let done = false;
+  const commit = async (cancel) => {
+    if (done) return; done = true;
+    if (cancel) { renderCreatives(); return; }
+    const nv = sel.value || null;
+    if ((nv || '') === (curId || '')) { renderCreatives(); return; }
+    const ok = await _cvPutField(id, { appeal_type_id: nv });
+    if (ok && c) {
+      c.appeal_type_id = nv;
+      c.appeal_name = nv ? (axes.find(a => a.id === nv)?.name || null) : null;
+      showToast('訴求軸を保存しました', 'success');
+    }
+    renderCreatives();
+  };
+  sel.addEventListener('change', () => commit(false));
+  sel.addEventListener('blur', () => commit(false));
+  sel.addEventListener('keydown', e => { if (e.key === 'Escape') commit(true); });
+}
+
 // 「もっと読み込む」フッター行を tbody 末尾に挿入（既存があれば差し替え）
 function renderCreativeLoadMore() {
   const tbody = document.getElementById('creative-tbody');
@@ -13414,7 +13628,7 @@ function renderCreativeLoadMore() {
   if (total <= loaded) return;
   const tr = document.createElement('tr');
   tr.className = 'creative-loadmore-row';
-  tr.innerHTML = `<td colspan="14" style="text-align:center;padding:14px;background:var(--surface)">
+  tr.innerHTML = `<td colspan="17" style="text-align:center;padding:14px;background:var(--surface)">
     <button type="button" onclick="loadMoreCreatives()" style="font-size:12px;padding:7px 18px;background:#fff;border:0.5px solid var(--border);border-radius:8px;cursor:pointer;color:var(--text)">
       次の${creativesPage.limit}件を読み込む（残り ${total - loaded} 件）
     </button>
