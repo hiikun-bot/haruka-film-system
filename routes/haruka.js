@@ -7827,6 +7827,7 @@ router.get('/creatives', async (req, res) => {
   const buildSelect = (includeOptional) => lightMode ? buildLightSelect() : `
     id, file_name, status, draft_deadline, final_deadline,
     internal_code, help_flag, talent_flag, special_payable_by, memo,
+    appeal_type_id, frameio_url, delivered_at,
     creative_type, team_id, project_id, created_at, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
     ${projectsRel}(id, name, client_id, producer_id, director_id, sheet_url, regulation_url, clients(id, name, status)),
     project_cycles(id, year, month),
@@ -7960,12 +7961,27 @@ router.get('/creatives', async (req, res) => {
     (dirUsers || []).forEach(u => userById.set(u.id, applyAvatarRef(u, avatarMap)));
   }
 
+  // 訴求軸名の解決（リスト表示用）。creatives.appeal_type_id は effective-appeal-axes
+  // （sync=ON: client_appeal_axes / sync=OFF: project_appeal_axes）の id を保持しているため、
+  // 両テーブルを id セットで一括引きして名前 Map を作る（UUID なので衝突しない）。
+  const appealIds = [...new Set((data || []).map(c => c.appeal_type_id).filter(Boolean))];
+  const appealNameById = new Map();
+  if (appealIds.length) {
+    const [caxRes, paxRes] = await Promise.all([
+      supabase.from('client_appeal_axes').select('id, name').in('id', appealIds),
+      supabase.from('project_appeal_axes').select('id, name').in('id', appealIds),
+    ]);
+    (caxRes.data || []).forEach(a => appealNameById.set(a.id, a.name));
+    (paxRes.data || []).forEach(a => { if (!appealNameById.has(a.id)) appealNameById.set(a.id, a.name); });
+  }
+
   // ボール保持者と teams を付与（teams は FK 不要の手動 stitch）
   const withBall = (data || []).map(c => {
     const projectDirector = c.projects?.director_id ? userById.get(c.projects.director_id) || null : null;
     const projectProducer = c.projects?.producer_id ? userById.get(c.projects.producer_id) || null : null;
     return {
       ...c,
+      appeal_name: c.appeal_type_id ? (appealNameById.get(c.appeal_type_id) || null) : null,
       teams: c.team_id ? (teamById.get(c.team_id) || null) : null,
       ball_holder: getBallHolder(
         c.status, c.creative_assignments,
