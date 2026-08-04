@@ -174,6 +174,102 @@ function roleCodeToInvoiceCostType(roleCode) {
 }
 
 /**
+ * 「この creative の単価はどの成果物グループ(line)から引くか」の候補を優先順で返す。
+ *
+ * resolveCreativeRoleCost（請求）と作成本数集計（routes/haruka.js）で同じ候補選定を使うために
+ * 切り出した共有ヘルパ。creatives.line_id が NULL でも案件×カテゴリ×ランクから解決できる
+ * ようにするのが主目的（ADR 031）。
+ *
+ * 候補スコープの優先順位:
+ *   creative.line_id (直接) > category_id 一致 > creative_type 由来カテゴリ一致 > 案件内の全 line
+ *
+ * @param {object} args
+ * @param {object} args.creative           - { project_id, line_id?, category_id?, creative_type? }
+ * @param {string|null} args.rankApplied   - 'A' | 'B' | 'C' | null（creative_assignments.rank_applied）
+ * @param {object} args.linesByProject     - Map<project_id, line[]> または { [project_id]: line[] }
+ * @param {string[]} [args.activeStatuses] - 集計対象 status（既定 ACTIVE_LINE_STATUSES）
+ * @param {object} [args.categoryIdByCode] - Map<category code, category_id>。line に category embed が
+ *                                           無い呼び出し元（集計側）で creative_type 由来の絞り込みに使う
+ * @param {string|null} [args.asOf]        - 'YYYY-MM-DD'。指定時は適用期間（ADR 025）でフィルタする
+ * @param {boolean} [args.rankFirst]       - true なら rank 一致を status より優先する（ADR 031・集計側）
+ * @returns {object[]} 候補 line（優先順）
+ */
+function buildCreativeLineCandidates({
+  creative,
+  rankApplied,
+  linesByProject,
+  activeStatuses,
+  categoryIdByCode,
+  asOf,
+  rankFirst,
+} = {}) {
+  if (!creative) return [];
+  const allowed = new Set(Array.isArray(activeStatuses) && activeStatuses.length ? activeStatuses : ACTIVE_LINE_STATUSES);
+  const projLines = (linesByProject && linesByProject.get && linesByProject.get(creative.project_id))
+    || (linesByProject && linesByProject[creative.project_id])
+    || [];
+
+  let candidates = [];
+  if (creative.line_id) {
+    const direct = projLines.find(l => l && l.id === creative.line_id);
+    if (direct) candidates = [direct];
+  }
+  if (!candidates.length && creative.category_id) {
+    candidates = projLines.filter(l => l && l.category_id === creative.category_id);
+  }
+  if (!candidates.length) {
+    // creative_type → category code でフォールバック（旧データ救済: video_short → video, design_* → image）
+    const ct = creative.creative_type || '';
+    const wantCatCode = ct.startsWith('video') ? 'video' : ct.startsWith('design') ? 'image' : null;
+    if (wantCatCode) {
+      const wantCatId = categoryIdByCode
+        ? (categoryIdByCode.get ? categoryIdByCode.get(wantCatCode) : categoryIdByCode[wantCatCode])
+        : null;
+      candidates = projLines.filter(l => l && (
+        (l.category && l.category.code === wantCatCode) || (wantCatId && l.category_id === wantCatId)
+      ));
+    }
+  }
+  if (!candidates.length) {
+    candidates = projLines.slice(); // 最後の手段：プロジェクト内の全 line
+  }
+
+  // 適用期間フィルタ（ADR 025 / 030）。asOf 未指定なら従来どおり期間は見ない
+  if (asOf) {
+    candidates = candidates.filter(l =>
+      (!l.applies_from || l.applies_from <= asOf) && (!l.applies_to || l.applies_to >= asOf));
+  }
+
+  // ADR 022: line.rank 列での一致を優先。rank 列が未設定(NULL)の旧データのみ、
+  // 後方互換で line.name の "Aランク" 文字列マッチにフォールバックする。
+  const rankMarker = rankApplied ? `${rankApplied}ランク` : null;
+  const isRankMatch = (l) => !!rankApplied
+    && (l.rank === rankApplied || (!l.rank && (l.name || '').includes(rankMarker)));
+
+  if (rankFirst) {
+    // 集計側（ADR 031）: 明示的に無効な status だけ落とし、rank 一致 → status 有効 → 適用開始が新しい順。
+    // 「Bランク/Cランクを作ったが status が draft のまま」という実データを、担当者のランクどおりに
+    // 拾うため。status が違うだけの理由で別ランクの単価を掴む事故を防ぐ。
+    candidates = candidates.filter(l => !['cancelled', 'rejected'].includes(l.status));
+    candidates.sort((a, b) =>
+      (isRankMatch(b) ? 1 : 0) - (isRankMatch(a) ? 1 : 0)
+      || (allowed.has(b.status) ? 1 : 0) - (allowed.has(a.status) ? 1 : 0)
+      || String(b.applies_from || '').localeCompare(String(a.applies_from || '')));
+    return candidates;
+  }
+
+  candidates = candidates.filter(l => allowed.has(l.status));
+  if (rankApplied) {
+    const idx = candidates.findIndex(isRankMatch);
+    if (idx > 0) {
+      const [rankMatch] = candidates.splice(idx, 1);
+      candidates.unshift(rankMatch);
+    }
+  }
+  return candidates;
+}
+
+/**
  * 与えられた creative + 担当ロール (assignment.role / 'director' / 'producer') に対して、
  * project_estimate_lines / project_estimate_line_costs から「この 1 本にいくら払うか」を返す。
  *
@@ -195,51 +291,14 @@ function resolveCreativeRoleCost({
   activeStatuses,
 } = {}) {
   if (!creative || !roleCode) return { unit_price: 0, line_id: null, line_cost_id: null };
-  const allowed = new Set(Array.isArray(activeStatuses) && activeStatuses.length ? activeStatuses : ACTIVE_LINE_STATUSES);
 
-  // 1) 候補 line の解決
-  //    優先順位: creative.line_id (直接) > project + category 一致 > project 一致のみ
-  const projLines = (linesByProject && linesByProject.get && linesByProject.get(creative.project_id))
-    || (linesByProject && linesByProject[creative.project_id])
-    || [];
-  let candidates = [];
-  if (creative.line_id) {
-    const direct = projLines.find(l => l && l.id === creative.line_id);
-    if (direct) candidates = [direct];
-  }
-  if (!candidates.length && creative.category_id) {
-    candidates = projLines.filter(l => l && l.category_id === creative.category_id);
-  }
-  if (!candidates.length) {
-    // creative_type → category code でフォールバック（旧データ救済: video_short → video, design_* → image）
-    const ct = creative.creative_type || '';
-    const wantCatCode = ct.startsWith('video') ? 'video' : ct.startsWith('design') ? 'image' : null;
-    if (wantCatCode) {
-      candidates = projLines.filter(l => l && l.category && l.category.code === wantCatCode);
-    }
-  }
-  if (!candidates.length) {
-    candidates = projLines.slice(); // 最後の手段：プロジェクト内の全 line
-  }
-
-  // 2) status フィルタ
-  candidates = candidates.filter(l => allowed.has(l.status));
+  // 1) 候補 line の解決（スコープ → status → rank 優先）
+  const candidates = buildCreativeLineCandidates({
+    creative, rankApplied, linesByProject, activeStatuses,
+  });
   if (!candidates.length) return { unit_price: 0, line_id: null, line_cost_id: null };
 
-  // 3) rank マッチを優先順位の先頭に持ってくる（rank が無ければそのまま）
-  //    ADR 022: line.rank 列での一致を優先。rank 列が未設定(NULL)の旧データのみ、
-  //    後方互換で line.name の "Aランク" 文字列マッチにフォールバックする。
-  if (rankApplied) {
-    const rankMarker = `${rankApplied}ランク`;
-    const idx = candidates.findIndex(l =>
-      l.rank === rankApplied || (!l.rank && (l.name || '').includes(rankMarker)));
-    if (idx > 0) {
-      const [rankMatch] = candidates.splice(idx, 1);
-      candidates.unshift(rankMatch);
-    }
-  }
-
-  // 4) 候補 line を順番に見て、roleCode の line_cost を持つ最初の line を採用
+  // 2) 候補 line を順番に見て、roleCode の line_cost を持つ最初の line を採用
   //    (director/producer の line_cost が rank A の line にしかない、というケースを救うため)
   //
   // 注: 請求は 1 creative = 1 unit 単位なので「per-unit 価格」を返す（line 全体ではない）。
@@ -303,4 +362,5 @@ module.exports = {
   indexLineCostsByLine,
   roleCodeToInvoiceCostType,
   resolveCreativeRoleCost,
+  buildCreativeLineCandidates,
 };

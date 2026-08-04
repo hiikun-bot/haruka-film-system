@@ -10,6 +10,7 @@ const {
   indexLineCostsByLine,
   roleCodeToInvoiceCostType,
   resolveCreativeRoleCost,
+  buildCreativeLineCandidates,
 } = require('../../utils/pricing');
 
 describe('ACTIVE_LINE_STATUSES', () => {
@@ -462,5 +463,113 @@ describe('resolveCreativeRoleCost', () => {
       lineCostsByLine,
     });
     expect(viaObj.unit_price).toBe(700);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// buildCreativeLineCandidates — 単価解決に使う候補 line の選定（ADR 031）
+// creatives.line_id が NULL のクリエイティブを「単価不明」にしないための経路。
+// ─────────────────────────────────────────────────────────────────────────
+describe('buildCreativeLineCandidates（単価解決の候補 line）', () => {
+  function line(over = {}) {
+    return {
+      id: 'l1',
+      project_id: 'p1',
+      status: 'contracted',
+      category_id: 'cat-video',
+      rank: null,
+      applies_from: null,
+      applies_to: null,
+      client_unit_price: 10000,
+      planned_count: 0,
+      ...over,
+    };
+  }
+  const CATEGORY_ID_BY_CODE = new Map([['video', 'cat-video'], ['image', 'cat-image']]);
+
+  test('creative が無ければ空配列', () => {
+    expect(buildCreativeLineCandidates()).toEqual([]);
+    expect(buildCreativeLineCandidates({ creative: null })).toEqual([]);
+  });
+
+  test('line_id NULL でも creative_type からカテゴリ一致の line を候補にする（categoryIdByCode 経由）', () => {
+    const lines = [line({ id: 'video-A', rank: 'A' }), line({ id: 'image-A', category_id: 'cat-image' })];
+    const got = buildCreativeLineCandidates({
+      creative: { project_id: 'p1', line_id: null, category_id: null, creative_type: 'video_short' },
+      linesByProject: new Map([['p1', lines]]),
+      categoryIdByCode: CATEGORY_ID_BY_CODE,
+    });
+    expect(got.map(l => l.id)).toEqual(['video-A']);
+  });
+
+  test('rankFirst=true: rank 一致なら status が draft でも rank 不一致の contracted より優先（ADR 031）', () => {
+    const lines = [
+      line({ id: 'A-contracted', rank: 'A', status: 'contracted' }),
+      line({ id: 'C-draft',      rank: 'C', status: 'draft' }),
+    ];
+    const got = buildCreativeLineCandidates({
+      creative: { project_id: 'p1', line_id: null, creative_type: 'video_short' },
+      rankApplied: 'C',
+      linesByProject: new Map([['p1', lines]]),
+      categoryIdByCode: CATEGORY_ID_BY_CODE,
+      rankFirst: true,
+    });
+    expect(got[0].id).toBe('C-draft');
+  });
+
+  test('rankFirst=true でも cancelled / rejected は候補から外す', () => {
+    const lines = [
+      line({ id: 'C-cancelled', rank: 'C', status: 'cancelled' }),
+      line({ id: 'A-contracted', rank: 'A', status: 'contracted' }),
+    ];
+    const got = buildCreativeLineCandidates({
+      creative: { project_id: 'p1', line_id: null, creative_type: 'video_short' },
+      rankApplied: 'C',
+      linesByProject: new Map([['p1', lines]]),
+      categoryIdByCode: CATEGORY_ID_BY_CODE,
+      rankFirst: true,
+    });
+    expect(got.map(l => l.id)).toEqual(['A-contracted']);
+  });
+
+  test('rankFirst 未指定（請求側）は従来どおり status=ACTIVE のみ・rank 一致を先頭に寄せる', () => {
+    const lines = [
+      line({ id: 'A-contracted', rank: 'A', status: 'contracted' }),
+      line({ id: 'C-draft',      rank: 'C', status: 'draft' }),
+      line({ id: 'C-delivered',  rank: 'C', status: 'delivered' }),
+    ];
+    const got = buildCreativeLineCandidates({
+      creative: { project_id: 'p1', line_id: null, creative_type: 'video_short' },
+      rankApplied: 'C',
+      linesByProject: new Map([['p1', lines]]),
+      categoryIdByCode: CATEGORY_ID_BY_CODE,
+    });
+    expect(got.map(l => l.id)).toEqual(['C-delivered', 'A-contracted']);
+  });
+
+  test('asOf 指定時は適用期間（ADR 025）外の line を候補から外す', () => {
+    const lines = [
+      line({ id: 'old', applies_from: '2026-01-01', applies_to: '2026-06-30' }),
+      line({ id: 'new', applies_from: '2026-07-01', applies_to: null }),
+    ];
+    const args = {
+      creative: { project_id: 'p1', line_id: null, creative_type: 'video_short' },
+      linesByProject: new Map([['p1', lines]]),
+      categoryIdByCode: CATEGORY_ID_BY_CODE,
+      rankFirst: true,
+    };
+    expect(buildCreativeLineCandidates({ ...args, asOf: '2026-08-31' }).map(l => l.id)).toEqual(['new']);
+    expect(buildCreativeLineCandidates({ ...args, asOf: '2026-05-31' }).map(l => l.id)).toEqual(['old']);
+  });
+
+  test('カテゴリ一致が無ければ案件内の全 line を候補にする（最後の手段）', () => {
+    const lines = [line({ id: 'lp', category_id: 'cat-lp' })];
+    const got = buildCreativeLineCandidates({
+      creative: { project_id: 'p1', line_id: null, creative_type: 'video_short' },
+      linesByProject: new Map([['p1', lines]]),
+      categoryIdByCode: CATEGORY_ID_BY_CODE,
+      rankFirst: true,
+    });
+    expect(got.map(l => l.id)).toEqual(['lp']);
   });
 });
