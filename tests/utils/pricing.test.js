@@ -13,6 +13,7 @@ const {
   buildCreativeLineCandidates,
   creativeRankApplied,
   pickCreativeLineId,
+  lineRankOf,
 } = require('../../utils/pricing');
 
 describe('ACTIVE_LINE_STATUSES', () => {
@@ -674,5 +675,28 @@ describe('creativeRankApplied', () => {
     expect(creativeRankApplied({ creative_assignments: [{ role: 'editor', rank_applied: null }] })).toBeNull();
     expect(creativeRankApplied({})).toBeNull();
     expect(creativeRankApplied()).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// lineRankOf — 成果物グループのランク判定（ADR 022 / 旧 project_rates 移行データ互換）
+// rank 列が NULL の line が本番に 57/156 件あり、ここを間違えると
+// ADR 030 の分類キーが A/B/C で衝突して単価がランクをまたいで揺れる。
+// ─────────────────────────────────────────────────────────────────────────
+describe('lineRankOf（成果物グループのランク判定）', () => {
+  test('rank 列があればそれを大文字で返す', () => {
+    expect(lineRankOf({ rank: 'A' })).toBe('A');
+    expect(lineRankOf({ rank: 'b', name: '動画 Cランク' })).toBe('B'); // rank 列が優先
+  });
+
+  test('rank 列が NULL なら name の「Aランク」表記から判定する', () => {
+    expect(lineRankOf({ rank: null, name: '動画 Aランク (旧 project_rates 移行)' })).toBe('A');
+    expect(lineRankOf({ rank: null, name: '静止画 Cランク' })).toBe('C');
+  });
+
+  test('どちらも無ければ null（分類キーで衝突させないため）', () => {
+    expect(lineRankOf({ rank: null, name: '切り抜き編集' })).toBeNull();
+    expect(lineRankOf({ rank: null, name: null })).toBeNull();
+    expect(lineRankOf(null)).toBeNull();
   });
 });
