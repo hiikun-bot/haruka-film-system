@@ -5879,16 +5879,18 @@ function resolveEffectiveLineId(baseLine, creativeProjectId, linesByProjCatRank,
   // ADR 030 補強: クリエイティブが所属する案件(creativeProjectId)基準で解決する。
   // line_id が隣の案件を指していても、所属案件の同カテゴリ・ランクの有効単価に寄せる。
   const projectId = creativeProjectId || baseLine.project_id;
-  const key = `${projectId}|${baseLine.category_id}|${baseLine.rank ?? ''}`;
+  const key = `${projectId}|${baseLine.category_id}|${lineRankOf(baseLine) ?? ''}`;
   const cands = (linesByProjCatRank.get(key) || []).filter(l =>
     (!l.applies_from || l.applies_from <= monthEndStr) &&
     (!l.applies_to   || l.applies_to   >= monthEndStr)
   );
-  cands.sort((a, b) => String(b.applies_from || '').localeCompare(String(a.applies_from || '')));
+  cands.sort((a, b) =>
+    String(b.applies_from || '').localeCompare(String(a.applies_from || ''))
+    || String(a.id).localeCompare(String(b.id)));  // 同日なら id 昇順で固定（解決結果を毎回同じにする）
   return (cands[0] && cands[0].id) || baseLine.id;
 }
 
-const { buildCreativeLineCandidates, creativeRankApplied, pickCreativeLineId } = require('../utils/pricing');
+const { buildCreativeLineCandidates, creativeRankApplied, pickCreativeLineId, lineRankOf } = require('../utils/pricing');
 
 // creative_categories の code → id マップ。line 側は category_id しか持たないため、
 // creative_type（video_short / design_* 等）から候補 line を絞るのに使う（ADR 031）。
@@ -5934,7 +5936,7 @@ async function buildLinePricingContext(creatives, tag) {
   for (const l of projLines) {
     lineById.set(l.id, l);
     allLineIds.add(l.id);
-    const key = `${l.project_id}|${l.category_id}|${l.rank ?? ''}`;
+    const key = `${l.project_id}|${l.category_id}|${lineRankOf(l) ?? ''}`;
     if (!linesByProjCatRank.has(key)) linesByProjCatRank.set(key, []);
     linesByProjCatRank.get(key).push(l);
     if (!linesByProject.has(l.project_id)) linesByProject.set(l.project_id, []);

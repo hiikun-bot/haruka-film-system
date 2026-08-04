@@ -246,11 +246,9 @@ function buildCreativeLineCandidates({
       (!l.applies_from || l.applies_from <= asOf) && (!l.applies_to || l.applies_to >= asOf));
   }
 
-  // ADR 022: line.rank 列での一致を優先。rank 列が未設定(NULL)の旧データのみ、
-  // 後方互換で line.name の "Aランク" 文字列マッチにフォールバックする。
-  const rankMarker = rankApplied ? `${rankApplied}ランク` : null;
-  const isRankMatch = (l) => !!rankApplied
-    && (l.rank === rankApplied || (!l.rank && (l.name || '').includes(rankMarker)));
+  // ADR 022: rank 列を正とし、NULL の旧データは name の "Aランク" 表記で判定する（lineRankOf）
+  const wantRank = rankApplied ? String(rankApplied).toUpperCase() : null;
+  const isRankMatch = (l) => !!wantRank && lineRankOf(l) === wantRank;
 
   if (rankFirst) {
     // 集計側（ADR 031）: 明示的に無効な status だけ落とし、rank 一致 → status 有効 → 適用開始が新しい順。
@@ -260,7 +258,8 @@ function buildCreativeLineCandidates({
     candidates.sort((a, b) =>
       (isRankMatch(b) ? 1 : 0) - (isRankMatch(a) ? 1 : 0)
       || (allowed.has(b.status) ? 1 : 0) - (allowed.has(a.status) ? 1 : 0)
-      || String(b.applies_from || '').localeCompare(String(a.applies_from || '')));
+      || String(b.applies_from || '').localeCompare(String(a.applies_from || ''))
+      || String(a.id).localeCompare(String(b.id)));  // 同条件なら id 昇順で固定（毎回同じ結果にする）
     return candidates;
   }
 
@@ -273,6 +272,20 @@ function buildCreativeLineCandidates({
     }
   }
   return candidates;
+}
+
+/**
+ * line のランク（'A' | 'B' | 'C' | ...）を返す。
+ *
+ * ADR 022 で `rank` 列が導入されたが、旧 project_rates から移行した line は rank 列が NULL で
+ * 「動画 Aランク (旧 project_rates 移行)」のように name にしかランクが書かれていない
+ * （2026-08-04 時点で本番 156 件中 57 件）。ランク判定はすべてこの関数を通すこと。
+ */
+function lineRankOf(line) {
+  if (!line) return null;
+  if (line.rank) return String(line.rank).toUpperCase();
+  const m = /([A-Za-z])ランク/.exec(line.name || '');
+  return m ? m[1].toUpperCase() : null;
 }
 
 /**
@@ -319,9 +332,8 @@ function pickCreativeLineId({ creative, linesByProject, costsByLine, categoryIdB
   if (!candidates.length) return null;
 
   if (rankApplied) {
-    const rankMarker = `${rankApplied}ランク`;
-    const exact = candidates.filter(l =>
-      l.rank === rankApplied || (!l.rank && (l.name || '').includes(rankMarker)));
+    const wantRank = String(rankApplied).toUpperCase();
+    const exact = candidates.filter(l => lineRankOf(l) === wantRank);
     // buildCreativeLineCandidates が適用開始の新しい順に整列済み
     if (exact.length) return exact[0].id;
   }
@@ -424,5 +436,6 @@ module.exports = {
   buildCreativeLineCandidates,
   creativeRankApplied,
   pickCreativeLineId,
+  lineRankOf,
   CREATOR_ROLE_CODES,
 };
