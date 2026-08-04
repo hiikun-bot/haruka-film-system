@@ -35,6 +35,12 @@
 const ACTIVE_LINE_STATUSES = ['contracted', 'in_progress', 'delivered'];
 
 /**
+ * 制作担当のロール code 群。クリエイティブ登録時の担当は一律 role='editor' で INSERT される
+ * ため、designer / director_as_editor と横断で扱う場面が多い（単価行の照合・ランク解決）。
+ */
+const CREATOR_ROLE_CODES = ['editor', 'designer', 'director_as_editor'];
+
+/**
  * 1つの project_estimate_line_costs 行が consume するコストを計算する（ADR 004）。
  *
  * @param {object} lineCost - project_estimate_line_costs の row
@@ -270,6 +276,59 @@ function buildCreativeLineCandidates({
 }
 
 /**
+ * この creative の担当者に適用されたランク（creative_assignments.rank_applied）を1つ返す。
+ * 制作担当（editor/designer/director_as_editor）を優先し、無ければ最初に見つかったものを使う。
+ */
+function creativeRankApplied(creative) {
+  const assignments = creative?.creative_assignments || [];
+  const creator = assignments.find(a =>
+    a.rank_applied && CREATOR_ROLE_CODES.includes(a.role));
+  return creator?.rank_applied || assignments.find(a => a.rank_applied)?.rank_applied || null;
+}
+
+/**
+ * creative に実際に紐付ける（creatives.line_id に保存する）成果物グループを決める。
+ * 曖昧なときは「付けない」（null を返す）のが原則 — 誤った line_id は ADR 030 の単価解決を
+ * 誤らせるため、埋めないほうが安全（集計は ADR 031 のフォールバックで救われる）。
+ *
+ *   - 制作担当の rank_applied 一致を最優先（rank 列 / 旧データは name の "Aランク" 表記）
+ *   - ランク一致が無い場合は、単価行を持つ候補が 1 つに絞れるときだけ採用
+ *   - 単価行を持たない line は候補にしない
+ *
+ * @param {object} args.creative         - { project_id, line_id?, category_id?, creative_type?, creative_assignments? }
+ * @param {object} args.linesByProject   - Map<project_id, line[]>
+ * @param {object} args.costsByLine      - Map<line_id, line_cost[]>
+ * @param {object} [args.categoryIdByCode]
+ * @param {string} [args.asOf]           - 'YYYY-MM-DD'（通常は今日。停止済み line を除外するため）
+ * @returns {string|null} line_id
+ */
+function pickCreativeLineId({ creative, linesByProject, costsByLine, categoryIdByCode, asOf } = {}) {
+  if (!creative) return null;
+  const costsOf = (lineId) =>
+    (costsByLine && (costsByLine.get ? costsByLine.get(lineId) : costsByLine[lineId])) || [];
+  const rankApplied = creativeRankApplied(creative);
+  const candidates = buildCreativeLineCandidates({
+    // 既存の紐付けに引きずられないよう line_id は外して選び直す
+    creative: { ...creative, line_id: null },
+    rankApplied,
+    linesByProject,
+    categoryIdByCode,
+    asOf,
+    rankFirst: true,
+  }).filter(l => costsOf(l.id).length);
+  if (!candidates.length) return null;
+
+  if (rankApplied) {
+    const rankMarker = `${rankApplied}ランク`;
+    const exact = candidates.filter(l =>
+      l.rank === rankApplied || (!l.rank && (l.name || '').includes(rankMarker)));
+    // buildCreativeLineCandidates が適用開始の新しい順に整列済み
+    if (exact.length) return exact[0].id;
+  }
+  return candidates.length === 1 ? candidates[0].id : null;
+}
+
+/**
  * 与えられた creative + 担当ロール (assignment.role / 'director' / 'producer') に対して、
  * project_estimate_lines / project_estimate_line_costs から「この 1 本にいくら払うか」を返す。
  *
@@ -313,7 +372,7 @@ function resolveCreativeRoleCost({
   // クリエイティブ登録時の担当は一律 role='editor' で INSERT されるため、静止画 line の
   // designer 単価行が roleCode='editor' でマッチせず 0 円になるバグがあった（2026-06 突合で発覚）。
   // 完全一致を最優先し、無ければ同グループ（editor/designer/director_as_editor）の cost を採用する。
-  const CREATOR_ROLE_GROUP = ['editor', 'designer', 'director_as_editor'];
+  const CREATOR_ROLE_GROUP = CREATOR_ROLE_CODES;
   const wantCreatorGroup = CREATOR_ROLE_GROUP.includes(roleCode);
   for (const line of candidates) {
     const costs = (lineCostsByLine && lineCostsByLine[line.id]) || [];
@@ -363,4 +422,7 @@ module.exports = {
   roleCodeToInvoiceCostType,
   resolveCreativeRoleCost,
   buildCreativeLineCandidates,
+  creativeRankApplied,
+  pickCreativeLineId,
+  CREATOR_ROLE_CODES,
 };
