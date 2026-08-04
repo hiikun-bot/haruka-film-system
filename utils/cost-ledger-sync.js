@@ -341,7 +341,11 @@ async function applyChanges() {
         else resp = await supabase.from('project_estimate_line_costs').insert({ line_id: a.lineId, role_id: a.roleId, unit_price: a.value, currency: 'JPY', pricing_type: 'fixed_per_unit' });
       }
       else if (a.kind === 'line_and_cost') {
-        const ins = await supabase.from('project_estimate_lines').insert({ project_id: a.projectId, category_id: a.categoryId, rank: a.rank, name: `${a.catName} ${a.rank}ランク`, planned_count: 0, client_unit_price: a.charge || 0, currency: 'JPY' }).select('id').single();
+        // status を明示しないと DB default の 'draft' になり、ADR 005 の集計対象
+        // （contracted/in_progress/delivered）から外れて売上・粗利に載らない。
+        // 台帳から作られた行は「単価が確定した有効なグループ」なので contracted で作る
+        // （案件モーダルの「プリセットから一括生成」と同じ扱い）。
+        const ins = await supabase.from('project_estimate_lines').insert({ project_id: a.projectId, category_id: a.categoryId, rank: a.rank, name: `${a.catName} ${a.rank}ランク`, planned_count: 0, client_unit_price: a.charge || 0, currency: 'JPY', status: 'contracted', status_changed_at: new Date().toISOString() }).select('id').single();
         if (ins.error) throw new Error(ins.error.message);
         resp = await supabase.from('project_estimate_line_costs').insert({ line_id: ins.data.id, role_id: a.roleId, unit_price: a.value, currency: 'JPY', pricing_type: 'fixed_per_unit' });
       }
