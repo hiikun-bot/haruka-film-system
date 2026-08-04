@@ -11,6 +11,8 @@ const {
   roleCodeToInvoiceCostType,
   resolveCreativeRoleCost,
   buildCreativeLineCandidates,
+  creativeRankApplied,
+  pickCreativeLineId,
 } = require('../../utils/pricing');
 
 describe('ACTIVE_LINE_STATUSES', () => {
@@ -571,5 +573,106 @@ describe('buildCreativeLineCandidates（単価解決の候補 line）', () => {
       rankFirst: true,
     });
     expect(got.map(l => l.id)).toEqual(['lp']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// pickCreativeLineId — creatives.line_id に実際に保存する line の決定（ADR 031 補強）
+// 「曖昧なら埋めない」が原則。誤った line_id は ADR 030 の単価解決を誤らせる。
+// ─────────────────────────────────────────────────────────────────────────
+describe('pickCreativeLineId（creatives.line_id の自動紐付け）', () => {
+  function line(over = {}) {
+    return {
+      id: 'l1', project_id: 'p1', status: 'contracted', category_id: 'cat-video',
+      rank: null, name: null, applies_from: null, applies_to: null,
+      client_unit_price: 10000, planned_count: 0,
+      ...over,
+    };
+  }
+  const CATEGORY_ID_BY_CODE = new Map([['video', 'cat-video'], ['image', 'cat-image']]);
+  const editorCost = (lineId) => [{ id: `lc-${lineId}`, line_id: lineId, role: { code: 'editor' }, unit_price: 3500 }];
+  const creative = (over = {}) => ({
+    project_id: 'p1', line_id: null, category_id: null, creative_type: 'video_short',
+    creative_assignments: [{ role: 'editor', rank_applied: 'C' }],
+    ...over,
+  });
+  const call = (lines, costsByLine, c) => pickCreativeLineId({
+    creative: c,
+    linesByProject: new Map([['p1', lines]]),
+    costsByLine,
+    categoryIdByCode: CATEGORY_ID_BY_CODE,
+    asOf: '2026-08-04',
+  });
+
+  test('担当者のランクに一致する line を選ぶ（status が draft でも）', () => {
+    const lines = [line({ id: 'A', rank: 'A' }), line({ id: 'C', rank: 'C', status: 'draft' })];
+    const costs = new Map([['A', editorCost('A')], ['C', editorCost('C')]]);
+    expect(call(lines, costs, creative())).toBe('C');
+  });
+
+  test('rank 列が NULL の旧データは name の "Cランク" 表記で一致させる（ADR 022 互換）', () => {
+    const lines = [
+      line({ id: 'A', name: '動画 Aランク (旧 project_rates 移行)' }),
+      line({ id: 'C', name: '動画 Cランク (旧 project_rates 移行)' }),
+    ];
+    const costs = new Map([['A', editorCost('A')], ['C', editorCost('C')]]);
+    expect(call(lines, costs, creative())).toBe('C');
+  });
+
+  test('ランク一致が無く候補が複数なら埋めない（曖昧なので null）', () => {
+    const lines = [line({ id: 'A', rank: 'A' }), line({ id: 'B', rank: 'B' })];
+    const costs = new Map([['A', editorCost('A')], ['B', editorCost('B')]]);
+    expect(call(lines, costs, creative())).toBeNull();
+  });
+
+  test('ランク一致が無くても候補が 1 つに絞れるなら採用する', () => {
+    const lines = [line({ id: 'only', rank: 'A' })];
+    const costs = new Map([['only', editorCost('only')]]);
+    expect(call(lines, costs, creative())).toBe('only');
+  });
+
+  test('単価行を持たない line は候補にしない', () => {
+    const lines = [line({ id: 'C', rank: 'C' }), line({ id: 'A', rank: 'A' })];
+    const costs = new Map([['A', editorCost('A')]]); // C には単価行なし
+    expect(call(lines, costs, creative())).toBe('A');
+  });
+
+  test('停止済み（applies_to が過去）の line は選ばない', () => {
+    const lines = [
+      line({ id: 'C-old', rank: 'C', applies_to: '2026-06-30' }),
+      line({ id: 'C-new', rank: 'C', applies_from: '2026-07-01' }),
+    ];
+    const costs = new Map([['C-old', editorCost('C-old')], ['C-new', editorCost('C-new')]]);
+    expect(call(lines, costs, creative())).toBe('C-new');
+  });
+
+  test('既存の line_id には引きずられず担当ランクで選び直す', () => {
+    const lines = [line({ id: 'A', rank: 'A' }), line({ id: 'C', rank: 'C' })];
+    const costs = new Map([['A', editorCost('A')], ['C', editorCost('C')]]);
+    expect(call(lines, costs, creative({ line_id: 'A' }))).toBe('C');
+  });
+
+  test('案件に line が無ければ null', () => {
+    expect(call([], new Map(), creative())).toBeNull();
+    expect(pickCreativeLineId({})).toBeNull();
+  });
+});
+
+describe('creativeRankApplied', () => {
+  test('制作担当（editor/designer/director_as_editor）の rank_applied を優先', () => {
+    expect(creativeRankApplied({ creative_assignments: [
+      { role: 'director', rank_applied: 'A' },
+      { role: 'editor', rank_applied: 'C' },
+    ] })).toBe('C');
+  });
+
+  test('制作担当がいなければ最初に見つかった rank_applied', () => {
+    expect(creativeRankApplied({ creative_assignments: [{ role: 'director', rank_applied: 'B' }] })).toBe('B');
+  });
+
+  test('rank_applied が無ければ null', () => {
+    expect(creativeRankApplied({ creative_assignments: [{ role: 'editor', rank_applied: null }] })).toBeNull();
+    expect(creativeRankApplied({})).toBeNull();
+    expect(creativeRankApplied()).toBeNull();
   });
 });

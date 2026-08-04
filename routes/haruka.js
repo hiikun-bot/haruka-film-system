@@ -5845,8 +5845,10 @@ function jstMonthEndStr(year, month) {
 // フォールバックし、その場合は分類キーが得られないので呼び出し側で従来どおり元 line_id を使う。
 //   filter: { ids: [line_id,...] } または { projectIds: [project_id,...] }
 async function loadEstimateLinesForPricing(filter, tag) {
-  const withApplies = 'id, project_id, category_id, rank, planned_count, client_unit_price, status, applies_from, applies_to';
-  const legacy      = 'id, project_id, planned_count, client_unit_price, status';
+  // name は ADR 022 の後方互換（rank 列が NULL の旧 project_rates 移行 line は
+  // 「動画 Aランク (旧 project_rates 移行)」のように name でしかランクが判別できない）に必須。
+  const withApplies = 'id, project_id, category_id, rank, name, planned_count, client_unit_price, status, applies_from, applies_to';
+  const legacy      = 'id, project_id, name, planned_count, client_unit_price, status';
   const applyFilter = (q) => filter.ids
     ? q.in('id', filter.ids)
     : q.in('project_id', filter.projectIds);
@@ -5886,7 +5888,7 @@ function resolveEffectiveLineId(baseLine, creativeProjectId, linesByProjCatRank,
   return (cands[0] && cands[0].id) || baseLine.id;
 }
 
-const { buildCreativeLineCandidates } = require('../utils/pricing');
+const { buildCreativeLineCandidates, creativeRankApplied, pickCreativeLineId } = require('../utils/pricing');
 
 // creative_categories の code → id マップ。line 側は category_id しか持たないため、
 // creative_type（video_short / design_* 等）から候補 line を絞るのに使う（ADR 031）。
@@ -5899,15 +5901,6 @@ async function loadCategoryIdByCode(tag) {
   }
   for (const c of (data || [])) if (c.code) map.set(c.code, c.id);
   return map;
-}
-
-// この creative の担当者に適用されたランク（creative_assignments.rank_applied）を1つ返す。
-// 制作担当（editor/designer/director_as_editor）を優先し、無ければ最初に見つかったものを使う。
-function creativeRankApplied(creative) {
-  const assignments = creative?.creative_assignments || [];
-  const creator = assignments.find(a =>
-    a.rank_applied && ['editor', 'designer', 'director_as_editor'].includes(a.role));
-  return creator?.rank_applied || assignments.find(a => a.rank_applied)?.rank_applied || null;
 }
 
 // 作成本数集計の3経路（creative-by-assignee / creator-summary / creator-detail）が共有する
@@ -5963,6 +5956,89 @@ async function buildLinePricingContext(creatives, tag) {
   }
   const categoryIdByCode = await loadCategoryIdByCode(tag);
   return { lineById, lineCostsByLine, baseLineById, linesByProjCatRank, linesByProject, categoryIdByCode };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ADR 031 補強: creatives.line_id を「登録・担当者変更のたびに」実データとして埋める。
+// これまで line_id を書き込む経路がアプリに存在せず、2026-05-06 の移行 SQL でバックフィル
+// した分にしか値が入っていなかった（＝以降の登録分は全件 NULL）。集計は ADR 031 の
+// フォールバックで救えるが、line_id が埋まっていれば紐付けの誤りが画面上で追える。
+// ─────────────────────────────────────────────────────────────────────────
+
+// 指定案件群の line と line_costs をまとめて取得する（line_id 解決用の軽量コンテキスト）。
+async function loadProjectLinePricing(projectIds, tag) {
+  const linesByProject = new Map();
+  const costsByLine = new Map();
+  const ids = Array.from(new Set((projectIds || []).filter(Boolean)));
+  if (!ids.length) return { linesByProject, costsByLine, categoryIdByCode: new Map() };
+
+  const lines = await loadEstimateLinesForPricing({ projectIds: ids }, tag);
+  for (const l of lines) {
+    if (!linesByProject.has(l.project_id)) linesByProject.set(l.project_id, []);
+    linesByProject.get(l.project_id).push(l);
+  }
+  if (lines.length) {
+    const { data, error } = await supabase
+      .from('project_estimate_line_costs')
+      .select('id, line_id, unit_price, pricing_type, role:roles(id, code, label)')
+      .in('line_id', lines.map(l => l.id));
+    if (error) console.warn(`[${tag}] line_costs load failed:`, error.message);
+    for (const lc of (data || [])) {
+      if (!costsByLine.has(lc.line_id)) costsByLine.set(lc.line_id, []);
+      costsByLine.get(lc.line_id).push(lc);
+    }
+  }
+  const categoryIdByCode = await loadCategoryIdByCode(tag);
+  return { linesByProject, costsByLine, categoryIdByCode };
+}
+
+// creative 1件に紐付ける line_id を決める（判定は utils/pricing.js の pickCreativeLineId）。
+// 「今日」時点で有効なグループから選ぶので、停止済み（applies_to が過去）は対象外。
+function pickLineIdForCreative(creative, ctx) {
+  return pickCreativeLineId({
+    creative,
+    linesByProject: ctx.linesByProject,
+    costsByLine: ctx.costsByLine,
+    categoryIdByCode: ctx.categoryIdByCode,
+    asOf: _todayStrJST(),
+  });
+}
+
+// creative の line_id を担当ランクに合わせて同期する（fire-and-forget 想定）。
+// 解決できない／既存値と同じ場合は何もしない。
+async function syncCreativeLineId(creativeId, opts = {}) {
+  if (!creativeId) return null;
+  try {
+    const { data: c, error } = await supabase
+      .from('creatives')
+      .select('id, project_id, line_id, category_id, creative_type, creative_assignments(role, rank_applied)')
+      .eq('id', creativeId)
+      .maybeSingle();
+    if (error) { console.warn('[syncCreativeLineId] creative fetch failed:', error.message); return null; }
+    if (!c) return null;
+
+    const ctx = opts.ctx || await loadProjectLinePricing([c.project_id], 'syncCreativeLineId');
+    const lineId = pickLineIdForCreative(c, ctx);
+    if (!lineId) {
+      // 解決できないとき、既存 line_id が「今の案件に属さない line」を指しているなら誤紐付け
+      // （案件付け替えの取り残し）なので外す。属しているならそのまま維持する。
+      const belongs = (ctx.linesByProject.get(c.project_id) || []).some(l => l.id === c.line_id);
+      if (c.line_id && !belongs) {
+        const { error: clrErr } = await supabase.from('creatives').update({ line_id: null }).eq('id', creativeId);
+        if (clrErr) console.warn('[syncCreativeLineId] clear failed:', clrErr.message);
+        return null;
+      }
+      return c.line_id || null;
+    }
+    if (lineId === c.line_id) return c.line_id;
+
+    const { error: upErr } = await supabase.from('creatives').update({ line_id: lineId }).eq('id', creativeId);
+    if (upErr) { console.warn('[syncCreativeLineId] update failed:', upErr.message); return c.line_id || null; }
+    return lineId;
+  } catch (e) {
+    console.warn('[syncCreativeLineId] failed:', e?.message || e);
+    return null;
+  }
 }
 
 // この creative の単価解決に使う line_id を決める。
@@ -8677,6 +8753,14 @@ router.post('/creatives/bulk', async (req, res) => {
   const { data, error } = await supabase.from('creatives').insert(inserts).select();
   if (error) return res.status(500).json({ error: error.message });
 
+  // ADR 031 補強: 成果物グループ(line)を紐付ける。一括登録は担当者未定なので、
+  // 単価行を持つ候補が 1 つに絞れる案件でだけ埋まる（曖昧なら NULL のまま）。
+  // 案件は全件共通なので line/line_costs のロードは 1 回で済ませる。
+  (async () => {
+    const ctx = await loadProjectLinePricing([project_id], 'creatives/bulk');
+    for (const c of (data || [])) await syncCreativeLineId(c.id, { ctx });
+  })().catch(e => console.warn('[line_id] bulk sync failed:', e.message));
+
   // 採番起点を進める（ADR 008 Phase 4）
   // - next_filename_serial 列があれば advancedTo (= startSeq + count) に進める
   // - seq_counter 列は Phase 5 で削除予定だが、互換のため advancedTo - 1 で同期更新する
@@ -8786,6 +8870,8 @@ router.post('/creatives', async (req, res) => {
   }
   // 新規作成時も ball_holder_id を初期化（担当者付きで作られた場合は初期通知が飛ぶ）
   syncBallHolderId(data.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
+  // ADR 031 補強: 担当ランクに合う成果物グループ(line)を紐付ける（曖昧なら付けない）
+  syncCreativeLineId(data.id).catch(e => console.warn('[line_id] sync failed:', e.message));
 
   // admin / secretary に「クリエイティブ登録通知」を発火（登録者本人は除外）
   // 主処理は止めない — 通知失敗は console.warn で握りつぶす
@@ -9663,6 +9749,10 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   ) {
     syncBallHolderId(req.params.id).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
   }
+  // ADR 031 補強: 担当者が変わるとランクも変わりうるので line_id を取り直す
+  if (assignee_id !== undefined) {
+    syncCreativeLineId(req.params.id).catch(e => console.warn('[line_id] sync failed:', e.message));
+  }
 
   res.json(data);
 });
@@ -10397,6 +10487,8 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
   // 担当者変更時はボールが新担当者に移る可能性があるため必ず同期する。
   if (projectChanged || assigneeChange) {
     syncBallHolderId(creativeId).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
+    // ADR 031 補強: 案件付け替え・担当者変更で単価グループが変わるので line_id を取り直す
+    syncCreativeLineId(creativeId).catch(e => console.warn('[line_id] sync failed:', e.message));
   }
 
   res.json({ ok: true, creative: updated, log_count: logRows.length });
@@ -21975,6 +22067,9 @@ router.patch('/creatives/:id/portfolio-note', requireAuth, async (req, res) => {
 //   const harukaRouter = require('./routes/haruka');                 // ルーター本体
 //   const { syncBallHolderId, getBallHolder } = require('./routes/haruka'); // ヘルパー
 router.syncBallHolderId    = syncBallHolderId;
+router.syncCreativeLineId  = syncCreativeLineId;
+router.loadProjectLinePricing = loadProjectLinePricing;
+router.pickLineIdForCreative  = pickLineIdForCreative;
 router.getBallHolder       = getBallHolder;
 router.getDriveService     = getDriveService;
 router.getOrCreateFolder   = getOrCreateFolder;
