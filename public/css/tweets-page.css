@@ -319,10 +319,16 @@
   cursor: zoom-in;
 }
 
-/* 複数画像（2〜4枚）— X/Twitter 風グリッド。各セルは cover で埋め、クリックで等倍ライトボックス */
+/* 複数画像（2〜4枚）— X/Twitter 風グリッド。各セルは cover で埋め、クリックで等倍ライトボックス
+   トラックは必ず minmax(0, 1fr)。素の `1fr` は minmax(auto, 1fr) 相当で、セル内の <img> の
+   min-content（＝画像の実寸）がトラックの最小サイズになる。Safari/WebKit はこれを厳密に適用する
+   ため、2行目のトラックが画像実寸まで膨らみ aspect-ratio で固定した高さを溢れ、overflow:hidden で
+   3・4枚目が丸ごと隠れていた（iPhone で「2枚までしか表示されない」バグ報告 a7e2a3dd）。
+   img 側の min-width/min-height:0 も同じ理由で必須。 */
 .tweet-image-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
   gap: 3px;
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -333,12 +339,15 @@
   background: #F9FAFB;
   border: 1px solid #E5E7EB;
 }
+.tweet-image-grid.n2 { grid-template-rows: minmax(0, 1fr); }
 .tweet-image-grid.n3,
-.tweet-image-grid.n4 { grid-template-rows: 1fr 1fr; }
+.tweet-image-grid.n4 { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
 .tweet-image-grid.n3 img:first-child { grid-row: span 2; }
 .tweet-image-grid img {
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   object-fit: cover;
   display: block;
   cursor: zoom-in;
