@@ -18295,6 +18295,41 @@ function openEditProjectById(projectId) {
   openEditProject(p);
 }
 
+// 案件の単価（成果物グループ）を確認するための導線。
+// 案件編集モーダルを開いたうえで「💰 見積・費用」タブに切り替え、成果物グループまでスクロールする。
+// 分析モーダル等 allProjects / allClients を読んでいない画面からも呼ばれるため、
+// キャッシュに無ければ API から取り直す（openEditProject が allClients を参照するため両方必要）。
+//   projectId    : 開く案件
+//   closeModalId : 呼び出し元モーダルを閉じたい場合に指定（分析の内訳モーダル等）
+async function openProjectPricing(projectId, closeModalId) {
+  if (!projectId) { showToast('案件が特定できませんでした', 'warn'); return; }
+  // 案件編集モーダルは編集 UI なので、権限が無いロールには開かない（ADR 015）
+  if (!canEditProject()) { showToast('案件の単価を見る権限がありません', 'warn'); return; }
+  if (closeModalId) closeModal(closeModalId);
+
+  if (!Array.isArray(allClients) || !allClients.length) {
+    try { if (typeof loadClients === 'function') await loadClients(); } catch (_) {}
+  }
+  let p = (Array.isArray(allProjects) ? allProjects : []).find(x => x.id === projectId);
+  if (!p) {
+    try {
+      const res = await apiFetch(`${API}/projects/${projectId}`);
+      if (res.ok) p = await res.json();
+    } catch (e) { console.warn('[openProjectPricing] project fetch failed', e); }
+  }
+  if (!p) { showToast('案件データが見つかりません', 'warn'); return; }
+
+  openEditProject(p);          // 内部で switchProjectTab('main') される
+  switchProjectTab('estimate'); // ので、その後に見積・費用タブへ切り替える
+  // 成果物グループの見出しを画面内に入れる（描画完了を待つ）
+  requestAnimationFrame(() => {
+    const sec = document.getElementById('p-lines-section');
+    if (sec && typeof sec.scrollIntoView === 'function') {
+      sec.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  });
+}
+
 function openEditProject(p) {
   // どの案件を編集中かヘッダーで常に分かるように、クライアント名／案件名を出す
   {
@@ -28108,7 +28143,7 @@ function _eiRenderLines(lines, editable) {
           ${dateBlock}${g.creative_id
             ? `<span style="cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;text-underline-offset:2px" onclick="closeModal('modal-edit-invoice'); openCreativeDetail('${esc(g.creative_id)}')" title="クリックでクリエイティブ詳細を開く">${esc(g.creative_label || '(無題)')}</span>`
             : `<span>${esc(g.creative_label || '(無題)')}</span>`}${(g.creative_project_id && (typeof hasPermission==='function' && hasPermission('invoice.all_view')))
-            ? `<button type="button" class="btn btn-sm" style="font-size:10px;padding:2px 8px;margin-left:8px" onclick="closeModal('modal-edit-invoice'); openEditProjectById('${esc(g.creative_project_id)}')" title="この案件の支払単価を確認">💴 案件の価格</button>`
+            ? `<button type="button" class="btn btn-sm" style="font-size:10px;padding:2px 8px;margin-left:8px" onclick="openProjectPricing('${esc(g.creative_project_id)}', 'modal-edit-invoice')" title="この案件の支払単価を確認">💴 案件の価格</button>`
             : ''}
         </div>
         ${colHeader}
@@ -40967,7 +41002,7 @@ function renderCostCoverage() {
       </td>
       <td style="padding:8px 10px;text-align:center;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(fmtDate(r.last_delivered))}</td>
       <td style="padding:8px 10px;text-align:center;white-space:nowrap">
-        <button class="btn-sm" onclick="openEditProjectById('${r.project_id}')" style="font-size:11px;padding:4px 10px">単価設定 →</button>
+        <button class="btn-sm" onclick="openProjectPricing('${r.project_id}')" style="font-size:11px;padding:4px 10px">単価設定 →</button>
       </td>
     </tr>`;
   }).join('');
@@ -41550,8 +41585,12 @@ async function openCreatorDetail(userId, baseType) {
     const roleChips = visibleRoles.length
       ? visibleRoles.map(c => `<span class="creator-detail-role-chip ${roleChipClass(c)}">${esc(roleLabel(c))}</span>`).join('')
       : '<span style="color:var(--text-muted);font-size:11px">—</span>';
+    // 単価不明バッジ → クリックでその案件の単価設定（成果物グループ）を開く。
+    // project.id が取れない行だけは従来どおり非クリックのバッジにする。
     const rateUnknownBadge = it.rate_unknown
-      ? '<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C;margin-left:4px">単価不明</span>'
+      ? (it.project?.id
+        ? `<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C;margin-left:4px;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px" onclick="openProjectPricing('${esc(it.project.id)}', 'modal-creator-detail')" title="クリックで「${esc(it.project.name)}」の単価設定（成果物グループ）を開く">単価不明 ↗</span>`
+        : '<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C;margin-left:4px">単価不明</span>')
       : '';
     return `<tr style="border-bottom:1px solid var(--border-light)">
       <td style="padding:8px 10px;font-size:12px;vertical-align:top">${esc(it.project.name)}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">${esc(it.project.client_name)}</div></td>
