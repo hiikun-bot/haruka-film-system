@@ -15825,11 +15825,23 @@ function _tmRoleShort(role) {
   return def ? def.short : (role || '');
 }
 
+// 選択中メンバーのうち退職者（is_active === false）の ID 配列を返す。
+// 退職者の team_members 行は「復帰したら再登録なしで元のチームに戻す」ために保持し続けるので、
+// 表示からは隠しつつ _tmSelectedIds には残す（保存時にそのまま member_ids で送り返す）。
+// allMembers 未ロード時は判定できないため空配列（＝隠さない）を返す。
+function _tmResignedSelectedIds() {
+  if (!Array.isArray(allMembers) || !allMembers.length) return [];
+  const byId = new Map(allMembers.map(m => [m.id, m]));
+  return Array.from(_tmSelectedIds).filter(id => byId.get(id)?.is_active === false);
+}
+
 // 選択中メンバーを chip 形式で再描画。ランクは絶対に出さない。
+// 退職者は一覧から隠し、件数だけ注記する（所属データ自体は保持）。
 function renderTeamMemberChips() {
   const container = document.getElementById('t-member-list');
   if (!container) return;
-  const ids = Array.from(_tmSelectedIds);
+  const resignedIds = new Set(_tmResignedSelectedIds());
+  const ids = Array.from(_tmSelectedIds).filter(id => !resignedIds.has(id));
   // allMembers から id 一致するメンバーを取り出し（順序は allMembers の並び順を維持してブレを防ぐ）
   const idSet = new Set(ids);
   const selected = (Array.isArray(allMembers) ? allMembers : []).filter(m => idSet.has(m.id));
@@ -15840,8 +15852,13 @@ function renderTeamMemberChips() {
   const countEl = document.getElementById('t-member-count');
   if (countEl) countEl.textContent = ids.length ? `(${ids.length}名)` : '';
 
+  // 退職者ぶんの注記（在籍メンバーが 0 名でも出す）
+  const resignedNote = resignedIds.size
+    ? `<div style="padding:8px 14px;border-top:1px dashed var(--border);font-size:11px;color:var(--text-muted);line-height:1.5">🔒 退職者 ${resignedIds.size}名は非表示中（所属は保持されており、復帰させると自動で戻ります）</div>`
+    : '';
+
   if (!selected.length && !orphans.length) {
-    container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:13px">メンバー未選択 — 下のボタンから追加できます</div>';
+    container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:13px">メンバー未選択 — 下のボタンから追加できます</div>' + resignedNote;
     return;
   }
 
@@ -15863,7 +15880,7 @@ function renderTeamMemberChips() {
       <button type="button" onclick="removeTeamMember('${id}')" style="background:none;border:none;color:var(--text-muted);font-size:18px;line-height:1;cursor:pointer;padding:0 4px">×</button>
     </div>`;
   }).join('');
-  container.innerHTML = rowsHtml + orphanHtml;
+  container.innerHTML = rowsHtml + orphanHtml + resignedNote;
 }
 
 function removeTeamMember(id) {
@@ -15878,14 +15895,20 @@ function openTeamMemberPicker(triggerEl) {
     showToast('メンバー選択 UI を読み込めませんでした', 'error');
     return;
   }
+  // 退職者は picker の候補にも選択済みにも出さない（showInactive: false）。
+  // ただし所属データは保持したいので、onChange で戻ってきた ids に退職者ぶんを必ず足し戻す。
+  // これをしないと、チームを保存した瞬間に退職者の team_members 行が消え、
+  // 復帰時に手作業で再登録することになる。
+  const resigned = _tmResignedSelectedIds();
+  const resignedSet = new Set(resigned);
   window.MemberPicker.open(triggerEl, {
     mode: 'multi',
-    value: Array.from(_tmSelectedIds),
+    value: Array.from(_tmSelectedIds).filter(id => !resignedSet.has(id)),
     allowedRoles: null,    // 全ロール
     showInactive: false,
     title: 'チームメンバーを選択',
     onChange: (ids) => {
-      _tmSelectedIds = new Set(Array.isArray(ids) ? ids : []);
+      _tmSelectedIds = new Set([...(Array.isArray(ids) ? ids : []), ...resigned]);
       renderTeamMemberChips();
     },
   });

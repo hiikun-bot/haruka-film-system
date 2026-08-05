@@ -17299,9 +17299,27 @@ router.put('/teams/:id', requireAuth, requirePermission('team.manage'), async (r
   // team_members 中間テーブルで管理（users.team_id は基本チームとして変更しない）
   if (member_ids !== undefined) {
     const teamId = req.params.id;
+    // 退職者（users.is_active=false）の所属行は保持する。
+    // チーム編集モーダルは退職者を非表示にするため member_ids に載ってこないが、
+    // ここで消してしまうと復帰時に手作業で再登録する羽目になる（フラグを戻すだけで
+    // 元のチームに戻れる状態を維持するのが狙い）。
+    let keepResignedIds = [];
+    try {
+      const { data: existing } = await supabase
+        .from('team_members').select('user_id').eq('team_id', teamId);
+      const existingIds = [...new Set((existing || []).map(r => r.user_id).filter(Boolean))];
+      if (existingIds.length) {
+        const { data: exUsers } = await supabase
+          .from('users').select('id, is_active').in('id', existingIds);
+        keepResignedIds = (exUsers || []).filter(u => u && u.is_active === false).map(u => u.id);
+      }
+    } catch (e) {
+      console.warn('[PUT /teams/:id] resigned member retention skipped:', e.message);
+    }
+    const finalIds = [...new Set([...(Array.isArray(member_ids) ? member_ids : []), ...keepResignedIds])];
     await supabase.from('team_members').delete().eq('team_id', teamId);
-    if (member_ids.length > 0) {
-      const inserts = member_ids.map(uid => ({ team_id: teamId, user_id: uid }));
+    if (finalIds.length > 0) {
+      const inserts = finalIds.map(uid => ({ team_id: teamId, user_id: uid }));
       const { error: e2 } = await supabase.from('team_members').insert(inserts);
       if (e2) return res.status(500).json({ error: e2.message });
     }
