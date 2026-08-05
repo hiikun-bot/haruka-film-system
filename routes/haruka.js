@@ -13127,8 +13127,12 @@ router.post('/members/:id/deactivate', requireAuth, requirePermission('member.de
   res.json(data);
 });
 
-// 復帰処理（管理者のみ）
-router.post('/members/:id/reactivate', requireAuth, requirePermission('member.deactivate'), async (req, res) => {
+// 復帰処理（既定 admin のみ）
+// 退職処理(member.deactivate)より強い権限として member.reactivate に分離している。
+// role_permissions に行が無いロールは false 判定になり、admin だけが無条件 true
+// （auth.js#userHasPermission / utils/roles.js#roleCodesHavePermission のロックアウト防止分岐）。
+// 他ロールに開放したい場合は管理画面の権限設定から ON にする。
+router.post('/members/:id/reactivate', requireAuth, requirePermission('member.reactivate'), async (req, res) => {
   const { data, error } = await supabase
     .from('users')
     .update({
@@ -20245,7 +20249,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'dashboard.sales_summary','dashboard.monthly_forecast',
   'project.create_edit','project.unit_price_view','project.fee_view','project.delete',
   'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others',
-  'member.list','member.edit_password','member.deactivate','member.delete',
+  'member.list','member.edit_password','member.deactivate','member.reactivate','member.delete',
   'team.manage','team.assign','team.delete',
   'invoice.own','invoice.all_view',
   'master.page','master.sys_config',

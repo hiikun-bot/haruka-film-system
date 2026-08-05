@@ -12230,10 +12230,14 @@ function renderMemberTable(list, visibleMembers) {
           <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;max-width:200px;vertical-align:middle">${m.note ? `<span title="${esc(m.note)}" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;word-break:break-word;white-space:normal">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
           <td style="padding:8px 12px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
             ${m.is_active && (hasPermission('member.edit_password') || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
-            ${hasPermission('member.deactivate') ? (m.is_active
-              ? `<button class="btn-danger" style="font-size:11px;padding:2px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
-              : `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`
-            ) : ''}
+            ${m.is_active
+              ? (hasPermission('member.deactivate')
+                  ? `<button class="btn-danger" style="font-size:11px;padding:2px 8px" onclick="deactivateMember('${m.id}','${m.full_name}')">退職</button>`
+                  : '')
+              // 復帰は member.reactivate（既定 admin のみ）。退職より強い権限として分けている。
+              : (hasPermission('member.reactivate')
+                  ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="reactivateMember('${m.id}')">復帰</button>`
+                  : '')}
             ${hasPermission('member.delete') && m.id !== currentUser?.id ? `<button class="btn-sm" style="color:#A32D2D;border-color:#F09595;font-size:11px;padding:2px 8px" onclick="deleteMemberPermanently('${m.id}','${m.full_name}')">削除</button>` : ''}
             ${invoiceFolderSectionHtml(m)}
           </td>
@@ -30186,7 +30190,8 @@ const ROLE_PERM_LIST = [
   { section:'クリエイティブ', key:'creative.wcheck_toggle',      label:'Wチェック要否の個別設定（静止画）' },
   { section:'メンバー管理',   key:'member.list',                 label:'メンバー一覧閲覧' },
   { section:'メンバー管理',   key:'member.edit_password',        label:'メンバー編集・PW変更' },
-  { section:'メンバー管理',   key:'member.deactivate',           label:'メンバー無効化' },
+  { section:'メンバー管理',   key:'member.deactivate',           label:'メンバー無効化（退職処理）' },
+  { section:'メンバー管理',   key:'member.reactivate',           label:'退職メンバーの復帰' },
   { section:'メンバー管理',   key:'member.delete',               label:'メンバー削除（完全）' },
   { section:'チーム管理',     key:'team.manage',                 label:'チーム作成・編集' },
   { section:'チーム管理',     key:'team.assign',                 label:'メンバー割当' },
