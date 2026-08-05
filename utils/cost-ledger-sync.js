@@ -9,7 +9,9 @@
 //   - クライアント請求 → その案件×区分の見積行 client_unit_price（全行に反映）
 //   - ランクA/B/C       → その案件×区分の rank=A/B/C 行の「制作（編集者/デザイナー）支払単価」(line_costs)
 //                          ※ 該当ランク行が無ければ **見積行＋コストを自動作成** する
-//   - ディレクション費   → project_director_rates(project_id, creative_type)
+//   - ディレクション費   → その案件×区分の全グループの role=director の line_cost（1本あたり単価）
+//                          ※ 案件編集モーダルの「🎬 ディレクター費 → 全グループに反映」と同じ反映先。
+//                            旧 project_director_rates は誰も読まない孤立テーブルだったため 2026-08-06 に切替
 //   - 請求区分          → clients.billing_org（クライアント単位・矛盾時はスキップ）
 //
 // インポート反映は「シート再読込→再計算→DB反映」で冪等。プレビューはクライアントを信用せず再計算する。
@@ -81,13 +83,12 @@ async function loadModel() {
     }
     return out;
   };
-  const [clients, projects, cats, lines, costs, dirRates, roles] = await Promise.all([
+  const [clients, projects, cats, lines, costs, roles] = await Promise.all([
     fetchAll('clients', 'id,name,billing_org'),
     fetchAll('projects', 'id,client_id,name,created_at,primary_category_id,is_hidden'),
     fetchAll('creative_categories', 'id,code,name'),
     fetchAll('project_estimate_lines', 'id,project_id,category_id,name,planned_count,client_unit_price,rank,sort_order'),
-    fetchAll('project_estimate_line_costs', 'id,line_id,role_id,unit_price'),
-    fetchAll('project_director_rates', 'project_id,creative_type,director_fee'),
+    fetchAll('project_estimate_line_costs', 'id,line_id,role_id,user_id,unit_price,pricing_type'),
     fetchAll('roles', 'id,code,category'),
   ]);
   const m = {
@@ -98,10 +99,9 @@ async function loadModel() {
     catByName: Object.fromEntries(cats.map(c => [c.name, c])),
     clientById: Object.fromEntries(clients.map(c => [c.id, c])),
     projById: Object.fromEntries(projects.map(p => [p.id, p])),
-    costsByLine: {}, dirByKey: {}, linesByProj: {}, projByName: {},
+    costsByLine: {}, linesByProj: {}, projByName: {},
   };
   for (const c of costs) (m.costsByLine[c.line_id] ||= []).push(c);
-  for (const d of dirRates) m.dirByKey[d.project_id + '|' + d.creative_type] = d.director_fee;
   for (const l of m.lines) (m.linesByProj[l.project_id] ||= []).push(l);
   for (const p of projects) { const cl = m.clientById[p.client_id]; m.projByName[(cl ? cl.name : '') + '｜' + (p.name || '')] = p; }
   return m;
@@ -117,6 +117,25 @@ function creatorCostOfLine(line, m) {
   const want = creatorRoleCode(m.catById[line.category_id]?.code);
   return cs.find(c => m.roleById[c.role_id]?.code === want)
     || cs.find(c => m.roleById[c.role_id]?.category === 'creator') || null;
+}
+// ディレクター単価はロール固定行（user_id なし）だけを見る。UNIQUE(line_id, role_id, user_id) により最大1件。
+function directorCostOfLine(line, m) {
+  return (m.costsByLine[line.id] || [])
+    .find(c => !c.user_id && m.roleById[c.role_id]?.code === 'director') || null;
+}
+// 案件×区分のグループから「1本あたり」ディレクション費を読む。
+// 時給行（ADR 028 の時間制ディレクター費）は per-unit の意味を持たないので台帳には出さない。
+// グループ間で値が揃っていない場合は最大値を代表値にする（クライアント請求列と同じ扱い）。
+function directorFeeOfGroup(grp, m) {
+  const vals = [];
+  for (const l of grp) {
+    const c = directorCostOfLine(l, m);
+    if (!c) continue;
+    if ((c.pricing_type || 'fixed_per_unit') !== 'fixed_per_unit') continue;
+    vals.push(Number(c.unit_price) || 0);
+  }
+  if (!vals.length) return null;
+  return Math.max(...vals);
 }
 function meaningfulCategoryIds(p, m) {
   const pls = m.linesByProj[p.id] || [];
@@ -160,7 +179,7 @@ function buildRows(m) {
         const nz = grp.map(l => l.client_unit_price).filter(v => v > 0);
         const charge = nz.length ? Math.max(...nz) : 0;
         const ct = creativeTypeOf(code);
-        const dfee = ct ? m.dirByKey[p.id + '|' + ct] : undefined;
+        const dfee = directorFeeOfGroup(grp, m);
         const rankPrice = {};
         for (const rk of RANKS) {
           const line = grp.find(l => rankOf(l) === rk);
@@ -259,6 +278,10 @@ async function computeChanges() {
     }
     const grp = (m.linesByProj[p.id] || []).filter(l => l.category_id === cid);
 
+    // ランク列で新しく作る成果物グループにも引き継ぐディレクション費（シート値優先・空欄なら現状値）
+    const sheetDirFee = num(r[COL.directionFee]);
+    const carryDirFee = sheetDirFee != null ? sheetDirFee : directorFeeOfGroup(grp, m);
+
     const newCharge = num(r[COL.clientCharge]);
     if (newCharge != null) {
       const targets = grp.filter(l => (l.client_unit_price || 0) !== newCharge);
@@ -294,12 +317,13 @@ async function computeChanges() {
           _apply: { kind: 'line_cost', lineId: line.id, setRank: promote ? rk : null, costId: cc ? cc.id : null, roleId: creatorRole.id, value: price } });
       } else {
         changes.push({ scope: 'rank', label: `ランク${rk} 支払単価【行＋コスト自動作成】 (${ctx})`, before: DASH, after: price,
-          _apply: { kind: 'line_and_cost', projectId: p.id, categoryId: cid, rank: rk, catName, roleId: creatorRole.id, value: price, charge: newCharge } });
+          _apply: { kind: 'line_and_cost', projectId: p.id, categoryId: cid, rank: rk, catName, roleId: creatorRole.id, value: price, charge: newCharge,
+            dirRoleId: m.roleByCode['director']?.id || null, dirFee: carryDirFee } });
       }
     }
-    const ct = creativeTypeOf(code);
-    const dfee = num(r[COL.directionFee]);
-    if (ct && dfee != null) (projDirFee[p.id + '|' + ct] ||= { fees: new Set(), ct, projId: p.id, name: p.name }).fees.add(dfee);
+    if (sheetDirFee != null) {
+      (projDirFee[p.id + '|' + cid] ||= { fees: new Set(), projId: p.id, cid, name: p.name, catName, ctx }).fees.add(sheetDirFee);
+    }
     const billCode = billingLabelToCode(r[COL.billing]);
     if (billCode) (clientBilling[p.client_id] ||= { codes: new Set(), name: m.clientById[p.client_id]?.name }).codes.add(billCode);
   }
@@ -310,11 +334,25 @@ async function computeChanges() {
     const code = [...info.codes][0];
     if (code !== (cl.billing_org || null)) changes.push({ scope: 'client', label: `請求区分 (${cl.name})`, before: billingCodeToLabel(cl.billing_org) || DASH, after: billingCodeToLabel(code), _apply: { kind: 'client', id: clientId, value: code } });
   }
+  const directorRole = m.roleByCode['director'];
   for (const [, info] of Object.entries(projDirFee)) {
-    if (info.fees.size > 1) { conflicts.push({ label: `ディレクション費 (${info.name} / ${info.ct})`, values: [...info.fees] }); continue; }
+    if (info.fees.size > 1) { conflicts.push({ label: `ディレクション費 (${info.ctx})`, values: [...info.fees] }); continue; }
     const fee = [...info.fees][0];
-    const cur = m.dirByKey[info.projId + '|' + info.ct];
-    if ((cur == null ? null : cur) !== fee) changes.push({ scope: 'dir', label: `ディレクション費 (${info.name} / ${info.ct})`, before: (cur == null ? DASH : cur), after: fee, _apply: { kind: 'dir_fee', projId: info.projId, ct: info.ct, value: fee } });
+    if (!directorRole) { errors.push(`ディレクターロールが roles マスタに無いためディレクション費を反映できません: ${info.ctx}`); continue; }
+    const grp = (m.linesByProj[info.projId] || []).filter(l => l.category_id === info.cid);
+    const cur = directorFeeOfGroup(grp, m);
+    // 未設定(—) のまま 0 を書いても実体は変わらないので差分に出さない
+    if (cur === null && fee === 0) continue;
+    if (cur === fee) continue;
+    changes.push({
+      scope: 'dir',
+      label: `ディレクション費 (${info.ctx})`,
+      before: (cur == null ? DASH : cur),
+      after: fee,
+      // 反映先の line は apply 時に引き直す（同じ反映ランでランク列から自動作成された
+      // 成果物グループにも同時にディレクション費が乗るようにするため）
+      _apply: { kind: 'dir_fee', projectId: info.projId, categoryId: info.cid, roleId: directorRole.id, value: fee },
+    });
   }
   return { changes, conflicts, errors };
 }
@@ -348,9 +386,45 @@ async function applyChanges() {
         const ins = await supabase.from('project_estimate_lines').insert({ project_id: a.projectId, category_id: a.categoryId, rank: a.rank, name: `${a.catName} ${a.rank}ランク`, planned_count: 0, client_unit_price: a.charge || 0, currency: 'JPY', status: 'contracted', status_changed_at: new Date().toISOString() }).select('id').single();
         if (ins.error) throw new Error(ins.error.message);
         resp = await supabase.from('project_estimate_line_costs').insert({ line_id: ins.data.id, role_id: a.roleId, unit_price: a.value, currency: 'JPY', pricing_type: 'fixed_per_unit' });
+        // 案件共通のディレクション費は自動作成したグループにも引き継ぐ（案件モーダルの
+        // 「プリセットから一括生成」と同じ挙動。引き継がないと新ランクだけ ¥0 になる）
+        if (!resp.error && a.dirRoleId && a.dirFee > 0) {
+          const dirIns = await supabase.from('project_estimate_line_costs')
+            .insert({ line_id: ins.data.id, role_id: a.dirRoleId, unit_price: a.dirFee, currency: 'JPY', pricing_type: 'fixed_per_unit' });
+          if (dirIns.error) throw new Error(dirIns.error.message);
+        }
       }
       else if (a.kind === 'client') resp = await supabase.from('clients').update({ billing_org: a.value }).eq('id', a.id);
-      else if (a.kind === 'dir_fee') resp = await supabase.from('project_director_rates').upsert({ project_id: a.projId, creative_type: a.ct, director_fee: a.value, updated_at: new Date().toISOString() }, { onConflict: 'project_id,creative_type' });
+      else if (a.kind === 'dir_fee') {
+        // 案件編集モーダルの「🎬 ディレクター費 → 全グループに反映」と同じ挙動:
+        // その案件×区分の全グループの role=director 行（user_id なし）へ 1本あたり単価を揃える。
+        // 時給行は「⏱ 時給」モード・内訳での明示操作のみで変えるため、ここでは触らない。
+        const { data: lines, error: linesErr } = await supabase
+          .from('project_estimate_lines').select('id')
+          .eq('project_id', a.projectId).eq('category_id', a.categoryId);
+        if (linesErr) throw new Error(linesErr.message);
+        if (!lines || !lines.length) throw new Error('反映先の成果物グループがありません（先にランク単価を入れてグループを作ってください）');
+        for (const line of lines) {
+          const { data: existing, error: exErr } = await supabase
+            .from('project_estimate_line_costs').select('id, pricing_type')
+            .eq('line_id', line.id).eq('role_id', a.roleId).is('user_id', null).maybeSingle();
+          if (exErr) throw new Error(exErr.message);
+          if (existing && existing.pricing_type === 'hourly') continue;
+          if (a.value > 0) {
+            const r2 = existing
+              ? await supabase.from('project_estimate_line_costs')
+                  .update({ unit_price: a.value, pricing_type: 'fixed_per_unit', percentage: null, actual_hours: null })
+                  .eq('id', existing.id)
+              : await supabase.from('project_estimate_line_costs')
+                  .insert({ line_id: line.id, role_id: a.roleId, unit_price: a.value, pricing_type: 'fixed_per_unit', currency: 'JPY' });
+            if (r2.error) throw new Error(r2.error.message);
+          } else if (existing && existing.pricing_type === 'fixed_per_unit') {
+            const r2 = await supabase.from('project_estimate_line_costs').delete().eq('id', existing.id);
+            if (r2.error) throw new Error(r2.error.message);
+          }
+        }
+        resp = null;
+      }
       if (resp && resp.error) throw new Error(resp.error.message);
       applied++;
     } catch (e) { failures.push(`${ch.label}: ${e.message}`); }
@@ -358,4 +432,4 @@ async function applyChanges() {
   return { applied, total: changes.length, conflicts, errors, failures };
 }
 
-module.exports = { exportLedger, computeChanges, applyChanges, getSheetUrl, TAB_TITLE: '（先頭シート）' };
+module.exports = { exportLedger, computeChanges, applyChanges, getSheetUrl, TAB_TITLE: '（先頭シート）', directorFeeOfGroup };
