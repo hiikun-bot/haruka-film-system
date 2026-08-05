@@ -5535,8 +5535,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">📢 進捗通知の連携先（任意）</div>
           <div class="form-group" style="margin-bottom:10px">
             <label class="form-label">Slack チャンネル URL</label>
-            <input class="form-input" id="cl-slack-channel-url" placeholder="https://app.slack.com/client/T.../C..." style="font-size:13px">
-            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クリエイティブ納品時にこのチャンネルへ自動投稿されます。</div>
+            <input class="form-input" id="cl-slack-channel-url" placeholder="https://ワークスペース名.slack.com/archives/C..." style="font-size:13px">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クリエイティブ納品時にこのチャンネルへ自動投稿されます。<br>Slack でチャンネル名をクリック →「リンクをコピー」で取得した URL（<code>.../archives/C...</code>）か、アプリの <code>app.slack.com/client/T.../C...</code> 形式を貼ってください。</div>
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Chatwork ルーム ID</label>
@@ -6502,7 +6502,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                 <svg width="13" height="13" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#4A154B"/><path d="M6 15a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm6 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" fill="white"/></svg>
                 Slack チャンネルURL
               </label>
-              <input class="form-input" id="p-slack-channel-url" placeholder="https://app.slack.com/client/T.../C..." style="font-size:13px">
+              <input class="form-input" id="p-slack-channel-url" placeholder="https://ワークスペース名.slack.com/archives/C..." style="font-size:13px">
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">この案件のクリエイティブの進捗通知先。Slack でチャンネル名をクリック →「リンクをコピー」で取得した URL（<code>.../archives/C...</code>）か、アプリの <code>app.slack.com/client/T.../C...</code> 形式を貼ってください。未設定ならクライアント側の設定が使われます。</div>
             </div>
           </div>
         </div>
@@ -11119,6 +11120,24 @@ function openNewClientModal() {
   openModal('modal-client');
 }
 
+// SlackチャンネルURLの形式チェック（バグ報告 #5cf4ce3e）。
+// サーバー側 notifications.js の parseSlackChannelUrl と同じ2形式を受け付ける:
+//   (A) https://app.slack.com/client/T.../C...      （デスクトップアプリからコピー）
+//   (B) https://<ワークスペース>.slack.com/archives/C...（ブラウザのアドレスバー / リンクをコピー）
+// これ以外を保存すると通知が「無言で飛ばない」状態になるため、保存前に弾く。
+function isValidSlackChannelUrl(v) {
+  const s = String(v || '').trim();
+  if (!s) return true; // 未設定は許可（通知先なしとして扱う）
+  if (/\/client\/T[A-Z0-9]+\/[CDG][A-Z0-9]+/i.test(s)) return true;
+  if (/^https?:\/\/[A-Za-z0-9][A-Za-z0-9-]*\.slack\.com\/archives\/[CDG][A-Z0-9]+/i.test(s)) return true;
+  return false;
+}
+const SLACK_URL_FORMAT_HINT =
+  'SlackチャンネルURLの形式が正しくありません。\n'
+  + 'Slack でチャンネル名をクリック →「リンクをコピー」で取得した URL を貼ってください。\n'
+  + '例: https://ワークスペース名.slack.com/archives/C0123ABCD\n'
+  + '　　https://app.slack.com/client/T0123ABCD/C0123ABCD';
+
 async function submitClient() {
   const id = document.getElementById('cl-id').value;
   const name = document.getElementById('cl-name').value.trim();
@@ -11138,6 +11157,15 @@ async function submitClient() {
   }
   const invoice_registration_number = invoiceRegRaw || null;
   const billing_org = (document.getElementById('cl-billing-org')?.value || '') || null;
+
+  // SlackチャンネルURL: 形式ミスのまま保存すると通知が無言で飛ばなくなるので保存前に弾く
+  const clSlackEl = document.getElementById('cl-slack-channel-url');
+  if (!isValidSlackChannelUrl(clSlackEl?.value)) {
+    showToast(SLACK_URL_FORMAT_HINT, 'warn');
+    switchClientTab('basic');
+    clSlackEl?.focus();
+    return;
+  }
 
   const btn = document.getElementById('cl-submit-btn');
   const origText = btn.textContent;
@@ -22616,6 +22644,14 @@ async function submitProject() {
   const regulation_url = document.getElementById('p-regulation-url').value.trim() || null;
   const chatwork_room_id = document.getElementById('p-chatwork-room-id').value.trim() || null;
   const slack_channel_url = document.getElementById('p-slack-channel-url').value.trim() || null;
+  // SlackチャンネルURL: 形式ミスのまま保存すると、この案件のクリエイティブ通知が
+  // 無言で Slack に飛ばなくなる（バグ報告 #5cf4ce3e）ので保存前に弾く
+  if (!isValidSlackChannelUrl(slack_channel_url)) {
+    showToast(SLACK_URL_FORMAT_HINT, 'warn');
+    try { switchProjectTab('main'); switchProjectSubTab('link'); } catch (_) {}
+    document.getElementById('p-slack-channel-url')?.focus();
+    return;
+  }
   const admin_note = document.getElementById('p-admin-note').value.trim() || null;
   const is_hidden = document.getElementById('p-is-hidden').checked;
   const deadline_unit = document.getElementById('p-deadline-unit').value || 'monthly';

@@ -18,12 +18,30 @@ const supabase = require('./supabase');
 const { createBulkNotifications } = require('./utils/notification');
 
 // =============== Slack URL parser ===============
+// 受け付ける形式（バグ報告 #5cf4ce3e）:
+//   (A) デスクトップ/Web アプリ形式  https://app.slack.com/client/TXXXX/CXXXX[/...]
+//       → team_id と channel_id が両方 URL に含まれる。
+//   (B) ブラウザのアドレスバー形式    https://<workspace>.slack.com/archives/CXXXX[/pXXXXXXXX]
+//       → team_id が含まれない。ワークスペースのサブドメイン（domain）だけが手がかり。
+//
+// 旧実装は (A) しか解釈できず、(B) を貼った案件では sendSlackChannel が
+// invalid_url で無言終了 → その案件のクリエイティブ通知が Slack に一切
+// 飛ばない状態になっていた（本番で 17案件中 9案件が該当）。
+// (B) の team_id は resolveSlackWorkspace() が auth.test でサブドメインから解決する。
 function parseSlackChannelUrl(url) {
   if (!url) return null;
-  // https://app.slack.com/client/TXXXX/CXXXX or /client/TXXXX/CXXXX/...
-  const m = String(url).match(/\/client\/(T[A-Z0-9]+)\/(C[A-Z0-9]+)/);
-  if (!m) return null;
-  return { team_id: m[1], channel_id: m[2] };
+  const s = String(url).trim();
+  // (A) https://app.slack.com/client/TXXXX/CXXXX or /client/TXXXX/CXXXX/...
+  const mClient = s.match(/\/client\/(T[A-Z0-9]+)\/([CDG][A-Z0-9]+)/i);
+  if (mClient) {
+    return { team_id: mClient[1].toUpperCase(), channel_id: mClient[2].toUpperCase(), domain: null };
+  }
+  // (B) https://<workspace>.slack.com/archives/CXXXX（末尾に /pXXXX 等が付いていても可）
+  const mArchives = s.match(/^https?:\/\/([A-Za-z0-9][A-Za-z0-9-]*)\.slack\.com\/archives\/([CDG][A-Z0-9]+)/i);
+  if (mArchives) {
+    return { team_id: null, channel_id: mArchives[2].toUpperCase(), domain: mArchives[1].toLowerCase() };
+  }
+  return null;
 }
 
 // =============== Slack Bot Token Resolution ===============
@@ -33,6 +51,70 @@ async function getSlackBotToken(teamId) {
     .select('bot_token').eq('team_id', teamId).maybeSingle();
   if (error) console.warn('[notif] slack_workspaces select failed:', error.message);
   return data?.bot_token || null;
+}
+
+// team_id → そのワークスペースのサブドメイン（例: 'harukafilm'）のキャッシュ。
+// auth.test は無料・レート緩めだが、通知1件ごとに叩くのは無駄なのでプロセス内で保持する。
+// 値: 文字列（解決済み） / null（API が失敗した＝不明）。
+const _slackDomainByTeamId = new Map();
+
+// bot_token からワークスペースのサブドメインを取得する（auth.test の url を使う）。
+// 例: { ok: true, url: 'https://harukafilm.slack.com/', team_id: 'T094ST9L5MH' }
+async function fetchSlackWorkspaceDomain(teamId, botToken) {
+  if (_slackDomainByTeamId.has(teamId)) return _slackDomainByTeamId.get(teamId);
+  let domain = null;
+  try {
+    const res = await axios.post('https://slack.com/api/auth.test', null, {
+      headers: { Authorization: `Bearer ${botToken}` }, timeout: 10000,
+    });
+    if (res.data?.ok && res.data.url) {
+      const m = String(res.data.url).match(/^https?:\/\/([A-Za-z0-9][A-Za-z0-9-]*)\.slack\.com/i);
+      if (m) domain = m[1].toLowerCase();
+    } else {
+      console.warn('[notif/slack] auth.test failed:', res.data?.error || 'unknown');
+    }
+  } catch (e) {
+    console.warn('[notif/slack] auth.test error:', e.message);
+  }
+  _slackDomainByTeamId.set(teamId, domain);
+  return domain;
+}
+
+// parseSlackChannelUrl の結果からワークスペース（bot_token）を解決する。
+// - team_id が URL にある（形式 A）: 従来通り slack_workspaces を直引き
+// - team_id が無い（形式 B）: サブドメイン一致でワークスペースを特定
+//     1) 登録済みワークスペースの domain を auth.test で解決して照合
+//     2) どれとも一致しない場合、登録が1件だけ かつ その domain が不明（API失敗）なら
+//        そのワークスペースを使う（従来の単一ワークスペース運用への互換フォールバック）
+//     3) それ以外は workspace_not_registered として失敗させる
+//        （他社ワークスペースの URL に自社 bot で投げて channel_not_found になるのを防ぐ）
+// 戻り値: { token, reason }
+async function resolveSlackWorkspace(parsed) {
+  if (!parsed) return { token: null, reason: 'invalid_url' };
+  if (parsed.team_id) {
+    const token = await getSlackBotToken(parsed.team_id);
+    return token ? { token, reason: null } : { token: null, reason: 'no_workspace_token' };
+  }
+  const { data: workspaces, error } = await supabase
+    .from('slack_workspaces').select('team_id, bot_token');
+  if (error) {
+    console.warn('[notif] slack_workspaces select failed:', error.message);
+    return { token: null, reason: 'workspace_lookup_failed' };
+  }
+  const rows = (workspaces || []).filter(w => w.team_id && w.bot_token);
+  if (rows.length === 0) return { token: null, reason: 'no_workspace_token' };
+
+  let unknownDomainRow = null;
+  for (const w of rows) {
+    const domain = await fetchSlackWorkspaceDomain(w.team_id, w.bot_token);
+    if (domain && parsed.domain && domain === parsed.domain) return { token: w.bot_token, reason: null };
+    if (!domain && !unknownDomainRow) unknownDomainRow = w;
+  }
+  if (rows.length === 1 && unknownDomainRow) {
+    console.warn('[notif/slack] domain 未解決のため単一ワークスペースにフォールバック:', parsed.domain);
+    return { token: unknownDomainRow.bot_token, reason: null };
+  }
+  return { token: null, reason: 'workspace_not_registered' };
 }
 
 // =============== Slack API ===============
@@ -57,8 +139,8 @@ async function slackPost(token, channelOrUserId, text) {
 async function sendSlackChannel(channelUrl, text) {
   const parsed = parseSlackChannelUrl(channelUrl);
   if (!parsed) return { ok: false, reason: 'invalid_url' };
-  const token = await getSlackBotToken(parsed.team_id);
-  if (!token) return { ok: false, reason: 'no_workspace_token' };
+  const { token, reason } = await resolveSlackWorkspace(parsed);
+  if (!token) return { ok: false, reason: reason || 'no_workspace_token' };
   return slackPost(token, parsed.channel_id, text);
 }
 
@@ -68,8 +150,8 @@ async function sendSlackChannel(channelUrl, text) {
 async function sendSlackChannelWithFile(channelUrl, text, fileBuffer, filename) {
   const parsed = parseSlackChannelUrl(channelUrl);
   if (!parsed) return { ok: false, reason: 'invalid_url' };
-  const token = await getSlackBotToken(parsed.team_id);
-  if (!token) return { ok: false, reason: 'no_workspace_token' };
+  const { token, reason } = await resolveSlackWorkspace(parsed);
+  if (!token) return { ok: false, reason: reason || 'no_workspace_token' };
   if (!fileBuffer || !fileBuffer.length) return { ok: false, reason: 'empty_file' };
   // Slack initial_comment は 4000 字制限。安全側で 3500 字に丸める。
   const initial = String(text || '').slice(0, 3500);
@@ -232,6 +314,33 @@ function _formatChatworkFailureMessage({ roomId, primary, fallbackRoomId, fallba
   return parts.join('\n');
 }
 
+// Slack 投稿失敗時の可視化メッセージ（バグ報告 #5cf4ce3e）。
+// 旧実装は sendSlackChannel の戻り値を誰も見ておらず、チャンネルURLの形式ミスや
+// bot 未参加で通知が丸ごと消えても console.warn すら人の目に触れなかった。
+// reason ごとに「何を直せばいいか」を書いて Slack のエラーチャンネルへ送る。
+function _formatSlackFailureMessage({ channelUrl, primary, fallbackChannelUrl, fallback, creativeId, fileName }) {
+  const HINTS = {
+    invalid_url: 'チャンネルURLの形式が不正です。Slack でチャンネルを開いて「チャンネル名 → リンクをコピー」した URL（https://<ワークスペース>.slack.com/archives/C... または https://app.slack.com/client/T.../C...）を貼り直してください。',
+    no_workspace_token: 'このワークスペースの bot_token が slack_workspaces に登録されていません。設定画面から登録してください。',
+    workspace_not_registered: 'URL のワークスペースが slack_workspaces に登録されていません（他社ワークスペースの URL の可能性）。',
+    workspace_lookup_failed: 'slack_workspaces の参照に失敗しました（DB接続を確認してください）。',
+    not_in_channel: 'bot がチャンネルに参加していません。該当チャンネルで /invite してください。',
+    channel_not_found: 'チャンネルが見つかりません（URL が別ワークスペースのもの／チャンネル削除済みの可能性）。',
+  };
+  const parts = [
+    `Slack通知の投稿に失敗しました（${channelUrl || 'URL未設定'} / ${primary?.reason || 'unknown'}）。`,
+  ];
+  const hint = HINTS[primary?.reason];
+  if (hint) parts.push(hint);
+  if (fallback?.ok) {
+    parts.push(`クライアント側チャンネル（${fallbackChannelUrl}）へ代替送信しました。案件のSlackチャンネルURL設定を確認してください。`);
+  } else if (fallback) {
+    parts.push(`クライアント側チャンネル（${fallbackChannelUrl}）への代替送信も失敗（${fallback.reason || 'unknown'}）。`);
+  }
+  parts.push(`creative=${creativeId || '-'} file=${fileName || '-'}`);
+  return parts.join('\n');
+}
+
 // =============== Helpers ===============
 async function loadUser(userId) {
   if (!userId) return null;
@@ -386,6 +495,11 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const fallbackRoomId = (project?.chatwork_room_id && client?.chatwork_room_id
     && String(project.chatwork_room_id) !== String(client.chatwork_room_id))
     ? client.chatwork_room_id : null;
+  // 同じ理由で Slack にも代替先を用意する（バグ報告 #5cf4ce3e）。
+  // 案件の SlackチャンネルURL が不正／bot 未参加でも、クライアント側チャンネルへ退避する。
+  const fallbackChannelUrl = (project?.slack_channel_url && client?.slack_channel_url
+    && String(project.slack_channel_url) !== String(client.slack_channel_url))
+    ? client.slack_channel_url : null;
   const fileName  = detail.file_name;
 
   // 担当者の解決
@@ -462,6 +576,31 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     return fallback?.ok ? fallback : primary;
   };
 
+  // Slack 投稿の耐障害ラッパー（バグ報告 #5cf4ce3e）。Chatwork 版と同じ3段構え:
+  //   1) まず通常のチャンネル（案件 > クライアント）へ投稿
+  //   2) 失敗かつ案件・クライアントでチャンネルが異なる場合はクライアント側へ代替送信
+  //   3) それでも届かなければ notifyAutoError で Slack エラーチャンネルへ可視化
+  //      （旧実装は戻り値を捨てていたため、URL形式ミスで通知ゼロでも誰も気づけなかった）
+  const postSlackResilient = async (text) => {
+    if (!channelUrl) return { ok: false, reason: 'no_channel' };
+    const primary = await sendSlackChannel(channelUrl, text);
+    if (primary.ok) return primary;
+    let fallback = null;
+    if (fallbackChannelUrl) {
+      fallback = await sendSlackChannel(fallbackChannelUrl, text);
+    }
+    notifyAutoError({
+      source: 'server',
+      kind: 'slack.send_failed',
+      apiPath: `slack:channel:${channelUrl}`,
+      message: _formatSlackFailureMessage({
+        channelUrl, primary, fallbackChannelUrl, fallback,
+        creativeId: detail.id, fileName,
+      }),
+    }).catch(() => {});
+    return fallback?.ok ? fallback : primary;
+  };
+
   // 遷移ごとの処理
   // Slack / Chatwork ともに「個人宛通知」として扱うため、
   // 対象ユーザーに DM ID が設定されていない場合はその通知をスキップする。
@@ -470,7 +609,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   const sendNotif = async (user, slackBody, cwBody) => {
     if (!user) return;
     if (channelUrl && user.slack_dm_id) {
-      await sendSlackChannel(channelUrl, `<@${user.slack_dm_id}>\n\n${slackBody}`);
+      await postSlackResilient(`<@${user.slack_dm_id}>\n\n${slackBody}`);
     }
     if (roomId && user.chatwork_dm_id) {
       await postChatworkResilient(`[To:${user.chatwork_dm_id}]\n${cwBody}`);
@@ -497,7 +636,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       result.reachableSlackCount = slackUsers.length;
       if (slackUsers.length) {
         const mentions = slackUsers.map(u => `<@${u.slack_dm_id}>`).join(' ');
-        await sendSlackChannel(channelUrl, `${mentions}\n\n${slackBody}`);
+        await postSlackResilient(`${mentions}\n\n${slackBody}`);
       }
     }
     if (roomId) {
@@ -518,7 +657,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   // ディレクターが任命されていない / DM ID 未設定の案件で、誰かが必ず気づける状態にする。
   const sendChannelMention = async (slackBody, cwBody) => {
     if (channelUrl) {
-      await sendSlackChannel(channelUrl, `<!here>\n\n${slackBody}`);
+      await postSlackResilient(`<!here>\n\n${slackBody}`);
     }
     if (roomId) {
       await postChatworkResilient(`[toall]\n${cwBody}`);
@@ -1373,4 +1512,5 @@ module.exports = {
   _autoErrorSignature,          // テスト用
   _isStaleClientBuild,          // テスト用
   _formatChatworkFailureMessage, // テスト用
+  _formatSlackFailureMessage,    // テスト用
 };
