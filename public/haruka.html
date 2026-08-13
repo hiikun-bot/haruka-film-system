@@ -13195,7 +13195,11 @@ function renderCreatives() {
       ].filter(Boolean).join(' ').toLowerCase();
       if (!haystack.includes(searchText)) return false;
     }
-    if (!activeBalls.includes(c.ball_holder?.type || 'unknown')) return false;
+    // キーワード検索中はボールフィルタを適用しない。
+    // 「クライアントチェック中」(ボール=クライアント) の CR は、クライアントチップ OFF の
+    // メンバーには検索してもヒットせず「CR が消えた・紛失した」ように見える
+    // （検索中だけ納品済みも表示するバグ #db00a22b 対応と同じ発想で、検索は全ボール横断）。
+    if (!searchText && !activeBalls.includes(c.ball_holder?.type || 'unknown')) return false;
     // 担当者フィルタ（複数選択 OR）— 後方互換: 単一値 currentAssigneeFilter も尊重
     if (currentAssigneeIds && currentAssigneeIds.size > 0) {
       if (!c.creative_assignments?.some(a => a.users?.id && currentAssigneeIds.has(a.users.id))) return false;
@@ -13228,6 +13232,10 @@ function renderCreatives() {
   });
   // ビュー絞り込み（自分の案件/自分のボール）— 作業エリア用フィルタ
   const _passesViewFilter = (c) => {
+    // キーワード検索中はビュー絞り込みも適用しない。「自分のボール」ビュー中に
+    // クライアントボールへ渡った CR を検索しても 0 件になり、CR 紛失と誤認される
+    // （上のボールフィルタの検索バイパスと同条件で揃える）。
+    if (searchText) return true;
     if (currentView === 'mine') {
       // 自分の案件 = 以下のいずれかに該当する場合
       //   1) 自分が編集者/デザイナー/director-as-editor として creative にアサインされている
