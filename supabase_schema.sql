@@ -2581,4 +2581,26 @@ CREATE INDEX IF NOT EXISTS idx_lpi_line ON line_payment_installments (line_id);
 CREATE INDEX IF NOT EXISTS idx_lpi_month ON line_payment_installments (target_month);
 CREATE INDEX IF NOT EXISTS idx_lpi_payee ON line_payment_installments (payee_user_id) WHERE payee_user_id IS NOT NULL;
 
+-- ==================== クリエイティブ削除監査ログ ====================
+-- 「誰が・いつ・どのCRを消したか」＋復元用スナップショット。詳細: migrations/2026-08-14_creative_deletion_logs.sql
+CREATE TABLE IF NOT EXISTS creative_deletion_logs (
+  id              BIGSERIAL PRIMARY KEY,
+  creative_id     UUID,
+  file_name       TEXT NOT NULL,
+  project_id      UUID,
+  project_name    TEXT,
+  client_id       UUID,
+  client_name     TEXT,
+  status          TEXT,
+  snapshot        JSONB,
+  files_snapshot  JSONB,
+  deleted_by      UUID,
+  deleted_by_name TEXT,
+  deleted_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_creative_deletion_logs_deleted_at
+  ON creative_deletion_logs(deleted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_creative_deletion_logs_file_name
+  ON creative_deletion_logs(file_name);
+
 NOTIFY pgrst, 'reload schema';
