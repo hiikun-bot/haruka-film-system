@@ -11243,13 +11243,57 @@ router.delete('/creatives', requireAuth, async (req, res) => {
     });
   }
 
+  // 削除対象ファイル一覧。Drive リネーム（後述）と削除監査ログの files_snapshot の両方で使う。
+  // drive_url / faststart_drive_url / version も含めて取り、復元調査時に Drive 上の
+  // 「【削除】」付きファイルへ直接たどれるようにする。
+  const { data: filesToRename } = await supabase
+    .from('creative_files')
+    .select('id, creative_id, version, generated_name, original_name, drive_file_id, drive_url, faststart_drive_file_id, faststart_drive_url, uploaded_at')
+    .in('creative_id', ids);
+
+  // ── 削除監査ログ（creative_deletion_logs）に必ず INSERT してから削除する ──
+  // project_deletion_logs（DELETE /projects/:id）と同設計。
+  // 背景: 2026-08-10 に CR（バルセロナ 260810_..._0000201）が削除されたが、
+  //       記録が一切なく「誰が・いつ消したか」を特定できなかった。
+  // snapshot に creatives 行の全列を残すので、誤削除時はここから再登録（復元）できる。
+  const { data: creativesToDelete, error: snapErr } = await supabase
+    .from('creatives')
+    .select('*, projects(id, name, client_id, clients(id, name))')
+    .in('id', ids);
+  if (snapErr) return res.status(500).json({ error: snapErr.message });
+
+  const filesByCreative = new Map();
+  for (const f of (filesToRename || [])) {
+    if (!filesByCreative.has(f.creative_id)) filesByCreative.set(f.creative_id, []);
+    filesByCreative.get(f.creative_id).push(f);
+  }
+  const logRows = (creativesToDelete || []).map(c => {
+    const { projects: proj, ...snapshot } = c;
+    return {
+      creative_id: c.id,
+      file_name: c.file_name || '(不明)',
+      project_id: c.project_id || null,
+      project_name: proj?.name || null,
+      client_id: proj?.client_id || null,
+      client_name: proj?.clients?.name || null,
+      status: c.status || null,
+      snapshot,
+      files_snapshot: filesByCreative.get(c.id) || [],
+      deleted_by: req.user?.id || null,
+      deleted_by_name: req.user?.full_name || req.user?.email || null,
+    };
+  });
+  if (logRows.length > 0) {
+    const { error: logErr } = await supabase.from('creative_deletion_logs').insert(logRows);
+    if (logErr) {
+      // 監査ログに残せない場合は削除を中断（誤削除→記録なしの再発を防ぐ）
+      return res.status(500).json({ error: '削除ログの記録に失敗したため削除を中止しました: ' + logErr.message });
+    }
+  }
+
   // Drive ファイルは「即削除」せず、「【削除】」プレフィックスを付けてリネームする。
   // 誤削除を防ぐため、後から手動で Drive 上で確認して整理する運用を想定。
   // 対象: creative_files.drive_file_id（原本） + faststart_drive_file_id（高速化版）
-  const { data: filesToRename } = await supabase
-    .from('creative_files')
-    .select('id, generated_name, original_name, drive_file_id, faststart_drive_file_id')
-    .in('creative_id', ids);
 
   const renameResults = { renamed: 0, skipped: 0, failed: 0 };
   if ((filesToRename || []).length > 0 && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
