@@ -20288,11 +20288,13 @@ router.get('/role-permissions', requireAuth, async (req, res) => {
 });
 
 // 有効なロール／権限キーのホワイトリスト
-const VALID_ROLES = new Set(['admin','secretary','producer','producer_director','director','editor','designer']);
+// ロールの検証は roles マスタ駆動（PUT ハンドラ内で roles を引いて判定）。
+// 合成値 'producer_director' は roles マスタに存在しないため明示的に許可する。
+const SYNTHETIC_ROLES = new Set(['producer_director']);
 const VALID_PERMISSION_KEYS = new Set([
   'dashboard.sales_summary','dashboard.monthly_forecast',
-  'project.create_edit','project.unit_price_view','project.fee_view','project.delete',
-  'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others',
+  'project.create_edit','project.client_price','project.unit_price_view','project.fee_view','project.delete',
+  'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others','creative.wcheck_toggle',
   'member.list','member.edit_password','member.deactivate','member.reactivate','member.delete',
   'team.manage','team.assign','team.delete',
   'invoice.own','invoice.all_view',
@@ -20311,16 +20313,17 @@ const VALID_PERMISSION_KEYS = new Set([
 router.put('/role-permissions', requireAuth, requireSuperAdmin, async (req, res) => {
   const { permissions } = req.body; // [{role, permission_key, allowed}, ...]
   if (!Array.isArray(permissions)) return res.status(400).json({ error: 'permissions配列が必要です' });
-  // ホワイトリスト検証
-  for (const p of permissions) {
-    if (!VALID_ROLES.has(p.role)) return res.status(400).json({ error: `不正なロール: ${p.role}` });
-    if (!VALID_PERMISSION_KEYS.has(p.permission_key)) return res.status(400).json({ error: `不正な権限キー: ${p.permission_key}` });
-  }
-  // role_id 解決のため roles マスタを 1 回だけ引く
+  // role_id 解決とロール検証のため roles マスタを 1 回だけ引く
   const { data: rolesData, error: rolesErr } = await supabase
     .from('roles').select('id, code');
   if (rolesErr) return res.status(500).json({ error: rolesErr.message });
   const roleIdByCode = new Map((rolesData || []).map(r => [r.code, r.id]));
+  // ホワイトリスト検証（ロールは roles マスタ + 合成値。ハードコード Set だと
+  // 後発ロール（external_director 等）が弾かれてマトリクス保存不能になる）
+  for (const p of permissions) {
+    if (!roleIdByCode.has(p.role) && !SYNTHETIC_ROLES.has(p.role)) return res.status(400).json({ error: `不正なロール: ${p.role}` });
+    if (!VALID_PERMISSION_KEYS.has(p.permission_key)) return res.status(400).json({ error: `不正な権限キー: ${p.permission_key}` });
+  }
 
   const now = new Date().toISOString();
   const rows = permissions.map(p => ({
