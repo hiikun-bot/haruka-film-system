@@ -7893,6 +7893,7 @@ router.get('/creatives', async (req, res) => {
     creative_type, team_id, project_id, created_at, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
     ${projectsRel}(id, name, client_id, producer_id, director_id, sheet_url, regulation_url, clients(id, name, status)),
     project_cycles(id, year, month),
+    creative_files(id, version, uploaded_at),
     creative_assignments(
       id, role, rank_applied, created_at,
       users(id, full_name, nickname, role, rank, team_id)
@@ -7977,6 +7978,17 @@ router.get('/creatives', async (req, res) => {
   if (lightMode) {
     return res.json({ data: data || [], total: count ?? (data || []).length, limit, offset });
   }
+
+  // リスト表示のサムネイル用: 最新版（version 最大 → uploaded_at 最新）の creative_files.id を
+  // thumb_file_id として返す。配信は既存の /portfolio/thumbnail/:fileId（サーバー代理・キャッシュ付き）。
+  // embed 本体はレスポンスから strip し、一覧ペイロードには id 文字列 1 個だけ足す（PR #940 の方針維持）。
+  (data || []).forEach(c => {
+    const files = (c.creative_files || []).slice().sort((a, b) =>
+      (Number(b.version) || 0) - (Number(a.version) || 0) ||
+      String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || '')));
+    c.thumb_file_id = files[0]?.id || null;
+    delete c.creative_files;
+  });
 
   // select から外した avatar_url をキャッシュから注入（値は従来の res.json パッチ通過後と同一形）。
   // ball_holder（getBallHolder が返す holder_user / holder_users）は以下の user オブジェクトへの
