@@ -442,6 +442,77 @@ tr.row-help td{background:#FFFBF2}
   .cv-adv-field-status .cv-adv-label{padding-top:0}
 }
 
+/* ── クリエイティブ一覧（リスト表示）ヘッダー列フィルター（Excel/スプレッドシート風） ── */
+.cv-th{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.cv-colf-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:18px;height:18px;padding:0;font-size:8px;line-height:1;
+  border:0.5px solid transparent;border-radius:5px;background:transparent;
+  color:var(--text-muted);cursor:pointer;transition:all .12s;flex-shrink:0;
+}
+.cv-colf-btn:hover{background:#e7f6f4;border-color:var(--em-light);color:var(--em-dark)}
+.cv-colf-btn.on{background:var(--em);border-color:var(--em);color:#fff}
+.cv-colf-btn.sorted{border-color:var(--em);color:var(--em-dark);background:#e7f6f4}
+.cv-colf-btn.on.sorted{color:#fff;background:var(--em)}
+.cv-colf-pop{
+  position:fixed;z-index:1200;min-width:220px;max-width:290px;
+  background:#fff;border:0.5px solid var(--border);border-radius:12px;
+  box-shadow:0 10px 34px rgba(30,60,55,.18);padding:10px;display:flex;flex-direction:column;gap:8px;
+  font-size:12px;
+}
+.cv-colf-pop .cv-colf-title{font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:.05em;padding:0 2px}
+.cv-colf-sortrow{display:flex;gap:6px}
+.cv-colf-sortbtn{
+  flex:1;height:28px;font-size:11px;font-weight:600;border-radius:8px;
+  border:0.5px solid var(--border);background:#fff;color:var(--text);cursor:pointer;transition:all .12s;
+}
+.cv-colf-sortbtn:hover{border-color:var(--em-light);background:#f5fbfa}
+.cv-colf-sortbtn.on{background:var(--em-pale);border-color:var(--em);color:var(--em-dark)}
+.cv-colf-search{
+  height:30px;padding:4px 10px;font-size:12px;border:0.5px solid var(--border);
+  border-radius:8px;outline:none;width:100%;
+}
+.cv-colf-search:focus{border-color:var(--em)}
+.cv-colf-list{max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:1px;border:0.5px solid var(--border);border-radius:8px;padding:4px}
+.cv-colf-item{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:6px;cursor:pointer;user-select:none}
+.cv-colf-item:hover{background:#f5fbfa}
+.cv-colf-item input[type="checkbox"]{width:14px;height:14px;cursor:pointer;accent-color:var(--em);flex-shrink:0}
+.cv-colf-item .cv-colf-val{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv-colf-item .cv-colf-cnt{font-size:10px;color:var(--text-muted);flex-shrink:0}
+.cv-colf-item.cv-colf-all{border-bottom:0.5px solid var(--border);border-radius:6px 6px 0 0;margin-bottom:2px;font-weight:600}
+.cv-colf-empty{padding:10px;text-align:center;color:var(--text-muted);font-size:11px}
+.cv-colf-foot{display:flex;justify-content:space-between;gap:6px}
+.cv-colf-clearbtn{
+  height:28px;padding:0 12px;font-size:11px;font-weight:600;border-radius:8px;
+  border:0.5px solid var(--border);background:#fff;color:var(--text-muted);cursor:pointer;
+}
+.cv-colf-clearbtn:hover{background:#fbeaea;color:#a03030;border-color:#f1c5c5}
+.cv-colf-closebtn{
+  height:28px;padding:0 14px;font-size:11px;font-weight:600;border-radius:8px;
+  border:0.5px solid var(--em);background:var(--em);color:#fff;cursor:pointer;
+}
+.cv-colf-active-bar{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin-bottom:8px;padding:7px 12px;font-size:12px;color:var(--em-dark);
+  background:var(--em-pale);border:0.5px solid var(--em-light);border-radius:9px;
+}
+.cv-colf-active-bar .cv-colf-chip{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:11px;font-weight:600;
+  background:#fff;border:0.5px solid var(--em-light);border-radius:7px;color:var(--em-dark);
+}
+.cv-colf-active-bar .cv-colf-chip button{border:none;background:none;cursor:pointer;color:var(--text-muted);font-size:11px;padding:0 1px;line-height:1}
+.cv-colf-active-bar .cv-colf-chip button:hover{color:#a03030}
+.cv-colf-allclear{
+  margin-left:auto;height:24px;padding:0 12px;font-size:11px;font-weight:600;border-radius:7px;
+  border:0.5px solid var(--em);background:#fff;color:var(--em-dark);cursor:pointer;
+}
+.cv-colf-allclear:hover{background:#fbeaea;color:#a03030;border-color:#f1c5c5}
+/* リスト表示: ファイル名前の小サムネイル（スプレッドシートの IMAGE 関数風） */
+.cv-list-thumb{
+  width:34px;height:34px;object-fit:cover;border-radius:6px;vertical-align:middle;
+  margin-right:8px;border:0.5px solid var(--border);background:#f2f2ef;flex-shrink:0;
+}
+
 /* ガント本体を少しコンパクトに */
 .cv-gantt-main{border-radius:10px}
 .cv-g-toolbar{padding:4px 12px;font-size:11px;display:flex;gap:12px;align-items:center;border-bottom:0.5px solid var(--border-light);background:#fafefd}
@@ -4310,25 +4381,27 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div class="table-wrap">
       <!-- stale-while-revalidate 中の小さな進捗表示（loadCreatives が表示/非表示を制御） -->
       <div id="creative-refreshing-pill" class="cv-refreshing-pill" style="display:none" role="status" aria-live="polite"><span class="cv-refreshing-spin" aria-hidden="true"></span>更新中…</div>
+      <!-- 列フィルター適用中バー（Excel風ヘッダーフィルター）: updateCvColHeaderBtns() が表示制御 -->
+      <div id="cv-colf-active-bar" class="cv-colf-active-bar" style="display:none"></div>
       <table>
         <thead>
             <tr>
                 <th style="width:36px;text-align:center"><input type="checkbox" id="creative-check-all" onclick="toggleAllCreativeChecks(this)" style="cursor:pointer;width:14px;height:14px"></th>
-                <th>クライアント</th>
-                <th>ファイル名</th>
-                <th>訴求軸</th>
-                <th>編集者</th>
-                <th class="rank-col">ランク</th>
-                <th>チーム</th>
-                <th>ステータス</th>
-                <th>メモ</th>
-                <th>ボール保持者</th>
-                <th>初稿提出日</th>
-                <th>最終納期</th>
-                <th>納品日</th>
-                <th>Frame.io</th>
-                <th>遅れ</th>
-                <th>SOS</th>
+                <th><span class="cv-th">クライアント<button type="button" class="cv-colf-btn" data-colf="client" onclick="cvColFilterOpen(event,'client')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">ファイル名<button type="button" class="cv-colf-btn" data-colf="file" onclick="cvColFilterOpen(event,'file')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">訴求軸<button type="button" class="cv-colf-btn" data-colf="appeal" onclick="cvColFilterOpen(event,'appeal')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">編集者<button type="button" class="cv-colf-btn" data-colf="editor" onclick="cvColFilterOpen(event,'editor')" title="フィルター・並べ替え">▼</button></span></th>
+                <th class="rank-col"><span class="cv-th">ランク<button type="button" class="cv-colf-btn" data-colf="rank" onclick="cvColFilterOpen(event,'rank')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">チーム<button type="button" class="cv-colf-btn" data-colf="team" onclick="cvColFilterOpen(event,'team')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">ステータス<button type="button" class="cv-colf-btn" data-colf="status" onclick="cvColFilterOpen(event,'status')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">メモ<button type="button" class="cv-colf-btn" data-colf="memo" onclick="cvColFilterOpen(event,'memo')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">ボール保持者<button type="button" class="cv-colf-btn" data-colf="ball" onclick="cvColFilterOpen(event,'ball')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">初稿提出日<button type="button" class="cv-colf-btn" data-colf="draft" onclick="cvColFilterOpen(event,'draft')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">最終納期<button type="button" class="cv-colf-btn" data-colf="final" onclick="cvColFilterOpen(event,'final')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">納品日<button type="button" class="cv-colf-btn" data-colf="delivered" onclick="cvColFilterOpen(event,'delivered')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">Frame.io<button type="button" class="cv-colf-btn" data-colf="frameio" onclick="cvColFilterOpen(event,'frameio')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">遅れ<button type="button" class="cv-colf-btn" data-colf="late" onclick="cvColFilterOpen(event,'late')" title="フィルター・並べ替え">▼</button></span></th>
+                <th><span class="cv-th">SOS<button type="button" class="cv-colf-btn" data-colf="sos" onclick="cvColFilterOpen(event,'sos')" title="フィルター・並べ替え">▼</button></span></th>
                 <th></th>
             </tr>
         </thead>
@@ -13149,6 +13222,263 @@ function initTableScrollHint() {
   check();
 }
 
+// =====================================================================
+// クリエイティブ一覧（リスト表示）ヘッダー列フィルター（Excel/スプレッドシート風）
+// ---------------------------------------------------------------------
+// 各ヘッダーの ▼ から「値のチェックボックス絞り込み＋昇順/降順ソート」ができる。
+// - 対象はリスト表示のみ（ガント表示・納期アラート・サイドバー集計には影響しない）
+// - 候補値は「他の列のフィルターを通過した行」から算出（Excel の AutoFilter と同挙動）
+// - 状態はページ内のみ保持（リロードでリセット。永続化しないのは意図的）
+// =====================================================================
+let cvColFilters = {};   // colKey -> Set(選択中の表示値)。キー無し = その列はフィルタなし
+let cvColSort = null;    // { key, dir: 'asc' | 'desc' } | null
+let _cvColPreRows = [];  // 列フィルタ適用前の行キャッシュ（候補値算出用。renderCreatives が更新）
+let _cvColOpenKey = null;
+
+function _cvColEditorAssign(c) {
+  return c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+}
+// renderCreativeRow の遅れ判定と同一ロジック（行描画・列フィルター双方から参照する単一の正）
+function _cvListIsLate(c) {
+  if (c.status === '納品') return false;
+  const today = _cvAtMidnight(new Date());
+  const draftDeadline = c.draft_deadline ? _cvAtMidnight(c.draft_deadline) : null;
+  const finalDeadline = c.final_deadline ? _cvAtMidnight(c.final_deadline) : null;
+  const draftDiff = draftDeadline ? _cvDayDiff(draftDeadline, today) : null;
+  const finalDiff = finalDeadline ? _cvDayDiff(finalDeadline, today) : null;
+  const DRAFT_SUBMITTED_STATUSES = ['Dチェック','Dチェック後修正','Pチェック','Pチェック後修正','クライアントチェック中','クライアントチェック後修正','納品'];
+  const draftSubmitted = DRAFT_SUBMITTED_STATUSES.includes(c.status);
+  return (finalDiff !== null && finalDiff < 0) || (!draftSubmitted && draftDiff !== null && draftDiff < 0);
+}
+function _cvColTeamLabel(c) {
+  // renderCreativeRow のチーム解決（creatives.team_id 最優先 → 担当者の team_id → 所属チーム）と同一
+  const teamById = new Map(allTeams.map(t => [t.id, t]));
+  const teamByMember = new Map();
+  allTeams.forEach(t => (t.team_members || []).forEach(tm => {
+    if (!teamByMember.has(tm.user_id)) teamByMember.set(tm.user_id, t);
+  }));
+  const ed = _cvColEditorAssign(c);
+  const team = (c.team_id ? teamById.get(c.team_id) : null)
+    || (ed?.users?.team_id ? teamById.get(ed.users.team_id) : null)
+    || (ed?.users?.id ? teamByMember.get(ed.users.id) : null);
+  return team ? `${team.team_code}チーム` : '-';
+}
+function _cvColDateLabel(v) {
+  // 行描画と同じ _cvAtMidnight → toLocaleDateString で「8/30」形式に揃える
+  return v ? _cvAtMidnight(v).toLocaleDateString('ja-JP', { month:'numeric', day:'numeric' }) : '—';
+}
+// 列定義: get=表示値（フィルタ候補・突合に使う） / sort=並べ替えキー（省略時は get の値）
+const CV_COL_FILTER_DEFS = {
+  client:    { label:'クライアント', get:c => c.projects?.clients?.name || '-' },
+  file:      { label:'ファイル名', get:c => c.file_name || '-' },
+  appeal:    { label:'訴求軸', get:c => c.appeal_name || '—' },
+  editor:    { label:'編集者', get:c => { const ed = _cvColEditorAssign(c); return ed?.users ? NameDisplay.full(ed.users) : '未設定'; } },
+  rank:      { label:'ランク', get:c => { const ed = _cvColEditorAssign(c); return ed?.rank_applied || ed?.users?.rank || '-'; } },
+  team:      { label:'チーム', get:c => _cvColTeamLabel(c) },
+  status:    { label:'ステータス', get:c => c.status || '-' },
+  memo:      { label:'メモ', get:c => c.memo || '—' },
+  ball:      { label:'ボール保持者', get:c => c.ball_holder?.holder || '不明' },
+  draft:     { label:'初稿提出日', get:c => _cvColDateLabel(c.draft_deadline), sort:c => c.draft_deadline || '' },
+  final:     { label:'最終納期', get:c => _cvColDateLabel(c.final_deadline), sort:c => c.final_deadline || '' },
+  delivered: { label:'納品日', get:c => c.delivered_at ? new Date(c.delivered_at).toLocaleDateString('ja-JP', { timeZone:'Asia/Tokyo', month:'numeric', day:'numeric' }) : '—', sort:c => c.delivered_at || '' },
+  frameio:   { label:'Frame.io', get:c => c.frameio_url ? 'リンクあり' : 'リンクなし' },
+  late:      { label:'遅れ', get:c => _cvListIsLate(c) ? '遅れ' : '—' },
+  sos:       { label:'SOS', get:c => c.help_flag ? 'SOS中' : '—' },
+};
+function _cvColValue(c, key) {
+  try { return CV_COL_FILTER_DEFS[key].get(c); } catch (e) { return '-'; }
+}
+// excludeKey の列を除いた全列フィルターを通過するか（候補値算出時に自列を除外する Excel 挙動用）
+function _cvColFilterPass(c, excludeKey) {
+  for (const key of Object.keys(cvColFilters)) {
+    if (key === excludeKey) continue;
+    const set = cvColFilters[key];
+    if (set && set.size > 0 && !set.has(_cvColValue(c, key))) return false;
+  }
+  return true;
+}
+function _cvColSortVal(c, key) {
+  const def = CV_COL_FILTER_DEFS[key];
+  return def?.sort ? def.sort(c) : _cvColValue(c, key);
+}
+// グループ内の行を現在のソート指定で並べ替える（空値は昇順/降順どちらでも末尾）
+function _cvColSortRows(rows) {
+  if (!cvColSort) return rows;
+  const { key, dir } = cvColSort;
+  const sign = dir === 'desc' ? -1 : 1;
+  const isEmpty = v => v === '' || v === '-' || v === '—' || v == null;
+  return rows.slice().sort((a, b) => {
+    const va = _cvColSortVal(a, key), vb = _cvColSortVal(b, key);
+    if (isEmpty(va) && isEmpty(vb)) return 0;
+    if (isEmpty(va)) return 1;
+    if (isEmpty(vb)) return -1;
+    return sign * String(va).localeCompare(String(vb), 'ja', { numeric: true });
+  });
+}
+function _cvColPopEl() {
+  let pop = document.getElementById('cv-colf-pop');
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.id = 'cv-colf-pop';
+    pop.className = 'cv-colf-pop';
+    pop.style.display = 'none';
+    document.body.appendChild(pop);
+    // 外側クリック / Esc / スクロールで閉じる
+    document.addEventListener('click', (e) => {
+      if (pop.style.display === 'none') return;
+      if (pop.contains(e.target) || e.target.closest?.('.cv-colf-btn')) return;
+      cvColFilterClose();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cvColFilterClose(); });
+    // ページ/テーブルのスクロールで位置がズレるので閉じる。ただしポップアップ内部
+    // （候補リスト .cv-colf-list）のスクロールでは閉じない
+    window.addEventListener('scroll', (e) => {
+      if (e.target instanceof Node && pop.contains(e.target)) return;
+      cvColFilterClose();
+    }, true);
+  }
+  return pop;
+}
+function cvColFilterClose() {
+  const pop = document.getElementById('cv-colf-pop');
+  if (pop) pop.style.display = 'none';
+  _cvColOpenKey = null;
+}
+function cvColFilterOpen(ev, key) {
+  ev.stopPropagation();
+  if (_cvColOpenKey === key) { cvColFilterClose(); return; }
+  _cvColOpenKey = key;
+  const def = CV_COL_FILTER_DEFS[key];
+  const pop = _cvColPopEl();
+
+  // 候補値: 他列のフィルター通過行から件数つきで集計
+  const counts = new Map();
+  _cvColPreRows.filter(c => _cvColFilterPass(c, key)).forEach(c => {
+    const v = _cvColValue(c, key);
+    counts.set(v, (counts.get(v) || 0) + 1);
+  });
+  // 並び順: sort キーがある列（日付）は sort キー順、それ以外は表示値の自然順
+  let values = Array.from(counts.keys());
+  if (def.sort) {
+    const sortKeyByVal = new Map();
+    _cvColPreRows.forEach(c => { const v = _cvColValue(c, key); if (!sortKeyByVal.has(v)) sortKeyByVal.set(v, String(def.sort(c))); });
+    values.sort((a, b) => String(sortKeyByVal.get(a) || '').localeCompare(String(sortKeyByVal.get(b) || '')));
+  } else {
+    values.sort((a, b) => String(a).localeCompare(String(b), 'ja', { numeric: true }));
+  }
+  const active = cvColFilters[key] || null; // null = 全選択（フィルタなし）
+  const sortAsc  = cvColSort?.key === key && cvColSort.dir === 'asc';
+  const sortDesc = cvColSort?.key === key && cvColSort.dir === 'desc';
+
+  pop.innerHTML = `
+    <div class="cv-colf-title">${esc(def.label)}</div>
+    <div class="cv-colf-sortrow">
+      <button type="button" class="cv-colf-sortbtn ${sortAsc ? 'on' : ''}" onclick="cvColSortSet('${key}','asc')">↑ 昇順</button>
+      <button type="button" class="cv-colf-sortbtn ${sortDesc ? 'on' : ''}" onclick="cvColSortSet('${key}','desc')">↓ 降順</button>
+    </div>
+    <input type="text" class="cv-colf-search" placeholder="値を検索…" oninput="cvColFilterSearch(this.value)" onclick="event.stopPropagation()">
+    <div class="cv-colf-list" id="cv-colf-list">
+      <label class="cv-colf-item cv-colf-all"><input type="checkbox" id="cv-colf-check-all" onchange="cvColFilterToggleAll(this.checked)"><span class="cv-colf-val">(すべて選択)</span></label>
+      ${values.length ? values.map((v, i) => `
+        <label class="cv-colf-item" data-val="${esc(v)}">
+          <input type="checkbox" data-cvval="${esc(v)}" ${(!active || active.has(v)) ? 'checked' : ''} onchange="cvColFilterApply()">
+          <span class="cv-colf-val" title="${esc(v)}">${esc(v)}</span>
+          <span class="cv-colf-cnt">${counts.get(v)}件</span>
+        </label>`).join('') : '<div class="cv-colf-empty">候補がありません</div>'}
+    </div>
+    <div class="cv-colf-foot">
+      <button type="button" class="cv-colf-clearbtn" onclick="cvColFilterClearOne('${key}')">クリア</button>
+      <button type="button" class="cv-colf-closebtn" onclick="cvColFilterClose()">閉じる</button>
+    </div>`;
+
+  // 位置決め: ボタン直下・画面右端はみ出しは左に寄せる
+  pop.style.display = 'flex';
+  pop.style.visibility = 'hidden';
+  const rect = ev.currentTarget.getBoundingClientRect();
+  const pw = pop.offsetWidth || 240;
+  pop.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - pw - 8))}px`;
+  pop.style.top = `${rect.bottom + 6}px`;
+  pop.style.visibility = '';
+  _cvColSyncAllCheckbox();
+}
+function cvColFilterSearch(text) {
+  const t = (text || '').toLowerCase();
+  document.querySelectorAll('#cv-colf-list .cv-colf-item:not(.cv-colf-all)').forEach(el => {
+    el.style.display = (el.dataset.val || '').toLowerCase().includes(t) ? '' : 'none';
+  });
+}
+function _cvColSyncAllCheckbox() {
+  const boxes = Array.from(document.querySelectorAll('#cv-colf-list input[data-cvval]'));
+  const all = document.getElementById('cv-colf-check-all');
+  if (!all) return;
+  const checked = boxes.filter(b => b.checked).length;
+  all.checked = checked === boxes.length && boxes.length > 0;
+  all.indeterminate = checked > 0 && checked < boxes.length;
+}
+function cvColFilterToggleAll(on) {
+  // 検索で見えている候補だけを対象にする（Excel と同じ挙動）
+  document.querySelectorAll('#cv-colf-list .cv-colf-item:not(.cv-colf-all)').forEach(el => {
+    if (el.style.display === 'none') return;
+    const box = el.querySelector('input[data-cvval]');
+    if (box) box.checked = on;
+  });
+  cvColFilterApply();
+}
+function cvColFilterApply() {
+  if (!_cvColOpenKey) return;
+  const boxes = Array.from(document.querySelectorAll('#cv-colf-list input[data-cvval]'));
+  const selected = boxes.filter(b => b.checked).map(b => b.dataset.cvval);
+  if (selected.length === boxes.length) delete cvColFilters[_cvColOpenKey]; // 全選択 = フィルタ解除
+  else cvColFilters[_cvColOpenKey] = new Set(selected);
+  _cvColSyncAllCheckbox();
+  renderCreatives();
+}
+function cvColSortSet(key, dir) {
+  // 同じ方向をもう一度押したら解除（トグル）
+  cvColSort = (cvColSort?.key === key && cvColSort.dir === dir) ? null : { key, dir };
+  renderCreatives();
+  // ポップアップのソートボタンの点灯を更新するため開き直す
+  const btn = document.querySelector(`.cv-colf-btn[data-colf="${key}"]`);
+  if (btn && _cvColOpenKey === key) {
+    _cvColOpenKey = null;
+    cvColFilterOpen({ stopPropagation(){}, currentTarget: btn }, key);
+  }
+}
+function cvColFilterClearOne(key) {
+  delete cvColFilters[key];
+  if (cvColSort?.key === key) cvColSort = null;
+  renderCreatives();
+  const btn = document.querySelector(`.cv-colf-btn[data-colf="${key}"]`);
+  if (btn) {
+    _cvColOpenKey = null;
+    cvColFilterOpen({ stopPropagation(){}, currentTarget: btn }, key);
+  }
+}
+function cvColFiltersClearAll() {
+  cvColFilters = {};
+  cvColSort = null;
+  cvColFilterClose();
+  renderCreatives();
+}
+// ヘッダー▼ボタンの点灯状態と「列フィルター適用中」バーを更新（renderCreatives 末尾から呼ぶ）
+function updateCvColHeaderBtns() {
+  document.querySelectorAll('.cv-colf-btn[data-colf]').forEach(btn => {
+    const key = btn.dataset.colf;
+    btn.classList.toggle('on', !!cvColFilters[key]);
+    btn.classList.toggle('sorted', cvColSort?.key === key);
+    btn.textContent = cvColSort?.key === key ? (cvColSort.dir === 'asc' ? '▲' : '▼') : '▼';
+  });
+  const bar = document.getElementById('cv-colf-active-bar');
+  if (!bar) return;
+  const keys = Object.keys(cvColFilters);
+  if (!keys.length && !cvColSort) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  const chips = keys.map(k =>
+    `<span class="cv-colf-chip">${esc(CV_COL_FILTER_DEFS[k].label)}: ${cvColFilters[k].size}件選択<button type="button" title="この列のフィルターを解除" onclick="delete cvColFilters['${k}'];renderCreatives()">✕</button></span>`);
+  if (cvColSort) chips.push(`<span class="cv-colf-chip">並べ替え: ${esc(CV_COL_FILTER_DEFS[cvColSort.key].label)} ${cvColSort.dir === 'asc' ? '昇順' : '降順'}<button type="button" title="並べ替えを解除" onclick="cvColSort=null;renderCreatives()">✕</button></span>`);
+  bar.innerHTML = `<span style="font-weight:700">🔽 列フィルター</span>${chips.join('')}<button type="button" class="cv-colf-allclear" onclick="cvColFiltersClearAll()">すべて解除</button>`;
+  bar.style.display = 'flex';
+}
+
 function renderCreatives() {
   const tbody = document.getElementById('creative-tbody');
   const showRank = hasPermission('creative.rank_price_column');
@@ -13264,7 +13594,15 @@ function renderCreatives() {
     }
     return true;
   };
-  const filtered = baseFiltered.filter(_passesViewFilter);
+  let filtered = baseFiltered.filter(_passesViewFilter);
+
+  // ヘッダー列フィルター（Excel風・リスト表示のみ）
+  // 候補値算出用に「列フィルタ適用前」の行をキャッシュしてから絞り込む。
+  // ガント表示中は適用しない（モード切替時に renderCreatives が再実行されるため戻りも自動）。
+  _cvColPreRows = filtered;
+  if (currentCreativeMode === 'list' && Object.keys(cvColFilters).length > 0) {
+    filtered = filtered.filter(c => _cvColFilterPass(c));
+  }
 
   // 件数表示: ページング後の総件数(creativesPage.total) があればそちらを参照
   const totalLabel = (creativesPage.total > 0)
@@ -13279,8 +13617,12 @@ function renderCreatives() {
   try { renderAlerts(baseFiltered); } catch(e) { console.warn('[alerts] render error:', e); }
 
   if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="16" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
+    const colfActive = Object.keys(cvColFilters).length > 0;
+    tbody.innerHTML = colfActive
+      ? '<tr><td colspan="16" style="text-align:center;padding:40px;color:var(--text-muted)">列フィルターに該当するクリエイティブがありません<br><button type="button" class="cv-colf-allclear" style="margin-top:10px" onclick="cvColFiltersClearAll()">列フィルターをすべて解除</button></td></tr>'
+      : '<tr><td colspan="16" style="text-align:center;padding:40px;color:var(--text-muted)">該当するクリエイティブがありません</td></tr>';
     renderCreativeLoadMore();
+    updateCvColHeaderBtns();
     return;
   }
 
@@ -13344,8 +13686,8 @@ function renderCreatives() {
       ? '納品済'
       : (finalDiff === null ? '-' : finalDiff < 0 ? `${Math.abs(finalDiff)}日超過` : finalDiff === 0 ? '今日' : `あと${finalDiff}日`);
 
-    const isLate = (finalDiff !== null && finalDiff < 0 && c.status !== '納品') ||
-                (!draftSubmitted && draftDiff !== null && draftDiff < 0 && c.status !== '納品');
+    // 遅れ判定は列フィルター（CV_COL_FILTER_DEFS.late）と共通のヘルパーに集約
+    const isLate = _cvListIsLate(c);
     const clientName = c.projects?.clients?.name || '-';
 
     // 納品日（delivered_at）の JST 表示
@@ -13355,7 +13697,7 @@ function renderCreatives() {
     return `<tr class="${isLate?'row-late':''} ${c.help_flag?'row-help':''}" data-id="${c.id}">
       <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="creative-row-check" data-id="${c.id}" onchange="updateCreativeDeleteBar()" style="cursor:pointer;width:14px;height:14px"></td>
       <td style="white-space:nowrap;font-size:13px;font-weight:500;color:var(--text)">${clientName}</td>
-      <td style="font-size:13px;font-weight:500;cursor:pointer;color:var(--em-dark);text-decoration:underline dotted;white-space:nowrap" onclick="openCreativeDetail('${c.id}')" title="${c.file_name}">${c.file_name}</td>
+      <td style="font-size:13px;font-weight:500;cursor:pointer;color:var(--em-dark);white-space:nowrap" onclick="openCreativeDetail('${c.id}')" title="${c.file_name}">${c.thumb_file_id ? `<img class="cv-list-thumb" loading="lazy" decoding="async" src="/api/haruka/portfolio/thumbnail/${esc(c.thumb_file_id)}?s=120" alt="" onerror="this.style.display='none'">` : ''}<span style="text-decoration:underline dotted">${c.file_name}</span></td>
       <td class="cv-ed" title="クリックで訴求軸を変更" onclick="cvEditAppeal(event,this,'${c.id}')" style="font-size:12px;white-space:nowrap">${c.appeal_name ? esc(c.appeal_name) : '<span style="color:#B4B2A9">—</span>'}</td>
       <td class="cv-ed" title="クリックで担当編集者を変更" onclick="cvEditEditor(event,this,'${c.id}')" style="font-size:14px;font-weight:500">${editor?.users ? avatarWithName(editor.users, 36) : '<span style="color:#B4B2A9">未設定</span>'}</td>
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
@@ -13457,11 +13799,13 @@ function renderCreatives() {
     const ordered = Array.from(groups.values()).sort((a, b) => String(a.sort).localeCompare(String(b.sort), 'ja'));
     tbody.innerHTML = ordered.map(g => {
       const head = `<tr class="cv-list-group-head"><td colspan="${GROUP_COLSPAN}" style="background:var(--em-pale,#f6f0ff);padding:8px 12px;font-size:12px;font-weight:700;color:var(--em-dark,#5E35B1);border-top:0.5px solid var(--border);border-bottom:0.5px solid var(--border);letter-spacing:.04em">${esc(g.label)} <span style="color:var(--text-muted);font-weight:500;margin-left:6px">(${g.items.length}件)</span></td></tr>`;
-      return head + g.items.map(renderCreativeRow).join('');
+      // ヘッダー列フィルターの昇順/降順はグループ内で適用（グループ見出しの並びは名称順のまま）
+      return head + _cvColSortRows(g.items).map(renderCreativeRow).join('');
     }).join('');
   }
   initTableScrollHint();
   renderCreativeLoadMore();
+  updateCvColHeaderBtns();
 }
 
 // =====================================================================

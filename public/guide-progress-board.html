@@ -249,6 +249,17 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </ul>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 セルにマウスを乗せると <b>✎</b> が出るのが編集できる目印です。編集中に <kbd>Esc</kbd> で取消。</p>
   </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔽 リスト表示はヘッダーから列フィルター・並べ替えができます（Excel風）</div>
+    <p>リスト表示の各ヘッダー（クライアント／ファイル名／ステータス／ボール保持者／納期など）の <b>▼</b> をクリックすると、Excelのオートフィルターのようなパネルが開きます。</p>
+    <ul>
+      <li><b>値のチェックボックス</b>：表示したい値だけにチェックを入れて絞り込み（件数つき。上部の検索ボックスで候補の絞り込みも可能）。</li>
+      <li><b>↑ 昇順 / ↓ 降順</b>：その列でグループ内の行を並べ替え。もう一度押すと解除。</li>
+      <li>フィルター中の列は ▼ が緑に点灯し、表の上に「列フィルター」バーが出ます。<b>すべて解除</b>ボタンで一括リセット。</li>
+    </ul>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 列フィルターはリスト表示だけに効きます（ガント表示・納期遅れアラートの集計には影響しません）。ページを再読み込みするとリセットされます。</p>
+  </div>
 </section>
 
 <!-- ═══ STEP 3 ═══ -->
