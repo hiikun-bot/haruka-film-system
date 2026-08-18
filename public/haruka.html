@@ -9093,6 +9093,14 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <span id="fp-filename" style="font-size:12px;font-weight:600;font-family:monospace;color:#e4e4e7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <!-- バージョン移動（⬅️最新⇄前回➡️）。同一クリエイティブに複数バージョンがある時のみ表示 -->
+        <div id="fp-ver-nav" style="display:none;align-items:center;gap:3px;flex-shrink:0">
+          <button id="fp-ver-prev-btn" onclick="fpNavigateVersion(1)" title="前のバージョン（古い方）を表示" style="background:#2a2a2e;border:1px solid #3f3f46;color:#e4e4e7;font-size:12px;border-radius:5px;padding:3px 9px;cursor:pointer;line-height:1">⬅️</button>
+          <span id="fp-ver-label" style="font-size:11px;color:#a1a1aa;font-family:monospace;min-width:44px;text-align:center" title="表示中のバージョン / 総バージョン数">v1/1</span>
+          <button id="fp-ver-next-btn" onclick="fpNavigateVersion(-1)" title="次のバージョン（新しい方）を表示" style="background:#2a2a2e;border:1px solid #3f3f46;color:#e4e4e7;font-size:12px;border-radius:5px;padding:3px 9px;cursor:pointer;line-height:1">➡️</button>
+        </div>
+        <!-- 差分比較モード（静止画のみ）: 最新と前回を横並び表示 -->
+        <button id="fp-compare-btn" onclick="fpToggleCompareMode()" style="display:none;font-size:11px;color:#fbbf24;background:none;border:0.5px solid #fbbf24;border-radius:5px;padding:3px 10px;cursor:pointer;font-family:inherit" title="今回と前回のバージョンを横並びで比較">🆚 差分比較</button>
         <button id="fp-premiere-btn" onclick="fpDownloadMarkers()" style="display:none;font-size:11px;color:#c084fc;background:none;border:0.5px solid #c084fc;border-radius:5px;padding:3px 10px;cursor:pointer;font-family:inherit" title="タイムコード付きコメントをPremiereマーカーとして書き出す" onmouseover="this.style.background='rgba(192,132,252,0.12)'" onmouseout="this.style.background='none'">▶ Premiere</button>
         <a id="fp-drive-link" href="#" target="_blank" rel="noopener" style="font-size:11px;color:#3ECFCA;text-decoration:none;padding:3px 10px;border:0.5px solid #3ECFCA;border-radius:5px;display:none">↗ Drive</a>
         <button onclick="closeFilePreview()" style="background:none;border:none;color:#71717a;font-size:22px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#71717a'">×</button>
@@ -38611,10 +38619,154 @@ async function _fpFetchDirectUrl(driveFileId) {
   });
 })();
 
+// ===== バージョン間ナビ（⬅️➡️）/ 差分比較（横並び）/ 長押しで前回表示 =====
+// データソースは _cdFilesCache（クリエイティブ詳細で読込済の全バージョン・version DESC）。
+// 追加 API 不要。キャッシュ内に fileRecordId が見つからない場合（学び広場からの単発
+// プレビュー等）はナビ UI を出さず、従来どおりの単体プレビューになる。
+const FP_IMAGE_EXT_RE = /\.(jpg|jpeg|png|gif|webp|svg)$/i; // openFilePreview の isImage 判定と共通
+let _fpVersionNav = null;      // { files, index, creativeType, assigneeRole }
+let _fpCompareMode = false;    // 差分比較（横並び）モード中か
+let _fpFlashActive = false;    // 長押しで前回を表示中か
+let _fpFlashRestoring = false; // 長押しを離した直後、今回画像への復帰 load 中（fit 再計算を抑止してズーム位置を維持）
+
+function _fpResolveDriveFileId(f) {
+  if (!f) return null;
+  return f.drive_file_id || (f.drive_url ? (f.drive_url.match(/\/d\/([^/]+)/) || [])[1] : null);
+}
+// ナビ位置から offset 分ずれたファイル（+1=1つ古い / -1=1つ新しい）
+function _fpNavFile(offset) {
+  const nav = _fpVersionNav;
+  if (!nav) return null;
+  return nav.files[nav.index + offset] || null;
+}
+// 表示中の1つ前（古い）のバージョン。差分比較・長押し比較はプレビュー可能な静止画のみ対象
+function _fpGetPrevImageFile() {
+  const f = _fpNavFile(1);
+  if (!f) return null;
+  if (!FP_IMAGE_EXT_RE.test(f.generated_name || '')) return null;
+  return _fpResolveDriveFileId(f) ? f : null;
+}
+function _fpVerLabel(f, idx) {
+  const nav = _fpVersionNav;
+  const n = Number(f?.version) || (nav ? nav.files.length - idx : 0);
+  return 'v' + (n || '?');
+}
+
+// ⬅️➡️ボタン: delta=+1 で1つ古いバージョン、-1 で1つ新しいバージョンを開き直す
+function fpNavigateVersion(delta) {
+  const nav = _fpVersionNav;
+  if (!nav) return;
+  const f = nav.files[nav.index + delta];
+  if (!f) return;
+  openFilePreview(_fpResolveDriveFileId(f), f.generated_name, f.drive_url || '', f.id, nav.creativeType, nav.assigneeRole);
+}
+
+function fpUpdateVersionNavUI(isImage) {
+  const nav = _fpVersionNav;
+  const wrap = document.getElementById('fp-ver-nav');
+  const cmpBtn = document.getElementById('fp-compare-btn');
+  const multi = !!(nav && nav.files.length > 1);
+  if (wrap) {
+    wrap.style.display = multi ? 'flex' : 'none';
+    if (multi) {
+      const label = document.getElementById('fp-ver-label');
+      if (label) label.textContent = `${_fpVerLabel(nav.files[nav.index], nav.index)}/${nav.files.length}`;
+      const canOlder = nav.index < nav.files.length - 1;
+      const canNewer = nav.index > 0;
+      const prevBtn = document.getElementById('fp-ver-prev-btn');
+      const nextBtn = document.getElementById('fp-ver-next-btn');
+      if (prevBtn) { prevBtn.disabled = !canOlder; prevBtn.style.opacity = canOlder ? '1' : '0.35'; prevBtn.style.cursor = canOlder ? 'pointer' : 'default'; }
+      if (nextBtn) { nextBtn.disabled = !canNewer; nextBtn.style.opacity = canNewer ? '1' : '0.35'; nextBtn.style.cursor = canNewer ? 'pointer' : 'default'; }
+    }
+  }
+  if (cmpBtn) {
+    const showCmp = !!(isImage && _fpGetPrevImageFile());
+    cmpBtn.style.display = showCmp ? '' : 'none';
+    cmpBtn.textContent = _fpCompareMode ? '✕ 比較を終了' : '🆚 差分比較';
+    cmpBtn.style.background = _fpCompareMode ? 'rgba(251,191,36,0.15)' : 'none';
+  }
+}
+
+// 差分比較モード: 前回（左）と今回（右）を横並びフィット表示。もう一度押すと通常表示に戻る
+function fpToggleCompareMode() {
+  const nav = _fpVersionNav;
+  if (!nav) return;
+  const cur = nav.files[nav.index];
+  if (_fpCompareMode) {
+    // 終了: 通常プレビューを開き直す（zoom/bbox/コメント状態も再初期化される）
+    openFilePreview(_fpResolveDriveFileId(cur), cur.generated_name, cur.drive_url || '', cur.id, nav.creativeType, nav.assigneeRole);
+    return;
+  }
+  const prev = _fpGetPrevImageFile();
+  if (!prev) return;
+  _fpCompareMode = true;
+  _fpFlashActive = false;
+  _fpFlashRestoring = false;
+  fpHideLoading();
+  const pane = (f, idx, isCurrent) => `
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;background:#111;${isCurrent ? '' : 'border-right:1px solid #2a2a2e'}">
+      <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 10px;background:#1e1e22;border-bottom:1px solid #2a2a2e;min-width:0">
+        <span style="font-size:11px;font-weight:700;white-space:nowrap;color:${isCurrent ? '#3ECFCA' : '#a1a1aa'}">${isCurrent ? '今回' : '前回'} ${_fpVerLabel(f, idx)}</span>
+        <span style="font-size:10px;font-family:monospace;color:#71717a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" title="${esc(f.generated_name || '')}">${esc(f.generated_name || '')}</span>
+      </div>
+      <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:10px">
+        <img src="${API}/files/${_fpResolveDriveFileId(f)}/stream" style="max-width:100%;max-height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none" draggable="false">
+      </div>
+    </div>`;
+  document.getElementById('fp-player').innerHTML =
+    `<div id="fp-compare-wrap" style="display:flex;width:100%;height:100%">${pane(prev, nav.index + 1, false)}${pane(cur, nav.index, true)}</div>`;
+  fpUpdateVersionNavUI(true);
+}
+
+// 長押しで前回表示（ぱらぱら比較）: 押している間だけ img の src を前回バージョンに差し替える。
+// ズーム/パン位置・overlay サイズはそのまま維持するので、押す⇄離すで違いが浮かび上がる。
+function fpFlashStart(ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  if (_fpFlashActive || _fpCompareMode) return;
+  const prev = _fpGetPrevImageFile();
+  const img = document.getElementById('fp-image');
+  if (!prev || !img) return;
+  _fpFlashActive = true;
+  img.dataset.currentSrc = img.src;
+  img.src = `${API}/files/${_fpResolveDriveFileId(prev)}/stream`;
+  const btn = document.getElementById('fp-flash-btn');
+  if (btn) btn.style.background = 'rgba(251,191,36,0.25)';
+  const stage = document.getElementById('fp-image-stage');
+  if (stage && !document.getElementById('fp-flash-badge')) {
+    const b = document.createElement('div');
+    b.id = 'fp-flash-badge';
+    b.textContent = `⏪ 前回 ${_fpVerLabel(prev, _fpVersionNav.index + 1)} を表示中（離すと今回に戻ります）`;
+    b.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(120,53,15,0.92);color:#fbbf24;font-size:11px;font-weight:700;padding:4px 12px;border-radius:6px;border:1px solid #92400e;z-index:6;pointer-events:none;white-space:nowrap';
+    stage.appendChild(b);
+  }
+}
+function fpFlashEnd() {
+  if (!_fpFlashActive) return;
+  _fpFlashActive = false;
+  const img = document.getElementById('fp-image');
+  if (img && img.dataset.currentSrc) {
+    _fpFlashRestoring = true; // 復帰 load で fit 再計算しない（ズーム位置維持）
+    img.src = img.dataset.currentSrc;
+  }
+  const badge = document.getElementById('fp-flash-badge');
+  if (badge) badge.remove();
+  const btn = document.getElementById('fp-flash-btn');
+  if (btn) btn.style.background = 'transparent';
+}
+
 function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creativeType, assigneeRole) {
   currentPreviewFileId   = fileRecordId || null;
   _fpCurrentDriveFileId  = driveFileId  || null;
   _fpCurrentQuality      = 'original';
+  // バージョン間ナビ状態を解決（クリエイティブ詳細のファイル一覧キャッシュから）
+  _fpCompareMode = false;
+  _fpFlashActive = false;
+  _fpFlashRestoring = false;
+  const _navFiles = Array.isArray(_cdFilesCache) ? _cdFilesCache : [];
+  const _navIndex = fileRecordId ? _navFiles.findIndex(x => x && x.id === fileRecordId) : -1;
+  _fpVersionNav = _navIndex >= 0
+    ? { files: _navFiles, index: _navIndex, creativeType: creativeType || '', assigneeRole: assigneeRole || '' }
+    : null;
   // ファイル切替時に zoom 状態をリセット（ファイル間で持ち越さない）
   _fpZoom = { scale: 1, tx: 0, ty: 0, fitScale: 1 };
   // 画質バッジをリセット
@@ -38635,7 +38787,14 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
   diagnoseArea.style.display = 'none';
 
   const isVideo = FP_VIDEO_EXT_RE.test(filename); // ホバー先読みと同一条件（定義は上の先読みブロック）
-  const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(filename);
+  const isImage = FP_IMAGE_EXT_RE.test(filename);
+
+  // ⬅️➡️ナビ・差分比較ボタンの表示を更新し、長押し/差分比較用に前回画像を先読み
+  fpUpdateVersionNavUI(isImage);
+  if (isImage) {
+    const _prevImg = _fpGetPrevImageFile();
+    if (_prevImg) { try { new Image().src = `${API}/files/${_fpResolveDriveFileId(_prevImg)}/stream`; } catch (_) {} }
+  }
 
   // Premiereボタン: 動画クリエイティブ + DBレコードあり のときだけ表示
   // （静止画はタイムコード概念がないため非表示。Premiere Pro連携不要）
@@ -38736,6 +38895,11 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
     } else if (isImage) {
       ctrlBar.style.display = 'none';
       fpShowLoading('画像を読み込み中...');
+      // 長押しで前回表示（ぱらぱら比較）ボタン: 前回バージョンの静止画がある時のみズームツールバーに出す
+      const _prevForFlash = _fpGetPrevImageFile();
+      const flashBtnHtml = _prevForFlash ? `
+            <span style="width:1px;height:14px;background:#3f3f46;margin:0 2px"></span>
+            <button type="button" id="fp-flash-btn" title="押している間だけ前回バージョンを表示（ぱらぱら比較で違いが分かる）" style="display:flex;align-items:center;gap:4px;background:transparent;border:1px solid #fbbf24;color:#fbbf24;cursor:pointer;padding:3px 8px;border-radius:4px;font-size:11px;line-height:1;font-weight:600;user-select:none;touch-action:none" onpointerdown="fpFlashStart(event)" onpointerup="fpFlashEnd()" onpointerleave="fpFlashEnd()" onpointercancel="fpFlashEnd()" oncontextmenu="return false">⏪ 長押しで前回</button>` : '';
       // 画像と overlay レイヤーを transform レイヤー内に配置（zoom/pan 対応）
       // - stage は overflow:hidden で表示窓
       // - transform レイヤーが scale + translate を一括で持つ
@@ -38754,7 +38918,7 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
             <button type="button" onclick="fpZoomFit()" title="フィット表示にリセット (Cmd/Ctrl + 0)" style="background:transparent;border:none;color:#e4e4e7;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:13px;line-height:1">⤺</button>
             <!-- 選択範囲（黄色枠）の表示ON/OFF。OFFにすると元の素材を見て整列・余白を確認しやすい -->
             <span id="fp-bbox-toggle-sep" style="width:1px;height:14px;background:#3f3f46;margin:0 2px;display:none"></span>
-            <button type="button" id="fp-bbox-toggle-btn" onclick="fpToggleBboxVisible()" title="選択範囲（黄色枠）の表示/非表示を切り替え。OFFにすると元の素材だけ表示" style="display:none;align-items:center;gap:4px;background:rgba(245,197,24,0.16);border:1px solid #f5c518;color:#fbbf24;cursor:pointer;padding:3px 8px;border-radius:4px;font-size:11px;line-height:1;font-weight:600">▦ 範囲 ON</button>
+            <button type="button" id="fp-bbox-toggle-btn" onclick="fpToggleBboxVisible()" title="選択範囲（黄色枠）の表示/非表示を切り替え。OFFにすると元の素材だけ表示" style="display:none;align-items:center;gap:4px;background:rgba(245,197,24,0.16);border:1px solid #f5c518;color:#fbbf24;cursor:pointer;padding:3px 8px;border-radius:4px;font-size:11px;line-height:1;font-weight:600">▦ 範囲 ON</button>${flashBtnHtml}
           </div>
         </div>`;
       // 新しい画像を開くたびに選択範囲は「全表示」をデフォルトに戻す
@@ -38840,6 +39004,11 @@ function closeFilePreview() {
   _fpZoom = { scale: 1, tx: 0, ty: 0, fitScale: 1 };
   _fpZoomWheelHandler = null;
   _fpZoomDblHandler   = null;
+  // バージョンナビ・差分比較・長押し比較の状態リセット
+  _fpVersionNav = null;
+  _fpCompareMode = false;
+  _fpFlashActive = false;
+  _fpFlashRestoring = false;
 }
 
 // ===== プレビュー ローディングインジケーター =====
@@ -39508,6 +39677,8 @@ function fpNativeFullscreen() {
   document.addEventListener('mousedown', e => {
     const header = document.getElementById('fp-header');
     if (!header || !header.contains(e.target)) return;
+    // ボタン・リンク上での押下はドラッグ開始しない（⬅️➡️ナビ等を押しながら動かしても窓が動かないように）
+    if (e.target.closest && e.target.closest('button,a,select,input')) return;
     dragging = true;
     const win = document.getElementById('fp-window');
     const rect = win.getBoundingClientRect();
@@ -40249,6 +40420,8 @@ let _fpBboxHidden = false;
 
 // 画像が読み込まれた時のハンドラ（onload から呼ぶ）
 function fpOnImageLoaded() {
+  // 長押し比較（前回⇄今回）の src 差し替え時は fit/overlay を再計算しない（ズーム位置を維持）
+  if (_fpFlashActive || _fpFlashRestoring) { _fpFlashRestoring = false; fpHideLoading(); return; }
   fpHideLoading();
   fpSyncOverlaySize();
   fpZoomFit();              // fit に合わせて初期 transform を確定
