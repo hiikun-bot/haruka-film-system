@@ -5,7 +5,7 @@ const supabase = require('../supabase');
 const googleServiceAccount = require('../lib/google-service-account');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireRole, requireLevel, requirePermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache, invalidateUserCache } = require('../auth');
+const { requireAuth, requireRole, requireLevel, requirePermission, requireAnyPermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache, invalidateUserCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
 const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
@@ -2024,8 +2024,8 @@ router.get('/filename-templates/:id', async (req, res) => {
   res.json(data || null);
 });
 
-// POST /api/filename-templates  新規（admin/secretary 権限想定）
-router.post('/filename-templates', requireAuth, requirePermission('master.page'), async (req, res) => {
+// POST /api/filename-templates  新規（master.page または master.filename_templates。既定: admin/secretary/producer/director）
+router.post('/filename-templates', requireAuth, requireAnyPermission('master.page', 'master.filename_templates'), async (req, res) => {
   const { name, separator, tokens, is_default } = req.body || {};
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: 'name は必須です' });
@@ -2059,7 +2059,7 @@ router.post('/filename-templates', requireAuth, requirePermission('master.page')
 });
 
 // PUT /api/filename-templates/:id  更新
-router.put('/filename-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+router.put('/filename-templates/:id', requireAuth, requireAnyPermission('master.page', 'master.filename_templates'), async (req, res) => {
   const { name, separator, tokens, is_default } = req.body || {};
   const update = {};
   if (name !== undefined) {
@@ -2105,7 +2105,7 @@ router.put('/filename-templates/:id', requireAuth, requirePermission('master.pag
 // DELETE /api/filename-templates/:id
 //   - is_default のテンプレは削除不可
 //   - projects.filename_template_id で参照中の場合は 409
-router.delete('/filename-templates/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
+router.delete('/filename-templates/:id', requireAuth, requireAnyPermission('master.page', 'master.filename_templates'), async (req, res) => {
   const id = req.params.id;
   // 自身が default かチェック
   const { data: target, error: getErr } = await supabase
@@ -20310,7 +20310,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'member.list','member.edit_password','member.deactivate','member.reactivate','member.delete',
   'team.manage','team.assign','team.delete',
   'invoice.own','invoice.all_view',
-  'master.page','master.sys_config',
+  'master.page','master.sys_config','master.filename_templates',
   'system.view_as',
   'analytics.view',
   'analytics.bug_reports.view',

@@ -298,6 +298,12 @@ async function userHasPermission(userRole, key) {
 }
 
 function requirePermission(key) {
+  return requireAnyPermission(key);
+}
+
+// 複数の permission_key の OR 判定版。いずれか1つでも許可されていれば通す。
+// 例: requireAnyPermission('master.page', 'master.filename_templates')
+function requireAnyPermission(...keys) {
   return async (req, res, next) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: 'ログインが必要です' });
     try {
@@ -307,11 +313,14 @@ function requirePermission(key) {
       //   3) 集合が空（dual-read fallback）の場合は旧 req.user.role での単発判定にフォールバック
       const codes = await rolesUtil.getEffectiveRoleCodes(req, { isSuperAdminUser });
       let ok = false;
-      if (codes.length > 0) {
-        ok = await rolesUtil.roleCodesHavePermission(codes, key);
-      } else {
-        const effectiveRole = getEffectiveRole(req); // 旧経路
-        ok = await userHasPermission(effectiveRole, key);
+      for (const key of keys) {
+        if (codes.length > 0) {
+          ok = await rolesUtil.roleCodesHavePermission(codes, key);
+        } else {
+          const effectiveRole = getEffectiveRole(req); // 旧経路
+          ok = await userHasPermission(effectiveRole, key);
+        }
+        if (ok) break;
       }
       if (ok) return next();
       return res.status(403).json({ error: 'この操作の権限がありません' });
@@ -325,6 +334,7 @@ module.exports = {
   requireRole,
   requireLevel,
   requirePermission,
+  requireAnyPermission,
   requireSuperAdmin,
   userHasPermission,
   isSuperAdminUser,
