@@ -353,6 +353,11 @@ function invalidatePermissionsCache() {
  * ロールコード集合に対する permission チェック。
  * - admin を含む場合は常に true（ロックアウト防止、auth.js の挙動を踏襲）
  * - 'producer_director' を直接渡された場合は ['producer','director'] の和集合として扱う
+ * - 合成値 'producer_director' の TEXT 行は producer と director を「両方」持つ
+ *   ユーザー（＝旧 producer_director 相当）にのみ適用する。片方だけの単独ロールに
+ *   適用すると、権限マトリクスの PD 列 ON が producer / director 単独にも
+ *   API レベルで漏れてしまう（フロント hasPermission は「兼任のみ許可」で、
+ *   単独ロールにはボタンを出さない。その意図とサーバー判定を一致させる）
  */
 async function roleCodesHavePermission(codes, key) {
   if (!Array.isArray(codes) || codes.length === 0 || !key) return false;
@@ -366,12 +371,11 @@ async function roleCodesHavePermission(codes, key) {
   const perms = await loadPermissionsByCode();
   for (const code of expanded) {
     if (perms.get(`${code}|${key}`) === true) return true;
-    // dual-read: 'producer_director' の TEXT 行も拾う（合成値の権限を保持する移行期）
-    // producer / director どちらかを持つユーザーには producer_director 設定の許可も適用する
-    if ((code === 'producer' || code === 'director')
-        && perms.get(`producer_director|${key}`) === true) {
-      return true;
-    }
+  }
+  // dual-read: 'producer_director' の TEXT 行（移行期に残る）は兼任者のみに適用
+  if (expanded.includes('producer') && expanded.includes('director')
+      && perms.get(`producer_director|${key}`) === true) {
+    return true;
   }
   return false;
 }

@@ -96,3 +96,9 @@ ALTER TABLE project_estimate_line_costs
   - `role_permissions.role_id` 列追加 + バックフィル（合成値 `producer_director` の権限行は role_id NULL のまま残し、Step 3 のコード側で和集合解釈）
   - **このPRはコード変更なし**。dual-read 期間として `users.role` / `role_permissions.role` TEXT は維持。
   - 続き: Step 2（コードを `user_roles` 経由に切替）→ Step 3（`role_permissions.role_id` 参照に切替）→ Step 4（旧列 DROP）
+- **2026-08-18**: 合成値 `producer_director` TEXT 行の適用範囲を「producer と director を両方持つ兼任者のみ」に修正。
+  - 従来のサーバー側 dual-read 互換は「producer / director の**どちらか**を持つ全員」に PD 行を適用しており、
+    権限マトリクスの PD 列 ON が director / producer 単独ロールにも API レベルで漏れていた
+    （フロント `hasPermission` は「兼任のみ許可・単独は不可」で、意図と不一致）。
+  - `utils/roles.js#roleCodesHavePermission` / `auth.js#userHasPermission` を両方保有時のみ適用に統一。
+    合わせて code 単体ループで判定していた箇所（PUT /members/:id、google-calendar の reqHasPermission）を集合判定に切替。
