@@ -4285,6 +4285,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <span id="creative-delete-bar" style="display:none;align-items:center;gap:6px">
           <span id="creative-selected-count" style="font-size:12px;color:var(--text-muted)">0件選択中</span>
           <button class="btn" onclick="openBulkStatusModal()" style="font-size:12px;padding:4px 10px" title="選択したクリエイティブのステータスをまとめて変更（納品含む）">ステータス一括変更</button>
+          <button class="btn" onclick="openBulkDeadlineModal()" style="font-size:12px;padding:4px 10px" title="選択したクリエイティブの初稿締切・最終納品日をまとめて変更">📅 予定日一括変更</button>
           <button class="btn-danger" onclick="deleteSelectedCreatives()" style="font-size:12px;padding:4px 10px">削除</button>
         </span>
         <button class="btn-primary" onclick="openCreateCreative()" style="font-size:12px;padding:6px 12px">＋ 追加</button>
@@ -5010,6 +5011,42 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
       <button class="btn-primary" id="bulk-status-apply-btn" onclick="applyBulkStatusChange()">一括変更する</button>
       <button class="btn" onclick="closeModal('modal-bulk-status')">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- 予定日（初稿締切・最終納品日）一括変更モーダル。
+     入口は 2つ: ①リスト表示のチェック選択バー ②提出遅れアラートバー（遅延中の制作側案件を対象に自動セット）。
+     「遅延しているのではなく日付が変更になっているケース」をまとめて是正するための機能。 -->
+<div class="modal-overlay" id="modal-bulk-deadline">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-title">📅 予定日一括変更<button class="modal-close" onclick="closeModal('modal-bulk-deadline')">×</button></div>
+    <div class="form-group">
+      <label class="form-label">対象（チェックを外すと除外できます）</label>
+      <div id="bulk-dl-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px;line-height:1.7"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">変更する日付</label>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="bulk-dl-field" value="final" checked onchange="_bulkDlRecompute()">最終納品日</label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="bulk-dl-field" value="draft" onchange="_bulkDlRecompute()">初稿締切日</label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="bulk-dl-field" value="both" onchange="_bulkDlRecompute()">両方</label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">変更方法</label>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:13px">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="bulk-dl-method" value="set" checked onchange="_bulkDlRecompute()">日付を指定</label>
+        <input type="date" class="form-input" id="bulk-dl-date" style="width:auto;font-size:13px;padding:4px 8px" onchange="_bulkDlRecompute()">
+        <span style="color:var(--border)">｜</span>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="bulk-dl-method" value="shift" onchange="_bulkDlRecompute()">日数でずらす</label>
+        <span style="display:inline-flex;align-items:center;gap:4px"><input type="number" class="form-input" id="bulk-dl-shift" value="7" step="1" style="width:70px;font-size:13px;padding:4px 8px" oninput="_bulkDlRecompute()">日後ろへ（マイナスで前倒し）</span>
+      </div>
+      <div id="bulk-dl-hint" style="display:none;font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+      <button class="btn-primary" id="bulk-dl-apply-btn" onclick="applyBulkDeadlineChange()">一括変更する</button>
+      <button class="btn" onclick="closeModal('modal-bulk-deadline')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -15427,6 +15464,12 @@ function renderAlerts(rows) {
   const bdNavBtnHtml = (typeof bdIsAllowed === 'function' && bdIsAllowed())
     ? `<button type="button" class="alert-filter-btn" style="margin-left:6px" onclick="bdGoToPage()">📦 一括納品完了へ</button>`
     : '';
+  // 予定日一括変更への導線 — 「遅延ではなく日付が変更になった」ケースをまとめて是正する。
+  // 対象は制作側遅延 (lateOurs) のみ。onclick 文字列に ID 配列を埋め込めないためモジュール変数で受け渡す
+  _cvAlertLateIds = lateOurs.map(c => c.id);
+  const dlBtnHtml = lateOurs.length
+    ? `<button type="button" class="alert-filter-btn" style="margin-left:6px" onclick="openBulkDeadlineModal(_cvAlertLateIds)" title="提出遅れ中のクリエイティブの初稿締切・最終納品日をまとめて変更します（遅延ではなく日付変更になったケースの是正用）">📅 予定日をまとめて変更</button>`
+    : '';
   // 制作側遅延が無く、クライアント待ちのみの場合は文言を切り替える
   const headText = lateOurs.length
     ? `提出遅れ ${lateOurs.length}件：`
@@ -15435,7 +15478,7 @@ function renderAlerts(rows) {
     ? `<span class="alert-client-note" onclick="cvSpShowAllDelayed()" title="クライアントにボールがあり締切超過の案件。制作側は返答待ちです。クリックで遅延を全件表示します">⏳ クライアント確認待ち ${lateClient.length}件</span>`
     : '';
   const dotHtml = lateOurs.length ? `<div class="alert-dot"></div>` : '';
-  el.innerHTML = `<div class="alert-bar${lateOurs.length?'':' is-calm'}">${dotHtml}<span class="alert-text">${headText}</span><span class="alert-names">${chips}</span>${clientNoteHtml}<button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button>${bdNavBtnHtml}</div>`;
+  el.innerHTML = `<div class="alert-bar${lateOurs.length?'':' is-calm'}">${dotHtml}<span class="alert-text">${headText}</span><span class="alert-names">${chips}</span>${clientNoteHtml}<button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button>${dlBtnHtml}${bdNavBtnHtml}</div>`;
 }
 
 function setClient(btn, id) {
@@ -46711,6 +46754,178 @@ async function applyBulkStatusChange() {
   const allChk = document.getElementById('creative-check-all');
   if (allChk) allChk.checked = false;
   await loadCreatives();
+}
+
+// ===== 予定日（初稿締切・最終納品日）一括変更 =====
+// 「遅延しているのではなく日付が変更になっている」ケースを、1件ずつ開かずにまとめて是正する。
+// 入口: ①リスト表示のチェック選択バー（選択中の行が対象） ②提出遅れアラートバー（制作側遅延 lateOurs が対象）。
+// 実行は cvEditDate と同じ PUT /creatives/:id { draft_deadline / final_deadline } を1件ずつ叩くクライアント側バルク。
+let _cvAlertLateIds = [];
+let _bulkDlCtx = null;
+
+function openBulkDeadlineModal(ids) {
+  const targets = Array.isArray(ids)
+    ? ids.map(id => (allCreatives || []).find(c => c && c.id === id)).filter(Boolean)
+    : _bulkSelectedCreatives();
+  if (!targets.length) { showToast('対象のクリエイティブにチェックを入れてください', 'warn'); return; }
+  _bulkDlCtx = { targets };
+  // 入力を既定値へリセット（前回の値を引きずらない）
+  const fEl = document.querySelector('input[name="bulk-dl-field"][value="final"]');
+  if (fEl) fEl.checked = true;
+  const mEl = document.querySelector('input[name="bulk-dl-method"][value="set"]');
+  if (mEl) mEl.checked = true;
+  const dateEl = document.getElementById('bulk-dl-date');
+  // 既定日付は JST の今日（そのまま「今日提出予定に変更」できる自然な初期値）
+  if (dateEl) dateEl.value = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const shiftEl = document.getElementById('bulk-dl-shift');
+  if (shiftEl) shiftEl.value = '7';
+  const listEl = document.getElementById('bulk-dl-list');
+  if (listEl) {
+    listEl.innerHTML = targets.map(c => {
+      const e = c.creative_assignments?.find(a => ['editor', 'designer'].includes(a.role));
+      const person = e?.users ? NameDisplay.short(e.users) : '?';
+      const client = c.projects?.clients?.name || '?';
+      const raw = c.file_name || '(ファイル名なし)';
+      const shortName = raw.length > 30 ? `${raw.slice(0, 12)}…${raw.slice(-12)}` : raw;
+      return `<label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="${esc(raw)}">` +
+        `<input type="checkbox" class="bulk-dl-check" data-id="${c.id}" checked onchange="_bulkDlRecompute()">` +
+        `<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0">${esc(person)}<small style="color:var(--text-muted)">（${esc(client)}）</small> ${esc(shortName)}</span>` +
+        `<span class="bulk-dl-preview" data-id="${c.id}" style="white-space:nowrap;color:var(--text-muted)"></span>` +
+        `</label>`;
+    }).join('');
+  }
+  openModal('modal-bulk-deadline');
+  _bulkDlRecompute();
+}
+
+function _bulkDlParams() {
+  return {
+    field: document.querySelector('input[name="bulk-dl-field"]:checked')?.value || 'final',
+    method: document.querySelector('input[name="bulk-dl-method"]:checked')?.value || 'set',
+    dateVal: document.getElementById('bulk-dl-date')?.value || '',
+    shiftDays: parseInt(document.getElementById('bulk-dl-shift')?.value, 10)
+  };
+}
+// 'YYYY-MM-DD' を n 日ずらす（UTC 固定で計算しタイムゾーン起因の日ズレを防ぐ）
+function _bulkDlShiftDay(day, n) {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d) + n * 86400000).toISOString().slice(0, 10);
+}
+const _bulkDlFmt = day => day ? `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}` : '未設定';
+// 対象1件の実行計画: { changes: { draft_deadline?, final_deadline? }, reason? }（changes 空 = スキップ）
+function _bulkDlPlanFor(c, p) {
+  const fields = p.field === 'both' ? ['draft_deadline', 'final_deadline'] : [p.field === 'draft' ? 'draft_deadline' : 'final_deadline'];
+  const changes = {};
+  let hadUnset = false;
+  for (const f of fields) {
+    const cur = c[f] ? String(c[f]).slice(0, 10) : '';
+    let nv;
+    if (p.method === 'set') {
+      nv = p.dateVal;
+    } else {
+      if (!cur) { hadUnset = true; continue; } // 未設定はずらしようがない
+      if (!Number.isFinite(p.shiftDays)) continue;
+      nv = _bulkDlShiftDay(cur, p.shiftDays);
+    }
+    if (nv && nv !== cur) changes[f] = nv;
+  }
+  if (!Object.keys(changes).length) {
+    return { changes, reason: hadUnset ? '日付未設定のためずらせません' : 'すでにこの日付です' };
+  }
+  return { changes };
+}
+// プレビュー再計算: 各行に「現在 → 変更後」を表示し、ヒント行に件数内訳を出す
+function _bulkDlRecompute() {
+  if (!_bulkDlCtx) return;
+  const p = _bulkDlParams();
+  const invalid = (p.method === 'set' && !p.dateVal) || (p.method === 'shift' && !Number.isFinite(p.shiftDays));
+  let nChange = 0, nSkip = 0, nOff = 0;
+  document.querySelectorAll('#bulk-dl-list .bulk-dl-check').forEach(cb => {
+    const c = _bulkDlCtx.targets.find(x => x.id === cb.dataset.id);
+    const prevEl = document.querySelector(`#bulk-dl-list .bulk-dl-preview[data-id="${cb.dataset.id}"]`);
+    if (!c || !prevEl) return;
+    if (!cb.checked) { nOff++; prevEl.textContent = ''; return; }
+    if (invalid) { prevEl.textContent = ''; return; }
+    const plan = _bulkDlPlanFor(c, p);
+    const keys = Object.keys(plan.changes);
+    if (!keys.length) { nSkip++; prevEl.textContent = `−（${plan.reason}）`; return; }
+    nChange++;
+    prevEl.textContent = keys.map(f => {
+      const label = f === 'draft_deadline' ? '初稿' : '納品';
+      return `${label} ${_bulkDlFmt(c[f] ? String(c[f]).slice(0, 10) : '')} → ${_bulkDlFmt(plan.changes[f])}`;
+    }).join(' ／ ');
+  });
+  const hintEl = document.getElementById('bulk-dl-hint');
+  if (!hintEl) return;
+  if (invalid) {
+    hintEl.textContent = p.method === 'set' ? '変更後の日付を入力してください' : 'ずらす日数を入力してください';
+    hintEl.style.display = '';
+    return;
+  }
+  const parts = [];
+  if (nChange) parts.push(`✅ ${nChange}件を変更`);
+  if (nSkip)   parts.push(`− ${nSkip}件はスキップ（変更なし・日付未設定）`);
+  if (nOff)    parts.push(`${nOff}件はチェックを外したため対象外`);
+  hintEl.textContent = parts.join(' ／ ');
+  hintEl.style.display = parts.length ? '' : 'none';
+}
+async function applyBulkDeadlineChange() {
+  if (!_bulkDlCtx) return;
+  const p = _bulkDlParams();
+  if (p.method === 'set' && !p.dateVal) { showToast('変更後の日付を入力してください', 'warn'); return; }
+  if (p.method === 'shift' && !Number.isFinite(p.shiftDays)) { showToast('ずらす日数を入力してください', 'warn'); return; }
+  const checkedIds = new Set(Array.from(document.querySelectorAll('#bulk-dl-list .bulk-dl-check:checked')).map(cb => cb.dataset.id));
+  const plans = _bulkDlCtx.targets.filter(c => checkedIds.has(c.id)).map(c => ({ c, plan: _bulkDlPlanFor(c, p) }));
+  const runnable = plans.filter(x => Object.keys(x.plan.changes).length);
+  if (!runnable.length) { showToast('変更できる対象がありません（すべて変更なし・日付未設定です）', 'warn'); return; }
+
+  const btn = document.getElementById('bulk-dl-apply-btn');
+  btn.disabled = true;
+  let done = 0;
+  const okIds = [], failed = [];
+  const runOne = async ({ c, plan }) => {
+    try {
+      const res = await apiFetch(`${API}/creatives/${c.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(plan.changes)
+      });
+      if (res.ok) {
+        okIds.push(c.id);
+        Object.entries(plan.changes).forEach(([f, v]) => { c[f] = v; });
+        try { _cdInvalidateCache(c.id); } catch (_) {}
+      } else {
+        const e = await res.json().catch(() => ({}));
+        failed.push({ c, msg: String(e?.error || `HTTP ${res.status}`).split('\n')[0] });
+      }
+    } catch (e) {
+      failed.push({ c, msg: e.message });
+    }
+    done++;
+    btn.textContent = `変更中… (${done}/${runnable.length})`;
+  };
+  // ステータス一括変更と同じ 4並列の順次処理（同時リクエスト数を絞りつつ待たせすぎない）
+  const queue = runnable.slice();
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+    while (queue.length) await runOne(queue.shift());
+  }));
+  btn.disabled = false;
+  btn.textContent = '一括変更する';
+  closeModal('modal-bulk-deadline');
+  _bulkDlCtx = null;
+
+  const skipped = plans.filter(x => !Object.keys(x.plan.changes).length);
+  let msg = `${okIds.length} 件の予定日を変更しました`;
+  if (failed.length)  msg += ` ／ 失敗 ${failed.length} 件`;
+  if (skipped.length) msg += ` ／ スキップ ${skipped.length} 件`;
+  showToast(msg, failed.length ? 'warn' : 'success');
+  if (failed.length) {
+    const lines = failed.map(f => `✕ ${f.c.file_name || f.c.id}: ${f.msg}`);
+    alert(`予定日一括変更の結果\n\n成功: ${okIds.length} 件\n\n${lines.join('\n')}`);
+  }
+  const allChk = document.getElementById('creative-check-all');
+  if (allChk) allChk.checked = false;
+  document.querySelectorAll('.creative-row-check:checked').forEach(cb => { cb.checked = false; });
+  // ローカルの allCreatives は更新済みなので再描画のみ（renderAlerts も内部で再計算され提出遅れ件数が即時反映される）
+  renderCreatives();
 }
 
 // クリエイティブ詳細モーダルの「🗑 削除」ボタン。
