@@ -290,10 +290,12 @@ async function userHasPermission(userRole, key) {
     if (perms.get(`producer|${key}`) === true) return true;
     if (perms.get(`director|${key}`) === true) return true;
   }
-  // 3) 逆に producer / director を持つユーザーは合成値の TEXT 行（移行期に残る）も適用
-  if (userRole === 'producer' || userRole === 'director') {
-    if (perms.get(`producer_director|${key}`) === true) return true;
-  }
+  // ※ 逆方向（producer / director 単独 → 合成値 TEXT 行）の継承は行わない。
+  //   合成値 'producer_director' の行は兼任者のみに適用するのが意図
+  //   （フロント hasPermission と同じ扱い）。単独ロールにも適用すると
+  //   権限マトリクスの PD 列 ON が producer / director 全員に API レベルで漏れる。
+  //   兼任者は user_roles で ['producer','director'] を持ち、集合判定
+  //   （utils/roles.js#roleCodesHavePermission）側が両方保有時のみ適用する。
   return false;
 }
 

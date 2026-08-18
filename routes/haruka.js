@@ -12950,11 +12950,13 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   const targetLevel = rankOfRoleCodes(effectiveTargetCodes);
 
   // member.edit_password 保有可否（user_roles 集合 → role_permissions 経由で評価）
-  // 現状の userHasPermission は単一 legacy role 文字列を受けるため、配列中の各コードを順に試す
+  // 集合判定（roleCodesHavePermission）で評価する。単一コードを順に試す方式だと
+  // producer+director 兼任者が合成値 'producer_director' TEXT 行の権限を拾えない
   let isAdmin = false;
-  for (const c of (requesterCodes.length > 0 ? requesterCodes : [requesterRole])) {
-    if (!c) continue;
-    if (await userHasPermission(c, 'member.edit_password')) { isAdmin = true; break; }
+  if (requesterCodes.length > 0) {
+    isAdmin = await roleCodesHavePermission(requesterCodes, 'member.edit_password');
+  } else if (requesterRole) {
+    isAdmin = await userHasPermission(requesterRole, 'member.edit_password');
   }
   const isSelf = requester.id === target.id;
 

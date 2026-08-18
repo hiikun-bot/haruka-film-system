@@ -20,19 +20,19 @@ const crypto = require('crypto');
 const router = express.Router();
 
 const supabase = require('../supabase');
-const { requireAuth, requirePermission, userHasPermission, getEffectiveRoleCodes } = require('../auth');
+const { requireAuth, requirePermission, getEffectiveRoleCodes } = require('../auth');
+const { roleCodesHavePermission } = require('../utils/roles');
 const cryptoAes = require('../utils/crypto-aes');
 const gcal = require('../lib/google-calendar');
 const wh = require('../lib/working-hours');
 
 // 「現在の req（VIEW AS 含む）が指定 permission key を持つか」を判定する。
-// auth.js#userHasPermission は code 単体のため、effective roles の OR を取る。
+// 集合判定（roleCodesHavePermission）で評価する。code 単体の OR だと
+// producer+director 兼任者が合成値 'producer_director' TEXT 行の権限を拾えない
 async function reqHasPermission(req, key) {
   try {
     const codes = await getEffectiveRoleCodes(req);
-    for (const c of codes) {
-      if (await userHasPermission(c, key)) return true;
-    }
+    if (codes.length > 0) return await roleCodesHavePermission(codes, key);
   } catch (_) { /* fall through */ }
   return false;
 }

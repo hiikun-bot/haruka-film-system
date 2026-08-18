@@ -436,12 +436,17 @@ describe('roleCodesHavePermission', () => {
     expect(await roles.roleCodesHavePermission(['director'], 'projects.view')).toBe(true);
   });
 
-  test('producer / director 保有者には producer_director TEXT 行の許可も適用', async () => {
+  test('producer_director TEXT 行は producer+director 兼任者にのみ適用（単独ロールには漏らさない）', async () => {
     setPerms([
       { role: 'producer_director', role_id: null, roles: null, permission_key: 'invoices.view', allowed: true },
     ]);
-    expect(await roles.roleCodesHavePermission(['producer'], 'invoices.view')).toBe(true);
-    expect(await roles.roleCodesHavePermission(['director'], 'invoices.view')).toBe(true);
+    // 兼任（両方保有）→ 適用
+    expect(await roles.roleCodesHavePermission(['producer', 'director'], 'invoices.view')).toBe(true);
+    // 合成値そのものを渡された場合も兼任扱い → 適用
+    expect(await roles.roleCodesHavePermission(['producer_director'], 'invoices.view')).toBe(true);
+    // 単独ロール → 適用しない（PD 列 ON が単独 producer / director に漏れない）
+    expect(await roles.roleCodesHavePermission(['producer'], 'invoices.view')).toBe(false);
+    expect(await roles.roleCodesHavePermission(['director'], 'invoices.view')).toBe(false);
     expect(await roles.roleCodesHavePermission(['editor'], 'invoices.view')).toBe(false);
   });
 
