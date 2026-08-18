@@ -9131,10 +9131,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         <!-- バージョン移動（⬅️最新⇄前回➡️）。同一クリエイティブに複数バージョンがある時のみ表示 -->
-        <div id="fp-ver-nav" style="display:none;align-items:center;gap:3px;flex-shrink:0">
-          <button id="fp-ver-prev-btn" onclick="fpNavigateVersion(1)" title="前のバージョン（古い方）を表示" style="background:#2a2a2e;border:1px solid #3f3f46;color:#e4e4e7;font-size:12px;border-radius:5px;padding:3px 9px;cursor:pointer;line-height:1">⬅️</button>
-          <span id="fp-ver-label" style="font-size:11px;color:#a1a1aa;font-family:monospace;min-width:44px;text-align:center" title="表示中のバージョン / 総バージョン数">v1/1</span>
-          <button id="fp-ver-next-btn" onclick="fpNavigateVersion(-1)" title="次のバージョン（新しい方）を表示" style="background:#2a2a2e;border:1px solid #3f3f46;color:#e4e4e7;font-size:12px;border-radius:5px;padding:3px 9px;cursor:pointer;line-height:1">➡️</button>
+        <div id="fp-ver-nav" style="display:none;align-items:center;gap:6px;flex-shrink:0;background:#26262b;border:1px solid #3f3f46;border-radius:9px;padding:3px 6px">
+          <button id="fp-ver-prev-btn" onclick="fpNavigateVersion(1)" title="前のバージョン（古い方）を表示" style="display:flex;align-items:center;gap:6px;background:#3f3f46;border:1px solid #52525b;color:#fff;font-size:12.5px;font-weight:700;border-radius:7px;padding:7px 14px;cursor:pointer;line-height:1;font-family:inherit;white-space:nowrap" onmouseover="if(!this.disabled)this.style.background='#52525b'" onmouseout="this.style.background='#3f3f46'">⬅️ 前へ</button>
+          <span id="fp-ver-label" style="font-size:14px;font-weight:800;color:#3ECFCA;font-family:monospace;min-width:52px;text-align:center;letter-spacing:0.03em" title="表示中のバージョン / 総バージョン数">v1/1</span>
+          <button id="fp-ver-next-btn" onclick="fpNavigateVersion(-1)" title="次のバージョン（新しい方）を表示" style="display:flex;align-items:center;gap:6px;background:#3f3f46;border:1px solid #52525b;color:#fff;font-size:12.5px;font-weight:700;border-radius:7px;padding:7px 14px;cursor:pointer;line-height:1;font-family:inherit;white-space:nowrap" onmouseover="if(!this.disabled)this.style.background='#52525b'" onmouseout="this.style.background='#3f3f46'">次へ ➡️</button>
         </div>
         <!-- 差分比較モード（静止画のみ）: 最新と前回を横並び表示 -->
         <button id="fp-compare-btn" onclick="fpToggleCompareMode()" style="display:none;font-size:11px;color:#fbbf24;background:none;border:0.5px solid #fbbf24;border-radius:5px;padding:3px 10px;cursor:pointer;font-family:inherit" title="今回と前回のバージョンを横並びで比較">🆚 差分比較</button>
@@ -38713,7 +38713,11 @@ function fpUpdateVersionNavUI(isImage) {
     wrap.style.display = multi ? 'flex' : 'none';
     if (multi) {
       const label = document.getElementById('fp-ver-label');
-      if (label) label.textContent = `${_fpVerLabel(nav.files[nav.index], nav.index)}/${nav.files.length}`;
+      if (label) {
+        label.textContent = `${_fpVerLabel(nav.files[nav.index], nav.index)}/${nav.files.length}`;
+        // 過去バージョン表示中は琥珀色にして「最新ではない」ことを一目で分からせる
+        label.style.color = nav.index > 0 ? '#fbbf24' : '#3ECFCA';
+      }
       const canOlder = nav.index < nav.files.length - 1;
       const canNewer = nav.index > 0;
       const prevBtn = document.getElementById('fp-ver-prev-btn');
@@ -38728,6 +38732,20 @@ function fpUpdateVersionNavUI(isImage) {
     cmpBtn.textContent = _fpCompareMode ? '✕ 比較を終了' : '🆚 差分比較';
     cmpBtn.style.background = _fpCompareMode ? 'rgba(251,191,36,0.15)' : 'none';
   }
+}
+
+// 過去バージョン（最新以外）を開いている間、プレイヤー上部に常時警告バナーを出す。
+// 前回のものを「正」と誤認したまま確認・指示してしまう事故の防止。
+function _fpAppendOldVersionBanner() {
+  const nav = _fpVersionNav;
+  if (!nav || nav.index <= 0) return;
+  const player = document.getElementById('fp-player');
+  if (!player || document.getElementById('fp-old-version-banner')) return;
+  const b = document.createElement('div');
+  b.id = 'fp-old-version-banner';
+  b.textContent = `⚠️ 過去バージョン ${_fpVerLabel(nav.files[nav.index], nav.index)} を表示中 — 最新は ${_fpVerLabel(nav.files[0], 0)} です（「次へ ➡️」で最新に戻れます）`;
+  b.style.cssText = 'position:absolute;top:0;left:0;right:0;background:rgba(180,83,9,0.94);color:#fff;font-size:13px;font-weight:800;text-align:center;padding:8px 12px;z-index:7;pointer-events:none;letter-spacing:0.03em';
+  player.appendChild(b);
 }
 
 // 差分比較モード: 前回（左）と今回（右）を横並びフィット表示。もう一度押すと通常表示に戻る
@@ -38746,18 +38764,27 @@ function fpToggleCompareMode() {
   _fpFlashActive = false;
   _fpFlashRestoring = false;
   fpHideLoading();
-  const pane = (f, idx, isCurrent) => `
+  // ラベルは「前回=参考 / 今回=正」を大きく明示（前回を正解と誤認しないための強調表示）。
+  // 「（最新）」表記は表示中バージョンが本当に最新（index 0）の時だけ付ける。
+  const pane = (f, idx, isCurrent) => {
+    const isLatest = idx === 0;
+    const badge = isCurrent
+      ? `✅ 今回 ${_fpVerLabel(f, idx)}${isLatest ? '（最新）' : ''}`
+      : `⏪ 前回 ${_fpVerLabel(f, idx)}（参考・古い版）`;
+    return `
     <div style="flex:1;min-width:0;display:flex;flex-direction:column;background:#111;${isCurrent ? '' : 'border-right:1px solid #2a2a2e'}">
-      <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 10px;background:#1e1e22;border-bottom:1px solid #2a2a2e;min-width:0">
-        <span style="font-size:11px;font-weight:700;white-space:nowrap;color:${isCurrent ? '#3ECFCA' : '#a1a1aa'}">${isCurrent ? '今回' : '前回'} ${_fpVerLabel(f, idx)}</span>
-        <span style="font-size:10px;font-family:monospace;color:#71717a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" title="${esc(f.generated_name || '')}">${esc(f.generated_name || '')}</span>
+      <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:10px;padding:8px 12px;background:${isCurrent ? 'rgba(62,207,202,0.10)' : '#1e1e22'};border-bottom:2px solid ${isCurrent ? '#3ECFCA' : '#3f3f46'};min-width:0">
+        <span style="font-size:15px;font-weight:800;white-space:nowrap;padding:5px 16px;border-radius:8px;letter-spacing:0.04em;${isCurrent ? 'background:#3ECFCA;color:#0f172a' : 'background:#3f3f46;color:#d4d4d8'}">${badge}</span>
+        <span style="font-size:11px;font-family:monospace;color:#71717a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" title="${esc(f.generated_name || '')}">${esc(f.generated_name || '')}</span>
       </div>
       <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:10px">
         <img src="${API}/files/${_fpResolveDriveFileId(f)}/stream" style="max-width:100%;max-height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none" draggable="false">
       </div>
     </div>`;
+  };
   document.getElementById('fp-player').innerHTML =
     `<div id="fp-compare-wrap" style="display:flex;width:100%;height:100%">${pane(prev, nav.index + 1, false)}${pane(cur, nav.index, true)}</div>`;
+  _fpAppendOldVersionBanner(); // 比較の「今回」自体が過去バージョンの時も警告を維持
   fpUpdateVersionNavUI(true);
 }
 
@@ -38778,8 +38805,8 @@ function fpFlashStart(ev) {
   if (stage && !document.getElementById('fp-flash-badge')) {
     const b = document.createElement('div');
     b.id = 'fp-flash-badge';
-    b.textContent = `⏪ 前回 ${_fpVerLabel(prev, _fpVersionNav.index + 1)} を表示中（離すと今回に戻ります）`;
-    b.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(120,53,15,0.92);color:#fbbf24;font-size:11px;font-weight:700;padding:4px 12px;border-radius:6px;border:1px solid #92400e;z-index:6;pointer-events:none;white-space:nowrap';
+    b.textContent = `⏪ 前回 ${_fpVerLabel(prev, _fpVersionNav.index + 1)}（参考・古い版）を表示中 — 離すと今回に戻ります`;
+    b.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(120,53,15,0.95);color:#fbbf24;font-size:14px;font-weight:800;padding:7px 18px;border-radius:8px;border:1px solid #f59e0b;z-index:6;pointer-events:none;white-space:nowrap;letter-spacing:0.03em';
     stage.appendChild(b);
   }
 }
@@ -38983,6 +39010,9 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
         <div style="font-size:11px;color:#52525b">Drive連携に失敗しているか、Drive未設定時にアップロードされたファイルです</div>
       </div>`;
   }
+
+  // 過去バージョンを開いた時は常時警告バナー（最新と誤認しない）
+  _fpAppendOldVersionBanner();
 
   fpClearTimecode();
   fpClearBbox();
