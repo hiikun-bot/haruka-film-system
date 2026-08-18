@@ -38682,12 +38682,25 @@ function _fpNavFile(offset) {
   if (!nav) return null;
   return nav.files[nav.index + offset] || null;
 }
-// 表示中の1つ前（古い）のバージョン。差分比較・長押し比較はプレビュー可能な静止画のみ対象
+// 表示中の1つ前（古い）のバージョン。長押しぱらぱら比較はプレビュー可能な静止画のみ対象
 function _fpGetPrevImageFile() {
   const f = _fpNavFile(1);
   if (!f) return null;
   if (!FP_IMAGE_EXT_RE.test(f.generated_name || '')) return null;
   return _fpResolveDriveFileId(f) ? f : null;
+}
+// 差分比較（横並び）用: 今回・前回が「両方とも静止画」または「両方とも動画」の時だけ前回を返す
+function _fpGetPrevCompareFile() {
+  const nav = _fpVersionNav;
+  if (!nav) return null;
+  const cur  = nav.files[nav.index];
+  const prev = _fpNavFile(1);
+  if (!cur || !prev) return null;
+  const curName = cur.generated_name || '', prevName = prev.generated_name || '';
+  const bothImg = FP_IMAGE_EXT_RE.test(curName) && FP_IMAGE_EXT_RE.test(prevName);
+  const bothVid = FP_VIDEO_EXT_RE.test(curName) && FP_VIDEO_EXT_RE.test(prevName);
+  if (!bothImg && !bothVid) return null;
+  return (_fpResolveDriveFileId(cur) && _fpResolveDriveFileId(prev)) ? prev : null;
 }
 function _fpVerLabel(f, idx) {
   const nav = _fpVersionNav;
@@ -38727,7 +38740,8 @@ function fpUpdateVersionNavUI(isImage) {
     }
   }
   if (cmpBtn) {
-    const showCmp = !!(isImage && _fpGetPrevImageFile());
+    // 静止画×静止画 / 動画×動画 の組み合わせなら表示（isImage 引数は後方互換のため残置）
+    const showCmp = !!_fpGetPrevCompareFile();
     cmpBtn.style.display = showCmp ? '' : 'none';
     cmpBtn.textContent = _fpCompareMode ? '✕ 比較を終了' : '🆚 差分比較';
     cmpBtn.style.background = _fpCompareMode ? 'rgba(251,191,36,0.15)' : 'none';
@@ -38758,12 +38772,16 @@ function fpToggleCompareMode() {
     openFilePreview(_fpResolveDriveFileId(cur), cur.generated_name, cur.drive_url || '', cur.id, nav.creativeType, nav.assigneeRole);
     return;
   }
-  const prev = _fpGetPrevImageFile();
+  const prev = _fpGetPrevCompareFile();
   if (!prev) return;
+  const isVideoCmp = FP_VIDEO_EXT_RE.test(cur.generated_name || '');
   _fpCompareMode = true;
   _fpFlashActive = false;
   _fpFlashRestoring = false;
   fpHideLoading();
+  // 動画の単体プレビュー用コントロールバーは比較中は使わない（比較専用の同期バーを下に出す）
+  const ctrlBar = document.getElementById('fp-controls-bar');
+  if (ctrlBar) ctrlBar.style.display = 'none';
   // ラベルは「前回=参考 / 今回=正」を大きく明示（前回を正解と誤認しないための強調表示）。
   // 「（最新）」表記は表示中バージョンが本当に最新（index 0）の時だけ付ける。
   const pane = (f, idx, isCurrent) => {
@@ -38771,6 +38789,10 @@ function fpToggleCompareMode() {
     const badge = isCurrent
       ? `✅ 今回 ${_fpVerLabel(f, idx)}${isLatest ? '（最新）' : ''}`
       : `⏪ 前回 ${_fpVerLabel(f, idx)}（参考・古い版）`;
+    // 動画: 前回側は常にミュート（左右同時再生で音声が二重にならないように）
+    const media = isVideoCmp
+      ? `<video id="fp-cmp-video-${isCurrent ? 'cur' : 'prev'}" preload="metadata" playsinline ${isCurrent ? '' : 'muted'} style="width:100%;height:100%;object-fit:contain;background:#000;display:block"></video>`
+      : `<img src="${API}/files/${_fpResolveDriveFileId(f)}/stream" style="max-width:100%;max-height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none" draggable="false">`;
     return `
     <div style="flex:1;min-width:0;display:flex;flex-direction:column;background:#111;${isCurrent ? '' : 'border-right:1px solid #2a2a2e'}">
       <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:10px;padding:8px 12px;background:${isCurrent ? 'rgba(62,207,202,0.10)' : '#1e1e22'};border-bottom:2px solid ${isCurrent ? '#3ECFCA' : '#3f3f46'};min-width:0">
@@ -38778,14 +38800,118 @@ function fpToggleCompareMode() {
         <span style="font-size:11px;font-family:monospace;color:#71717a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" title="${esc(f.generated_name || '')}">${esc(f.generated_name || '')}</span>
       </div>
       <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:10px">
-        <img src="${API}/files/${_fpResolveDriveFileId(f)}/stream" style="max-width:100%;max-height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none" draggable="false">
+        ${media}
       </div>
     </div>`;
   };
+  // 動画比較用の共有コントロール（Frame.io の同期再生風: 1本のバーで左右を同時操作）
+  const cmpControls = isVideoCmp ? `
+    <div id="fp-cmp-controls" style="flex-shrink:0;display:flex;align-items:center;gap:12px;background:#1e1e22;border-top:1px solid #2a2a2e;padding:8px 16px">
+      <button id="fp-cmp-play-btn" onclick="fpCmpTogglePlay()" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;width:28px;text-align:center;flex-shrink:0" title="左右同時に再生/一時停止 (Space)">▶</button>
+      <input type="range" id="fp-cmp-seekbar" min="0" max="1000" value="0" step="1" style="flex:1;height:4px;accent-color:#3ECFCA;cursor:pointer" oninput="fpCmpSeekInput(this)">
+      <span id="fp-cmp-time" style="color:#e4e4e7;font-size:11px;font-family:monospace;white-space:nowrap;flex-shrink:0">0:00:00:00 / 0:00:00:00</span>
+      <button id="fp-cmp-mute-btn" onclick="fpCmpToggleMute()" style="background:none;border:none;color:#a1a1aa;font-size:14px;cursor:pointer;flex-shrink:0" title="今回側の音声ON/OFF（前回側は常にミュート）">🔊</button>
+      <span style="font-size:10px;color:#52525b;white-space:nowrap;flex-shrink:0">🔗 左右同期再生（前回はミュート）</span>
+    </div>` : '';
   document.getElementById('fp-player').innerHTML =
-    `<div id="fp-compare-wrap" style="display:flex;width:100%;height:100%">${pane(prev, nav.index + 1, false)}${pane(cur, nav.index, true)}</div>`;
+    `<div id="fp-compare-wrap" style="display:flex;flex-direction:column;width:100%;height:100%">
+      <div style="flex:1;min-height:0;display:flex">${pane(prev, nav.index + 1, false)}${pane(cur, nav.index, true)}</div>
+      ${cmpControls}
+    </div>`;
+  if (isVideoCmp) setTimeout(() => fpCmpInitVideos(cur, prev), 50);
   _fpAppendOldVersionBanner(); // 比較の「今回」自体が過去バージョンの時も警告を維持
   fpUpdateVersionNavUI(true);
+}
+
+// ===== 動画差分比較の同期再生 =====
+function _fpCmpCur()  { return document.getElementById('fp-cmp-video-cur'); }
+function _fpCmpPrev() { return document.getElementById('fp-cmp-video-prev'); }
+
+// 左右の <video> に src をセット（ADR 021 と同じ方針: direct-url 優先 → /stream プロキシ fallback）
+function fpCmpInitVideos(curFile, prevFile) {
+  const pairs = [
+    { v: _fpCmpCur(),  driveId: _fpResolveDriveFileId(curFile)  },
+    { v: _fpCmpPrev(), driveId: _fpResolveDriveFileId(prevFile) },
+  ];
+  pairs.forEach(({ v, driveId }) => {
+    if (!v || !driveId) return;
+    const proxyUrl = `${API}/files/${driveId}/stream`;
+    v.dataset.fallbackSrc = proxyUrl;
+    v.dataset.directTried = '0';
+    v.addEventListener('error', () => {
+      // 直リンク再生エラー時は一度だけプロキシへ fallback（単体プレビューと同じ流儀の簡易版）
+      if (v.dataset.directTried === '1' && v.dataset.fallbackSrc) {
+        try { _fpInvalidateDirectUrl(driveId); } catch (_) {}
+        v.dataset.directTried = '2';
+        v.src = v.dataset.fallbackSrc;
+        v.load();
+      }
+    });
+    (async () => {
+      try {
+        const directUrl = await _fpFetchDirectUrl(driveId);
+        if (directUrl && document.body.contains(v)) {
+          v.src = directUrl;
+          v.dataset.directTried = '1';
+          return;
+        }
+      } catch (_) { /* fallback へ */ }
+      if (document.body.contains(v)) v.src = proxyUrl;
+    })();
+  });
+  const cur = _fpCmpCur();
+  if (!cur) return;
+  // 今回側をマスターにして seekbar / 時間表示 / ドリフト補正を行う
+  cur.addEventListener('timeupdate', fpCmpOnTimeupdate);
+  cur.addEventListener('loadedmetadata', fpCmpOnTimeupdate);
+  cur.addEventListener('play',  () => { const b = document.getElementById('fp-cmp-play-btn'); if (b) b.textContent = '⏸'; });
+  cur.addEventListener('pause', () => { const b = document.getElementById('fp-cmp-play-btn'); if (b) b.textContent = '▶'; const p = _fpCmpPrev(); if (p && !p.paused) p.pause(); });
+  cur.addEventListener('ended', () => { const b = document.getElementById('fp-cmp-play-btn'); if (b) b.textContent = '▶'; const p = _fpCmpPrev(); if (p && !p.paused) p.pause(); });
+}
+
+function fpCmpOnTimeupdate() {
+  const cur = _fpCmpCur();
+  if (!cur || !cur.duration) return;
+  const bar = document.getElementById('fp-cmp-seekbar');
+  if (bar) bar.value = (cur.currentTime / cur.duration) * 1000;
+  const t = document.getElementById('fp-cmp-time');
+  if (t) t.textContent = fpTimecodeStr(cur.currentTime) + ' / ' + fpTimecodeStr(cur.duration);
+  // 前回側が0.35秒以上ズレたら今回側に合わせる（長尺でのドリフト補正）
+  const prev = _fpCmpPrev();
+  if (prev && prev.duration && !prev.seeking && Math.abs(prev.currentTime - cur.currentTime) > 0.35) {
+    prev.currentTime = Math.min(cur.currentTime, prev.duration);
+  }
+}
+
+function fpCmpTogglePlay() {
+  const cur = _fpCmpCur(), prev = _fpCmpPrev();
+  if (!cur) return;
+  if (cur.paused) {
+    if (prev) {
+      prev.currentTime = Math.min(cur.currentTime, prev.duration || cur.currentTime);
+      prev.play().catch(() => {});
+    }
+    cur.play().catch(() => {});
+  } else {
+    cur.pause();
+    if (prev) prev.pause();
+  }
+}
+
+function fpCmpSeekInput(el) {
+  const cur = _fpCmpCur(), prev = _fpCmpPrev();
+  if (!cur || !cur.duration) return;
+  const t = (el.value / 1000) * cur.duration;
+  cur.currentTime = t;
+  if (prev && prev.duration) prev.currentTime = Math.min(t, prev.duration);
+}
+
+function fpCmpToggleMute() {
+  const cur = _fpCmpCur();
+  const btn = document.getElementById('fp-cmp-mute-btn');
+  if (!cur) return;
+  cur.muted = !cur.muted;
+  if (btn) btn.textContent = cur.muted ? '🔇' : '🔊';
 }
 
 // 長押しで前回表示（ぱらぱら比較）: 押している間だけ img の src を前回バージョンに差し替える。
@@ -38864,6 +38990,10 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
   if (isImage) {
     const _prevImg = _fpGetPrevImageFile();
     if (_prevImg) { try { new Image().src = `${API}/files/${_fpResolveDriveFileId(_prevImg)}/stream`; } catch (_) {} }
+  } else if (isVideo) {
+    // 動画差分比較に備えて前回動画の direct-url を先読み（キャッシュを温める）
+    const _prevCmp = _fpGetPrevCompareFile();
+    if (_prevCmp) { try { _fpFetchDirectUrl(_fpResolveDriveFileId(_prevCmp)).catch(() => {}); } catch (_) {} }
   }
 
   // Premiereボタン: 動画クリエイティブ + DBレコードあり のときだけ表示
@@ -39194,6 +39324,8 @@ function fpClickPlayer(e) {
 }
 
 function fpTogglePlay() {
+  // 動画差分比較中は左右同期の再生/停止へ（Space キーも共通で効く）
+  if (_fpCompareMode && document.getElementById('fp-cmp-video-cur')) { fpCmpTogglePlay(); return; }
   const v = document.getElementById('fp-video');
   if (!v) return;
   v.paused ? v.play().catch(() => {}) : v.pause();
