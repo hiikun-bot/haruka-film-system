@@ -17329,6 +17329,8 @@ const _ROLE_PERMS_FALLBACK = {
   'secretary|invoice.own': true, 'producer|invoice.own': true, 'producer_director|invoice.own': true, 'director|invoice.own': true, 'editor|invoice.own': true, 'designer|invoice.own': true,
   'secretary|invoice.all_view': true,
   'secretary|master.page': true,
+  // ファイル名テンプレート管理（ディレクター層以上に開放。producer_director は producer/director 継承で許可）
+  'secretary|master.filename_templates': true, 'producer|master.filename_templates': true, 'director|master.filename_templates': true,
   'secretary|analytics.view': true,
   // analytics.bug_reports.view は全ロール開放
   'secretary|analytics.bug_reports.view': true,
@@ -17488,10 +17490,13 @@ function applyRoleBasedUI() {
   const addClientBtn = document.getElementById('btn-add-client');
   if (addClientBtn) addClientBtn.style.display = canEditProject() ? '' : 'none';
   // マスター管理ナビ
+  // master.page が無くても master.filename_templates（ファイル名テンプレート管理のみ）でナビを出す。
+  // どのセクションを見せるかは loadMasterPage() 側で絞る。
+  const canMasterPage = hasPermission('master.page') || hasPermission('master.filename_templates');
   const masterNav = document.getElementById('nav-master');
-  if (masterNav) masterNav.style.display = hasPermission('master.page') ? '' : 'none';
+  if (masterNav) masterNav.style.display = canMasterPage ? '' : 'none';
   const drawerMaster = document.getElementById('nav-drawer-master');
-  if (drawerMaster) drawerMaster.style.display = hasPermission('master.page') ? '' : 'none';
+  if (drawerMaster) drawerMaster.style.display = canMasterPage ? '' : 'none';
   // 素材広場ナビ — 全ロール開放（全ログインユーザーに表示）
   // applyRoleBasedUI() はログイン後（currentUser 設定後）にのみ走るため、
   // ナビ可視性はログイン済みであること自体で担保される。サーバ側も requireAuth のみ
@@ -29963,6 +29968,15 @@ async function loadMasterPage() {
   const costLedgerNav = document.getElementById('mnav-cost_ledger');
   if (costLedgerNav) costLedgerNav.style.display = ['admin', 'secretary'].includes(effectiveRole()) ? '' : 'none';
 
+  // master.page を持たず master.filename_templates だけで入ってきた場合（既定: ディレクター層）は、
+  // ファイル名テンプレート以外のセクションを隠し、初期表示もそこに固定する。
+  const fnTplOnly = !hasPermission('master.page') && hasPermission('master.filename_templates');
+  ['generic','general','categories','products','appeal_axes','checklist','item_names'].forEach(t => {
+    const el = document.getElementById(`mnav-${t}`);
+    if (el) el.style.display = fnTplOnly ? 'none' : '';
+  });
+  if (fnTplOnly && currentMasterNav !== 'filename_templates') currentMasterNav = 'filename_templates';
+
   const [catRes, itemRes] = await Promise.all([
     apiFetch(`${API}/master/categories`),
     apiFetch(`${API}/master/items`),
@@ -30280,6 +30294,7 @@ const ROLE_PERM_LIST = [
   { section:'請求管理',       key:'invoice.all_view',            label:'全員の請求一覧閲覧' },
   { section:'マスター管理',   key:'master.page',                 label:'マスター管理ページ' },
   { section:'マスター管理',   key:'master.sys_config',           label:'システム設定' },
+  { section:'マスター管理',   key:'master.filename_templates',   label:'ファイル名テンプレート管理（マスター管理ページ権限なしでも単独で開放可）' },
   { section:'システム',       key:'system.view_as',              label:'VIEW AS（ロールプレビュー）' },
   { section:'分析',           key:'analytics.view',              label:'分析・集計ページ閲覧（経営系・全集計）' },
   { section:'分析',           key:'analytics.bug_reports.view',  label:'分析メニュー：バグ報告件数' },

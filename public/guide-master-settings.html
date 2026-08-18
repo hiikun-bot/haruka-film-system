@@ -186,7 +186,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="wanpoint">
     <div class="wanpoint-title">ここだけは絶対！</div>
-    <p>「マスター」タブは <strong>マスター管理ページ権限（既定：管理者・秘書）</strong> を持つ人にだけ表示されます。見えない場合は権限不足です（<a href="/guide-roles-permissions.html" style="color:var(--star-deep);font-weight:700">権限・ロールの管理</a> 参照）。</p>
+    <p>「マスター」タブは <strong>マスター管理ページ権限（既定：管理者・秘書）</strong> を持つ人にだけ表示されます。例外として、<strong>ファイル名テンプレート管理権限（既定：管理者・秘書・プロデューサー・ディレクター）</strong>だけを持つ人にもタブは表示され、その場合は「📁 ファイル名テンプレート」のみ操作できます。見えない場合は権限不足です（<a href="/guide-roles-permissions.html" style="color:var(--star-deep);font-weight:700">権限・ロールの管理</a> 参照）。</p>
   </div>
 
   <div class="next-btn-wrap"><a class="next-btn" href="#step2">STEP 2 へ進む</a></div>
@@ -292,7 +292,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="step-card">
     <div class="step-card-title">🛠 制作サポート系（管理者・秘書で表示）</div>
     <ul>
-      <li><b>📁 ファイル名テンプレート</b>：納品ファイル名の命名規約テンプレを管理。案件に紐づけて使います（詳しくは <a href="/guide-project-create.html" style="color:var(--em-dark);font-weight:700">案件作成ガイド</a>）</li>
+      <li><b>📁 ファイル名テンプレート</b>：納品ファイル名の命名規約テンプレを管理。案件に紐づけて使います。ディレクター・プロデューサーも既定で編集できます（詳しくは <a href="/guide-project-create.html" style="color:var(--em-dark);font-weight:700">案件作成ガイド</a>）</li>
       <li><b>✅ チェックリスト</b>：全案件共通のチェック項目。案件固有の項目は案件編集モーダルの「チェックリスト」タブで設定します</li>
       <li><b>📦 品目マスター</b>：見積で使う品目名と単位。案件の見積編集の「📦 品目マスターから選択」ピッカーに出ます</li>
       <li><b>💴 ランク単価プリセット</b>（管理者・秘書・プロデューサー系のみ表示）：カテゴリ別に制作者への支払単価 A / B / C を登録 → 案件の「見積・費用」の「📋 プリセットから一括生成」で使用（詳しくは <a href="/guide-budget-rates.html" style="color:var(--em-dark);font-weight:700">見積・単価ガイド</a>）</li>
@@ -345,7 +345,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="trouble-list">
     <div class="trouble-item">
       <span class="trouble-icon">🙈</span>
-      <div><div class="trouble-q">ヘッダーに「マスター」タブが出ない</div><div class="trouble-a">マスター管理ページ権限（既定：管理者・秘書）が必要です。管理者に相談してください</div></div>
+      <div><div class="trouble-q">ヘッダーに「マスター」タブが出ない</div><div class="trouble-a">マスター管理ページ権限（既定：管理者・秘書）またはファイル名テンプレート管理権限（既定：ディレクター以上）が必要です。管理者に相談してください</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🔍</span>
