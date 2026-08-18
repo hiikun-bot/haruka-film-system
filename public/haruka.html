@@ -4213,6 +4213,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <span class="count-badge" id="creative-count" style="font-size:12px">0件</span>
         <span id="creative-delete-bar" style="display:none;align-items:center;gap:6px">
           <span id="creative-selected-count" style="font-size:12px;color:var(--text-muted)">0件選択中</span>
+          <button class="btn" onclick="openBulkStatusModal()" style="font-size:12px;padding:4px 10px" title="選択したクリエイティブのステータスをまとめて変更（納品含む）">ステータス一括変更</button>
           <button class="btn-danger" onclick="deleteSelectedCreatives()" style="font-size:12px;padding:4px 10px">削除</button>
         </span>
         <button class="btn-primary" onclick="openCreateCreative()" style="font-size:12px;padding:6px 12px">＋ 追加</button>
@@ -4912,6 +4913,30 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
       <button class="btn-primary" id="status-apply-btn" onclick="applyQuickStatusChange()">変更する</button>
       <button class="btn" onclick="closeModal('modal-status')">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- リスト表示のチェック選択 → ステータス一括変更モーダル（一括納品もここから） -->
+<div class="modal-overlay" id="modal-bulk-status">
+  <div class="modal">
+    <div class="modal-title">ステータス一括変更<button class="modal-close" onclick="closeModal('modal-bulk-status')">×</button></div>
+    <div class="form-group">
+      <label class="form-label">対象</label>
+      <div id="bulk-status-count" style="font-size:14px;font-weight:500;color:var(--text);padding:4px 0"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">変更先ステータス</label>
+      <select class="form-select" id="bulk-status-select" onchange="onBulkStatusSelectChange()"></select>
+      <div id="bulk-status-hint" style="display:none;font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5"></div>
+    </div>
+    <div class="form-group" id="bulk-status-reason-group" style="display:none">
+      <label class="form-label">変更理由（必須・監査ログに残ります）</label>
+      <textarea class="form-input" id="bulk-status-reason" rows="2" style="resize:vertical" placeholder="例: 月末のクライアント承認確認済み。まとめて納品処理"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+      <button class="btn-primary" id="bulk-status-apply-btn" onclick="applyBulkStatusChange()">一括変更する</button>
+      <button class="btn" onclick="closeModal('modal-bulk-status')">キャンセル</button>
     </div>
   </div>
 </div>
@@ -46015,6 +46040,144 @@ async function deleteSelectedCreatives() {
   if (!ok) return;
   document.getElementById('creative-check-all').checked = false;
   document.getElementById('creative-delete-bar').style.display = 'none';
+  await loadCreatives();
+}
+
+// ==================== リスト表示: チェック選択の一括ステータス変更（一括納品含む） ====================
+// 1件ずつ既存エンドポイントを叩くクライアント側バルク（サーバー側の検証・副作用をそのまま通す）:
+//   - 工程上の直接遷移（_quickStatusTransitions で direct）→ PUT /creatives/:id { status }
+//     （納品時の delivered_at 自動セット・ADR 009 スナップショット等はサーバー側で従来どおり動く）
+//   - それ以外は admin のみ POST /creatives/:id/admin-status（理由必須・請求書整合性ガードはサーバー側）
+//   - LP/HP/LINE（工程テンプレ案件）・工程制約で進められないものはスキップして結果で報告
+let _bulkStatusCtx = null;
+
+function _bulkSelectedCreatives() {
+  const ids = Array.from(document.querySelectorAll('.creative-row-check:checked')).map(cb => cb.dataset.id);
+  return ids.map(id => (allCreatives || []).find(c => c.id === id)).filter(Boolean);
+}
+function _bulkIsTemplateCategory(c) {
+  // openStatusModal と同じ判定: 工程テンプレ駆動カテゴリ（LP/HP/LINE）は status 文字列運用ではない
+  const proj = (Array.isArray(allProjects) ? allProjects : []).find(p => p.id === (c.projects?.id || c.project_id));
+  const catCode = proj ? (getProjectCategory(proj)?.code || null) : null;
+  return !!(catCode && ['lp', 'hp', 'line'].includes(catCode));
+}
+// 対象1件の実行計画: { mode: 'direct' | 'jump' | 'skip', reason? }
+function _bulkPlanFor(c, target, isAdmin) {
+  if (_bulkIsTemplateCategory(c)) return { mode: 'skip', reason: '工程テンプレ案件（LP/HP/LINE）のため対象外' };
+  if ((c.status || '') === target) return { mode: 'skip', reason: 'すでにこのステータスです' };
+  if (target.startsWith('Pチェック') && !c.projects?.producer_id) return { mode: 'skip', reason: 'プロデューサー無し案件のため Pチェックへ進められません' };
+  const tr = _quickStatusTransitions(c).find(t => t.status === target);
+  if (tr && tr.direct) {
+    if (tr.requiresAssignee) {
+      const hasAssignee = (c.creative_assignments || []).some(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
+      if (!hasAssignee) return { mode: 'skip', reason: '担当者未設定のため進められません' };
+    }
+    return { mode: 'direct' };
+  }
+  if (isAdmin) return { mode: 'jump' };
+  return { mode: 'skip', reason: tr?.why ? `${tr.why}（詳細画面から個別に進めてください）` : '工程上ここへは進められません（管理者のみ一括ジャンプ可）' };
+}
+function openBulkStatusModal() {
+  const targets = _bulkSelectedCreatives();
+  if (!targets.length) { showToast('対象のクリエイティブにチェックを入れてください', 'warn'); return; }
+  _bulkStatusCtx = { isAdmin: isTopAdmin() };
+  document.getElementById('bulk-status-count').textContent = `選択中の ${targets.length} 件のクリエイティブ`;
+  const sel = document.getElementById('bulk-status-select');
+  sel.innerHTML = ['<option value="">選択してください</option>']
+    .concat(QUICK_STATUS_ALL.map(s => `<option value="${esc(s)}">${esc(s)}</option>`)).join('');
+  sel.value = '';
+  const reasonEl = document.getElementById('bulk-status-reason');
+  if (reasonEl) reasonEl.value = '';
+  onBulkStatusSelectChange();
+  openModal('modal-bulk-status');
+}
+// 変更先の選択に応じて「何件が通常遷移/管理者ジャンプ/スキップか」を事前に見せる
+function onBulkStatusSelectChange() {
+  const target = document.getElementById('bulk-status-select')?.value;
+  const hintEl = document.getElementById('bulk-status-hint');
+  const reasonGroup = document.getElementById('bulk-status-reason-group');
+  if (!hintEl || !reasonGroup) return;
+  if (!target) { hintEl.style.display = 'none'; reasonGroup.style.display = 'none'; return; }
+  const isAdmin = !!_bulkStatusCtx?.isAdmin;
+  const plans = _bulkSelectedCreatives().map(c => _bulkPlanFor(c, target, isAdmin));
+  const nDirect = plans.filter(p => p.mode === 'direct').length;
+  const nJump   = plans.filter(p => p.mode === 'jump').length;
+  const nSkip   = plans.filter(p => p.mode === 'skip').length;
+  const parts = [];
+  if (nDirect) parts.push(`✅ ${nDirect}件を通常遷移で変更`);
+  if (nJump)   parts.push(`⚠️ ${nJump}件は工程を跨ぐ管理者ジャンプ（理由必須・監査ログに記録・請求書整合性チェックあり）`);
+  if (nSkip)   parts.push(`− ${nSkip}件はスキップ（工程テンプレ案件・工程制約など。実行後に内訳を表示）`);
+  hintEl.textContent = parts.join(' ／ ');
+  hintEl.style.display = parts.length ? '' : 'none';
+  reasonGroup.style.display = nJump > 0 ? '' : 'none';
+}
+async function applyBulkStatusChange() {
+  const target = document.getElementById('bulk-status-select')?.value;
+  if (!target) { showToast('変更先ステータスを選択してください', 'warn'); return; }
+  const isAdmin = !!_bulkStatusCtx?.isAdmin;
+  const targets = _bulkSelectedCreatives();
+  if (!targets.length) { closeModal('modal-bulk-status'); return; }
+  const plans = targets.map(c => ({ c, plan: _bulkPlanFor(c, target, isAdmin) }));
+  const reason = document.getElementById('bulk-status-reason')?.value.trim() || '';
+  if (plans.some(p => p.plan.mode === 'jump') && !reason) {
+    showToast('工程ジャンプを含むため変更理由を入力してください（監査ログに残ります）', 'warn');
+    document.getElementById('bulk-status-reason')?.focus();
+    return;
+  }
+  const runnable = plans.filter(p => p.plan.mode !== 'skip');
+  if (!runnable.length) { showToast('変更できる対象がありません（すべてスキップ対象です）', 'warn'); return; }
+  // 納品は支払いカウントに直結するため最終確認を挟む（ADR 026: delivered_at の JST 月でカウント）
+  if (target === '納品' && !confirm(
+    `${runnable.length} 件を「納品」にします。\n\n` +
+    `納品完了日時が現在時刻でセットされ、この月の支払い本数としてカウントされます。\n` +
+    `よろしいですか？`
+  )) return;
+
+  const btn = document.getElementById('bulk-status-apply-btn');
+  btn.disabled = true;
+  let done = 0;
+  const okIds = [], failed = [];
+  const runOne = async ({ c, plan }) => {
+    try {
+      const res = (plan.mode === 'direct')
+        ? await apiFetch(`${API}/creatives/${c.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: target }) })
+        : await apiFetch(`${API}/creatives/${c.id}/admin-status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: target, reason }) });
+      if (res.ok) {
+        okIds.push(c.id);
+        try { _cdInvalidateCache(c.id); } catch (_) {}
+      } else {
+        const e = await res.json().catch(() => ({}));
+        failed.push({ c, msg: String(e?.error || `HTTP ${res.status}`).split('\n')[0] });
+      }
+    } catch (e) {
+      failed.push({ c, msg: e.message });
+    }
+    done++;
+    btn.textContent = `変更中… (${done}/${runnable.length})`;
+  };
+  // 4並列の順次処理（Railway/Supabase への同時リクエスト数を絞りつつ件数が多くても待たせすぎない）
+  const queue = runnable.slice();
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+    while (queue.length) await runOne(queue.shift());
+  }));
+  btn.disabled = false;
+  btn.textContent = '一括変更する';
+  closeModal('modal-bulk-status');
+
+  const skipped = plans.filter(p => p.plan.mode === 'skip');
+  let msg = `${okIds.length} 件を「${target}」に変更しました`;
+  if (failed.length)  msg += ` ／ 失敗 ${failed.length} 件`;
+  if (skipped.length) msg += ` ／ スキップ ${skipped.length} 件`;
+  showToast(msg, failed.length ? 'warn' : 'success');
+  // 失敗・スキップの内訳は toast では読めないので alert で明細表示（削除の409と同じ流儀）
+  if (failed.length || skipped.length) {
+    const lines = [];
+    failed.forEach(f => lines.push(`✕ ${f.c.file_name || f.c.id}: ${f.msg}`));
+    skipped.forEach(s => lines.push(`− ${s.c.file_name || s.c.id}: ${s.plan.reason}`));
+    alert(`一括ステータス変更の結果\n\n成功: ${okIds.length} 件\n\n${lines.join('\n')}`);
+  }
+  const allChk = document.getElementById('creative-check-all');
+  if (allChk) allChk.checked = false;
   await loadCreatives();
 }
 
