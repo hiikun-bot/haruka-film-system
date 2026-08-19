@@ -5557,6 +5557,35 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
 </div>
 
+<!-- 通知連携先モーダル（project.notification_edit / director 以上）
+     案件編集モーダル（project.create_edit）を開けないロール向けに、
+     案件 / クライアントの通知連携先（Slack チャンネル URL / Chatwork ルーム ID）だけを
+     閲覧・編集する限定モーダル。保存先は PATCH /projects/:id/notification ・
+     PATCH /clients/:id/notification（通知先 2 フィールドのみの限定 API）。 -->
+<div class="modal-overlay" id="modal-notification-edit">
+  <div class="modal" style="max-width:560px;width:92vw;padding:24px;border-radius:14px">
+    <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:2px">🔔 通知連携先の設定</div>
+    <div id="ne-target-name" style="font-size:13px;color:var(--text-muted);margin-bottom:14px"></div>
+    <div id="ne-fallback-note" style="background:#F3F1FF;border:1px solid #E0DBFF;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:#4527A0;line-height:1.6"></div>
+    <input type="hidden" id="ne-kind">
+    <input type="hidden" id="ne-id">
+    <div class="form-group" style="margin-bottom:12px">
+      <label class="form-label">Slack チャンネル URL</label>
+      <input class="form-input" id="ne-slack-url" placeholder="https://ワークスペース名.slack.com/archives/C..." style="font-size:13px">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クリエイティブ納品時にこのチャンネルへ自動投稿されます。<br>Slack でチャンネル名をクリック →「リンクをコピー」で取得した URL（<code>.../archives/C...</code>）か、アプリの <code>app.slack.com/client/T.../C...</code> 形式を貼ってください。</div>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label class="form-label">Chatwork ルーム ID</label>
+      <input class="form-input" id="ne-chatwork-id" placeholder="数字のみ 例: 12345678" style="font-size:13px">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Chatwork ルーム URL の末尾の数字。納品時に自動投稿されます。</div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+      <button class="btn" onclick="closeModal('modal-notification-edit')">キャンセル</button>
+      <button class="btn-primary" id="ne-save-btn" onclick="saveNotificationSettings()">保存する</button>
+    </div>
+  </div>
+</div>
+
 <!-- クライアント追加・編集モーダル -->
 <div class="modal-overlay" id="modal-client">
   <div class="modal" id="modal-client-inner" style="width:92vw;max-width:1000px;height:82vh;max-height:92vh;padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden">
@@ -11051,6 +11080,7 @@ function renderProjectsView() {
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
+            ${!canEditProject() && canEditNotification() ? `<button class="btn-sm" onclick="event.stopPropagation();openNotificationModal('project','${p.id}')" title="通知連携先（Slack/Chatwork）の設定">🔔 通知</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
         }).join('')
@@ -11073,6 +11103,7 @@ function renderProjectsView() {
             <span class="status-chip ${clientStatusClass(client.status)}">${client.status || '取引中'}</span>
             <span style="font-size:13px;color:var(--text-muted)">${clientProjects.length}件表示中</span>
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditClient('${client.id}')">編集</button>` : ''}
+            ${!canEditProject() && canEditNotification() ? `<button class="btn-sm" onclick="event.stopPropagation();openNotificationModal('client','${client.id}')" title="通知連携先（Slack/Chatwork）の設定">🔔 通知</button>` : ''}
             <span class="toggle-arrow" id="arrow-${client.id}">▼</span>
           </div>
         </div>
@@ -17732,6 +17763,8 @@ const _ROLE_PERMS_FALLBACK = {
   // 既存挙動と一致（DB読込失敗時の安全策）
   'admin|*': true, // admin は全許可
   'secretary|project.create_edit': true, 'producer|project.create_edit': true, 'producer_director|project.create_edit': true,
+  // 通知連携先（Slack/Chatwork）の設定。director 以上に開放（migration 2026-08-19_project_notification_edit_permission.sql）
+  'secretary|project.notification_edit': true, 'producer|project.notification_edit': true, 'producer_director|project.notification_edit': true, 'director|project.notification_edit': true,
   'producer|project.unit_price_view': true, 'producer_director|project.unit_price_view': true,
   // クライアント単価の閲覧・編集（既定: producer / secretary。producer_director は producer 継承で許可、director単独は不可）
   'producer|project.client_price': true, 'secretary|project.client_price': true,
@@ -17994,6 +18027,67 @@ function canSeeMember(m) {
 
 function canEditProject() {
   return hasPermission('project.create_edit');
+}
+
+// 通知連携先（Slack/Chatwork）の設定可否。director 以上に開放（ADR 015 準拠・hasPermission 判定）。
+// project.create_edit 保持者は案件/クライアント編集モーダルから設定できるため、
+// 専用の「🔔 通知」ボタンは canEditProject() が false のロールにだけ表示する。
+function canEditNotification() {
+  return hasPermission('project.notification_edit') || canEditProject();
+}
+
+// 通知連携先モーダルを開く。kind: 'project' | 'client'
+function openNotificationModal(kind, id) {
+  const src = kind === 'project'
+    ? (allProjects || []).find(p => String(p.id) === String(id))
+    : (allClients || []).find(c => String(c.id) === String(id));
+  if (!src) { showToast('対象が見つかりません。再読み込みしてください', 'warn'); return; }
+  document.getElementById('ne-kind').value = kind;
+  document.getElementById('ne-id').value = id;
+  document.getElementById('ne-target-name').textContent =
+    kind === 'project' ? `案件：${src.name || ''}` : `クライアント：${src.name || ''}`;
+  document.getElementById('ne-fallback-note').innerHTML = kind === 'project'
+    ? '<strong>クリエイティブ通知の送信先</strong>として、案件レベルで設定があればクライアント設定より優先されます。<br>空欄ならクライアントの設定にフォールバック。'
+    : 'クライアント配下の案件に個別の通知先が設定されていない場合、この設定が使われます。';
+  document.getElementById('ne-slack-url').value = src.slack_channel_url || '';
+  document.getElementById('ne-chatwork-id').value = src.chatwork_room_id || '';
+  openModal('modal-notification-edit');
+}
+
+async function saveNotificationSettings() {
+  const kind = document.getElementById('ne-kind').value;
+  const id = document.getElementById('ne-id').value;
+  const slack_channel_url = document.getElementById('ne-slack-url').value.trim();
+  const chatwork_room_id = document.getElementById('ne-chatwork-id').value.trim();
+  if (!isValidSlackChannelUrl(slack_channel_url)) {
+    showToast(SLACK_URL_FORMAT_HINT, 'warn');
+    document.getElementById('ne-slack-url')?.focus();
+    return;
+  }
+  if (chatwork_room_id && !/^\d+$/.test(chatwork_room_id)) {
+    showToast('ChatworkルームIDは数字のみで入力してください', 'warn');
+    document.getElementById('ne-chatwork-id')?.focus();
+    return;
+  }
+  const btn = document.getElementById('ne-save-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/${kind === 'project' ? 'projects' : 'clients'}/${id}/notification`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slack_channel_url, chatwork_room_id }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || '通知連携先の保存に失敗しました', 'error');
+      return;
+    }
+    closeModal('modal-notification-edit');
+    showToast('通知連携先を保存しました', 'success');
+    loadProjects(); // 一覧の CW / SL バッジへ即反映
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function openModal(id) {
@@ -30693,6 +30787,7 @@ const ROLE_PERM_LIST = [
   { section:'ダッシュボード', key:'dashboard.sales_summary',     label:'売上サマリー閲覧' },
   { section:'ダッシュボード', key:'dashboard.monthly_forecast',  label:'月次予測閲覧' },
   { section:'案件管理',       key:'project.create_edit',         label:'案件作成・編集' },
+  { section:'案件管理',       key:'project.notification_edit',   label:'通知連携先の設定（Slack/Chatwork）' },
   { section:'案件管理',       key:'project.client_price',        label:'クライアント単価の閲覧・編集' },
   { section:'案件管理',       key:'project.unit_price_view',     label:'単価設定閲覧' },
   { section:'案件管理',       key:'project.fee_view',            label:'報酬設定閲覧' },
