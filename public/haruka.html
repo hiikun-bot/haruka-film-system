@@ -34539,8 +34539,12 @@ function cdRefreshCommentLabel() {
 function cdUpdateAssigneeSelect() {
   const teamId = document.getElementById('cd-team-id').value;
   const sel = document.getElementById('cd-assignee-id');
+  // 兼務メンバー（主所属 team_id が別チーム）も候補に出すため team_members を参照する
+  // （updateAssigneeSelect / ceUpdateAssigneeSelect と同じ判定。LNSD のような全員兼務チームで admin しか出なくなる）
+  const team = teamId ? (allTeams || []).find(t => t.id === teamId) : null;
+  const teamMemberIds = new Set((team?.team_members || []).map(tm => tm.user_id));
   const members = allMembers.filter(m => m.is_active !== false &&
-    (!teamId || m.team_id === teamId || m.role === 'admin'));
+    (!teamId || teamMemberIds.has(m.id) || m.team_id === teamId || m.role === 'admin'));
   sel.innerHTML = '<option value="">（未設定）</option>' +
     members.map(m => `<option value="${m.id}">${esc(NameDisplay.full(m))}</option>`).join('');
 }
@@ -46327,8 +46331,11 @@ async function saveCreativeRateOverrides() {
 function peUpdateAssigneeSelect(selectedId) {
   const teamId = document.getElementById('pe-team-id').value;
   const sel = document.getElementById('pe-assignee-id');
+  // 兼務メンバー（主所属 team_id が別チーム）も候補に出すため team_members を参照する（cdUpdateAssigneeSelect と同じ判定）
+  const team = teamId ? (allTeams || []).find(t => t.id === teamId) : null;
+  const teamMemberIds = new Set((team?.team_members || []).map(tm => tm.user_id));
   const members = allMembers.filter(m => m.is_active !== false &&
-    (!teamId || m.team_id === teamId || m.role === 'admin'));
+    (!teamId || teamMemberIds.has(m.id) || m.team_id === teamId || m.role === 'admin'));
   sel.innerHTML = '<option value="">（未設定）</option>' +
     members.map(m => `<option value="${m.id}">${esc(NameDisplay.full(m))}</option>`).join('');
   if (selectedId) {
