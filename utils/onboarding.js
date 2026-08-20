@@ -32,11 +32,10 @@ const ONBOARDING_TASK_TEMPLATE = [
   { task_key: 'two_factor_auth',    phase: 'mt_before', label: 'Chatwork・Slackの二段階認証設定' },
   { task_key: 'personal_info_form', phase: 'mt_before', label: '個人情報フォーム回答' },
   { task_key: 'hf_contract',        phase: 'mt_before', label: 'HARUKA FILM契約書の提出', occupations: ['video_creator'] },
-  // --- MT ---
-  { task_key: 'mt_schedule', phase: 'mt', label: 'MT日程調整' },
-  { task_key: 'mt_handover', phase: 'mt', label: '引き継ぎMT実施（チーム目的・組織構造・価値観、窓口案内）' },
   // --- MT後 ---
-  { task_key: 'resource_sheet',   phase: 'mt_after', label: 'リソース表の入力指示' },
+  // ※MTフェーズ（MT日程調整・引き継ぎMT実施）とリソース表の入力指示は
+  //   2026-08-20 の運用変更で廃止（テンプレから除外。phase 'mt' の定義自体は
+  //   既存データ互換のため ONBOARDING_PHASES に残す）
   { task_key: 'gnd_contract',     phase: 'mt_after', label: 'GND契約書の提出依頼' },
   { task_key: 'study_group_link', phase: 'mt_after', label: '勉強会リンク送付', occupations: ['video_creator'] },
   // --- 完了確認 ---
