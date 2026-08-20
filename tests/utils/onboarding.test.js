@@ -19,16 +19,16 @@ const {
 const VIDEO_ONLY_KEYS = ['hf_contract'];
 
 describe('buildOnboardingTasks（職種別テンプレ展開）', () => {
-  test('動画クリエイターは全9タスク（動画限定1件を含む）', () => {
+  test('動画クリエイターは全10タスク（動画限定1件を含む）', () => {
     const tasks = buildOnboardingTasks('video_creator');
-    expect(tasks).toHaveLength(9);
+    expect(tasks).toHaveLength(10);
     const keys = tasks.map(t => t.task_key);
     for (const k of VIDEO_ONLY_KEYS) expect(keys).toContain(k);
   });
 
-  test('デザイナーは動画限定タスクを除いた8タスク', () => {
+  test('デザイナーは動画限定タスクを除いた9タスク', () => {
     const tasks = buildOnboardingTasks('designer');
-    expect(tasks).toHaveLength(8);
+    expect(tasks).toHaveLength(9);
     const keys = tasks.map(t => t.task_key);
     for (const k of VIDEO_ONLY_KEYS) expect(keys).not.toContain(k);
   });
@@ -81,7 +81,7 @@ describe('computeOnboardingProgress（進捗計算）', () => {
   test('未着手: done=0、next_task はテンプレ先頭のラベル', () => {
     const tasks = buildOnboardingTasks('designer').map(t => ({ ...t, done: false }));
     const p = computeOnboardingProgress(tasks);
-    expect(p).toEqual({ done: 0, total: 8, next_task: 'Chatwork・Slackの二段階認証設定' });
+    expect(p).toEqual({ done: 0, total: 9, next_task: 'Chatwork・Slackの二段階認証設定' });
   });
 
   test('途中: done数が正しく、next_task はフェーズ順・sort順で最初の未完了', () => {
@@ -92,7 +92,7 @@ describe('computeOnboardingProgress（進捗計算）', () => {
     }));
     const p = computeOnboardingProgress(tasks);
     expect(p.done).toBe(4);
-    expect(p.total).toBe(9);
+    expect(p.total).toBe(10);
     expect(p.next_task).toBe('Chatworkコンタクト申請・招待');
   });
 
@@ -106,7 +106,7 @@ describe('computeOnboardingProgress（進捗計算）', () => {
   test('全完了: next_task は null', () => {
     const tasks = buildOnboardingTasks('designer').map(t => ({ ...t, done: true }));
     const p = computeOnboardingProgress(tasks);
-    expect(p).toEqual({ done: 8, total: 8, next_task: null });
+    expect(p).toEqual({ done: 9, total: 9, next_task: null });
   });
 
   test('空配列・null 安全', () => {
