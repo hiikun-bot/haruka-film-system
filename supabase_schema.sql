@@ -1094,6 +1094,8 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   -- 既定: admin / producer / secretary を許可。producer兼director は producer 行で継承され許可、director単独は対象外。
   -- ※ director単独への漏れを防ぐため producer_director 行・director 行は seed しない（utils/roles.js#roleCodesHavePermission の dual-read 分岐対策）。
   ('admin','project.client_price',true),('producer','project.client_price',true),('secretary','project.client_price',true),
+  -- 通知連携先（Slack/Chatwork）の設定。director 以上に開放（migration 2026-08-19_project_notification_edit_permission.sql）
+  ('admin','project.notification_edit',true),('secretary','project.notification_edit',true),('producer','project.notification_edit',true),('producer_director','project.notification_edit',true),('director','project.notification_edit',true),
   -- クリエイティブ
   ('admin','creative.all_projects_view',true),('secretary','creative.all_projects_view',true),('producer','creative.all_projects_view',true),('producer_director','creative.all_projects_view',true),
   ('admin','creative.rank_price_column',true),('producer','creative.rank_price_column',true),('producer_director','creative.rank_price_column',true),('director','creative.rank_price_column',true),

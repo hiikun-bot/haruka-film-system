@@ -1408,6 +1408,61 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   res.json(resolvedTags !== undefined ? { ...(data || {}), tags: resolvedTags } : data);
 });
 
+// ==================== 通知連携先の限定更新（director 以上） ====================
+// 案件・クライアントの通知連携先（slack_channel_url / chatwork_room_id）のみを更新する。
+// 案件編集全体（PUT /projects/:id 等）は従来どおり project.create_edit が必要だが、
+// 通知先の設定は director にも開放する（permission: project.notification_edit）。
+// migration: migrations/2026-08-19_project_notification_edit_permission.sql
+// フロントの isValidSlackChannelUrl と同じ判定（archives 形式 or app.slack.com/client 形式）。
+function isValidSlackChannelUrl(v) {
+  const s = String(v || '').trim();
+  if (!s) return true; // 未設定は許可（通知先なしとして扱う）
+  if (/\/client\/T[A-Z0-9]+\/[CDG][A-Z0-9]+/i.test(s)) return true;
+  if (/^https?:\/\/[A-Za-z0-9][A-Za-z0-9-]*\.slack\.com\/archives\/[CDG][A-Z0-9]+/i.test(s)) return true;
+  return false;
+}
+
+function buildNotificationUpdate(req, res) {
+  const updateData = { updated_at: new Date().toISOString() };
+  if ('slack_channel_url' in req.body) {
+    const v = String(req.body.slack_channel_url || '').trim();
+    if (!isValidSlackChannelUrl(v)) {
+      res.status(400).json({ error: 'SlackチャンネルURLの形式が正しくありません（.../archives/C... か app.slack.com/client/T.../C... 形式）' });
+      return null;
+    }
+    updateData.slack_channel_url = v || null;
+  }
+  if ('chatwork_room_id' in req.body) {
+    const v = String(req.body.chatwork_room_id || '').trim();
+    if (v && !/^\d+$/.test(v)) {
+      res.status(400).json({ error: 'ChatworkルームIDは数字のみで入力してください' });
+      return null;
+    }
+    updateData.chatwork_room_id = v || null;
+  }
+  return updateData;
+}
+
+router.patch('/projects/:id/notification', requireAuth, requireAnyPermission('project.notification_edit', 'project.create_edit'), async (req, res) => {
+  const updateData = buildNotificationUpdate(req, res);
+  if (!updateData) return;
+  const { data, error } = await supabase
+    .from('projects').update(updateData).eq('id', req.params.id)
+    .select('id, name, slack_channel_url, chatwork_room_id').single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+router.patch('/clients/:id/notification', requireAuth, requireAnyPermission('project.notification_edit', 'project.create_edit'), async (req, res) => {
+  const updateData = buildNotificationUpdate(req, res);
+  if (!updateData) return;
+  const { data, error } = await supabase
+    .from('clients').update(updateData).eq('id', req.params.id)
+    .select('id, name, slack_channel_url, chatwork_room_id').single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // ==================== ADR 008 Phase 1: クリエイティブ管理シート同期 ====================
 // 案件単位で creatives + creative_versions を Google Sheets に片方向同期する。
 // 同期先 URL が未設定なら system_settings.creatives_export_master_template_url を
