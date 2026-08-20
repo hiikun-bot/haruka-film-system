@@ -151,7 +151,11 @@ function buildInvoiceAnnounceTexts(monthStr, opts = {}) {
   const slackBody = body.replace(/\(bow\)/g, '🙇‍♀️').replace(/\(please\)/g, '🙏');
   const slack = `${greeting}🙏\n\n*📄 請求書送付についてのご案内*\n\n${slackBody}\n${footer}`;
 
-  return { month: `${parsed.year}-${String(parsed.month).padStart(2, '0')}`, chatwork, slack, submitPeriodLabel };
+  // プレーン版: 装飾記法なし（ダッシュボードの全体連絡カード用。見出しは
+  // announcements.title 側に入るため本文に重複させない）
+  const plain = `${greeting}🙏\n\n${slackBody}\n${footer}`;
+
+  return { month: `${parsed.year}-${String(parsed.month).padStart(2, '0')}`, chatwork, slack, plain, submitPeriodLabel };
 }
 
 module.exports = {
@@ -161,4 +165,6 @@ module.exports = {
   weekdayJa,           // テスト用
   DEFAULT_HF_CLIENTS,
   FORMAT_SHEET_URL,
+  SUBMIT_DAY_START,
+  SUBMIT_DAY_END,
 };

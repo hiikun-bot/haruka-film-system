@@ -48,6 +48,15 @@ describe('buildInvoiceAnnounceTexts', () => {
     expect(t.chatwork).toContain('(bow)');
   });
 
+  test('プレーン版（お知らせ用）は装飾記法なしで見出し重複もない', () => {
+    const t = buildInvoiceAnnounceTexts('2026-09');
+    expect(t.plain).not.toContain('[info]');
+    expect(t.plain).not.toContain('*📄');
+    expect(t.plain).not.toContain('(bow)');
+    expect(t.plain).toContain('みなさんお疲れ様でございます');
+    expect(t.plain).toContain('9/26(土)~9/28(月)');
+  });
+
   test('Slack 版は Chatwork 専用記法を含まない', () => {
     const t = buildInvoiceAnnounceTexts('2026-09');
     expect(t.slack).not.toContain('[info]');

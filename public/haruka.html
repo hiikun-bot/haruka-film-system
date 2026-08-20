@@ -31733,6 +31733,7 @@ async function renderSysconfigPage() {
         <div id="sys-invoice-announce-result" style="display:none;margin-top:12px;padding:10px;border-radius:6px;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto"></div>
         <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:10px">
           毎月20日 10:00（日本時間）に、Chatwork 全体チャットと Slack 全体チャンネルへ「請求書送付についてのご案内」を自動送信します（旧秘書業務の自動化）。<br>
+          同時にダッシュボードの「📢 お知らせ（全体連絡）」にも同内容を掲載します（掲載期限は提出期間最終日の28日まで）。<br>
           最終送信月: <strong>${esc(settings.invoice_announce_last_sent || '未送信（次の20日から自動化）')}</strong>。同じ月への二重送信は自動でブロックされます。<br>
           20日に送信できなかった場合は22日まで自動でリトライします。送信先が未入力のときは既定値（全体チャット / 全体チャンネル）を使用します。<br>
           <strong>今すぐ送信</strong>は当月分を即時送信します（自動送信を待たず初月に流す場合や、臨時の再案内用）。
@@ -32073,7 +32074,8 @@ async function sendInvoiceAnnounceManual(btn) {
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) {
       resultEl.style.background = '#e8f5e9'; resultEl.style.color = '#1b5e20';
-      resultEl.textContent = `✓ 送信しました（${data.month} 分）: Chatwork OK / Slack OK`;
+      const ann = data.announcement?.ok ? 'お知らせ掲載 OK' : `お知らせ掲載 失敗(${data.announcement?.reason || '不明'})`;
+      resultEl.textContent = `✓ 送信しました（${data.month} 分）: Chatwork OK / Slack OK / ${ann}`;
     } else {
       resultEl.style.background = '#ffebee'; resultEl.style.color = '#b71c1c';
       const cw = data.chatwork ? (data.chatwork.ok ? 'OK' : `失敗(${data.chatwork.reason || '不明'})`) : '-';

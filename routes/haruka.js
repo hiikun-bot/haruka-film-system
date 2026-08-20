@@ -17951,6 +17951,7 @@ router.post('/admin/invoice-announce/send', requireAuth, requireRole('admin'), a
       month: result.month,
       chatwork: result.chatwork,
       slack: result.slack,
+      announcement: result.announcement,
     });
   } catch (err) {
     console.error('[invoice-announce/send]', err);
