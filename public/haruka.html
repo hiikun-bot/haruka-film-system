@@ -25182,6 +25182,7 @@ function renderOnboardingDetail() {
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
       <button class="btn-sm" onclick="obCopyFirstMessage()">📋 初回メッセージ文例をコピー</button>
+      <button class="btn-sm" onclick="obRenameRecord()">✏️ 名前を変更</button>
       ${r.status === 'in_progress' ? `<button class="btn-sm" onclick="obUpdateStatus('completed')" style="color:#27AE60">✅ 完了にする</button>
       <button class="btn-sm" onclick="obUpdateStatus('cancelled')" style="color:#95A5A6">中止にする</button>` : `<button class="btn-sm" onclick="obUpdateStatus('in_progress')">↩ 進行中に戻す</button>`}
       ${isDeletable ? `<button class="btn-sm" onclick="obDeleteRecord()" style="color:#C0392B;margin-left:auto">🗑 削除</button>` : ''}
@@ -25223,6 +25224,29 @@ async function obUpdateStatus(status) {
     showToast(`ステータスを「${OB_STATUS_META[status]?.label || status}」にしました`, 'success');
     await obReloadDetail();
     loadOnboardingPage();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function obRenameRecord() {
+  const r = _obDetail;
+  if (!r) return;
+  const current = r.member_name || '';
+  const input = prompt('新しい名前を入力してください', current);
+  if (input === null) return; // キャンセル
+  const name = input.trim();
+  if (!name) { showToast('名前を入力してください', 'warn'); return; }
+  if (name === current) return;
+  try {
+    const res = await apiFetch(`${API}/onboarding/${_obDetailId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ member_name: name }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '名前の変更に失敗しました');
+    showToast(`名前を「${name}」に変更しました`, 'success');
+    await obReloadDetail();
+    loadOnboardingPage(); // 一覧の表示名にも反映
   } catch (e) { showToast(e.message, 'error'); }
 }
 
