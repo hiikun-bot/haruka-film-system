@@ -19,16 +19,16 @@ const {
 const VIDEO_ONLY_KEYS = ['hf_contract'];
 
 describe('buildOnboardingTasks（職種別テンプレ展開）', () => {
-  test('動画クリエイターは全8タスク（動画限定1件を含む）', () => {
+  test('動画クリエイターは全9タスク（動画限定1件を含む）', () => {
     const tasks = buildOnboardingTasks('video_creator');
-    expect(tasks).toHaveLength(8);
+    expect(tasks).toHaveLength(9);
     const keys = tasks.map(t => t.task_key);
     for (const k of VIDEO_ONLY_KEYS) expect(keys).toContain(k);
   });
 
-  test('デザイナーは動画限定タスクを除いた7タスク', () => {
+  test('デザイナーは動画限定タスクを除いた8タスク', () => {
     const tasks = buildOnboardingTasks('designer');
-    expect(tasks).toHaveLength(7);
+    expect(tasks).toHaveLength(8);
     const keys = tasks.map(t => t.task_key);
     for (const k of VIDEO_ONLY_KEYS) expect(keys).not.toContain(k);
   });
@@ -42,7 +42,7 @@ describe('buildOnboardingTasks（職種別テンプレ展開）', () => {
     expect([...designer].filter(k => !video.has(k))).toEqual([]);
   });
 
-  test('sort_order は昇順・重複なし、phase は定義済み4フェーズのみ', () => {
+  test('sort_order は昇順・重複なし、phase は定義済みフェーズのみ', () => {
     const validPhases = new Set(ONBOARDING_PHASES.map(p => p.key));
     for (const occ of Object.keys(ONBOARDING_OCCUPATIONS)) {
       const tasks = buildOnboardingTasks(occ);
@@ -62,7 +62,7 @@ describe('buildOnboardingTasks（職種別テンプレ展開）', () => {
     }
   });
 
-  test('フェーズは mt_before → mt → mt_after → final の順に並ぶ', () => {
+  test('フェーズは 相手がやる作業 → こっちがやる作業 の順に並ぶ', () => {
     const phaseIndex = new Map(ONBOARDING_PHASES.map((p, i) => [p.key, i]));
     const tasks = buildOnboardingTasks('video_creator');
     const indices = tasks.map(t => phaseIndex.get(t.phase));
@@ -81,32 +81,32 @@ describe('computeOnboardingProgress（進捗計算）', () => {
   test('未着手: done=0、next_task はテンプレ先頭のラベル', () => {
     const tasks = buildOnboardingTasks('designer').map(t => ({ ...t, done: false }));
     const p = computeOnboardingProgress(tasks);
-    expect(p).toEqual({ done: 0, total: 7, next_task: 'Chatworkコンタクト申請・招待' });
+    expect(p).toEqual({ done: 0, total: 8, next_task: 'Chatwork・Slackの二段階認証設定' });
   });
 
   test('途中: done数が正しく、next_task はフェーズ順・sort順で最初の未完了', () => {
     const tasks = buildOnboardingTasks('video_creator').map(t => ({
       ...t,
-      // MT前4件を完了 → 次は MT後フェーズ先頭の「GND契約書の提出依頼」
+      // 相手側フェーズ4件を完了 → 次は こっち側フェーズ先頭の「Chatworkコンタクト申請・招待」
       done: t.phase === 'mt_before',
     }));
     const p = computeOnboardingProgress(tasks);
     expect(p.done).toBe(4);
-    expect(p.total).toBe(8);
-    expect(p.next_task).toBe('GND契約書の提出依頼');
+    expect(p.total).toBe(9);
+    expect(p.next_task).toBe('Chatworkコンタクト申請・招待');
   });
 
   test('配列の並びが崩れていても next_task はフェーズ順で解決する', () => {
     const tasks = buildOnboardingTasks('designer').map(t => ({ ...t, done: t.phase === 'mt_before' }));
     const shuffled = [...tasks].reverse();
     const p = computeOnboardingProgress(shuffled);
-    expect(p.next_task).toBe('GND契約書の提出依頼'); // mt_after フェーズの先頭
+    expect(p.next_task).toBe('Chatworkコンタクト申請・招待'); // こっち側フェーズの先頭
   });
 
   test('全完了: next_task は null', () => {
     const tasks = buildOnboardingTasks('designer').map(t => ({ ...t, done: true }));
     const p = computeOnboardingProgress(tasks);
-    expect(p).toEqual({ done: 7, total: 7, next_task: null });
+    expect(p).toEqual({ done: 8, total: 8, next_task: null });
   });
 
   test('空配列・null 安全', () => {
