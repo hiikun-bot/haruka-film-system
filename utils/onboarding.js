@@ -135,6 +135,36 @@ function buildOnboardingFirstMessage(occupation) {
   ].join('\n');
 }
 
+// ---------- 新規HFSユーザーとの名前マッチング（自動紐付け用・純関数） ----------
+
+// 空白（半角/全角）を除去して小文字化した比較キー
+function normalizeNameKey(s) {
+  return String(s || '').replace(/[\s　]/g, '').toLowerCase();
+}
+
+/**
+ * オンボーディングレコードの member_name が、新規HFSユーザーの氏名/ニックネームと
+ * 同一人物とみなせるか判定する。
+ * 例: member_name '柏木 薫（キャシーG）' は full_name '柏木薫' にも nickname 'キャシーG' にもマッチ。
+ * 誤マッチ防止のため、比較キーが2文字未満の場合は判定しない。
+ */
+function onboardingNameMatches(memberName, { fullName, nickname } = {}) {
+  const m = normalizeNameKey(memberName);
+  if (!m) return false;
+  const f = normalizeNameKey(fullName);
+  if (f && f.length >= 2 && (m === f || m.includes(f) || f.includes(m))) return true;
+  const n = normalizeNameKey(nickname);
+  if (n && n.length >= 2 && m.includes(n)) return true;
+  return false;
+}
+
+// users.role → オンボーディング職種。対象外ロール（director/admin等）は null
+function roleToOnboardingOccupation(role) {
+  if (role === 'editor') return 'video_creator';
+  if (role === 'designer') return 'designer';
+  return null;
+}
+
 module.exports = {
   ONBOARDING_OCCUPATIONS,
   ONBOARDING_PHASES,
@@ -144,4 +174,7 @@ module.exports = {
   sortOnboardingTasks,
   computeOnboardingProgress,
   buildOnboardingFirstMessage,
+  normalizeNameKey,
+  onboardingNameMatches,
+  roleToOnboardingOccupation,
 };

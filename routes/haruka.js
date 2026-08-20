@@ -12665,6 +12665,14 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
     await syncUserRolesForLegacyRole(data.id, role);
     invalidateRolesCache();
   }
+  // オンボーディング自動紐付け（名前一致で user_id 紐付け＋招待タスク自動チェック、
+  // 一致なしなら editor/designer はレコード自動作成）。失敗しても作成は止めない。
+  if (data && data.id) {
+    try {
+      require('../utils/onboarding-autolink').handleNewHfsUser(data)
+        .catch(e => console.warn('[members:create] onboarding-autolink 失敗:', e?.message));
+    } catch (e) { console.warn('[members:create] onboarding-autolink 呼び出し失敗:', e?.message); }
+  }
   if (droppedColumns.length > 0) {
     console.warn(`[members:create] silent drop された列: ${droppedColumns.join(', ')}`);
     return res.json({ ...data, _droppedColumns: droppedColumns });
