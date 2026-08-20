@@ -166,3 +166,36 @@ describe('テンプレ定義の健全性', () => {
     }
   });
 });
+
+describe('onboardingNameMatches（自動紐付けの名前一致・純関数）', () => {
+  const { onboardingNameMatches, roleToOnboardingOccupation } = require('../../utils/onboarding');
+
+  test('氏名の完全一致・空白/全角スペースの差は無視', () => {
+    expect(onboardingNameMatches('松本華子', { fullName: '松本華子' })).toBe(true);
+    expect(onboardingNameMatches('浅間 菜々美', { fullName: '浅間　菜々美' })).toBe(true);
+  });
+
+  test('member_name にニックネーム括弧書きがあっても氏名/ニックネームでマッチ', () => {
+    expect(onboardingNameMatches('柏木 薫（キャシーG）', { fullName: '柏木薫' })).toBe(true);
+    expect(onboardingNameMatches('柏木 薫（キャシーG）', { fullName: '別人', nickname: 'キャシーG' })).toBe(true);
+  });
+
+  test('別人はマッチしない', () => {
+    expect(onboardingNameMatches('柏木 薫（キャシーG）', { fullName: '山崎哲生', nickname: 'ザッキー' })).toBe(false);
+    expect(onboardingNameMatches('松本華子', { fullName: '松田華' })).toBe(false);
+  });
+
+  test('比較キーが2文字未満・空は誤マッチ防止で不一致', () => {
+    expect(onboardingNameMatches('松本華子', { fullName: '松' })).toBe(false);
+    expect(onboardingNameMatches('松本華子', {})).toBe(false);
+    expect(onboardingNameMatches('', { fullName: '松本華子' })).toBe(false);
+  });
+
+  test('roleToOnboardingOccupation は editor/designer のみ対象', () => {
+    expect(roleToOnboardingOccupation('editor')).toBe('video_creator');
+    expect(roleToOnboardingOccupation('designer')).toBe('designer');
+    expect(roleToOnboardingOccupation('director')).toBeNull();
+    expect(roleToOnboardingOccupation('admin')).toBeNull();
+    expect(roleToOnboardingOccupation(undefined)).toBeNull();
+  });
+});

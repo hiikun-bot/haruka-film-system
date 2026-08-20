@@ -492,6 +492,13 @@ app.post('/api/invitations/register', async (req, res) => {
     // 招待を使用済みにする
     await supabase.from('invitations').update({ used: true, used_at: new Date().toISOString() }).eq('token', token);
 
+    // オンボーディング自動紐付け（名前一致で user_id 紐付け＋招待タスク自動チェック、
+    // 一致なしなら editor/designer はレコード自動作成）。失敗しても登録は止めない。
+    try {
+      require('./utils/onboarding-autolink').handleNewHfsUser(newUser)
+        .catch(e => console.warn('[invitations/register] onboarding-autolink 失敗:', e?.message));
+    } catch (e) { console.warn('[invitations/register] onboarding-autolink 呼び出し失敗:', e?.message); }
+
     req.logIn(newUser, err => {
       if (err) return res.status(500).json({ error: 'ログインに失敗しました' });
       res.json({ ok: true, user: safeUser(newUser) });
