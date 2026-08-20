@@ -31316,6 +31316,38 @@ async function renderSysconfigPage() {
         </div>
       </div>
 
+      <!-- 請求書案内の自動送信 -->
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:14px">🧾 請求書案内 — 毎月20日の自動送信</div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label class="form-label">Chatwork ルーム ID（全体チャット）</label>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="sys-invoice-announce-cw-room" placeholder="365971239" style="flex:1"
+              value="${esc(settings.invoice_announce_chatwork_room_id || '')}">
+            <button class="btn" onclick="saveInvoiceAnnounceSetting('invoice_announce_chatwork_room_id', 'sys-invoice-announce-cw-room')">保存</button>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label class="form-label">Slack チャンネル URL（全体チャンネル）</label>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" id="sys-invoice-announce-slack-url" placeholder="https://app.slack.com/client/T.../C..." style="flex:1"
+              value="${esc(settings.invoice_announce_slack_channel_url || '')}">
+            <button class="btn" onclick="saveInvoiceAnnounceSetting('invoice_announce_slack_channel_url', 'sys-invoice-announce-slack-url')">保存</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button class="btn btn-ghost" onclick="previewInvoiceAnnounce(this)">👁 文面をプレビュー</button>
+          <button class="btn" onclick="sendInvoiceAnnounceManual(this)">📨 今すぐ送信</button>
+        </div>
+        <div id="sys-invoice-announce-result" style="display:none;margin-top:12px;padding:10px;border-radius:6px;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto"></div>
+        <div style="font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:10px">
+          毎月20日 10:00（日本時間）に、Chatwork 全体チャットと Slack 全体チャンネルへ「請求書送付についてのご案内」を自動送信します（旧秘書業務の自動化）。<br>
+          最終送信月: <strong>${esc(settings.invoice_announce_last_sent || '未送信（次の20日から自動化）')}</strong>。同じ月への二重送信は自動でブロックされます。<br>
+          20日に送信できなかった場合は22日まで自動でリトライします。送信先が未入力のときは既定値（全体チャット / 全体チャンネル）を使用します。<br>
+          <strong>今すぐ送信</strong>は当月分を即時送信します（自動送信を待たず初月に流す場合や、臨時の再案内用）。
+        </div>
+      </div>
+
       <!-- メンテナンス（DB スキーマ同期） -->
       <div class="card" style="margin-bottom:16px">
         <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:14px">🛠 メンテナンス — DB スキーマ同期</div>
@@ -31585,6 +31617,85 @@ async function saveSysDrive() {
   } else {
     const e = await res.json();
     showToast('エラー: ' + translateError(e?.error), 'error');
+  }
+}
+
+// ==================== 請求書案内（毎月20日の自動送信） ====================
+
+async function saveInvoiceAnnounceSetting(key, inputId) {
+  const value = document.getElementById(inputId).value.trim();
+  if (key === 'invoice_announce_slack_channel_url' && value && !/\/client\/T[A-Z0-9]+\/C[A-Z0-9]+/.test(value)) {
+    showToast('Slack チャンネル URL の形式が正しくありません (期待形式: https://app.slack.com/client/T.../C...)', 'warn');
+    return;
+  }
+  if (key === 'invoice_announce_chatwork_room_id' && value && !/^\d+$/.test(value)) {
+    showToast('Chatwork ルーム ID は数字で入力してください', 'warn');
+    return;
+  }
+  const res = await apiFetch(`${API}/system-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, value: value || null }),
+  });
+  if (res.ok) {
+    showToast('保存しました', 'ok');
+  } else {
+    const e = await res.json().catch(() => ({}));
+    showToast(e.error || '保存に失敗しました', 'error');
+  }
+}
+
+async function previewInvoiceAnnounce(btn) {
+  const resultEl = document.getElementById('sys-invoice-announce-result');
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/admin/invoice-announce/preview`);
+    const data = await res.json().catch(() => ({}));
+    resultEl.style.display = '';
+    if (!res.ok) {
+      resultEl.style.background = '#ffebee'; resultEl.style.color = '#b71c1c';
+      resultEl.textContent = `✗ ${data.error || `HTTP ${res.status}`}`;
+      return;
+    }
+    resultEl.style.background = 'var(--em-pale)'; resultEl.style.color = 'var(--text)';
+    resultEl.textContent =
+      `対象月: ${data.month}（提出期間 ${data.submit_period}）\n` +
+      `最終送信月: ${data.last_sent_month || '未送信'}\n` +
+      `送信先: Chatwork ルーム ${data.chatwork_room_id} / ${data.slack_channel_url}\n` +
+      `\n───── Chatwork 文面 ─────\n${data.chatwork}\n` +
+      `\n───── Slack 文面 ─────\n${data.slack}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function sendInvoiceAnnounceManual(btn) {
+  if (!confirm('請求書案内を Chatwork 全体チャットと Slack 全体チャンネルへ今すぐ送信します。\nチーム全員に通知されます。よろしいですか？')) return;
+  const resultEl = document.getElementById('sys-invoice-announce-result');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = '📨 送信中...';
+  resultEl.style.display = '';
+  resultEl.style.background = 'var(--em-pale)'; resultEl.style.color = 'var(--text)';
+  resultEl.textContent = '送信中...';
+  try {
+    const res = await apiFetch(`${API}/admin/invoice-announce/send`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      resultEl.style.background = '#e8f5e9'; resultEl.style.color = '#1b5e20';
+      resultEl.textContent = `✓ 送信しました（${data.month} 分）: Chatwork OK / Slack OK`;
+    } else {
+      resultEl.style.background = '#ffebee'; resultEl.style.color = '#b71c1c';
+      const cw = data.chatwork ? (data.chatwork.ok ? 'OK' : `失敗(${data.chatwork.reason || '不明'})`) : '-';
+      const sl = data.slack ? (data.slack.ok ? 'OK' : `失敗(${data.slack.reason || '不明'})`) : '-';
+      resultEl.textContent = data.error
+        ? `✗ ${data.error}`
+        : `✗ 一部失敗: Chatwork ${cw} / Slack ${sl}\nBot がルーム/チャンネルに参加しているか、トークン設定を確認してください。`;
+    }
+  } catch (e) {
+    resultEl.style.background = '#ffebee'; resultEl.style.color = '#b71c1c';
+    resultEl.textContent = `✗ ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = original;
   }
 }
 
