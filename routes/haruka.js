@@ -20421,6 +20421,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'team.manage','team.assign','team.delete',
   'invoice.own','invoice.all_view',
   'master.page','master.sys_config','master.filename_templates',
+  'onboarding.page',
   'system.view_as',
   'analytics.view',
   'analytics.bug_reports.view',
@@ -22253,6 +22254,213 @@ router.patch('/creatives/:id/portfolio-note', requireAuth, async (req, res) => {
     console.error('[portfolio-note] failed:', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ============================================================
+// 🚀 オンボーディング管理（新メンバー受け入れチェックリスト）
+// ------------------------------------------------------------
+// 背景: 秘書チーム解体に伴い、スプレッドシート「オンボーディング引き継ぎシート」で
+//       秘書が回していた新メンバー受け入れ業務を HFS に取り込む（運用者: admin）。
+// テーブル: onboarding_records / onboarding_tasks（migrations/2026-08-20_onboarding.sql）
+// テンプレ・進捗計算・文例生成は utils/onboarding.js（純関数・テスト済み）に集約。
+// 権限: 'onboarding.page'（既定: admin / secretary）。削除のみ admin 限定。
+// ============================================================
+const {
+  ONBOARDING_OCCUPATIONS,
+  ONBOARDING_PHASES,
+  isValidOccupation,
+  buildOnboardingTasks,
+  sortOnboardingTasks,
+  computeOnboardingProgress,
+  buildOnboardingFirstMessage,
+} = require('../utils/onboarding');
+
+const ONBOARDING_STATUSES = new Set(['in_progress', 'completed', 'cancelled']);
+
+// user_id / created_by / done_by がいずれも users 参照のため、embed は FK 名で明示する
+const ONBOARDING_USER_EMBED = 'user:users!onboarding_records_user_id_fkey(id, full_name, nickname)';
+
+const isMissingOnboardingTable = (err) => {
+  const msg = (err && err.message) || '';
+  return /relation .*onboarding_(records|tasks).* does not exist/.test(msg) || (err && err.code === '42P01');
+};
+const onboardingMigrationHint = (res) =>
+  res.status(503).json({ error: 'onboarding テーブルが未作成です。migrations/2026-08-20_onboarding.sql を本番Supabaseに適用してください。' });
+
+// GET /onboarding — 一覧（progress・next_task 付き）
+router.get('/onboarding', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
+  const { data, error } = await supabase
+    .from('onboarding_records')
+    .select(`*, ${ONBOARDING_USER_EMBED}, onboarding_tasks(done, label, phase, sort_order)`)
+    .order('created_at', { ascending: false });
+  if (error) {
+    if (isMissingOnboardingTable(error)) return onboardingMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  const list = (data || []).map(r => {
+    const progress = computeOnboardingProgress(r.onboarding_tasks || []);
+    const { onboarding_tasks, ...rest } = r;
+    return { ...rest, progress: { done: progress.done, total: progress.total }, next_task: progress.next_task };
+  });
+  res.json(list);
+});
+
+// POST /onboarding — 作成（職種別テンプレを onboarding_tasks に展開）
+router.post('/onboarding', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
+  const { member_name, occupation, user_id, note } = req.body || {};
+  if (!member_name || typeof member_name !== 'string' || !member_name.trim()) {
+    return res.status(400).json({ error: 'member_name は必須です' });
+  }
+  if (!isValidOccupation(occupation)) {
+    return res.status(400).json({ error: `occupation は ${Object.keys(ONBOARDING_OCCUPATIONS).join(' / ')} のいずれかで指定してください` });
+  }
+  const insert = {
+    member_name: member_name.trim(),
+    occupation,
+    user_id: user_id || null,
+    note: (note && String(note).trim()) || null,
+    created_by: req.user.id,
+  };
+  const { data: record, error } = await supabase
+    .from('onboarding_records')
+    .insert(insert)
+    .select(`*, ${ONBOARDING_USER_EMBED}`)
+    .single();
+  if (error) {
+    if (isMissingOnboardingTable(error)) return onboardingMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  // テンプレ展開は一括INSERT（1行ずつだと N 回往復になるため）
+  const taskRows = buildOnboardingTasks(occupation).map(t => ({ ...t, record_id: record.id }));
+  const { data: tasks, error: taskErr } = await supabase
+    .from('onboarding_tasks')
+    .insert(taskRows)
+    .select();
+  if (taskErr) {
+    // タスク展開に失敗したら中途半端なレコードを残さない（ON DELETE CASCADE）
+    await supabase.from('onboarding_records').delete().eq('id', record.id);
+    return res.status(500).json({ error: `チェックリストの展開に失敗しました: ${taskErr.message}` });
+  }
+  res.json({ ...record, tasks: sortOnboardingTasks(tasks || []), phases: ONBOARDING_PHASES });
+});
+
+// GET /onboarding/:id — 詳細（tasks をフェーズ順・sort順で返す）
+router.get('/onboarding/:id', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
+  const { data, error } = await supabase
+    .from('onboarding_records')
+    .select(`*, ${ONBOARDING_USER_EMBED}, onboarding_tasks(*)`)
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error) {
+    if (isMissingOnboardingTable(error)) return onboardingMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: 'オンボーディングレコードが見つかりません' });
+  const { onboarding_tasks, ...rest } = data;
+  const tasks = sortOnboardingTasks(onboarding_tasks || []);
+  const progress = computeOnboardingProgress(tasks);
+  res.json({
+    ...rest,
+    tasks,
+    phases: ONBOARDING_PHASES,
+    progress: { done: progress.done, total: progress.total },
+    next_task: progress.next_task,
+  });
+});
+
+// PATCH /onboarding/:id — status / note / member_name / user_id の更新
+router.patch('/onboarding/:id', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
+  const { status, note, member_name, user_id } = req.body || {};
+  const update = {};
+  if (status !== undefined) {
+    if (!ONBOARDING_STATUSES.has(status)) {
+      return res.status(400).json({ error: `status は ${[...ONBOARDING_STATUSES].join(' / ')} のいずれかで指定してください` });
+    }
+    update.status = status;
+  }
+  if (note !== undefined) update.note = (note && String(note).trim()) || null;
+  if (member_name !== undefined) {
+    if (typeof member_name !== 'string' || !member_name.trim()) {
+      return res.status(400).json({ error: 'member_name は空にできません' });
+    }
+    update.member_name = member_name.trim();
+  }
+  if (user_id !== undefined) update.user_id = user_id || null;
+  if (Object.keys(update).length === 0) return res.status(400).json({ error: '更新項目がありません' });
+  update.updated_at = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('onboarding_records')
+    .update(update)
+    .eq('id', req.params.id)
+    .select(`*, ${ONBOARDING_USER_EMBED}`)
+    .maybeSingle();
+  if (error) {
+    if (isMissingOnboardingTable(error)) return onboardingMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: 'オンボーディングレコードが見つかりません' });
+  res.json(data);
+});
+
+// PATCH /onboarding/:id/tasks/:taskId — done 切替（done_at / done_by を記録）
+router.patch('/onboarding/:id/tasks/:taskId', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
+  const done = !!(req.body || {}).done;
+  const update = done
+    ? { done: true, done_at: new Date().toISOString(), done_by: req.user.id }
+    : { done: false, done_at: null, done_by: null };
+  const { data, error } = await supabase
+    .from('onboarding_tasks')
+    .update(update)
+    .eq('id', req.params.taskId)
+    .eq('record_id', req.params.id) // 別レコードのタスクIDを誤って掴まないようガード
+    .select()
+    .maybeSingle();
+  if (error) {
+    if (isMissingOnboardingTable(error)) return onboardingMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: 'タスクが見つかりません' });
+  // 親レコードの updated_at も更新（一覧の鮮度表示用。失敗しても本処理は成功扱い）
+  await supabase.from('onboarding_records')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', req.params.id);
+  res.json(data);
+});
+
+// DELETE /onboarding/:id — 削除（admin のみ。タスクは ON DELETE CASCADE）
+router.delete('/onboarding/:id', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
+  // 実効ロールコード集合で admin 判定（ADR 015: req.user.role 直書き禁止・VIEW AS 追従）
+  const codes = await getEffectiveRoleCodes(req);
+  if (!codes.includes('admin')) {
+    return res.status(403).json({ error: '削除は admin のみ可能です' });
+  }
+  const { data, error } = await supabase
+    .from('onboarding_records')
+    .delete()
+    .eq('id', req.params.id)
+    .select('id')
+    .maybeSingle();
+  if (error) {
+    if (isMissingOnboardingTable(error)) return onboardingMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: 'オンボーディングレコードが見つかりません' });
+  res.json({ ok: true });
+});
+
+// GET /onboarding/:id/first-message — 初回メッセージ文例（職種別出し分け・コピー用）
+router.get('/onboarding/:id/first-message', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
+  const { data, error } = await supabase
+    .from('onboarding_records')
+    .select('id, occupation')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error) {
+    if (isMissingOnboardingTable(error)) return onboardingMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: 'オンボーディングレコードが見つかりません' });
+  res.json({ occupation: data.occupation, message: buildOnboardingFirstMessage(data.occupation) });
 });
 
 // router を主エクスポートにしつつ、ヘルパー関数も同じ object 経由で取り出せるようにする
