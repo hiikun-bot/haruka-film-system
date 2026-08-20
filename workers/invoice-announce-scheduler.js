@@ -25,7 +25,7 @@
 
 const supabase = require('../supabase');
 const { sendChatworkRoom, sendSlackChannel, notifyAutoError } = require('../notifications');
-const { buildInvoiceAnnounceTexts, parseHfClients } = require('../utils/invoice-announce');
+const { buildInvoiceAnnounceTexts, parseHfClients, SUBMIT_DAY_END } = require('../utils/invoice-announce');
 
 const TICK_MS = 10 * 60_000; // 10分
 const SEND_HOUR_JST = 10;    // 10時以降に送信
@@ -107,7 +107,30 @@ async function sendInvoiceAnnounce({ month, trigger = 'auto' }) {
   const chatwork = await sendChatworkRoom(roomId, texts.chatwork);
   const slack = await sendSlackChannel(slackUrl, texts.slack);
 
-  if (chatwork.ok || slack.ok) {
+  // ダッシュボードの全体連絡（お知らせ）カードにも同内容を掲載。
+  // 掲載期限 = 提出期間最終日（28日）の 23:59:59 JST。
+  // ※POST /announcements 経由だと broadcast Slack へ二重投稿されるため直接 INSERT する。
+  let announcement = { ok: false, reason: 'skipped' };
+  try {
+    const [y, m] = month.split('-').map(Number);
+    const deadlineIso = new Date(Date.UTC(y, m - 1, SUBMIT_DAY_END, 23, 59, 59) - 9 * 3600 * 1000).toISOString();
+    const { data: admin } = await supabase.from('users')
+      .select('id').eq('role', 'admin').eq('is_active', true).limit(1).maybeSingle();
+    const { error: annErr } = await supabase.from('announcements').insert({
+      title: `🧾 請求書送付についてのご案内（${m}月・提出 ${texts.submitPeriodLabel}）`,
+      body: texts.plain,
+      posted_by: admin?.id || null,
+      deadline_at: deadlineIso,
+      is_active: true,
+    });
+    announcement = annErr ? { ok: false, reason: annErr.message } : { ok: true };
+    if (annErr) console.warn('[invoice-announce] お知らせ掲載失敗:', annErr.message);
+  } catch (e) {
+    announcement = { ok: false, reason: e.message };
+    console.warn('[invoice-announce] お知らせ掲載失敗:', e.message);
+  }
+
+  if (chatwork.ok || slack.ok || announcement.ok) {
     await upsertSetting(SETTING_KEYS.lastSent, month);
   }
   if (!chatwork.ok || !slack.ok) {
@@ -120,8 +143,8 @@ async function sendInvoiceAnnounce({ month, trigger = 'auto' }) {
       apiPath: trigger === 'manual' ? 'POST /api/haruka/admin/invoice-announce/send' : 'worker:invoice-announce-scheduler',
     });
   }
-  console.log(`[invoice-announce] 送信結果 (${trigger}, ${month}): chatwork=${chatwork.ok ? 'OK' : chatwork.reason}, slack=${slack.ok ? 'OK' : slack.reason}`);
-  return { month, chatwork, slack, roomId, slackUrl };
+  console.log(`[invoice-announce] 送信結果 (${trigger}, ${month}): chatwork=${chatwork.ok ? 'OK' : chatwork.reason}, slack=${slack.ok ? 'OK' : slack.reason}, announcement=${announcement.ok ? 'OK' : announcement.reason}`);
+  return { month, chatwork, slack, announcement, roomId, slackUrl };
 }
 
 async function tick() {
