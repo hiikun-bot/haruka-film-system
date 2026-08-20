@@ -19,16 +19,16 @@ const {
 const VIDEO_ONLY_KEYS = ['hf_contract', 'study_group_link'];
 
 describe('buildOnboardingTasks（職種別テンプレ展開）', () => {
-  test('動画クリエイターは全12タスク（動画限定2件を含む）', () => {
+  test('動画クリエイターは全9タスク（動画限定2件を含む）', () => {
     const tasks = buildOnboardingTasks('video_creator');
-    expect(tasks).toHaveLength(12);
+    expect(tasks).toHaveLength(9);
     const keys = tasks.map(t => t.task_key);
     for (const k of VIDEO_ONLY_KEYS) expect(keys).toContain(k);
   });
 
-  test('デザイナーは動画限定タスクを除いた10タスク', () => {
+  test('デザイナーは動画限定タスクを除いた7タスク', () => {
     const tasks = buildOnboardingTasks('designer');
-    expect(tasks).toHaveLength(10);
+    expect(tasks).toHaveLength(7);
     const keys = tasks.map(t => t.task_key);
     for (const k of VIDEO_ONLY_KEYS) expect(keys).not.toContain(k);
   });
@@ -81,32 +81,32 @@ describe('computeOnboardingProgress（進捗計算）', () => {
   test('未着手: done=0、next_task はテンプレ先頭のラベル', () => {
     const tasks = buildOnboardingTasks('designer').map(t => ({ ...t, done: false }));
     const p = computeOnboardingProgress(tasks);
-    expect(p).toEqual({ done: 0, total: 10, next_task: 'Chatworkコンタクト申請・招待' });
+    expect(p).toEqual({ done: 0, total: 7, next_task: 'Chatworkコンタクト申請・招待' });
   });
 
   test('途中: done数が正しく、next_task はフェーズ順・sort順で最初の未完了', () => {
     const tasks = buildOnboardingTasks('video_creator').map(t => ({
       ...t,
-      // MT前4件 + MT日程調整 を完了 → 次は「引き継ぎMT実施」
-      done: t.phase === 'mt_before' || t.task_key === 'mt_schedule',
+      // MT前4件を完了 → 次は MT後フェーズ先頭の「GND契約書の提出依頼」
+      done: t.phase === 'mt_before',
     }));
     const p = computeOnboardingProgress(tasks);
-    expect(p.done).toBe(5);
-    expect(p.total).toBe(12);
-    expect(p.next_task).toMatch(/^引き継ぎMT実施/);
+    expect(p.done).toBe(4);
+    expect(p.total).toBe(9);
+    expect(p.next_task).toBe('GND契約書の提出依頼');
   });
 
   test('配列の並びが崩れていても next_task はフェーズ順で解決する', () => {
     const tasks = buildOnboardingTasks('designer').map(t => ({ ...t, done: t.phase === 'mt_before' }));
     const shuffled = [...tasks].reverse();
     const p = computeOnboardingProgress(shuffled);
-    expect(p.next_task).toBe('MT日程調整'); // mt フェーズの先頭
+    expect(p.next_task).toBe('GND契約書の提出依頼'); // mt_after フェーズの先頭
   });
 
   test('全完了: next_task は null', () => {
     const tasks = buildOnboardingTasks('designer').map(t => ({ ...t, done: true }));
     const p = computeOnboardingProgress(tasks);
-    expect(p).toEqual({ done: 10, total: 10, next_task: null });
+    expect(p).toEqual({ done: 7, total: 7, next_task: null });
   });
 
   test('空配列・null 安全', () => {
