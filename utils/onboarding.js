@@ -37,7 +37,6 @@ const ONBOARDING_TASK_TEMPLATE = [
   //   2026-08-20 の運用変更で廃止（テンプレから除外。phase 'mt' の定義自体は
   //   既存データ互換のため ONBOARDING_PHASES に残す）
   { task_key: 'gnd_contract',     phase: 'mt_after', label: 'GND契約書の提出依頼' },
-  { task_key: 'study_group_link', phase: 'mt_after', label: '勉強会リンク送付', occupations: ['video_creator'] },
   // --- 完了確認 ---
   { task_key: 'gnd_info_share',  phase: 'final', label: 'GOOD NEW Design関連の情報共有' },
   { task_key: 'invoice_guide',   phase: 'final', label: '請求書発行手続きの案内' },

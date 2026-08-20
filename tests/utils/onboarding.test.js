@@ -16,12 +16,12 @@ const {
   buildOnboardingFirstMessage,
 } = require('../../utils/onboarding');
 
-const VIDEO_ONLY_KEYS = ['hf_contract', 'study_group_link'];
+const VIDEO_ONLY_KEYS = ['hf_contract'];
 
 describe('buildOnboardingTasks（職種別テンプレ展開）', () => {
-  test('動画クリエイターは全9タスク（動画限定2件を含む）', () => {
+  test('動画クリエイターは全8タスク（動画限定1件を含む）', () => {
     const tasks = buildOnboardingTasks('video_creator');
-    expect(tasks).toHaveLength(9);
+    expect(tasks).toHaveLength(8);
     const keys = tasks.map(t => t.task_key);
     for (const k of VIDEO_ONLY_KEYS) expect(keys).toContain(k);
   });
@@ -92,7 +92,7 @@ describe('computeOnboardingProgress（進捗計算）', () => {
     }));
     const p = computeOnboardingProgress(tasks);
     expect(p.done).toBe(4);
-    expect(p.total).toBe(9);
+    expect(p.total).toBe(8);
     expect(p.next_task).toBe('GND契約書の提出依頼');
   });
 
