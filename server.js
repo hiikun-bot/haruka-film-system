@@ -670,6 +670,13 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] r2-eviction-sweep 起動失敗:', e.message);
     }
+    // 請求書案内: 毎月20日 10時 JST に Chatwork/Slack 全体チャットへ自動送信（旧秘書業務の自動化）
+    try {
+      const { startInvoiceAnnounceScheduler } = require('./workers/invoice-announce-scheduler');
+      startInvoiceAnnounceScheduler();
+    } catch (e) {
+      console.error('[startup] invoice-announce-scheduler 起動失敗:', e.message);
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
@@ -706,6 +713,12 @@ const runSchemaSync = require('./db/migrate');
       stopR2EvictionSweep();
     } catch (e) {
       console.error('[shutdown] r2-eviction-sweep 停止失敗:', e.message);
+    }
+    try {
+      const { stopInvoiceAnnounceScheduler } = require('./workers/invoice-announce-scheduler');
+      stopInvoiceAnnounceScheduler();
+    } catch (e) {
+      console.error('[shutdown] invoice-announce-scheduler 停止失敗:', e.message);
     }
     // 新規接続の受付を止め、処理中のリクエスト完了を待って終了
     server.close((err) => {

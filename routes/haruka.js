@@ -17905,6 +17905,59 @@ router.post('/admin/run-schema-sync', requireAuth, async (req, res) => {
   }
 });
 
+// ==================== 請求書案内（毎月20日の自動アナウンス） ====================
+// 旧秘書チームが手動投稿していた「請求書送付についてのご案内」の自動化。
+// 自動送信は workers/invoice-announce-scheduler.js。ここは admin 向けの
+// プレビューと手動送信（初月や臨時送信用）のみ。
+
+// プレビュー: 対象月の Chatwork/Slack 両文面と現在の送信設定を返す
+router.get('/admin/invoice-announce/preview', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { jstNowParts, SETTING_KEYS, DEFAULT_CHATWORK_ROOM_ID, DEFAULT_SLACK_CHANNEL_URL } = require('../workers/invoice-announce-scheduler');
+    const { buildInvoiceAnnounceTexts, parseHfClients, parseMonthStr } = require('../utils/invoice-announce');
+    const month = parseMonthStr(req.query.month) ? req.query.month : jstNowParts().date.slice(0, 7);
+
+    const keys = Object.values(SETTING_KEYS);
+    const { data } = await supabase.from('system_settings').select('key, value').in('key', keys);
+    const settings = {};
+    (data || []).forEach(r => { settings[r.key] = r.value; });
+
+    const texts = buildInvoiceAnnounceTexts(month, { hfClients: parseHfClients(settings[SETTING_KEYS.hfClients]) || undefined });
+    res.json({
+      month,
+      chatwork: texts.chatwork,
+      slack: texts.slack,
+      submit_period: texts.submitPeriodLabel,
+      last_sent_month: settings[SETTING_KEYS.lastSent] || null,
+      chatwork_room_id: settings[SETTING_KEYS.chatworkRoomId] || DEFAULT_CHATWORK_ROOM_ID,
+      slack_channel_url: settings[SETTING_KEYS.slackChannelUrl] || DEFAULT_SLACK_CHANNEL_URL,
+    });
+  } catch (err) {
+    console.error('[invoice-announce/preview]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 手動送信: 対象月（省略時は当月）の案内を Chatwork + Slack へ即時送信
+router.post('/admin/invoice-announce/send', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { sendInvoiceAnnounce, jstNowParts } = require('../workers/invoice-announce-scheduler');
+    const { parseMonthStr } = require('../utils/invoice-announce');
+    const month = parseMonthStr(req.body?.month) ? req.body.month : jstNowParts().date.slice(0, 7);
+    const result = await sendInvoiceAnnounce({ month, trigger: 'manual' });
+    const ok = result.chatwork.ok && result.slack.ok;
+    res.status(ok ? 200 : 502).json({
+      ok,
+      month: result.month,
+      chatwork: result.chatwork,
+      slack: result.slack,
+    });
+  } catch (err) {
+    console.error('[invoice-announce/send]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ==================== システム設定 ====================
 
 // システム設定取得（認証済みなら誰でも読める）
