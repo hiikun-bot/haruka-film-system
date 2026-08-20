@@ -37,6 +37,7 @@ const ONBOARDING_TASK_TEMPLATE = [
   // --- HFSへの招待（こっち＝運営側がやる作業） ---
   { task_key: 'chatwork_contact', phase: 'final', label: 'Chatworkコンタクト申請・招待' },
   { task_key: 'hfs_invite',       phase: 'final', label: 'HFSへメンバー招待' },
+  { task_key: 'gnd_slack_invite', phase: 'final', label: 'GNDからSlackに招待してもらう' },
   { task_key: 'gnd_info_share',   phase: 'final', label: 'GOOD NEW Design関連の情報共有' },
   { task_key: 'invoice_guide',    phase: 'final', label: '請求書発行手続きの案内' },
   { task_key: 'team_assignment',  phase: 'final', label: 'チーム配属の決定' },
