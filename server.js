@@ -677,6 +677,13 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] invoice-announce-scheduler 起動失敗:', e.message);
     }
+    // オンボーディング: 相手待ちタスクの停滞催促（既定3日・JST日中のみ）
+    try {
+      const { startOnboardingStallReminder } = require('./workers/onboarding-stall-reminder');
+      startOnboardingStallReminder();
+    } catch (e) {
+      console.error('[startup] onboarding-stall-reminder 起動失敗:', e.message);
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
@@ -719,6 +726,12 @@ const runSchemaSync = require('./db/migrate');
       stopInvoiceAnnounceScheduler();
     } catch (e) {
       console.error('[shutdown] invoice-announce-scheduler 停止失敗:', e.message);
+    }
+    try {
+      const { stopOnboardingStallReminder } = require('./workers/onboarding-stall-reminder');
+      stopOnboardingStallReminder();
+    } catch (e) {
+      console.error('[shutdown] onboarding-stall-reminder 停止失敗:', e.message);
     }
     // 新規接続の受付を止め、処理中のリクエスト完了を待って終了
     server.close((err) => {
