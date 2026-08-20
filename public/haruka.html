@@ -3909,6 +3909,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">学び広場</button>
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
+    <button class="nav-btn" id="nav-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">オンボーディング</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
     <button class="nav-btn" id="nav-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">素材広場</button>
@@ -4083,6 +4084,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
+    <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
     <button class="nav-drawer-btn" id="nav-drawer-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">🗂️ 素材広場</button>
@@ -8359,6 +8361,67 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 </div>
 
 <!-- 📦 一括納品完了（月次消込）— admin / secretary 専用（ADR 015: effectiveRole で判定） -->
+<!-- 🚀 オンボーディング管理（新メンバー受け入れチェックリスト）。権限: onboarding.page（既定 admin/secretary） -->
+<div id="page-onboarding" class="page">
+  <div style="max-width:1100px;margin:0 auto;padding:0 4px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+      <h2 style="margin:0;font-size:18px">🚀 オンボーディング管理</h2>
+      <select id="ob-status-filter" class="form-input" style="width:160px;padding:5px 8px;font-size:13px" onchange="renderOnboardingList()">
+        <option value="">すべて</option>
+        <option value="in_progress" selected>進行中</option>
+        <option value="completed">完了</option>
+        <option value="cancelled">中止</option>
+      </select>
+      <button class="btn-primary" id="ob-btn-create" style="margin-left:auto" onclick="openOnboardingCreate()">＋ 新規オンボーディング</button>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">新メンバーの受け入れ手続き（旧: オンボーディング引き継ぎシート）をチェックリストで管理します。行クリックで詳細を開きます。</div>
+    <div id="ob-list">
+      <div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- 🚀 オンボーディング 新規作成モーダル -->
+<div class="modal-overlay" id="modal-onboarding-create" style="z-index:310">
+  <div class="modal-card" style="width:min(520px,95vw)">
+    <div class="modal-title">🚀 新規オンボーディング<button class="modal-close" onclick="closeModal('modal-onboarding-create')">×</button></div>
+    <div class="form-group">
+      <label class="form-label">名前 <span style="color:#C0392B">*</span></label>
+      <input class="form-input" id="ob-c-name" placeholder="例) 山田 太郎">
+    </div>
+    <div class="form-group">
+      <label class="form-label">職種 <span style="color:#C0392B">*</span></label>
+      <select class="form-input" id="ob-c-occupation">
+        <option value="video_creator">動画クリエイター</option>
+        <option value="designer">デザイナー</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">システムユーザー紐付け（任意）</label>
+      <select class="form-input" id="ob-c-user"><option value="">（未登録・あとで紐付け）</option></select>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">HFSにメンバー登録済みの場合に選択すると「ニックネーム（名前）」表示になります</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">メモ（任意）</label>
+      <textarea class="form-input" id="ob-c-note" rows="3" placeholder="紹介経緯、稼働条件など" style="resize:vertical;font-size:13px"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn-sm" onclick="closeModal('modal-onboarding-create')">キャンセル</button>
+      <button class="btn-primary" id="ob-c-submit" onclick="submitOnboardingCreate()">作成（チェックリストを展開）</button>
+    </div>
+  </div>
+</div>
+
+<!-- 🚀 オンボーディング 詳細モーダル -->
+<div class="modal-overlay" id="modal-onboarding-detail" style="z-index:300">
+  <div class="modal-card" style="width:min(680px,95vw);max-height:88vh;overflow-y:auto">
+    <div class="modal-title"><span id="ob-d-title">🚀 オンボーディング詳細</span><button class="modal-close" onclick="closeModal('modal-onboarding-detail')">×</button></div>
+    <div id="ob-d-body">
+      <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
 <div id="page-bulk-deliver" class="page">
   <div style="max-width:1200px;margin:0 auto;padding:0 4px">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px">
@@ -17906,6 +17969,8 @@ function setPreviewRole(role) {
   if (document.getElementById('page-portfolio')?.classList.contains('active') && typeof pfReload === 'function') pfReload();
   // 一括納品（月次消込）: admin/secretary 限定ページ。VIEW AS 切替で前ロールの表示が残らないよう再描画（ADR 015）
   if (document.getElementById('page-bulk-deliver')?.classList.contains('active') && typeof loadBulkDeliverPage === 'function') loadBulkDeliverPage();
+  // 🚀 オンボーディング: onboarding.page 限定ページ。VIEW AS 切替で前ロールの表示（削除ボタン等）が残らないよう再描画（ADR 015）
+  if (document.getElementById('page-onboarding')?.classList.contains('active') && typeof loadOnboardingPage === 'function') loadOnboardingPage();
   // 分析ページ表示中に VIEW AS でロールが変わると、サイドバーから消えた項目が main にだけ残る不整合があるため再初期化
   if (document.getElementById('page-analytics')?.classList.contains('active') && typeof initAnalyticsPage === 'function') {
     if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) _analyticsView = 'bug-reports';
@@ -17965,6 +18030,12 @@ function applyRoleBasedUI() {
   if (bulkDeliverNav) bulkDeliverNav.style.display = canBulkDeliver ? '' : 'none';
   const drawerBulkDeliver = document.getElementById('nav-drawer-bulk-deliver');
   if (drawerBulkDeliver) drawerBulkDeliver.style.display = canBulkDeliver ? '' : 'none';
+  // 🚀 オンボーディングナビ — permission 'onboarding.page'（既定 admin/secretary。ADR 015: hasPermission 判定で VIEW AS に追従）
+  const canOnboarding = hasPermission('onboarding.page');
+  const onboardingNav = document.getElementById('nav-onboarding');
+  if (onboardingNav) onboardingNav.style.display = canOnboarding ? '' : 'none';
+  const drawerOnboarding = document.getElementById('nav-drawer-onboarding');
+  if (drawerOnboarding) drawerOnboarding.style.display = canOnboarding ? '' : 'none';
 
   // 分析・集計ナビ
   // - analytics.view (経営系・全集計): admin / secretary のみ
@@ -23351,6 +23422,7 @@ function showPage(name, btn) {
   if(name==='portfolio') loadPortfolioPage();
   if(name==='work-hours') loadWorkHoursPage();
   if(name==='bulk-deliver') loadBulkDeliverPage();
+  if(name==='onboarding') loadOnboardingPage();
   if(name==='material-square') loadMaterialSquarePage();
   else { try { if (typeof msStopListPolling === 'function') msStopListPolling(); } catch (_) {} }
 
@@ -24895,6 +24967,300 @@ function bdCloseModal() {
     _bdDidExecute = false;
     bdFetch(); // 実行後はページのデータを再読込（消込済みカードへの反映を含む）
   }
+}
+
+// ==================== 🚀 オンボーディング管理（新メンバー受け入れ） ====================
+//
+// 旧: スプレッドシート「オンボーディング引き継ぎシート」（秘書チーム運用）を HFS に取り込み。
+// - 権限UIは ADR 015 準拠: hasPermission('onboarding.page') / apiFetch() のみ使用
+//   （currentUser.role 直書き禁止。VIEW AS 切替は setPreviewRole の再描画リストに登録済み）。
+// - 名前表示: ユーザー紐付けがあれば NameDisplay 経由（ニックネーム（名前））、無ければ member_name。
+// - 時刻表示は JST 明示（toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })）。
+
+let _obRecords = [];          // GET /onboarding のレスポンス
+let _obDetail = null;         // 表示中の詳細（GET /onboarding/:id）
+let _obDetailId = null;
+
+const OB_OCCUPATION_LABELS = { video_creator: '動画クリエイター', designer: 'デザイナー' };
+const OB_STATUS_META = {
+  in_progress: { label: '進行中', color: '#2980B9' },
+  completed:   { label: '完了',   color: '#27AE60' },
+  cancelled:   { label: '中止',   color: '#95A5A6' },
+};
+
+function obDateJst(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD（JST）
+}
+
+// 表示名: ユーザー紐付けがあれば NameDisplay.full（ニックネーム（名前））、無ければ member_name をそのまま
+function obDisplayName(rec) {
+  if (rec && rec.user && window.NameDisplay) return NameDisplay.full(rec.user);
+  return (rec && rec.member_name) || '';
+}
+
+async function loadOnboardingPage() {
+  const listEl = document.getElementById('ob-list');
+  if (!listEl) return;
+  // VIEW AS 追従: 権限のないロールでは中身を出さない（ナビも applyRoleBasedUI で非表示）
+  if (!hasPermission('onboarding.page')) {
+    listEl.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">このページを閲覧する権限がありません</div>';
+    return;
+  }
+  const createBtn = document.getElementById('ob-btn-create');
+  if (createBtn) createBtn.style.display = '';
+  try {
+    const res = await apiFetch(`${API}/onboarding`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'オンボーディング一覧の取得に失敗しました');
+    _obRecords = Array.isArray(data) ? data : [];
+    renderOnboardingList();
+  } catch (e) {
+    console.error('[onboarding]', e);
+    listEl.innerHTML = `<div style="padding:32px;text-align:center;color:#C0392B;font-size:13px">${esc(e.message)}</div>`;
+  }
+}
+
+function renderOnboardingList() {
+  const listEl = document.getElementById('ob-list');
+  if (!listEl) return;
+  const filter = document.getElementById('ob-status-filter')?.value || '';
+  const rows = _obRecords.filter(r => !filter || r.status === filter);
+  if (rows.length === 0) {
+    listEl.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">該当するオンボーディングはありません</div>';
+    return;
+  }
+  const body = rows.map(r => {
+    const st = OB_STATUS_META[r.status] || { label: r.status, color: 'var(--text-muted)' };
+    const done = r.progress?.done ?? 0;
+    const total = r.progress?.total ?? 0;
+    const pct = total > 0 ? Math.round(done / total * 100) : 0;
+    const next = r.status === 'in_progress' ? (r.next_task || '—') : '—';
+    return `<tr onclick="openOnboardingDetail('${esc(r.id)}')" style="cursor:pointer;border-bottom:1px solid var(--border)">
+      <td style="padding:10px 12px;font-weight:600;white-space:nowrap">${esc(obDisplayName(r))}</td>
+      <td style="padding:10px 12px;white-space:nowrap;font-size:12px">${esc(OB_OCCUPATION_LABELS[r.occupation] || r.occupation)}</td>
+      <td style="padding:10px 12px;min-width:160px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:8px;border-radius:4px;background:var(--border);overflow:hidden">
+            <div style="height:100%;width:${pct}%;border-radius:4px;background:${pct >= 100 ? '#27AE60' : '#2980B9'}"></div>
+          </div>
+          <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">${done}/${total}</span>
+        </div>
+      </td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${esc(next)}</td>
+      <td style="padding:10px 12px;white-space:nowrap"><span style="font-size:11px;font-weight:700;color:${st.color};border:1px solid ${st.color}55;border-radius:10px;padding:2px 10px">${esc(st.label)}</span></td>
+    </tr>`;
+  }).join('');
+  listEl.innerHTML = `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:var(--bg);color:var(--text-muted);font-size:11px;text-align:left">
+        <th style="padding:8px 12px">名前</th>
+        <th style="padding:8px 12px">職種</th>
+        <th style="padding:8px 12px">進捗</th>
+        <th style="padding:8px 12px">次のアクション</th>
+        <th style="padding:8px 12px">ステータス</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+  </div>`;
+}
+
+// ---------- 新規作成 ----------
+async function openOnboardingCreate() {
+  document.getElementById('ob-c-name').value = '';
+  document.getElementById('ob-c-occupation').value = 'video_creator';
+  document.getElementById('ob-c-note').value = '';
+  const sel = document.getElementById('ob-c-user');
+  sel.innerHTML = '<option value="">（未登録・あとで紐付け）</option>';
+  openModal('modal-onboarding-create');
+  // メンバー候補（未取得なら取得）。失敗しても紐付けなしで作成できるので握りつぶす
+  try {
+    if (!Array.isArray(allMembers) || allMembers.length === 0) {
+      const res = await apiFetch(`${API}/members`);
+      const data = await res.json();
+      if (res.ok && Array.isArray(data)) allMembers = data;
+    }
+    obFillUserSelect(sel, '');
+  } catch (e) { console.warn('[onboarding] メンバー候補の取得に失敗', e); }
+}
+
+function obFillUserSelect(sel, selectedId) {
+  const opts = ['<option value="">（未登録・あとで紐付け）</option>'];
+  (allMembers || []).filter(m => m.is_active !== false).forEach(m => {
+    opts.push(`<option value="${esc(m.id)}" ${m.id === selectedId ? 'selected' : ''}>${esc(NameDisplay.full(m))}</option>`);
+  });
+  sel.innerHTML = opts.join('');
+}
+
+async function submitOnboardingCreate() {
+  const name = document.getElementById('ob-c-name').value.trim();
+  if (!name) { showToast('名前を入力してください', 'warn'); return; }
+  const btn = document.getElementById('ob-c-submit');
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/onboarding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        member_name: name,
+        occupation: document.getElementById('ob-c-occupation').value,
+        user_id: document.getElementById('ob-c-user').value || null,
+        note: document.getElementById('ob-c-note').value.trim() || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '作成に失敗しました');
+    closeModal('modal-onboarding-create');
+    showToast('オンボーディングを作成しました', 'success');
+    await loadOnboardingPage();
+    openOnboardingDetail(data.id);
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- 詳細モーダル ----------
+async function openOnboardingDetail(id) {
+  _obDetailId = id;
+  _obDetail = null;
+  document.getElementById('ob-d-body').innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>';
+  openModal('modal-onboarding-detail');
+  await obReloadDetail();
+}
+
+async function obReloadDetail() {
+  if (!_obDetailId) return;
+  try {
+    const res = await apiFetch(`${API}/onboarding/${_obDetailId}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '詳細の取得に失敗しました');
+    _obDetail = data;
+    renderOnboardingDetail();
+  } catch (e) {
+    document.getElementById('ob-d-body').innerHTML = `<div style="padding:24px;text-align:center;color:#C0392B;font-size:13px">${esc(e.message)}</div>`;
+  }
+}
+
+function renderOnboardingDetail() {
+  const r = _obDetail;
+  if (!r) return;
+  const st = OB_STATUS_META[r.status] || { label: r.status, color: 'var(--text-muted)' };
+  document.getElementById('ob-d-title').textContent = `🚀 ${obDisplayName(r)}（${OB_OCCUPATION_LABELS[r.occupation] || r.occupation}）`;
+  const done = r.progress?.done ?? 0;
+  const total = r.progress?.total ?? 0;
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+
+  // フェーズ見出し付きチェックリスト（tasks はサーバーがフェーズ順・sort順で返す）
+  const phaseLabels = new Map((r.phases || []).map(p => [p.key, p.label]));
+  let checklist = '';
+  let prevPhase = null;
+  (r.tasks || []).forEach(t => {
+    if (t.phase !== prevPhase) {
+      prevPhase = t.phase;
+      checklist += `<div style="margin:14px 0 6px;font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:.06em">${esc(phaseLabels.get(t.phase) || t.phase)}</div>`;
+    }
+    const doneInfo = t.done && t.done_at ? `<span style="font-size:11px;color:var(--text-muted);margin-left:8px">${esc(obDateJst(t.done_at))}</span>` : '';
+    checklist += `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 4px;border-radius:6px;cursor:pointer">
+      <input type="checkbox" ${t.done ? 'checked' : ''} onchange="obToggleTask('${esc(t.id)}', this.checked)" style="margin-top:2px;cursor:pointer">
+      <span style="font-size:13px;${t.done ? 'color:var(--text-muted);text-decoration:line-through' : ''}">${esc(t.label)}${doneInfo}</span>
+    </label>`;
+  });
+
+  const isDeletable = effectiveRole() === 'admin'; // 削除は admin のみ（サーバー側でも実効ロールで再判定）
+  document.getElementById('ob-d-body').innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <span style="font-size:11px;font-weight:700;color:${st.color};border:1px solid ${st.color}55;border-radius:10px;padding:2px 10px">${esc(st.label)}</span>
+      <div style="flex:1;min-width:140px;display:flex;align-items:center;gap:8px">
+        <div style="flex:1;height:8px;border-radius:4px;background:var(--border);overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${pct >= 100 ? '#27AE60' : '#2980B9'}"></div>
+        </div>
+        <span style="font-size:12px;color:var(--text-muted)">${done}/${total}</span>
+      </div>
+      <span style="font-size:11px;color:var(--text-muted)">開始: ${esc(obDateJst(r.created_at))}</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button class="btn-sm" onclick="obCopyFirstMessage()">📋 初回メッセージ文例をコピー</button>
+      ${r.status === 'in_progress' ? `<button class="btn-sm" onclick="obUpdateStatus('completed')" style="color:#27AE60">✅ 完了にする</button>
+      <button class="btn-sm" onclick="obUpdateStatus('cancelled')" style="color:#95A5A6">中止にする</button>` : `<button class="btn-sm" onclick="obUpdateStatus('in_progress')">↩ 進行中に戻す</button>`}
+      ${isDeletable ? `<button class="btn-sm" onclick="obDeleteRecord()" style="color:#C0392B;margin-left:auto">🗑 削除</button>` : ''}
+    </div>
+    <div style="border:1px solid var(--border);border-radius:8px;padding:4px 12px 10px;margin-bottom:12px">${checklist}</div>
+    <div class="form-group" style="margin-bottom:0">
+      <label class="form-label" style="font-size:12px;color:var(--text-muted);font-weight:600">メモ</label>
+      <textarea class="form-input" id="ob-d-note" rows="3" style="resize:vertical;font-size:13px">${esc(r.note || '')}</textarea>
+      <div style="text-align:right;margin-top:6px"><button class="btn-sm" onclick="obSaveNote()">メモを保存</button></div>
+    </div>`;
+}
+
+async function obToggleTask(taskId, done) {
+  try {
+    const res = await apiFetch(`${API}/onboarding/${_obDetailId}/tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ done }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '更新に失敗しました');
+    await obReloadDetail();
+    loadOnboardingPage(); // 一覧の進捗バーにも反映
+  } catch (e) {
+    showToast(e.message, 'error');
+    await obReloadDetail(); // チェック状態をサーバー値に戻す
+  }
+}
+
+async function obUpdateStatus(status) {
+  try {
+    const res = await apiFetch(`${API}/onboarding/${_obDetailId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '更新に失敗しました');
+    showToast(`ステータスを「${OB_STATUS_META[status]?.label || status}」にしました`, 'success');
+    await obReloadDetail();
+    loadOnboardingPage();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function obSaveNote() {
+  try {
+    const res = await apiFetch(`${API}/onboarding/${_obDetailId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: document.getElementById('ob-d-note').value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '保存に失敗しました');
+    showToast('メモを保存しました', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function obCopyFirstMessage() {
+  try {
+    const res = await apiFetch(`${API}/onboarding/${_obDetailId}/first-message`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '文例の取得に失敗しました');
+    await navigator.clipboard.writeText(data.message);
+    showToast('初回メッセージ文例をコピーしました（日程候補は書き換えてください）', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function obDeleteRecord() {
+  const r = _obDetail;
+  if (!r) return;
+  if (!confirm(`「${obDisplayName(r)}」のオンボーディングを削除します。チェックリストも消えます。よろしいですか？`)) return;
+  try {
+    const res = await apiFetch(`${API}/onboarding/${_obDetailId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '削除に失敗しました');
+    closeModal('modal-onboarding-detail');
+    showToast('削除しました', 'success');
+    loadOnboardingPage();
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // ==================== ⏱ 作業時間報告（タイムシート）— ADR 028 Stage 2 ====================
@@ -30807,6 +31173,7 @@ const ROLE_PERM_LIST = [
   { section:'チーム管理',     key:'team.delete',                 label:'チーム削除（完全）' },
   { section:'請求管理',       key:'invoice.own',                 label:'自分の請求作成・確認' },
   { section:'請求管理',       key:'invoice.all_view',            label:'全員の請求一覧閲覧' },
+  { section:'オンボーディング', key:'onboarding.page',           label:'オンボーディング管理ページ（新メンバー受け入れ）' },
   { section:'マスター管理',   key:'master.page',                 label:'マスター管理ページ' },
   { section:'マスター管理',   key:'master.sys_config',           label:'システム設定' },
   { section:'マスター管理',   key:'master.filename_templates',   label:'ファイル名テンプレート管理（マスター管理ページ権限なしでも単独で開放可）' },
