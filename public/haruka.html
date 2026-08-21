@@ -1428,8 +1428,6 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .mg-quick-due{font-size:12px;padding:7px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .12s}
 .mg-quick-due:hover{background:var(--em-pale)}
 .mg-quick-due.active{background:var(--em);border-color:var(--em);color:#fff;font-weight:700}
-.mg-pri-btn{font-size:12px;padding:7px 14px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .12s}
-.mg-pri-btn.active{border-color:var(--em);background:var(--em-pale);color:var(--text);font-weight:700;box-shadow:0 0 0 2px var(--em-light)}
 .mg-task-meta.mg-pri-high{color:#C0392B;font-weight:700}
 .mg-task-meta.mg-pri-mid{color:#B7791F;font-weight:700}
 .mg-tabbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
@@ -8467,33 +8465,52 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   <div class="modal-card" style="width:min(560px,95vw)">
     <div class="modal-title"><span id="mg-t-title">✅ タスクを追加</span><button class="modal-close" onclick="closeModal('modal-mg-task')">×</button></div>
     <div class="form-group">
-      <label class="form-label">タスク名 <span style="color:#C0392B">*</span></label>
-      <input class="form-input" id="mg-t-name" placeholder="例) After Effectsの講座を1本見る">
+      <label class="form-label">タスク名 <span style="font-size:10px;font-weight:800;color:#C0392B;border:1px solid #C0392B;border-radius:5px;padding:1px 6px;vertical-align:1px">必須</span></label>
+      <input class="form-input" id="mg-t-name" placeholder="例：提案資料を作成する">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">動詞から始めると管理しやすくなります</div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="form-group" style="flex:1.2;min-width:180px">
+        <label class="form-label">期限</label>
+        <input class="form-input" type="date" id="mg-t-due" onchange="mgSyncQuickDue()">
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button type="button" class="mg-quick-due" data-mg-due="today" onclick="mgQuickDue('today')">今日</button>
+          <button type="button" class="mg-quick-due" data-mg-due="tomorrow" onclick="mgQuickDue('tomorrow')">明日</button>
+          <button type="button" class="mg-quick-due" data-mg-due="weekend" onclick="mgQuickDue('weekend')">今週末</button>
+        </div>
+      </div>
+      <div class="form-group" style="flex:1;min-width:140px">
+        <label class="form-label">担当者</label>
+        <!-- マイゴールは完全個人ページのため担当は常に本人（選択不可） -->
+        <select class="form-input" disabled title="あなた専用ページのため、担当は常に自分です"><option>👤 自分</option></select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:140px">
+        <label class="form-label">ステータス</label>
+        <select class="form-input" id="mg-t-status">
+          <option value="未着手">未着手</option>
+          <option value="進行中">進行中</option>
+          <option value="完了">完了</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:1;min-width:140px">
+        <label class="form-label">優先度</label>
+        <select class="form-input" id="mg-t-priority">
+          <option value="">通常</option>
+          <option value="high">🔴 高</option>
+          <option value="mid">🟡 中</option>
+          <option value="low">⚪ 低</option>
+        </select>
+      </div>
     </div>
     <div class="form-group">
-      <label class="form-label">目標に紐付け（任意・進捗率つき）</label>
+      <label class="form-label">関連する目標（任意・進捗率つき）</label>
       <select class="form-input" id="mg-t-goal" onchange="mgSyncTaskKpiSelect()"></select>
     </div>
-    <div class="form-group">
-      <label class="form-label">期限（任意）</label>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        <button type="button" class="mg-quick-due" data-mg-due="today" onclick="mgQuickDue('today')">今日</button>
-        <button type="button" class="mg-quick-due" data-mg-due="tomorrow" onclick="mgQuickDue('tomorrow')">明日</button>
-        <button type="button" class="mg-quick-due" data-mg-due="weekend" onclick="mgQuickDue('weekend')">今週末</button>
-        <input class="form-input" type="date" id="mg-t-due" style="flex:1;min-width:140px;width:auto" onchange="mgSyncQuickDue()">
-      </div>
-    </div>
-    <div class="form-group">
-      <label class="form-label">優先度（任意）</label>
-      <div style="display:flex;gap:6px">
-        <button type="button" class="mg-pri-btn" id="mg-pri-high" onclick="mgSetPriority('high')">🔴 高</button>
-        <button type="button" class="mg-pri-btn" id="mg-pri-mid" onclick="mgSetPriority('mid')">🟡 中</button>
-        <button type="button" class="mg-pri-btn" id="mg-pri-low" onclick="mgSetPriority('low')">⚪ 低</button>
-      </div>
-    </div>
-    <!-- 通常のタスクは上の3項目だけで登録完了（10秒登録）。分類・KPI・メモ等はライト層に見せない折りたたみ -->
+    <!-- 通常のタスクは上だけで登録完了（10秒登録）。分類・KPI・メモ等はライト層に見せない折りたたみ -->
     <details id="mg-t-details" style="margin:2px 0 12px;border:0.5px solid var(--border-light);border-radius:10px;padding:8px 12px">
-      <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text-muted)">⚙️ 詳細設定（分類・KPI・メモなど）</summary>
+      <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text-muted)">＋ 詳細設定を開く（分類・KPI・メモなど）</summary>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
         <div class="form-group" style="flex:1;min-width:150px">
           <label class="form-label">大分類（任意）</label>
@@ -8510,14 +8527,6 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <div class="form-group" id="mg-t-kpi-wrap" style="display:none">
         <label class="form-label">KPIに紐付け（任意）</label>
         <select class="form-input" id="mg-t-kpi"></select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">ステータス</label>
-        <select class="form-input" id="mg-t-status">
-          <option value="未着手">未着手</option>
-          <option value="進行中">進行中</option>
-          <option value="完了">完了</option>
-        </select>
       </div>
       <div class="form-group">
         <label class="form-label">詳細（任意）</label>
@@ -26009,8 +26018,6 @@ async function mgDeleteGoal() {
 }
 
 // ---------- タスク 作成/編集モーダル ----------
-let _mgTaskPriority = null; // 優先度トグルの状態（null = 未設定）
-
 function mgOpenTaskModal(taskId) {
   _mgEditTaskId = taskId || null;
   const t = taskId ? _mgData?.tasks.find(x => x.id === taskId) : null;
@@ -26040,13 +26047,12 @@ function mgOpenTaskModal(taskId) {
   document.getElementById('mg-t-detail').value = t?.detail || '';
   document.getElementById('mg-t-memo').value = t?.memo || '';
   document.getElementById('mg-t-link').value = t?.link_url || '';
-  _mgTaskPriority = t?.priority || null;
-  mgRenderPriorityBtns();
+  document.getElementById('mg-t-priority').value = t?.priority || '';
   mgSyncQuickDue();
   mgSyncTaskKpiSelect(t?.kpi_id || null);
   // 詳細設定はデフォルト折りたたみ（10秒登録）。編集時に詳細項目が入っていれば開く
   const details = document.getElementById('mg-t-details');
-  if (details) details.open = !!(t && (t.major_category || t.mid_category || t.kpi_id || t.detail || t.memo || t.link_url || t.status === '進行中'));
+  if (details) details.open = !!(t && (t.major_category || t.mid_category || t.kpi_id || t.detail || t.memo || t.link_url));
   document.getElementById('mg-t-delete').style.display = t ? '' : 'none';
   // 新規＝「タスクを追加」＋連続登録ボタン / 編集＝「保存」のみ
   document.getElementById('mg-t-submit').textContent = t ? '保存' : 'タスクを追加';
@@ -26066,17 +26072,6 @@ function mgSyncQuickDue() {
   const map = { today: mgTodayJst(), tomorrow: mgAddDays(mgTodayJst(), 1), weekend: mgThisSundayJst() };
   document.querySelectorAll('#modal-mg-task .mg-quick-due').forEach(b => {
     b.classList.toggle('active', !!cur && map[b.dataset.mgDue] === cur);
-  });
-}
-
-// 優先度トグル（同じボタンをもう一度押すと解除）
-function mgSetPriority(p) {
-  _mgTaskPriority = (_mgTaskPriority === p) ? null : p;
-  mgRenderPriorityBtns();
-}
-function mgRenderPriorityBtns() {
-  ['high', 'mid', 'low'].forEach(p => {
-    document.getElementById(`mg-pri-${p}`)?.classList.toggle('active', _mgTaskPriority === p);
   });
 }
 
@@ -26107,7 +26102,7 @@ async function mgSubmitTask(addNext) {
     major_category: document.getElementById('mg-t-major').value.trim() || null,
     mid_category: document.getElementById('mg-t-mid').value.trim() || null,
     due_date: document.getElementById('mg-t-due').value || null,
-    priority: _mgTaskPriority,
+    priority: document.getElementById('mg-t-priority').value || null,
     status: document.getElementById('mg-t-status').value,
     detail: document.getElementById('mg-t-detail').value.trim() || null,
     memo: document.getElementById('mg-t-memo').value.trim() || null,
