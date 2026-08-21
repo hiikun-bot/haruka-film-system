@@ -20424,7 +20424,9 @@ router.get('/role-permissions', requireAuth, async (req, res) => {
 const SYNTHETIC_ROLES = new Set(['producer_director']);
 const VALID_PERMISSION_KEYS = new Set([
   'dashboard.sales_summary','dashboard.monthly_forecast',
-  'project.create_edit','project.client_price','project.unit_price_view','project.fee_view','project.delete',
+  // project.notification_edit は migration 2026-08-19 / ROLE_PERM_LIST に存在するのに
+  // このリストから漏れており、権限マトリクスから保存すると 400 になるバグがあった（本PRで追記修正）
+  'project.create_edit','project.notification_edit','project.client_price','project.unit_price_view','project.fee_view','project.delete',
   'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others','creative.wcheck_toggle',
   'member.list','member.edit_password','member.deactivate','member.reactivate','member.delete',
   'team.manage','team.assign','team.delete',
@@ -20434,6 +20436,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'system.view_as',
   'analytics.view',
   'analytics.bug_reports.view',
+  'team_load.page',
   'invoice_folder.view_own','invoice_folder.view_any','invoice_folder.generate_own','invoice_folder.generate_any',
 ]);
 
@@ -22470,6 +22473,139 @@ router.get('/onboarding/:id/first-message', requireAuth, requirePermission('onbo
   }
   if (!data) return res.status(404).json({ error: 'オンボーディングレコードが見つかりません' });
   res.json({ occupation: data.occupation, message: buildOnboardingFirstMessage(data.occupation) });
+});
+
+// ==================== 📊 チーム状況（チーム負荷ダッシュボード）====================
+//
+// ADR 033: メンバーごとの実務負荷（進行中CR数・持ちボール数・今週期限数・期限超過数）を
+// 実データからサーバー側で一括集計して返す。閲覧は admin + プロデューサー層のみ
+// （permission 'team_load.page'。メンバー同士の比較・詮索を防ぐチームビルディング上の判断）。
+//
+// 設計メモ:
+//   - フロントの allCreatives からの集計は禁止（GET /creatives は limit=500 上限で取りこぼす）
+//   - ボール判定は getBallHolder() の user_ids[]（複数ホルダー対応）を使う。
+//     ball_holder_id キャッシュ列は通知用の単数値（複数ホルダーの先頭しか入らない）ため使わない
+//   - 集計ロジック本体は utils/team-load.js の純関数（DB非依存・jestテスト対象）
+//   - 週の定義（今日〜今週日曜・JST・週=月〜日）は _todayStrJST() / _thisSundayStrJST() を
+//     そのまま再利用し、ダッシュボード等の既存UIと一致させる
+//   - 新テーブル無し（role_permissions の seed のみ）なので migration 未適用でも API 自体は動く。
+//     seed 未投入時は requirePermission が 403 を返すだけ（安全側）
+router.get('/team-load', requireAuth, requirePermission('team_load.page'), async (req, res) => {
+  const { computeTeamLoad, extractAssigneeUserIds } = require('../utils/team-load');
+  try {
+    // ---- 1. 一括データ取得（N+1 禁止・並列4クエリ）----
+    // 対象メンバー: 社内アクティブメンバーのみ。avatar_url は base64 のため絶対に select しない（PR #940）
+    const membersPromise = supabase
+      .from('users')
+      .select('id, full_name, nickname')
+      .eq('is_active', true)
+      .eq('is_external', false)
+      .then(r => r);
+    // 未納品クリエイティブ + 担当 assignments + 案件のD/P（ボール判定用）を一括取得
+    const creativesPromise = supabase
+      .from('creatives')
+      .select(`
+        id, status, final_deadline, draft_deadline, project_id, team_id,
+        projects(id, director_id, producer_id),
+        creative_assignments(role, users(id, full_name, team_id))
+      `)
+      .not('status', 'in', '("納品","完納","納品済")')
+      .then(r => r);
+    // チーム代表ディレクター解決用（getBallHolder のチーム経由フォールバックに必要。
+    // syncBallHolderId() と同じ形で Map を組み立てる）
+    const teamsPromise = supabase
+      .from('teams')
+      .select('id, director_id, director:director_id(full_name), team_members(user_id)')
+      .then(r => r);
+
+    const [membersRes, creativesRes, teamsRes] = await Promise.all([membersPromise, creativesPromise, teamsPromise]);
+    if (membersRes.error) return res.status(500).json({ error: membersRes.error.message });
+    if (creativesRes.error) return res.status(500).json({ error: creativesRes.error.message });
+    const membersRaw = membersRes.data || [];
+    const creativesRaw = creativesRes.data || [];
+    const teamsRaw = teamsRes.data || [];
+
+    // ロール一括取得（表示用。utils/roles.js getUsersRolesMap で N+1 回避）
+    const rolesMap = await getUsersRolesMap(membersRaw.map(u => u.id));
+
+    // ---- 2. getBallHolder 用 Map 組み立て（syncBallHolderId と同じ形）----
+    const directorByTeamId   = new Map();
+    const directorByUserId   = new Map();
+    const directorIdByTeamId = new Map();
+    const directorIdByUserId = new Map();
+    teamsRaw.forEach(t => {
+      const name = t.director?.full_name || '';
+      if (t.director_id) {
+        directorByTeamId.set(t.id, name);
+        directorIdByTeamId.set(t.id, t.director_id);
+      }
+      (t.team_members || []).forEach(tm => {
+        if (tm.user_id && !directorByUserId.has(tm.user_id)) {
+          directorByUserId.set(tm.user_id, name);
+          directorIdByUserId.set(tm.user_id, t.director_id || null);
+        }
+      });
+    });
+
+    // 案件専用D/P のフォールバック解決用（assignment が無い時に projects.director_id / producer_id を使う）。
+    // creatives 横断の ID 集合を一括 IN で 1 クエリにまとめる（syncBallHolderId と同じ手法）
+    const projUserIds = Array.from(new Set(
+      creativesRaw.flatMap(c => [c.projects?.director_id, c.projects?.producer_id]).filter(Boolean)
+    ));
+    const projUserById = new Map();
+    if (projUserIds.length) {
+      const { data: us, error: uErr } = await supabase.from('users').select('id, full_name').in('id', projUserIds);
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      (us || []).forEach(u => projUserById.set(u.id, u));
+    }
+
+    // ---- 3. ボール保持者解決 → 純関数へ渡す形に変換 ----
+    const creatives = creativesRaw.map(c => {
+      const projectDirector = c.projects?.director_id ? (projUserById.get(c.projects.director_id) || null) : null;
+      const projectProducer = c.projects?.producer_id ? (projUserById.get(c.projects.producer_id) || null) : null;
+      const ball = getBallHolder(
+        c.status, c.creative_assignments,
+        directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
+        projectDirector, projectProducer
+      );
+      return {
+        id: c.id,
+        status: c.status,
+        final_deadline: c.final_deadline,
+        assignee_user_ids: extractAssigneeUserIds(c.creative_assignments),
+        ball_user_ids: Array.isArray(ball?.user_ids) ? ball.user_ids : [],
+      };
+    });
+
+    // ---- 4. 集計（純関数）----
+    const todayStr = _todayStrJST();
+    const sundayStr = _thisSundayStrJST();
+    const members = membersRaw.map(u => ({
+      id: u.id,
+      full_name: u.full_name,
+      nickname: u.nickname,
+      roles: (rolesMap.get(u.id) || []),
+    }));
+    const result = computeTeamLoad({ members, creatives, todayStr, sundayStr });
+
+    res.json({
+      as_of: new Date().toISOString(),
+      today: todayStr,       // JST
+      week_end: sundayStr,   // 今週日曜（JST・週=月〜日）
+      // 数値の定義（フロント・PR本文と一致させる）
+      definitions: {
+        active: '担当（editor/designer/director_as_editor）かつ「保留」以外の未納品クリエイティブ数',
+        balls: 'getBallHolder の user_ids[]（複数ホルダー対応）に本人が含まれる未納品クリエイティブ数',
+        due_this_week: '担当クリエイティブのうち final_deadline が今日〜今週日曜（JST・週=月〜日）',
+        overdue: '担当クリエイティブのうち final_deadline < 今日（JST）・未納品（保留含む）',
+      },
+      totals: result.totals,
+      members: result.members,
+    });
+  } catch (e) {
+    console.error('[team-load]', e);
+    res.status(500).json({ error: 'チーム状況の集計に失敗しました' });
+  }
 });
 
 // router を主エクスポートにしつつ、ヘルパー関数も同じ object 経由で取り出せるようにする
