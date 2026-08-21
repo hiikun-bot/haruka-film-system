@@ -4157,222 +4157,14 @@ router.post('/projects/:project_id/tasks/seed-from-template', requireAuth, requi
   res.status(201).json({ ok: true, inserted_count: rows.length, template_id: templateId, replaced: force && (existingCount || 0) > 0 });
 });
 
-// ==================== 案件スケジュール Phase 2 — ダッシュボード / マイタスク ====================
-// ADR 010 Phase 2: L3「今週の山場」 / L4「マイタスク」用の集約 API。
-// 既存の project_tasks インデックス（idx_project_tasks_milestone /
-// idx_project_tasks_assignee_due）を活用し、N+1 を避けるため projects は 1 回だけ JOIN する。
-
 // 共通ユーティリティ: YYYY-MM-DD の現地日付を返す（タイムゾーンずれ防止のため Asia/Tokyo 固定）。
+// ※ 案件スケジュール Phase 2 のマイタスク/今週の山場 API は 2026-08-21 に廃止（未使用のため）。
+//    この関数は規約・請求ファイル名生成など複数エンドポイントが使うため残している。
 function _todayStrJST() {
   const now = new Date();
   // toLocaleDateString("sv-SE") は "YYYY-MM-DD" 形式
   return now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 }
-
-// 今週日曜日(その日の終わり)の YYYY-MM-DD を返す。週開始は月曜とし「今週」=「月〜日」。
-function _thisSundayStrJST() {
-  const todayStr = _todayStrJST();
-  const today = new Date(`${todayStr}T00:00:00+09:00`);
-  // getDay(): 0=Sun, 1=Mon, ... 6=Sat
-  // 注: getDay() はサーバーローカル TZ で曜日を返すため（Railway は UTC、JST 0:00 = UTC 前日 15:00）、
-  //     JST の日付文字列を UTC として読み直して getUTCDay() で曜日を取る
-  const dow = new Date(`${todayStr}T00:00:00Z`).getUTCDay();
-  // 月曜起点: dow が日曜(0)なら今日が日曜＝当日、それ以外は (7 - dow) 日後
-  const daysUntilSun = dow === 0 ? 0 : (7 - dow);
-  const sun = new Date(today);
-  sun.setDate(sun.getDate() + daysUntilSun);
-  return sun.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-}
-
-// GET /api/dashboard/upcoming-milestones?days=14
-// 今日〜+days 日の未完了マイルストーン + 遅延中マイルストーンを返す（全案件、経営視点）
-router.get('/dashboard/upcoming-milestones', requireAuth, async (req, res) => {
-  const daysParam = parseInt(req.query.days, 10);
-  const days = Number.isFinite(daysParam) && daysParam > 0 && daysParam <= 90 ? daysParam : 14;
-
-  const todayStr = _todayStrJST();
-  const horizon = new Date(`${todayStr}T00:00:00+09:00`);
-  horizon.setDate(horizon.getDate() + days);
-  const horizonStr = horizon.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-
-  // 直近マイルストーン: today <= current_end_date <= today+days, NOT is_done, is_milestone
-  const { data: upcomingTasks, error: upErr } = await supabase
-    .from('project_tasks')
-    .select('id, project_id, title, current_end_date, original_end_date, is_milestone, is_done, assignee_type, project:projects(id, name, is_hidden)')
-    .eq('is_milestone', true)
-    .eq('is_done', false)
-    .gte('current_end_date', todayStr)
-    .lte('current_end_date', horizonStr)
-    .order('current_end_date', { ascending: true });
-  if (upErr) {
-    if (isMissingTasksTable(upErr)) {
-      return res.json({ upcoming: [], overdue: [] });
-    }
-    return res.status(500).json({ error: upErr.message });
-  }
-
-  // 遅延中: current_end_date < today, NOT is_done, is_milestone
-  const { data: overdueTasks, error: ovErr } = await supabase
-    .from('project_tasks')
-    .select('id, project_id, title, current_end_date, original_end_date, is_milestone, is_done, assignee_type, project:projects(id, name, is_hidden)')
-    .eq('is_milestone', true)
-    .eq('is_done', false)
-    .lt('current_end_date', todayStr)
-    .not('current_end_date', 'is', null)
-    .order('current_end_date', { ascending: true });
-  if (ovErr) {
-    if (isMissingTasksTable(ovErr)) {
-      return res.json({ upcoming: [], overdue: [] });
-    }
-    return res.status(500).json({ error: ovErr.message });
-  }
-
-  const shapeRow = (t, isOverdue) => ({
-    task_id: t.id,
-    project_id: t.project_id,
-    project_name: t.project?.name || '',
-    title: t.title,
-    current_end_date: t.current_end_date,
-    original_end_date: t.original_end_date,
-    is_overdue: isOverdue,
-    is_milestone: true,
-    assignee_type: t.assignee_type,
-  });
-
-  // 非表示案件（is_hidden=true）は除外
-  const upcoming = (upcomingTasks || [])
-    .filter(t => t.project && !t.project.is_hidden)
-    .map(t => shapeRow(t, false));
-  const overdue = (overdueTasks || [])
-    .filter(t => t.project && !t.project.is_hidden)
-    .map(t => shapeRow(t, true));
-
-  res.json({ upcoming, overdue });
-});
-
-// 内部ヘルパ: 自分のタスクを取得（my-tasks / my-tasks/count で共有）
-async function _fetchMyOpenTasks(userId) {
-  const { data, error } = await supabase
-    .from('project_tasks')
-    .select('id, project_id, title, current_end_date, original_end_date, assignee_type, is_milestone, is_done, sort_order, project:projects(id, name, is_hidden)')
-    .eq('assignee_user_id', userId)
-    .eq('is_done', false)
-    .order('current_end_date', { ascending: true, nullsFirst: false });
-  if (error) {
-    if (isMissingTasksTable(error)) return { tasks: [] };
-    return { error };
-  }
-  // 非表示案件は除外
-  const tasks = (data || []).filter(t => t.project && !t.project.is_hidden);
-  return { tasks };
-}
-
-// GET /api/my-tasks  認証ユーザー自身のタスクを 3 区分（today/thisWeek/later）で返す
-router.get('/my-tasks', requireAuth, async (req, res) => {
-  const userId = req.user?.id;
-  if (!userId) return res.status(401).json({ error: '認証が必要です' });
-
-  const { tasks, error } = await _fetchMyOpenTasks(userId);
-  if (error) return res.status(500).json({ error: error.message });
-
-  const todayStr = _todayStrJST();
-  const sundayStr = _thisSundayStrJST();
-
-  const today = [];
-  const thisWeek = [];
-  const later = [];
-
-  const shape = (t) => ({
-    task_id: t.id,
-    project_id: t.project_id,
-    project_name: t.project?.name || '',
-    title: t.title,
-    current_end_date: t.current_end_date,
-    original_end_date: t.original_end_date,
-    assignee_type: t.assignee_type,
-    is_milestone: t.is_milestone,
-  });
-
-  for (const t of tasks) {
-    const d = t.current_end_date;
-    if (!d) {
-      later.push(shape(t));
-    } else if (d <= todayStr) {
-      today.push(shape(t));
-    } else if (d <= sundayStr) {
-      thisWeek.push(shape(t));
-    } else {
-      later.push(shape(t));
-    }
-  }
-
-  res.json({ today, thisWeek, later });
-});
-
-// GET /api/my-tasks/count  ヘッダーアイコンのバッジ用（軽量）
-// today: 今日以前の期日かつ未完了 / overdue: 期日超過の未完了 / total: 全未完了
-router.get('/my-tasks/count', requireAuth, async (req, res) => {
-  const userId = req.user?.id;
-  if (!userId) return res.status(401).json({ error: '認証が必要です' });
-
-  const { tasks, error } = await _fetchMyOpenTasks(userId);
-  if (error) return res.status(500).json({ error: error.message });
-
-  const todayStr = _todayStrJST();
-  let todayCount = 0;
-  let overdueCount = 0;
-  for (const t of tasks) {
-    const d = t.current_end_date;
-    if (!d) continue;
-    if (d < todayStr) {
-      overdueCount += 1;
-      todayCount += 1; // overdue も「今日対応すべき」に含める
-    } else if (d === todayStr) {
-      todayCount += 1;
-    }
-  }
-  res.json({ today: todayCount, overdue: overdueCount, total: tasks.length });
-});
-
-// PATCH /api/my-tasks/:task_id/done  自分のタスクの完了/未完了を切り替える（権限緩和ルート）
-// 既存の /api/projects/:id/tasks/:tid PATCH は project.create_edit が必須で editor/designer
-// が自タスクを完了できない問題があるため、assignee 本人に限り is_done のみトグル可能にする。
-router.patch('/my-tasks/:task_id/done', requireAuth, async (req, res) => {
-  const userId = req.user?.id;
-  if (!userId) return res.status(401).json({ error: '認証が必要です' });
-  const taskId = req.params.task_id;
-  const newDone = !!(req.body && req.body.is_done);
-
-  const { data: existing, error: getErr } = await supabase
-    .from('project_tasks')
-    .select('id, assignee_user_id, is_done')
-    .eq('id', taskId)
-    .maybeSingle();
-  if (getErr) {
-    if (isMissingTasksTable(getErr)) return res.status(404).json({ error: 'task が見つかりません' });
-    return res.status(500).json({ error: getErr.message });
-  }
-  if (!existing) return res.status(404).json({ error: 'task が見つかりません' });
-  if (existing.assignee_user_id !== userId) {
-    return res.status(403).json({ error: '自分が担当のタスクのみ完了/未完了を変更できます' });
-  }
-
-  const update = {
-    is_done: newDone,
-    updated_at: new Date().toISOString(),
-  };
-  if (newDone && !existing.is_done) update.done_at = new Date().toISOString();
-  if (!newDone && existing.is_done) update.done_at = null;
-
-  const { data, error } = await supabase
-    .from('project_tasks')
-    .update(update)
-    .eq('id', taskId)
-    .select('id, is_done, done_at, updated_at')
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
 
 // ==================== 見積行 × ロール別コスト（project_estimate_line_costs）Stage 4b ====================
 // ADR 002 (見積行統合) + ADR 003 (roles マスタ) + ADR 004 (pricing_type) に基づく line_costs CRUD。
@@ -20424,7 +20216,9 @@ router.get('/role-permissions', requireAuth, async (req, res) => {
 const SYNTHETIC_ROLES = new Set(['producer_director']);
 const VALID_PERMISSION_KEYS = new Set([
   'dashboard.sales_summary','dashboard.monthly_forecast',
-  'project.create_edit','project.client_price','project.unit_price_view','project.fee_view','project.delete',
+  // project.notification_edit は migration 2026-08-19 / ROLE_PERM_LIST に存在するのに
+  // このリストから漏れており、権限マトリクスから保存すると 400 になるバグがあった（本PRで追記修正）
+  'project.create_edit','project.notification_edit','project.client_price','project.unit_price_view','project.fee_view','project.delete',
   'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others','creative.wcheck_toggle',
   'member.list','member.edit_password','member.deactivate','member.reactivate','member.delete',
   'team.manage','team.assign','team.delete',
@@ -20434,6 +20228,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'system.view_as',
   'analytics.view',
   'analytics.bug_reports.view',
+  'team_load.page',
   'invoice_folder.view_own','invoice_folder.view_any','invoice_folder.generate_own','invoice_folder.generate_any',
 ]);
 
@@ -22728,6 +22523,139 @@ router.delete('/personal-tasks/:id', requireAuth, async (req, res) => {
   }
   if (!data) return res.status(404).json({ error: 'タスクが見つかりません' });
   res.json({ ok: true });
+});
+
+// ==================== 📊 チーム状況（チーム負荷ダッシュボード）====================
+//
+// ADR 033: メンバーごとの実務負荷（進行中CR数・持ちボール数・今週期限数・期限超過数）を
+// 実データからサーバー側で一括集計して返す。閲覧は admin + プロデューサー層のみ
+// （permission 'team_load.page'。メンバー同士の比較・詮索を防ぐチームビルディング上の判断）。
+//
+// 設計メモ:
+//   - フロントの allCreatives からの集計は禁止（GET /creatives は limit=500 上限で取りこぼす）
+//   - ボール判定は getBallHolder() の user_ids[]（複数ホルダー対応）を使う。
+//     ball_holder_id キャッシュ列は通知用の単数値（複数ホルダーの先頭しか入らない）ため使わない
+//   - 集計ロジック本体は utils/team-load.js の純関数（DB非依存・jestテスト対象）
+//   - 週の定義（今日〜今週日曜・JST・週=月〜日）は _todayStrJST() / _thisSundayStrJST() を
+//     そのまま再利用し、ダッシュボード等の既存UIと一致させる
+//   - 新テーブル無し（role_permissions の seed のみ）なので migration 未適用でも API 自体は動く。
+//     seed 未投入時は requirePermission が 403 を返すだけ（安全側）
+router.get('/team-load', requireAuth, requirePermission('team_load.page'), async (req, res) => {
+  const { computeTeamLoad, extractAssigneeUserIds } = require('../utils/team-load');
+  try {
+    // ---- 1. 一括データ取得（N+1 禁止・並列4クエリ）----
+    // 対象メンバー: 社内アクティブメンバーのみ。avatar_url は base64 のため絶対に select しない（PR #940）
+    const membersPromise = supabase
+      .from('users')
+      .select('id, full_name, nickname')
+      .eq('is_active', true)
+      .eq('is_external', false)
+      .then(r => r);
+    // 未納品クリエイティブ + 担当 assignments + 案件のD/P（ボール判定用）を一括取得
+    const creativesPromise = supabase
+      .from('creatives')
+      .select(`
+        id, status, final_deadline, draft_deadline, project_id, team_id,
+        projects(id, director_id, producer_id),
+        creative_assignments(role, users(id, full_name, team_id))
+      `)
+      .not('status', 'in', '("納品","完納","納品済")')
+      .then(r => r);
+    // チーム代表ディレクター解決用（getBallHolder のチーム経由フォールバックに必要。
+    // syncBallHolderId() と同じ形で Map を組み立てる）
+    const teamsPromise = supabase
+      .from('teams')
+      .select('id, director_id, director:director_id(full_name), team_members(user_id)')
+      .then(r => r);
+
+    const [membersRes, creativesRes, teamsRes] = await Promise.all([membersPromise, creativesPromise, teamsPromise]);
+    if (membersRes.error) return res.status(500).json({ error: membersRes.error.message });
+    if (creativesRes.error) return res.status(500).json({ error: creativesRes.error.message });
+    const membersRaw = membersRes.data || [];
+    const creativesRaw = creativesRes.data || [];
+    const teamsRaw = teamsRes.data || [];
+
+    // ロール一括取得（表示用。utils/roles.js getUsersRolesMap で N+1 回避）
+    const rolesMap = await getUsersRolesMap(membersRaw.map(u => u.id));
+
+    // ---- 2. getBallHolder 用 Map 組み立て（syncBallHolderId と同じ形）----
+    const directorByTeamId   = new Map();
+    const directorByUserId   = new Map();
+    const directorIdByTeamId = new Map();
+    const directorIdByUserId = new Map();
+    teamsRaw.forEach(t => {
+      const name = t.director?.full_name || '';
+      if (t.director_id) {
+        directorByTeamId.set(t.id, name);
+        directorIdByTeamId.set(t.id, t.director_id);
+      }
+      (t.team_members || []).forEach(tm => {
+        if (tm.user_id && !directorByUserId.has(tm.user_id)) {
+          directorByUserId.set(tm.user_id, name);
+          directorIdByUserId.set(tm.user_id, t.director_id || null);
+        }
+      });
+    });
+
+    // 案件専用D/P のフォールバック解決用（assignment が無い時に projects.director_id / producer_id を使う）。
+    // creatives 横断の ID 集合を一括 IN で 1 クエリにまとめる（syncBallHolderId と同じ手法）
+    const projUserIds = Array.from(new Set(
+      creativesRaw.flatMap(c => [c.projects?.director_id, c.projects?.producer_id]).filter(Boolean)
+    ));
+    const projUserById = new Map();
+    if (projUserIds.length) {
+      const { data: us, error: uErr } = await supabase.from('users').select('id, full_name').in('id', projUserIds);
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      (us || []).forEach(u => projUserById.set(u.id, u));
+    }
+
+    // ---- 3. ボール保持者解決 → 純関数へ渡す形に変換 ----
+    const creatives = creativesRaw.map(c => {
+      const projectDirector = c.projects?.director_id ? (projUserById.get(c.projects.director_id) || null) : null;
+      const projectProducer = c.projects?.producer_id ? (projUserById.get(c.projects.producer_id) || null) : null;
+      const ball = getBallHolder(
+        c.status, c.creative_assignments,
+        directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
+        projectDirector, projectProducer
+      );
+      return {
+        id: c.id,
+        status: c.status,
+        final_deadline: c.final_deadline,
+        assignee_user_ids: extractAssigneeUserIds(c.creative_assignments),
+        ball_user_ids: Array.isArray(ball?.user_ids) ? ball.user_ids : [],
+      };
+    });
+
+    // ---- 4. 集計（純関数）----
+    const todayStr = _todayStrJST();
+    const sundayStr = _thisSundayStrJST();
+    const members = membersRaw.map(u => ({
+      id: u.id,
+      full_name: u.full_name,
+      nickname: u.nickname,
+      roles: (rolesMap.get(u.id) || []),
+    }));
+    const result = computeTeamLoad({ members, creatives, todayStr, sundayStr });
+
+    res.json({
+      as_of: new Date().toISOString(),
+      today: todayStr,       // JST
+      week_end: sundayStr,   // 今週日曜（JST・週=月〜日）
+      // 数値の定義（フロント・PR本文と一致させる）
+      definitions: {
+        active: '担当（editor/designer/director_as_editor）かつ「保留」以外の未納品クリエイティブ数',
+        balls: 'getBallHolder の user_ids[]（複数ホルダー対応）に本人が含まれる未納品クリエイティブ数',
+        due_this_week: '担当クリエイティブのうち final_deadline が今日〜今週日曜（JST・週=月〜日）',
+        overdue: '担当クリエイティブのうち final_deadline < 今日（JST）・未納品（保留含む）',
+      },
+      totals: result.totals,
+      members: result.members,
+    });
+  } catch (e) {
+    console.error('[team-load]', e);
+    res.status(500).json({ error: 'チーム状況の集計に失敗しました' });
+  }
 });
 
 // router を主エクスポートにしつつ、ヘルパー関数も同じ object 経由で取り出せるようにする
