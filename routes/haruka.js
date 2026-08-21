@@ -4166,6 +4166,23 @@ function _todayStrJST() {
   return now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 }
 
+// 今週日曜日(その日の終わり)の YYYY-MM-DD を返す。週開始は月曜とし「今週」=「月〜日」。
+// ※ #1066 でマイタスク/今週の山場 API と共に一度削除されたが、並行開発の #1067
+//    チーム状況（GET /team-load）が「今週期限」の集計に使うため復活させた。
+function _thisSundayStrJST() {
+  const todayStr = _todayStrJST();
+  const today = new Date(`${todayStr}T00:00:00+09:00`);
+  // getDay(): 0=Sun, 1=Mon, ... 6=Sat
+  // 注: getDay() はサーバーローカル TZ で曜日を返すため（Railway は UTC、JST 0:00 = UTC 前日 15:00）、
+  //     JST の日付文字列を UTC として読み直して getUTCDay() で曜日を取る
+  const dow = new Date(`${todayStr}T00:00:00Z`).getUTCDay();
+  // 月曜起点: dow が日曜(0)なら今日が日曜＝当日、それ以外は (7 - dow) 日後
+  const daysUntilSun = dow === 0 ? 0 : (7 - dow);
+  const sun = new Date(today);
+  sun.setDate(sun.getDate() + daysUntilSun);
+  return sun.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+}
+
 // ==================== 見積行 × ロール別コスト（project_estimate_line_costs）Stage 4b ====================
 // ADR 002 (見積行統合) + ADR 003 (roles マスタ) + ADR 004 (pricing_type) に基づく line_costs CRUD。
 // 1 line に対して、複数のロール（プロデューサー/ディレクター/編集者…）のコスト行を縦持ちで保持する。
