@@ -3910,6 +3910,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
     <button class="nav-btn" id="nav-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">オンボーディング</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
+    <button class="nav-btn" id="nav-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
     <button class="nav-btn" id="nav-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">素材広場</button>
   </div>
@@ -4035,6 +4036,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
     <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
+    <button class="nav-drawer-btn" id="nav-drawer-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
     <button class="nav-drawer-btn" id="nav-drawer-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">🗂️ 素材広場</button>
     <div class="nav-drawer-account">
@@ -8294,6 +8296,25 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div id="ob-list">
       <div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
     </div>
+  </div>
+</div>
+
+<!-- 📊 チーム状況（チーム負荷ダッシュボード・ADR 033）
+     閲覧は permission 'team_load.page'（admin + producer / producer_director 兼任者のみ）。
+     ナビ表示は applyRoleBasedUI、ページ内は loadTeamLoadPage 冒頭の二重ガードで制御（ADR 015）。 -->
+<div id="page-team-load" class="page">
+  <div style="max-width:1100px;margin:0 auto;padding:0 4px">
+    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px">
+      <h2 style="margin:0;font-size:18px">📊 チーム状況</h2>
+      <span style="font-size:12px;color:var(--text-muted)">実務データ自動集計</span>
+      <span id="tl-updated" style="margin-left:auto;font-size:11px;color:var(--text-muted)"></span>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">メンバーごとの進行中クリエイティブ・持ちボール・納期状況を実データから自動集計します。列ヘッダクリックで並び替えできます。</div>
+    <div id="tl-kpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px"></div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div id="tl-table" style="overflow-x:auto"></div>
+    </div>
+    <div id="tl-defs" style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.7"></div>
   </div>
 </div>
 
@@ -17892,6 +17913,8 @@ function setPreviewRole(role) {
     if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) _analyticsView = 'bug-reports';
     initAnalyticsPage();
   }
+  // 📊 チーム状況: team_load.page 限定ページ。VIEW AS 切替で前ロールの負荷データが残らないよう再描画（ADR 015）
+  if (document.getElementById('page-team-load')?.classList.contains('active') && typeof loadTeamLoadPage === 'function') loadTeamLoadPage();
   // VIEW AS 切替時は master ページも再描画（最高管理者専用タブが previewRole 切替で見えなくなるべきため）
   if (document.getElementById('page-master')?.classList.contains('active')) {
     // 現在開いているマスターサブページを再ロード。サブページごとに renderXxxPage が定義されているのでそれを再呼び出し
@@ -17964,6 +17987,14 @@ function applyRoleBasedUI() {
   if (analyticsNav) analyticsNav.style.display = canAnalytics ? '' : 'none';
   const drawerAnalytics = document.getElementById('nav-drawer-analytics');
   if (drawerAnalytics) drawerAnalytics.style.display = canAnalytics ? '' : 'none';
+
+  // 📊 チーム状況ナビ — permission 'team_load.page'（既定 admin + producer / producer_director 兼任者のみ。
+  // メンバー間比較を避けるためメンバー全員には出さない。ADR 015: hasPermission 判定で VIEW AS に追従）
+  const canTeamLoad = hasPermission('team_load.page');
+  const teamLoadNav = document.getElementById('nav-team-load');
+  if (teamLoadNav) teamLoadNav.style.display = canTeamLoad ? '' : 'none';
+  const drawerTeamLoad = document.getElementById('nav-drawer-team-load');
+  if (drawerTeamLoad) drawerTeamLoad.style.display = canTeamLoad ? '' : 'none';
   // サイドバーのうち analytics.view が必要な項目（経営系メニューと将来追加されるサブメニュー）は
   // フル権限がないロールでは隠す。data-an-perm="analytics.view" を目印にする。
   document.querySelectorAll('#an-sidebar [data-an-perm="analytics.view"]').forEach(el => {
@@ -23334,6 +23365,7 @@ function showPage(name, btn) {
   if(name==='master') loadMasterPage();
   if(name==='knowledge') initKnowledgePage();
   if(name==='analytics') initAnalyticsPage();
+  if(name==='team-load') loadTeamLoadPage();
   if(name==='tweets')   loadTweetsPage();
   if(name==='portfolio') loadPortfolioPage();
   if(name==='work-hours') loadWorkHoursPage();
@@ -25201,6 +25233,154 @@ async function obDeleteRecord() {
     showToast('削除しました', 'success');
     loadOnboardingPage();
   } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ==================== 📊 チーム状況（チーム負荷ダッシュボード）— ADR 033 ====================
+//
+// メンバーごとの実務負荷（進行中CR数・持ちボール数・今週期限数・期限超過数）を
+// サーバー一括集計 API（GET /team-load）から取得して表示する。
+// - 権限: permission 'team_load.page'（admin + producer / producer_director 兼任者のみ）。
+//   メンバー同士の比較・詮索を防ぐため、メンバー全員には開放しない（ADR 033）。
+//   ナビは applyRoleBasedUI、ページ内は loadTeamLoadPage 冒頭の二重ガード（ADR 015）。
+// - フロントの allCreatives からは集計しない（GET /creatives は limit=500 上限で取りこぼすため）。
+// - 名前表示は NameDisplay.full（「ニックネーム（名前）」標準・PR #502）＋ esc()。
+
+let _tlData = null;
+let _tlSort = { key: 'balls', dir: 'desc' }; // デフォルト: 持ちボール数降順
+
+const TL_LOAD_BADGE = {
+  high: { icon: '🔴', label: '高負荷', bg: '#FDECEA', color: '#C0392B' },
+  mid:  { icon: '🟡', label: '注意',   bg: '#FEFCE8', color: '#7A5F00' },
+  low:  { icon: '🟢', label: '余裕',   bg: 'var(--em-pale)', color: 'var(--em-dark)' },
+};
+
+async function loadTeamLoadPage() {
+  const kpiEl = document.getElementById('tl-kpi');
+  const tableEl = document.getElementById('tl-table');
+  if (!kpiEl || !tableEl) return;
+  const updEl = document.getElementById('tl-updated');
+  const defsEl = document.getElementById('tl-defs');
+  // VIEW AS 追従: 権限のないロールでは中身を出さない（ナビも applyRoleBasedUI で非表示・ADR 015）
+  if (!hasPermission('team_load.page')) {
+    _tlData = null;
+    kpiEl.innerHTML = '';
+    tableEl.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">このページを閲覧する権限がありません</div>';
+    if (updEl) updEl.textContent = '';
+    if (defsEl) defsEl.textContent = '';
+    return;
+  }
+  // スケルトンローディング
+  kpiEl.innerHTML = [1, 2, 3].map(() =>
+    '<div class="stat-card"><span class="skel-line" style="width:60%"></span><span class="skel-line" style="width:40%"></span></div>').join('');
+  tableEl.innerHTML = '<div style="padding:16px 20px">' +
+    [1, 2, 3, 4, 5].map(() => '<div class="skel-row"><span class="skel-circle"></span><span class="skel-line"></span></div>').join('') + '</div>';
+  try {
+    const res = await apiFetch(`${API}/team-load`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'チーム状況の取得に失敗しました');
+    _tlData = data;
+    renderTeamLoad();
+  } catch (e) {
+    console.error('[team-load]', e);
+    kpiEl.innerHTML = '';
+    tableEl.innerHTML = `<div style="padding:32px;text-align:center;color:#C0392B;font-size:13px">${esc(e.message)}</div>`;
+  }
+}
+
+// 列ヘッダクリックでソート切替（同列2回目で昇順/降順トグル）
+function tlSetSort(key) {
+  if (_tlSort.key === key) {
+    _tlSort.dir = _tlSort.dir === 'desc' ? 'asc' : 'desc';
+  } else {
+    _tlSort = { key, dir: 'desc' };
+  }
+  renderTeamLoad();
+}
+
+function renderTeamLoad() {
+  const data = _tlData;
+  const kpiEl = document.getElementById('tl-kpi');
+  const tableEl = document.getElementById('tl-table');
+  if (!data || !kpiEl || !tableEl) return;
+
+  // 更新時刻（JST明示・CLAUDE.md 共通ルール）
+  const updEl = document.getElementById('tl-updated');
+  if (updEl && data.as_of) {
+    const t = new Date(data.as_of).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+    updEl.textContent = `更新: ${t}`;
+  }
+
+  // KPI行（クリエイティブ単位・メンバー横断の重複なし）
+  const totals = data.totals || {};
+  const kpi = (label, value, color) =>
+    `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${label}</div><div style="font-size:22px;font-weight:700;color:${color}">${Number(value) || 0}</div></div>`;
+  kpiEl.innerHTML =
+    kpi('進行中クリエイティブ合計', totals.active, 'var(--em-dark)') +
+    kpi('今週期限（〜' + esc((data.week_end || '').slice(5).replace('-', '/')) + '）', totals.due_this_week, '#C05A0A') +
+    kpi('期限超過', totals.overdue, (totals.overdue > 0 ? '#C0392B' : 'var(--em-dark)'));
+
+  // ソート（メンバー名はふりがな無しなので localeCompare、数値列は数値比較）
+  const rows = [...(data.members || [])];
+  const { key, dir } = _tlSort;
+  const numKey = { active: 'active', balls: 'balls', due: 'due_this_week', overdue: 'overdue' }[key];
+  rows.sort((a, b) => {
+    let cmp;
+    if (numKey) cmp = (a[numKey] || 0) - (b[numKey] || 0);
+    else cmp = String(a.full_name).localeCompare(String(b.full_name), 'ja');
+    return dir === 'desc' ? -cmp : cmp;
+  });
+
+  // 負荷バーの長さ: ボール×2 + 今週期限 + 超過×3 の合成スコアを最大値で正規化
+  // （係数は「即応が必要な度合い」の重み。超過が最も重い）
+  const score = r => (r.balls || 0) * 2 + (r.due_this_week || 0) + (r.overdue || 0) * 3;
+  const maxScore = Math.max(1, ...rows.map(score));
+  const barColor = {
+    high: 'linear-gradient(90deg,#C0392B,#E74C3C)',
+    mid: 'linear-gradient(90deg,#C05A0A,#F7B731)',
+    low: 'linear-gradient(90deg,var(--em-dark),var(--em))',
+  };
+
+  const arrow = k => (key === k ? (dir === 'desc' ? ' ▼' : ' ▲') : '');
+  const th = (k, label, align) =>
+    `<button onclick="tlSetSort('${k}')" style="all:unset;cursor:pointer;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em;white-space:nowrap;${align ? 'text-align:right;justify-self:end' : ''}">${label}${arrow(k)}</button>`;
+  const gridCols = 'grid-template-columns:minmax(200px,1fr) 80px 80px 80px 64px 84px';
+
+  let html = `<div style="min-width:640px">`;
+  html += `<div style="display:grid;${gridCols};gap:8px;align-items:center;padding:10px 16px;border-bottom:0.5px solid var(--border)">` +
+    th('name', 'メンバー') +
+    th('active', '進行中CR', 1) + th('balls', '持ちボール', 1) + th('due', '今週期限', 1) + th('overdue', '超過', 1) +
+    `<span style="font-size:11px;font-weight:600;color:var(--text-muted);justify-self:end">負荷</span></div>`;
+
+  if (rows.length === 0) {
+    html += '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">対象メンバーがいません</div>';
+  }
+  rows.forEach(r => {
+    const badge = TL_LOAD_BADGE[r.load] || TL_LOAD_BADGE.low;
+    const pct = Math.min(100, Math.round(score(r) / maxScore * 100));
+    const name = (window.NameDisplay ? NameDisplay.full(r) : (r.nickname || r.full_name));
+    const num = (v, hot) =>
+      `<span style="font-size:14px;font-weight:600;justify-self:end;color:${hot && v > 0 ? '#C0392B' : 'var(--text)'}">${v || 0}</span>`;
+    html += `<div style="display:grid;${gridCols};gap:8px;align-items:center;padding:10px 16px;border-bottom:0.5px solid var(--border-light)">` +
+      `<div style="min-width:0">` +
+        `<div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${badge.icon} ${esc(name)}</div>` +
+        `<div class="dash-proj-bar" style="margin-top:6px"><div class="dash-proj-fill" style="width:${pct}%;background:${barColor[r.load] || barColor.low}"></div></div>` +
+      `</div>` +
+      num(r.active) + num(r.balls) + num(r.due_this_week) + num(r.overdue, true) +
+      `<span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;justify-self:end;background:${badge.bg};color:${badge.color}">${badge.label}</span>` +
+      `</div>`;
+  });
+  html += '</div>';
+  tableEl.innerHTML = html;
+
+  // 集計定義の脚注（サーバーの definitions と同一。数値の意味の誤解を防ぐ）
+  const defsEl = document.getElementById('tl-defs');
+  if (defsEl) {
+    const d = data.definitions || {};
+    defsEl.innerHTML =
+      `<div>・進行中CR: ${esc(d.active || '')}</div>` +
+      `<div>・持ちボール: ${esc(d.balls || '')}</div>` +
+      `<div>・今週期限: ${esc(d.due_this_week || '')}／超過: ${esc(d.overdue || '')}</div>`;
+  }
 }
 
 // ==================== ⏱ 作業時間報告（タイムシート）— ADR 028 Stage 2 ====================
@@ -31118,6 +31298,7 @@ const ROLE_PERM_LIST = [
   { section:'システム',       key:'system.view_as',              label:'VIEW AS（ロールプレビュー）' },
   { section:'分析',           key:'analytics.view',              label:'分析・集計ページ閲覧（経営系・全集計）' },
   { section:'分析',           key:'analytics.bug_reports.view',  label:'分析メニュー：バグ報告件数' },
+  { section:'チーム状況',     key:'team_load.page',              label:'チーム状況（負荷ダッシュボード）閲覧' },
 ];
 
 let _rolesEditMode = false;
