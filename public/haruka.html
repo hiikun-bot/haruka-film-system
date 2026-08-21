@@ -1413,6 +1413,25 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .mg-stats-card{flex:0 1 200px;min-width:170px;background:var(--white);border:0.5px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;justify-content:center;gap:8px}
 .mg-stat-line{font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}
 .mg-stat-line b{font-size:19px;color:var(--em-dark)}
+.mg-emoji-btn{width:34px;height:34px;font-size:18px;line-height:1;border:0.5px solid var(--border);border-radius:8px;background:var(--white);cursor:pointer;transition:all .12s;padding:0}
+.mg-emoji-btn:hover{background:var(--em-pale);transform:scale(1.12)}
+.mg-emoji-btn.active{background:var(--em-pale);border-color:var(--em);box-shadow:0 0 0 2px var(--em-light)}
+.mg-goal-term{font-size:10px;font-weight:800;letter-spacing:0.06em;background:rgba(255,255,255,0.28);border-radius:6px;padding:2px 7px;margin-right:7px;vertical-align:2px;display:inline-block}
+.mg-kpi-row{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px}
+.mg-kpi-row .dash-proj-bar{flex:1;min-width:50px;background:rgba(255,255,255,0.28)}
+.mg-kpi-row .dash-proj-fill{background:#fff}
+.mg-kpi-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42%;flex-shrink:0}
+.mg-kpi-count{font-variant-numeric:tabular-nums;white-space:nowrap}
+.mg-kpi-plus{border:none;border-radius:6px;background:rgba(255,255,255,0.24);color:#fff;font-size:11px;font-weight:700;padding:3px 9px;cursor:pointer;transition:background .12s}
+.mg-kpi-plus:hover{background:rgba(255,255,255,0.45)}
+.mg-kpi-edit-row{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 0;border-bottom:0.5px solid var(--border-light)}
+.mg-quick-due{font-size:12px;padding:7px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .12s}
+.mg-quick-due:hover{background:var(--em-pale)}
+.mg-quick-due.active{background:var(--em);border-color:var(--em);color:#fff;font-weight:700}
+.mg-pri-btn{font-size:12px;padding:7px 14px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .12s}
+.mg-pri-btn.active{border-color:var(--em);background:var(--em-pale);color:var(--text);font-weight:700;box-shadow:0 0 0 2px var(--em-light)}
+.mg-task-meta.mg-pri-high{color:#C0392B;font-weight:700}
+.mg-task-meta.mg-pri-mid{color:#B7791F;font-weight:700}
 .mg-tabbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .mg-tab{font-size:13px;padding:6px 14px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .15s}
 .mg-tab.active{background:var(--em);color:#fff;border-color:transparent;font-weight:600}
@@ -8388,18 +8407,31 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div style="display:flex;gap:10px">
       <div class="form-group" style="width:90px;flex-shrink:0">
         <label class="form-label">絵文字</label>
-        <input class="form-input" id="mg-g-emoji" placeholder="🏢" maxlength="8" style="text-align:center">
+        <input class="form-input" id="mg-g-emoji" placeholder="💪" maxlength="8" style="text-align:center">
       </div>
       <div class="form-group" style="flex:1">
         <label class="form-label">目標 <span style="color:#C0392B">*</span></label>
-        <input class="form-input" id="mg-g-name" placeholder="例) 会社設立">
+        <input class="form-input" id="mg-g-name" placeholder="例) 技術力向上、◯◯のスキル習得">
       </div>
+    </div>
+    <div class="form-group" style="margin-top:-2px">
+      <div id="mg-emoji-palette" style="display:flex;flex-wrap:wrap;gap:4px"></div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">クリックで選択（もう一度押すと解除）。上の欄に好きな絵文字を直接入力もできます</div>
     </div>
     <div class="form-group">
       <label class="form-label">なぜやるのか（任意）</label>
-      <textarea class="form-input" id="mg-g-purpose" rows="2" style="resize:vertical" placeholder="例) 事業を法人として本格化させるため"></textarea>
+      <textarea class="form-input" id="mg-g-purpose" rows="2" style="resize:vertical" placeholder="例) ワンランク上の案件を任せてもらえるようになるため"></textarea>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:140px">
+        <label class="form-label">区分（任意）</label>
+        <select class="form-input" id="mg-g-term">
+          <option value="">未設定</option>
+          <option value="short">短期目標</option>
+          <option value="mid">中期目標</option>
+          <option value="long">長期目標</option>
+        </select>
+      </div>
       <div class="form-group" style="flex:1;min-width:150px">
         <label class="form-label">目標日（カウントダウン表示）</label>
         <input class="form-input" type="date" id="mg-g-date">
@@ -8413,6 +8445,15 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         </select>
       </div>
     </div>
+    <!-- KPIは「しっかりやる人向け」なのでデフォルト折りたたみ（ライト層には見せない設計・ユーザー指示 2026-08-22） -->
+    <details id="mg-g-kpi-details" style="margin:2px 0 12px;border:0.5px solid var(--border-light);border-radius:10px;padding:8px 12px">
+      <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text-muted)">⚙️ 詳細設定 — KPI（何を何回する？）</summary>
+      <div style="font-size:11.5px;color:var(--text-muted);margin:8px 0 6px">目標を達成するための行動を数値で決めます（例: 営業DMを100件送る、講座を10本見る）。設定するとカードに進捗バーと［＋1］ボタンが出ます。</div>
+      <div id="mg-g-kpi-list"></div>
+      <div id="mg-g-kpi-actions" style="margin-top:8px">
+        <button type="button" class="btn-sm" onclick="mgOpenKpiModal(null)">＋ KPIを追加</button>
+      </div>
+    </details>
     <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
       <button class="btn-sm" id="mg-g-delete" style="color:#C0392B;margin-right:auto;display:none" onclick="mgDeleteGoal()">🗑 削除</button>
       <button class="btn-sm" onclick="closeModal('modal-mg-goal')">キャンセル</button>
@@ -8427,30 +8468,50 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div class="modal-title"><span id="mg-t-title">✅ タスクを追加</span><button class="modal-close" onclick="closeModal('modal-mg-task')">×</button></div>
     <div class="form-group">
       <label class="form-label">タスク名 <span style="color:#C0392B">*</span></label>
-      <input class="form-input" id="mg-t-name" placeholder="例) 商号候補を洗い出す">
+      <input class="form-input" id="mg-t-name" placeholder="例) After Effectsの講座を1本見る">
     </div>
     <div class="form-group">
-      <label class="form-label">目標に紐付け（任意）</label>
-      <select class="form-input" id="mg-t-goal"></select>
+      <label class="form-label">目標に紐付け（任意・進捗率つき）</label>
+      <select class="form-input" id="mg-t-goal" onchange="mgSyncTaskKpiSelect()"></select>
     </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <div class="form-group" style="flex:1;min-width:150px">
-        <label class="form-label">大分類（任意）</label>
-        <input class="form-input" id="mg-t-major" list="mg-datalist-major" placeholder="例) 設計">
-        <datalist id="mg-datalist-major"></datalist>
-      </div>
-      <div class="form-group" style="flex:1;min-width:150px">
-        <label class="form-label">中分類（任意）</label>
-        <input class="form-input" id="mg-t-mid" list="mg-datalist-mid" placeholder="例) 商号">
-        <datalist id="mg-datalist-mid"></datalist>
+    <div class="form-group">
+      <label class="form-label">期限（任意）</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <button type="button" class="mg-quick-due" data-mg-due="today" onclick="mgQuickDue('today')">今日</button>
+        <button type="button" class="mg-quick-due" data-mg-due="tomorrow" onclick="mgQuickDue('tomorrow')">明日</button>
+        <button type="button" class="mg-quick-due" data-mg-due="weekend" onclick="mgQuickDue('weekend')">今週末</button>
+        <input class="form-input" type="date" id="mg-t-due" style="flex:1;min-width:140px;width:auto" onchange="mgSyncQuickDue()">
       </div>
     </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <div class="form-group" style="flex:1;min-width:150px">
-        <label class="form-label">期限（任意）</label>
-        <input class="form-input" type="date" id="mg-t-due">
+    <div class="form-group">
+      <label class="form-label">優先度（任意）</label>
+      <div style="display:flex;gap:6px">
+        <button type="button" class="mg-pri-btn" id="mg-pri-high" onclick="mgSetPriority('high')">🔴 高</button>
+        <button type="button" class="mg-pri-btn" id="mg-pri-mid" onclick="mgSetPriority('mid')">🟡 中</button>
+        <button type="button" class="mg-pri-btn" id="mg-pri-low" onclick="mgSetPriority('low')">⚪ 低</button>
       </div>
-      <div class="form-group" style="flex:1;min-width:150px">
+    </div>
+    <!-- 通常のタスクは上の3項目だけで登録完了（10秒登録）。分類・KPI・メモ等はライト層に見せない折りたたみ -->
+    <details id="mg-t-details" style="margin:2px 0 12px;border:0.5px solid var(--border-light);border-radius:10px;padding:8px 12px">
+      <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text-muted)">⚙️ 詳細設定（分類・KPI・メモなど）</summary>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
+        <div class="form-group" style="flex:1;min-width:150px">
+          <label class="form-label">大分類（任意）</label>
+          <input class="form-input" id="mg-t-major" list="mg-datalist-major" placeholder="例) 学習">
+          <datalist id="mg-datalist-major"></datalist>
+        </div>
+        <div class="form-group" style="flex:1;min-width:150px">
+          <label class="form-label">中分類（任意）</label>
+          <input class="form-input" id="mg-t-mid" list="mg-datalist-mid" placeholder="例) After Effects">
+          <datalist id="mg-datalist-mid"></datalist>
+        </div>
+      </div>
+      <!-- 選んだ目標にKPIがあるときだけ表示 -->
+      <div class="form-group" id="mg-t-kpi-wrap" style="display:none">
+        <label class="form-label">KPIに紐付け（任意）</label>
+        <select class="form-input" id="mg-t-kpi"></select>
+      </div>
+      <div class="form-group">
         <label class="form-label">ステータス</label>
         <select class="form-input" id="mg-t-status">
           <option value="未着手">未着手</option>
@@ -8458,23 +8519,65 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <option value="完了">完了</option>
         </select>
       </div>
-    </div>
-    <div class="form-group">
-      <label class="form-label">詳細（任意）</label>
-      <textarea class="form-input" id="mg-t-detail" rows="2" style="resize:vertical"></textarea>
-    </div>
-    <div class="form-group">
-      <label class="form-label">メモ（任意）</label>
-      <textarea class="form-input" id="mg-t-memo" rows="2" style="resize:vertical"></textarea>
-    </div>
-    <div class="form-group">
-      <label class="form-label">資料URL（任意）</label>
-      <input class="form-input" id="mg-t-link" placeholder="https://...">
-    </div>
+      <div class="form-group">
+        <label class="form-label">詳細（任意）</label>
+        <textarea class="form-input" id="mg-t-detail" rows="2" style="resize:vertical"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">メモ（任意）</label>
+        <textarea class="form-input" id="mg-t-memo" rows="2" style="resize:vertical"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">資料URL（任意）</label>
+        <input class="form-input" id="mg-t-link" placeholder="https://...">
+      </div>
+    </details>
     <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
       <button class="btn-sm" id="mg-t-delete" style="color:#C0392B;margin-right:auto;display:none" onclick="mgDeleteTask()">🗑 削除</button>
       <button class="btn-sm" onclick="closeModal('modal-mg-task')">キャンセル</button>
-      <button class="btn-primary" id="mg-t-submit" onclick="mgSubmitTask()">保存</button>
+      <button class="btn-sm" id="mg-t-submit-next" onclick="mgSubmitTask(true)">追加して次を作成</button>
+      <button class="btn-primary" id="mg-t-submit" onclick="mgSubmitTask()">タスクを追加</button>
+    </div>
+  </div>
+</div>
+
+<!-- 🎯 マイゴール KPI 作成/編集モーダル（目標モーダルの詳細設定から開くため z-index を上に） -->
+<div class="modal-overlay" id="modal-mg-kpi" style="z-index:320">
+  <div class="modal-card" style="width:min(520px,95vw)">
+    <div class="modal-title"><span id="mg-k-title">📌 KPIを追加</span><button class="modal-close" onclick="closeModal('modal-mg-kpi')">×</button></div>
+    <div class="form-group">
+      <label class="form-label">目標</label>
+      <select class="form-input" id="mg-k-goal"></select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">何をする？ <span style="color:#C0392B">*</span></label>
+      <input class="form-input" id="mg-k-name" placeholder="例) 営業DMを送る、講座を見る">
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:110px">
+        <label class="form-label">何回？ <span style="color:#C0392B">*</span></label>
+        <input class="form-input" type="number" id="mg-k-target" min="0" step="any" placeholder="100">
+      </div>
+      <div class="form-group" style="width:110px;flex-shrink:0">
+        <label class="form-label">単位</label>
+        <input class="form-input" id="mg-k-unit" list="mg-datalist-unit" placeholder="回">
+        <datalist id="mg-datalist-unit">
+          <option value="回"><option value="件"><option value="本"><option value="人"><option value="ページ"><option value="時間"><option value="円"><option value="万円">
+        </datalist>
+      </div>
+      <div class="form-group" style="flex:1;min-width:110px">
+        <label class="form-label">現在</label>
+        <input class="form-input" type="number" id="mg-k-current" min="0" step="any" placeholder="0">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">期限（任意）</label>
+      <input class="form-input" type="date" id="mg-k-due">
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
+      <button class="btn-sm" id="mg-k-delete" style="color:#C0392B;margin-right:auto;display:none" onclick="mgDeleteKpi()">🗑 削除</button>
+      <button class="btn-sm" onclick="closeModal('modal-mg-kpi')">キャンセル</button>
+      <button class="btn-primary" id="mg-k-submit" onclick="mgSubmitKpi()">保存</button>
     </div>
   </div>
 </div>
@@ -25442,6 +25545,25 @@ function mgDateLabel(d) {
   const [y, m, day] = d.split('-').map(Number);
   return `${y}/${m}/${day}`;
 }
+const MG_TERM_LABELS = { short: '短期', mid: '中期', long: '長期' };
+const MG_PRIORITY_LABELS = { high: '🔴高', mid: '🟡中', low: '⚪低' };
+// KPIの数値表示（NUMERIC 型の "100.00" 等をそのまま出さない）
+function mgNum(v) {
+  const n = Number(v) || 0;
+  return Number.isInteger(n) ? n : Math.round(n * 100) / 100;
+}
+// YYYY-MM-DD 文字列の日付加算（JST日付文字列をUTCとして扱う既存パターン。ローカルTZ非依存）
+function mgAddDays(dstr, n) {
+  const d = new Date(`${dstr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+// 今週末＝今週日曜（JST・週は月〜日。既存の「今週」定義と一致させる）
+function mgThisSundayJst() {
+  const t = mgTodayJst();
+  const dow = new Date(`${t}T00:00:00Z`).getUTCDay();
+  return mgAddDays(t, dow === 0 ? 0 : 7 - dow);
+}
 
 async function loadMyGoalsPage() {
   const body = document.getElementById('mg-body');
@@ -25450,7 +25572,7 @@ async function loadMyGoalsPage() {
     const res = await apiFetch(`${API}/personal-goals`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'マイゴールの取得に失敗しました');
-    _mgData = { goals: data.goals || [], tasks: data.tasks || [] };
+    _mgData = { goals: data.goals || [], tasks: data.tasks || [], kpis: data.kpis || [] };
     mgRender();
   } catch (e) {
     console.error('[my-goals]', e);
@@ -25483,9 +25605,10 @@ function mgRenderHero() {
       <div style="font-size:16px;font-weight:800;margin-bottom:8px">マイゴールをはじめよう</div>
       <div style="font-size:13px;color:var(--text-muted);line-height:1.9;max-width:520px;margin:0 auto 16px">
         ここは<b>あなた専用</b>の目標・タスク管理ページです（管理者を含め他の人には見えません）。<br>
-        ① まず目標を作る（例:「🏢 会社設立」目標日 2027/7/1）<br>
-        ② タスクを追加して大分類・中分類で整理（例: 設計 &gt; 商号 &gt; 商号候補を洗い出す）<br>
-        ③ チェックを入れるたびに進捗バーが伸びて、目標日までのカウントダウンが進みます
+        ① まず目標を作る（例:「💪 技術力向上」「🎓 ◯◯のスキル習得」。短期・中期・長期の区分も選べます）<br>
+        ② タスクを追加して大分類・中分類で整理（例: 学習 &gt; After Effects &gt; 講座を1本見る）<br>
+        ③ チェックを入れるたびに進捗バーが伸びて、目標日までのカウントダウンが進みます<br>
+        <span style="opacity:0.8">しっかりやりたい人は、目標の「詳細設定」でKPI（何を何回する？）も決められます</span>
       </div>
       <button class="btn-primary" onclick="mgOpenGoalModal()">🎯 最初の目標を作る</button>
     </div>`;
@@ -25496,10 +25619,27 @@ function mgRenderHero() {
   const weekCountAll = PersonalGoalsUtils.countWeekCompleted(tasks, today);
   const streak = PersonalGoalsUtils.computeStreak(tasks, today);
 
-  const cards = visibleGoals.map(g => {
+  // 期間区分（短期→中期→長期→未設定）の順に並べる
+  const termOrder = { short: 0, mid: 1, long: 2 };
+  const sortedGoals = [...visibleGoals].sort((a, b) => (termOrder[a.term] ?? 3) - (termOrder[b.term] ?? 3));
+
+  const cards = sortedGoals.map(g => {
     const gTasks = tasks.filter(t => t.goal_id === g.id);
     const p = PersonalGoalsUtils.computeProgress(gTasks);
     const gWeek = PersonalGoalsUtils.countWeekCompleted(gTasks, today);
+    // KPI（設定した人のカードにだけ出る。ライト層のカードは今まで通り）
+    const gKpis = (_mgData.kpis || []).filter(k => k.goal_id === g.id);
+    const kpiHtml = gKpis.map(k => {
+      const target = Number(k.target_count) || 0;
+      const cur = Number(k.current_count) || 0;
+      const pct = target > 0 ? Math.min(100, Math.round(cur / target * 100)) : 0;
+      return `<div class="mg-kpi-row" onclick="event.stopPropagation();mgOpenKpiModal('${esc(k.id)}')" title="クリックでKPIを編集">
+        <span class="mg-kpi-name">📌${esc(k.title)}</span>
+        <div class="dash-proj-bar"><div class="dash-proj-fill" data-mg-w="${pct}" style="width:0%"></div></div>
+        <span class="mg-kpi-count">${mgNum(cur)}/${mgNum(target)}${esc(k.unit || '回')}${pct >= 100 ? '🎉' : ''}</span>
+        <button type="button" class="mg-kpi-plus" onclick="event.stopPropagation();mgKpiPlusOne('${esc(k.id)}')" title="＋1回">＋1</button>
+      </div>`;
+    }).join('');
     let countdown = '';
     if (g.status === 'achieved') {
       countdown = '<span class="mg-goal-countdown">🏆 達成！</span>';
@@ -25515,10 +25655,12 @@ function mgRenderHero() {
         </div>
         <div style="font-size:11.5px;opacity:0.9;margin-top:8px">💪 今週 ${gWeek}件完了</div>`
       : '<div style="font-size:11.5px;opacity:0.85;margin-top:10px">タスク未登録 — 「＋ タスクを追加」でこの目標に紐付けできます</div>';
+    const termBadge = g.term ? `<span class="mg-goal-term">${MG_TERM_LABELS[g.term] || ''}</span>` : '';
     return `<div class="mg-goal-card${g.status === 'achieved' ? ' achieved' : ''}" onclick="mgOpenGoalModal('${esc(g.id)}')" title="クリックで編集">
-      <div class="mg-goal-title"><span>${esc(g.emoji || '🎯')} ${esc(g.title)}</span>${countdown}</div>
+      <div class="mg-goal-title"><span>${termBadge}${esc(g.emoji || '🎯')} ${esc(g.title)}</span>${countdown}</div>
       ${g.purpose ? `<div class="mg-goal-purpose">${esc(g.purpose)}</div>` : ''}
       ${bar}
+      ${kpiHtml}
     </div>`;
   }).join('');
 
@@ -25578,6 +25720,13 @@ function mgTaskRowHtml(t, opts = {}) {
     const goal = t.goal_id ? (_mgData.goals.find(g => g.id === t.goal_id) || null) : null;
     const pathLabel = [goal ? `${goal.emoji || '🎯'}${goal.title}` : '', path].filter(Boolean).join(' / ');
     if (pathLabel) metas.push(`<span class="mg-task-meta">${esc(pathLabel)}</span>`);
+  }
+  if (t.priority) {
+    metas.push(`<span class="mg-task-meta mg-pri-${esc(t.priority)}">${MG_PRIORITY_LABELS[t.priority] || ''}</span>`);
+  }
+  if (t.kpi_id) {
+    const kpi = (_mgData.kpis || []).find(k => k.id === t.kpi_id);
+    if (kpi) metas.push(`<span class="mg-task-meta" title="KPI: ${esc(kpi.title)}">📌${esc(kpi.title)}</span>`);
   }
   if (t.due_date) {
     metas.push(`<span class="mg-task-meta${overdue ? ' overdue' : ''}">📅${esc(mgDateLabel(t.due_date))}${overdue ? ' ⚠️期限超過' : ''}</span>`);
@@ -25741,6 +25890,30 @@ function mgCompletedKeys() {
 }
 
 // ---------- 目標 作成/編集モーダル ----------
+// 絵文字パレット（クリック選択）。入力欄への直接入力（パレット外の絵文字）も引き続き可
+const MG_EMOJI_PALETTE = ['🎯','🏢','🚀','💰','📈','🏆','🔥','🌱','💪','🎓','📚','💻','🎬','🎨','📷','✍️','🗣️','🌏','✈️','🏠','🚗','💍','👶','❤️','🧘','🏃','⚽','🎸','🍳','🍀','⭐','👑'];
+function mgRenderEmojiPalette() {
+  const wrap = document.getElementById('mg-emoji-palette');
+  if (!wrap) return;
+  if (!wrap.childElementCount) {
+    wrap.innerHTML = MG_EMOJI_PALETTE.map(e =>
+      `<button type="button" class="mg-emoji-btn" onclick="mgPickEmoji('${e}')" title="${e} を選択">${e}</button>`).join('');
+    document.getElementById('mg-g-emoji')?.addEventListener('input', mgSyncEmojiPalette);
+  }
+  mgSyncEmojiPalette();
+}
+function mgPickEmoji(e) {
+  const input = document.getElementById('mg-g-emoji');
+  if (!input) return;
+  input.value = (input.value.trim() === e) ? '' : e; // 同じ絵文字をもう一度押すと解除
+  mgSyncEmojiPalette();
+}
+function mgSyncEmojiPalette() {
+  const cur = (document.getElementById('mg-g-emoji')?.value || '').trim();
+  document.querySelectorAll('#mg-emoji-palette .mg-emoji-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent === cur);
+  });
+}
 function mgOpenGoalModal(goalId) {
   _mgEditGoalId = goalId || null;
   const g = goalId ? _mgData?.goals.find(x => x.id === goalId) : null;
@@ -25748,11 +25921,44 @@ function mgOpenGoalModal(goalId) {
   document.getElementById('mg-g-emoji').value = g?.emoji || '';
   document.getElementById('mg-g-name').value = g?.title || '';
   document.getElementById('mg-g-purpose').value = g?.purpose || '';
+  document.getElementById('mg-g-term').value = g?.term || '';
   document.getElementById('mg-g-date').value = g?.target_date || '';
   document.getElementById('mg-g-status').value = g?.status || 'active';
   document.getElementById('mg-g-status-wrap').style.display = g ? '' : 'none';
   document.getElementById('mg-g-delete').style.display = g ? '' : 'none';
+  // KPIはデフォルト折りたたみ（ライト層に見せない）。KPI設定済みの目標だけ開いた状態にする
+  const kpiDetails = document.getElementById('mg-g-kpi-details');
+  if (kpiDetails) kpiDetails.open = !!(g && (_mgData?.kpis || []).some(k => k.goal_id === g.id));
+  mgRenderGoalKpiList();
+  mgRenderEmojiPalette();
   openModal('modal-mg-goal');
+}
+
+// 目標モーダル内のKPI一覧（詳細設定の中身）
+function mgRenderGoalKpiList() {
+  const list = document.getElementById('mg-g-kpi-list');
+  const actions = document.getElementById('mg-g-kpi-actions');
+  if (!list || !actions) return;
+  if (!_mgEditGoalId) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">目標を保存すると、KPIを追加できるようになります</div>';
+    actions.style.display = 'none';
+    return;
+  }
+  actions.style.display = '';
+  const kpis = (_mgData?.kpis || []).filter(k => k.goal_id === _mgEditGoalId);
+  list.innerHTML = kpis.length === 0
+    ? '<div style="font-size:12px;color:var(--text-muted)">KPIはまだありません</div>'
+    : kpis.map(k => {
+        const target = Number(k.target_count) || 0;
+        const cur = Number(k.current_count) || 0;
+        const done = target > 0 && cur >= target;
+        return `<div class="mg-kpi-edit-row">
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📌 ${esc(k.title)}</span>
+          <span style="font-variant-numeric:tabular-nums;white-space:nowrap">${mgNum(cur)}/${mgNum(target)}${esc(k.unit || '回')}${done ? ' 🎉' : ''}</span>
+          <button type="button" class="btn-sm" onclick="mgKpiPlusOne('${esc(k.id)}')">＋1</button>
+          <button type="button" class="btn-sm" onclick="mgOpenKpiModal('${esc(k.id)}')">編集</button>
+        </div>`;
+      }).join('');
 }
 
 async function mgSubmitGoal() {
@@ -25763,6 +25969,7 @@ async function mgSubmitGoal() {
     title,
     emoji: document.getElementById('mg-g-emoji').value.trim() || null,
     purpose: document.getElementById('mg-g-purpose').value.trim() || null,
+    term: document.getElementById('mg-g-term').value || null,
     target_date: document.getElementById('mg-g-date').value || null,
   };
   if (_mgEditGoalId) payload.status = document.getElementById('mg-g-status').value;
@@ -25802,15 +26009,19 @@ async function mgDeleteGoal() {
 }
 
 // ---------- タスク 作成/編集モーダル ----------
+let _mgTaskPriority = null; // 優先度トグルの状態（null = 未設定）
+
 function mgOpenTaskModal(taskId) {
   _mgEditTaskId = taskId || null;
   const t = taskId ? _mgData?.tasks.find(x => x.id === taskId) : null;
   document.getElementById('mg-t-title').textContent = t ? '✅ タスクを編集' : '✅ タスクを追加';
-  // 目標プルダウン（アーカイブ済みは、編集中タスクが紐付いている場合のみ残す）
+  // 目標プルダウン（進捗率つき。アーカイブ済みは、編集中タスクが紐付いている場合のみ残す）
   const goalSel = document.getElementById('mg-t-goal');
   const goalOpts = ['<option value="">（目標に紐付けない）</option>'];
   (_mgData?.goals || []).filter(g => g.status !== 'archived' || g.id === t?.goal_id).forEach(g => {
-    goalOpts.push(`<option value="${esc(g.id)}">${esc(g.emoji || '🎯')} ${esc(g.title)}</option>`);
+    const p = PersonalGoalsUtils.computeProgress((_mgData?.tasks || []).filter(x => x.goal_id === g.id));
+    const pctLabel = p.total > 0 ? `（進捗${p.pct}%）` : '';
+    goalOpts.push(`<option value="${esc(g.id)}">${esc(g.emoji || '🎯')} ${esc(g.title)}${pctLabel}</option>`);
   });
   goalSel.innerHTML = goalOpts.join('');
   // 新規作成時は目標フィルタの選択中目標を初期値にする（その目標を見ながら追加する流れが多いため）
@@ -25829,43 +26040,207 @@ function mgOpenTaskModal(taskId) {
   document.getElementById('mg-t-detail').value = t?.detail || '';
   document.getElementById('mg-t-memo').value = t?.memo || '';
   document.getElementById('mg-t-link').value = t?.link_url || '';
+  _mgTaskPriority = t?.priority || null;
+  mgRenderPriorityBtns();
+  mgSyncQuickDue();
+  mgSyncTaskKpiSelect(t?.kpi_id || null);
+  // 詳細設定はデフォルト折りたたみ（10秒登録）。編集時に詳細項目が入っていれば開く
+  const details = document.getElementById('mg-t-details');
+  if (details) details.open = !!(t && (t.major_category || t.mid_category || t.kpi_id || t.detail || t.memo || t.link_url || t.status === '進行中'));
   document.getElementById('mg-t-delete').style.display = t ? '' : 'none';
+  // 新規＝「タスクを追加」＋連続登録ボタン / 編集＝「保存」のみ
+  document.getElementById('mg-t-submit').textContent = t ? '保存' : 'タスクを追加';
+  document.getElementById('mg-t-submit-next').style.display = t ? 'none' : '';
   openModal('modal-mg-task');
 }
 
-async function mgSubmitTask() {
+// 期限クイック選択（今日/明日/今週末）。日付inputと双方向で同期
+function mgQuickDue(kind) {
+  const input = document.getElementById('mg-t-due');
+  const map = { today: mgTodayJst(), tomorrow: mgAddDays(mgTodayJst(), 1), weekend: mgThisSundayJst() };
+  input.value = map[kind] || '';
+  mgSyncQuickDue();
+}
+function mgSyncQuickDue() {
+  const cur = document.getElementById('mg-t-due')?.value || '';
+  const map = { today: mgTodayJst(), tomorrow: mgAddDays(mgTodayJst(), 1), weekend: mgThisSundayJst() };
+  document.querySelectorAll('#modal-mg-task .mg-quick-due').forEach(b => {
+    b.classList.toggle('active', !!cur && map[b.dataset.mgDue] === cur);
+  });
+}
+
+// 優先度トグル（同じボタンをもう一度押すと解除）
+function mgSetPriority(p) {
+  _mgTaskPriority = (_mgTaskPriority === p) ? null : p;
+  mgRenderPriorityBtns();
+}
+function mgRenderPriorityBtns() {
+  ['high', 'mid', 'low'].forEach(p => {
+    document.getElementById(`mg-pri-${p}`)?.classList.toggle('active', _mgTaskPriority === p);
+  });
+}
+
+// 選択中の目標にKPIがあるときだけKPIプルダウンを表示（ライト層には見せない）
+function mgSyncTaskKpiSelect(selectedKpiId) {
+  const wrap = document.getElementById('mg-t-kpi-wrap');
+  const sel = document.getElementById('mg-t-kpi');
+  if (!wrap || !sel) return;
+  const goalId = document.getElementById('mg-t-goal')?.value || '';
+  const kpis = goalId ? (_mgData?.kpis || []).filter(k => k.goal_id === goalId) : [];
+  if (kpis.length === 0) { wrap.style.display = 'none'; sel.innerHTML = ''; return; }
+  wrap.style.display = '';
+  sel.innerHTML = ['<option value="">（KPIに紐付けない）</option>']
+    .concat(kpis.map(k => `<option value="${esc(k.id)}">📌 ${esc(k.title)}（${mgNum(k.current_count)}/${mgNum(k.target_count)}${esc(k.unit || '回')}）</option>`))
+    .join('');
+  if (selectedKpiId && kpis.some(k => k.id === selectedKpiId)) sel.value = selectedKpiId;
+}
+
+async function mgSubmitTask(addNext) {
   if (_mgSaving) return;
   const title = document.getElementById('mg-t-name').value.trim();
   if (!title) { showToast('タスク名を入力してください', 'warn'); return; }
+  const kpiWrapVisible = document.getElementById('mg-t-kpi-wrap')?.style.display !== 'none';
   const payload = {
     title,
     goal_id: document.getElementById('mg-t-goal').value || null,
+    kpi_id: kpiWrapVisible ? (document.getElementById('mg-t-kpi').value || null) : null,
     major_category: document.getElementById('mg-t-major').value.trim() || null,
     mid_category: document.getElementById('mg-t-mid').value.trim() || null,
     due_date: document.getElementById('mg-t-due').value || null,
+    priority: _mgTaskPriority,
     status: document.getElementById('mg-t-status').value,
     detail: document.getElementById('mg-t-detail').value.trim() || null,
     memo: document.getElementById('mg-t-memo').value.trim() || null,
     link_url: document.getElementById('mg-t-link').value.trim() || null,
   };
+  const wasEditing = _mgEditTaskId;
   const btn = document.getElementById('mg-t-submit');
   _mgSaving = true; btn.disabled = true;
   try {
-    const res = await apiFetch(_mgEditTaskId ? `${API}/personal-tasks/${_mgEditTaskId}` : `${API}/personal-tasks`, {
-      method: _mgEditTaskId ? 'PATCH' : 'POST',
+    const res = await apiFetch(wasEditing ? `${API}/personal-tasks/${wasEditing}` : `${API}/personal-tasks`, {
+      method: wasEditing ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '保存に失敗しました');
-    closeModal('modal-mg-task');
-    showToast(_mgEditTaskId ? 'タスクを更新しました' : 'タスクを追加しました', 'success');
-    await loadMyGoalsPage();
+    if (addNext && !wasEditing) {
+      // 連続登録: モーダルを開いたまま、目標・分類は引き継いでタスク名などをリセット
+      const keep = { goal: payload.goal_id, kpi: payload.kpi_id, major: payload.major_category, mid: payload.mid_category };
+      await loadMyGoalsPage();
+      mgOpenTaskModal();
+      document.getElementById('mg-t-goal').value = keep.goal || '';
+      mgSyncTaskKpiSelect(keep.kpi);
+      document.getElementById('mg-t-major').value = keep.major || '';
+      document.getElementById('mg-t-mid').value = keep.mid || '';
+      document.getElementById('mg-t-name').focus();
+      showToast(`「${title}」を追加しました。続けてどうぞ`, 'success');
+    } else {
+      closeModal('modal-mg-task');
+      showToast(wasEditing ? 'タスクを更新しました' : 'タスクを追加しました', 'success');
+      await loadMyGoalsPage();
+    }
   } catch (e) {
     showToast(e.message, 'error');
   } finally {
     _mgSaving = false; btn.disabled = false;
   }
+}
+
+// ---------- KPI（何を何回する）モーダル ----------
+let _mgEditKpiId = null;
+
+function mgOpenKpiModal(kpiId) {
+  _mgEditKpiId = kpiId || null;
+  const k = kpiId ? (_mgData?.kpis || []).find(x => x.id === kpiId) : null;
+  document.getElementById('mg-k-title').textContent = k ? '📌 KPIを編集' : '📌 KPIを追加';
+  const sel = document.getElementById('mg-k-goal');
+  sel.innerHTML = (_mgData?.goals || [])
+    .filter(g => g.status !== 'archived' || g.id === k?.goal_id)
+    .map(g => `<option value="${esc(g.id)}">${esc(g.emoji || '🎯')} ${esc(g.title)}</option>`)
+    .join('');
+  // 目標モーダルの詳細設定から開いた場合は、編集中の目標を初期選択
+  sel.value = k ? k.goal_id : (_mgEditGoalId || sel.value);
+  document.getElementById('mg-k-name').value = k?.title || '';
+  document.getElementById('mg-k-target').value = k != null ? mgNum(k.target_count) : '';
+  document.getElementById('mg-k-unit').value = k?.unit || '';
+  document.getElementById('mg-k-current').value = k != null ? mgNum(k.current_count) : '';
+  document.getElementById('mg-k-due').value = k?.due_date || '';
+  document.getElementById('mg-k-delete').style.display = k ? '' : 'none';
+  openModal('modal-mg-kpi');
+}
+
+async function mgSubmitKpi() {
+  if (_mgSaving) return;
+  const title = document.getElementById('mg-k-name').value.trim();
+  if (!title) { showToast('KPI（何をするか）を入力してください', 'warn'); return; }
+  const goalId = document.getElementById('mg-k-goal').value;
+  if (!goalId) { showToast('KPIを紐付ける目標を選んでください', 'warn'); return; }
+  const target = document.getElementById('mg-k-target').value;
+  if (target === '' || Number(target) <= 0) { showToast('「何回？」に1以上の数値を入力してください', 'warn'); return; }
+  const payload = {
+    goal_id: goalId,
+    title,
+    target_count: Number(target),
+    current_count: document.getElementById('mg-k-current').value === '' ? 0 : Number(document.getElementById('mg-k-current').value),
+    unit: document.getElementById('mg-k-unit').value.trim() || '回',
+    due_date: document.getElementById('mg-k-due').value || null,
+  };
+  const btn = document.getElementById('mg-k-submit');
+  _mgSaving = true; btn.disabled = true;
+  try {
+    const res = await apiFetch(_mgEditKpiId ? `${API}/personal-kpis/${_mgEditKpiId}` : `${API}/personal-kpis`, {
+      method: _mgEditKpiId ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '保存に失敗しました');
+    closeModal('modal-mg-kpi');
+    showToast(_mgEditKpiId ? 'KPIを更新しました' : 'KPIを追加しました', 'success');
+    await loadMyGoalsPage();
+    mgRenderGoalKpiList(); // 目標モーダルが開いていれば詳細設定のKPI一覧も更新
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    _mgSaving = false; btn.disabled = false;
+  }
+}
+
+async function mgDeleteKpi() {
+  if (!_mgEditKpiId) return;
+  const k = (_mgData?.kpis || []).find(x => x.id === _mgEditKpiId);
+  if (!confirm(`KPI「${k?.title || ''}」を削除します。紐付いたタスクは残ります。よろしいですか？`)) return;
+  try {
+    const res = await apiFetch(`${API}/personal-kpis/${_mgEditKpiId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '削除に失敗しました');
+    closeModal('modal-mg-kpi');
+    showToast('KPIを削除しました', 'success');
+    await loadMyGoalsPage();
+    mgRenderGoalKpiList();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ＋1ボタン（カード/目標モーダルから）。目標値到達の瞬間だけ🎉
+async function mgKpiPlusOne(kpiId) {
+  const k = (_mgData?.kpis || []).find(x => x.id === kpiId);
+  if (!k) return;
+  const next = (Number(k.current_count) || 0) + 1;
+  try {
+    const res = await apiFetch(`${API}/personal-kpis/${kpiId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_count: next }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '更新に失敗しました');
+    const target = Number(k.target_count) || 0;
+    const reached = target > 0 && next >= target && (Number(k.current_count) || 0) < target;
+    showToast(reached ? `🎉 KPI「${k.title}」達成！おつかれさま！` : `＋1！（${mgNum(next)}/${mgNum(target)}${k.unit || '回'}）`, 'success');
+    await loadMyGoalsPage();
+    mgRenderGoalKpiList();
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 async function mgDeleteTask() {

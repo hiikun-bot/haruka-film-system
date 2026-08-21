@@ -2612,7 +2612,7 @@ CREATE INDEX IF NOT EXISTS idx_creative_deletion_logs_file_name
 -- ==================== 🎯 マイゴール（完全個人の目標・タスク管理 / ADR 032） ====================
 -- 本人以外（admin 含む）は一切閲覧・操作不可。プライバシーはアプリ層で100%担保
 -- （routes/haruka.js: requireAuth のみ + req.user.id 条件。RLSポリシー・permission key 無し）。
--- 詳細: migrations/2026-08-21_personal_goals.sql
+-- 詳細: migrations/2026-08-21_personal_goals.sql / 2026-08-22_personal_goals_term_kpi.sql
 
 CREATE TABLE IF NOT EXISTS personal_goals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2621,8 +2621,24 @@ CREATE TABLE IF NOT EXISTS personal_goals (
   purpose TEXT,                -- なぜやるのか（任意）
   emoji TEXT,                  -- 表示用絵文字（任意）
   target_date DATE,            -- 目標日（カウントダウン用）
+  term TEXT CHECK (term IN ('short','mid','long')),  -- 期間区分（任意）: 短期/中期/長期
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','achieved','archived')),
   achieved_at TIMESTAMPTZ,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- KPI（何を何回する）: しっかりやる人向けの任意機能。UIでは詳細設定に折りたたみ
+CREATE TABLE IF NOT EXISTS personal_goal_kpis (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  goal_id UUID NOT NULL REFERENCES personal_goals(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,                       -- 何を（例: 営業DMを送る）
+  target_count NUMERIC NOT NULL DEFAULT 1,   -- 何回（目標値）
+  current_count NUMERIC NOT NULL DEFAULT 0,  -- 現在の回数
+  unit TEXT NOT NULL DEFAULT '回',
+  due_date DATE,
   sort_order INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
@@ -2632,6 +2648,7 @@ CREATE TABLE IF NOT EXISTS personal_tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id),
   goal_id UUID REFERENCES personal_goals(id) ON DELETE SET NULL,
+  kpi_id UUID REFERENCES personal_goal_kpis(id) ON DELETE SET NULL,  -- KPI紐付け（任意）
   major_category TEXT,         -- 大分類（任意）
   mid_category TEXT,           -- 中分類（任意）
   title TEXT NOT NULL,
@@ -2639,6 +2656,7 @@ CREATE TABLE IF NOT EXISTS personal_tasks (
   memo TEXT,
   link_url TEXT,               -- 資料URL
   due_date DATE,
+  priority TEXT CHECK (priority IN ('high','mid','low')),  -- 優先度（任意）
   status TEXT NOT NULL DEFAULT '未着手' CHECK (status IN ('未着手','進行中','完了')),
   completed_at TIMESTAMPTZ,
   sort_order INT NOT NULL DEFAULT 0,
@@ -2647,8 +2665,11 @@ CREATE TABLE IF NOT EXISTS personal_tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_personal_goals_user_id     ON personal_goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_personal_goal_kpis_user_id ON personal_goal_kpis(user_id);
+CREATE INDEX IF NOT EXISTS idx_personal_goal_kpis_goal_id ON personal_goal_kpis(goal_id);
 CREATE INDEX IF NOT EXISTS idx_personal_tasks_user_id     ON personal_tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_personal_tasks_goal_id     ON personal_tasks(goal_id);
+CREATE INDEX IF NOT EXISTS idx_personal_tasks_kpi_id      ON personal_tasks(kpi_id);
 CREATE INDEX IF NOT EXISTS idx_personal_tasks_user_status ON personal_tasks(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_personal_tasks_due_date    ON personal_tasks(due_date);
 
