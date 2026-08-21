@@ -22472,6 +22472,264 @@ router.get('/onboarding/:id/first-message', requireAuth, requirePermission('onbo
   res.json({ occupation: data.occupation, message: buildOnboardingFirstMessage(data.occupation) });
 });
 
+// ============================================================
+// 🎯 マイゴール（完全個人の目標・タスク管理）
+// ------------------------------------------------------------
+// 背景: 個人の目標（例: 法人設立）とタスク（大分類→中分類→タスクの3階層）を
+//       本人だけが管理するページ。進捗率・ストリーク・今週完了数の集計は
+//       サーバーでは行わず、クライアント側（utils/personal-goals.js を /js/ で配信）で算出する。
+// テーブル: personal_goals / personal_tasks（migrations/2026-08-21_personal_goals.sql）
+// 権限: requireAuth のみ（permission key 無し・全ロール利用可）。
+// ⚠️ 完全個人領域（ADR 032）: 本人（req.user.id）以外は admin であっても一切読めない・書けない。
+//    全クエリで req.user.id を条件に使い、user_id パラメータは受け付けない。
+//    admin バイパス / isSuperAdminUser バイパスを絶対に追加しないこと。
+// ============================================================
+const PG_GOAL_STATUSES = new Set(['active', 'achieved', 'archived']);
+const PG_TASK_STATUSES = new Set(['未着手', '進行中', '完了']);
+const isPgDateStr = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+const isMissingPersonalGoalsTable = (err) => {
+  const msg = (err && err.message) || '';
+  return /relation .*personal_(goals|tasks).* does not exist/.test(msg) || (err && err.code === '42P01');
+};
+const personalGoalsMigrationHint = (res) =>
+  res.status(503).json({ error: 'マイゴールのテーブルが未作成です。migrations/2026-08-21_personal_goals.sql を本番Supabaseに適用してください。' });
+
+// 任意テキスト項目の共通整形: undefined=更新しない / 空文字・空白のみ=null
+const pgTrimOrNull = (v) => {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  return s || null;
+};
+
+// GET /personal-goals — 目標＋タスクをまとめて1本で返す（往復削減。分類・進捗はクライアント算出）
+router.get('/personal-goals', requireAuth, async (req, res) => {
+  const [goalsRes, tasksRes] = await Promise.all([
+    supabase.from('personal_goals').select('*')
+      .eq('user_id', req.user.id) // 本人のみ（admin も他人の分は取得不可）
+      .order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+    supabase.from('personal_tasks').select('*')
+      .eq('user_id', req.user.id)
+      .order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+  ]);
+  const err = goalsRes.error || tasksRes.error;
+  if (err) {
+    if (isMissingPersonalGoalsTable(err)) return personalGoalsMigrationHint(res);
+    return res.status(500).json({ error: err.message });
+  }
+  res.json({ goals: goalsRes.data || [], tasks: tasksRes.data || [] });
+});
+
+// POST /personal-goals — 目標の作成
+router.post('/personal-goals', requireAuth, async (req, res) => {
+  const { title, purpose, emoji, target_date, sort_order } = req.body || {};
+  if (!title || typeof title !== 'string' || !title.trim()) {
+    return res.status(400).json({ error: 'タイトルは必須です' });
+  }
+  if (target_date != null && target_date !== '' && !isPgDateStr(target_date)) {
+    return res.status(400).json({ error: '目標日は YYYY-MM-DD 形式で指定してください' });
+  }
+  const insert = {
+    user_id: req.user.id, // 常に本人。body の user_id は受け付けない
+    title: title.trim(),
+    purpose: pgTrimOrNull(purpose),
+    emoji: pgTrimOrNull(emoji),
+    target_date: target_date || null,
+    sort_order: Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0,
+  };
+  const { data, error } = await supabase.from('personal_goals').insert(insert).select().single();
+  if (error) {
+    if (isMissingPersonalGoalsTable(error)) return personalGoalsMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PATCH /personal-goals/:id — 目標の更新（achieved にしたら achieved_at、戻したら NULL）
+router.patch('/personal-goals/:id', requireAuth, async (req, res) => {
+  const { title, purpose, emoji, target_date, status, sort_order } = req.body || {};
+  const update = {};
+  if (title !== undefined) {
+    if (typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'タイトルは空にできません' });
+    update.title = title.trim();
+  }
+  if (purpose !== undefined) update.purpose = pgTrimOrNull(purpose);
+  if (emoji !== undefined) update.emoji = pgTrimOrNull(emoji);
+  if (target_date !== undefined) {
+    if (target_date != null && target_date !== '' && !isPgDateStr(target_date)) {
+      return res.status(400).json({ error: '目標日は YYYY-MM-DD 形式で指定してください' });
+    }
+    update.target_date = target_date || null;
+  }
+  if (status !== undefined) {
+    if (!PG_GOAL_STATUSES.has(status)) {
+      return res.status(400).json({ error: `status は ${[...PG_GOAL_STATUSES].join(' / ')} のいずれかで指定してください` });
+    }
+    update.status = status;
+    update.achieved_at = status === 'achieved' ? new Date().toISOString() : null;
+  }
+  if (sort_order !== undefined) update.sort_order = Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0;
+  if (Object.keys(update).length === 0) return res.status(400).json({ error: '更新項目がありません' });
+  update.updated_at = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('personal_goals')
+    .update(update)
+    .eq('id', req.params.id)
+    .eq('user_id', req.user.id) // IDOR防止: 他人の目標IDを指定しても 0行 → 404
+    .select()
+    .maybeSingle();
+  if (error) {
+    if (isMissingPersonalGoalsTable(error)) return personalGoalsMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: '目標が見つかりません' });
+  res.json(data);
+});
+
+// DELETE /personal-goals/:id — 目標の削除（紐付くタスクは FK ON DELETE SET NULL で残る）
+router.delete('/personal-goals/:id', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('personal_goals')
+    .delete()
+    .eq('id', req.params.id)
+    .eq('user_id', req.user.id) // IDOR防止: 他人の目標は削除不可（0行 → 404）
+    .select('id')
+    .maybeSingle();
+  if (error) {
+    if (isMissingPersonalGoalsTable(error)) return personalGoalsMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: '目標が見つかりません' });
+  res.json({ ok: true });
+});
+
+// goal_id が「本人の目標」を指しているか検証（他人の goal_id への紐付けを拒否）
+async function pgAssertOwnGoal(goalId, userId) {
+  const { data, error } = await supabase
+    .from('personal_goals')
+    .select('id')
+    .eq('id', goalId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
+}
+
+// POST /personal-tasks — タスクの作成
+router.post('/personal-tasks', requireAuth, async (req, res) => {
+  const { goal_id, major_category, mid_category, title, detail, memo, link_url, due_date, status, sort_order } = req.body || {};
+  if (!title || typeof title !== 'string' || !title.trim()) {
+    return res.status(400).json({ error: 'タスク名は必須です' });
+  }
+  if (due_date != null && due_date !== '' && !isPgDateStr(due_date)) {
+    return res.status(400).json({ error: '期限は YYYY-MM-DD 形式で指定してください' });
+  }
+  const taskStatus = status === undefined || status === null || status === '' ? '未着手' : status;
+  if (!PG_TASK_STATUSES.has(taskStatus)) {
+    return res.status(400).json({ error: `status は ${[...PG_TASK_STATUSES].join(' / ')} のいずれかで指定してください` });
+  }
+  try {
+    if (goal_id && !(await pgAssertOwnGoal(goal_id, req.user.id))) {
+      return res.status(400).json({ error: '指定された目標が見つかりません' });
+    }
+  } catch (e) {
+    if (isMissingPersonalGoalsTable(e)) return personalGoalsMigrationHint(res);
+    return res.status(500).json({ error: e.message });
+  }
+  const insert = {
+    user_id: req.user.id, // 常に本人。body の user_id は受け付けない
+    goal_id: goal_id || null,
+    major_category: pgTrimOrNull(major_category),
+    mid_category: pgTrimOrNull(mid_category),
+    title: title.trim(),
+    detail: pgTrimOrNull(detail),
+    memo: pgTrimOrNull(memo),
+    link_url: pgTrimOrNull(link_url),
+    due_date: due_date || null,
+    status: taskStatus,
+    completed_at: taskStatus === '完了' ? new Date().toISOString() : null,
+    sort_order: Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0,
+  };
+  const { data, error } = await supabase.from('personal_tasks').insert(insert).select().single();
+  if (error) {
+    if (isMissingPersonalGoalsTable(error)) return personalGoalsMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json(data);
+});
+
+// PATCH /personal-tasks/:id — タスクの更新（「完了」にしたら completed_at、戻したら NULL）
+router.patch('/personal-tasks/:id', requireAuth, async (req, res) => {
+  const { goal_id, major_category, mid_category, title, detail, memo, link_url, due_date, status, sort_order } = req.body || {};
+  const update = {};
+  if (title !== undefined) {
+    if (typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'タスク名は空にできません' });
+    update.title = title.trim();
+  }
+  if (goal_id !== undefined) {
+    try {
+      if (goal_id && !(await pgAssertOwnGoal(goal_id, req.user.id))) {
+        return res.status(400).json({ error: '指定された目標が見つかりません' });
+      }
+    } catch (e) {
+      if (isMissingPersonalGoalsTable(e)) return personalGoalsMigrationHint(res);
+      return res.status(500).json({ error: e.message });
+    }
+    update.goal_id = goal_id || null;
+  }
+  if (major_category !== undefined) update.major_category = pgTrimOrNull(major_category);
+  if (mid_category !== undefined) update.mid_category = pgTrimOrNull(mid_category);
+  if (detail !== undefined) update.detail = pgTrimOrNull(detail);
+  if (memo !== undefined) update.memo = pgTrimOrNull(memo);
+  if (link_url !== undefined) update.link_url = pgTrimOrNull(link_url);
+  if (due_date !== undefined) {
+    if (due_date != null && due_date !== '' && !isPgDateStr(due_date)) {
+      return res.status(400).json({ error: '期限は YYYY-MM-DD 形式で指定してください' });
+    }
+    update.due_date = due_date || null;
+  }
+  if (status !== undefined) {
+    if (!PG_TASK_STATUSES.has(status)) {
+      return res.status(400).json({ error: `status は ${[...PG_TASK_STATUSES].join(' / ')} のいずれかで指定してください` });
+    }
+    update.status = status;
+    update.completed_at = status === '完了' ? new Date().toISOString() : null;
+  }
+  if (sort_order !== undefined) update.sort_order = Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0;
+  if (Object.keys(update).length === 0) return res.status(400).json({ error: '更新項目がありません' });
+  update.updated_at = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('personal_tasks')
+    .update(update)
+    .eq('id', req.params.id)
+    .eq('user_id', req.user.id) // IDOR防止: 他人のタスクIDを指定しても 0行 → 404
+    .select()
+    .maybeSingle();
+  if (error) {
+    if (isMissingPersonalGoalsTable(error)) return personalGoalsMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: 'タスクが見つかりません' });
+  res.json(data);
+});
+
+// DELETE /personal-tasks/:id — タスクの削除
+router.delete('/personal-tasks/:id', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('personal_tasks')
+    .delete()
+    .eq('id', req.params.id)
+    .eq('user_id', req.user.id) // IDOR防止: 他人のタスクは削除不可（0行 → 404）
+    .select('id')
+    .maybeSingle();
+  if (error) {
+    if (isMissingPersonalGoalsTable(error)) return personalGoalsMigrationHint(res);
+    return res.status(500).json({ error: error.message });
+  }
+  if (!data) return res.status(404).json({ error: 'タスクが見つかりません' });
+  res.json({ ok: true });
+});
+
 // router を主エクスポートにしつつ、ヘルパー関数も同じ object 経由で取り出せるようにする
 // 用途:
 //   const harukaRouter = require('./routes/haruka');                 // ルーター本体
