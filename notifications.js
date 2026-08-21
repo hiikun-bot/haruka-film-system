@@ -136,6 +136,18 @@ async function slackPost(token, channelOrUserId, text) {
   }
 }
 
+// Slack ユーザーID（U...）宛の DM 送信。bot に im:write スコープが必要。
+// ワークスペースは slack_workspaces の先頭行（現状 HARUKA FILM の1件のみ登録）を使う。
+async function sendSlackDm(slackUserId, text) {
+  if (!slackUserId) return { ok: false, reason: 'no_user_id' };
+  const { data, error } = await supabase.from('slack_workspaces')
+    .select('bot_token').limit(1).maybeSingle();
+  if (error) console.warn('[notif/slack-dm] slack_workspaces select failed:', error.message);
+  const token = data?.bot_token || null;
+  if (!token) return { ok: false, reason: 'no_workspace_token' };
+  return slackPost(token, slackUserId, text);
+}
+
 async function sendSlackChannel(channelUrl, text) {
   const parsed = parseSlackChannelUrl(channelUrl);
   if (!parsed) return { ok: false, reason: 'invalid_url' };
@@ -1502,6 +1514,7 @@ module.exports = {
   sendSlackChannel,
   sendSlackChannelWithFile,
   sendSlackWebhook,
+  sendSlackDm,
   sendChatworkRoom,
   // テスト・他モジュールから再利用可能にするためエクスポート
   buildCreativeNotifBody,
