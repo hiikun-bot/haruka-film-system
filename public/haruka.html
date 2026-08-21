@@ -1398,6 +1398,55 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .dash-proj-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:13px}
 .dash-proj-bar{flex:1;height:6px;background:var(--border-light);border-radius:3px;overflow:hidden}
 .dash-proj-fill{height:100%;background:linear-gradient(90deg,var(--em-dark),var(--em));border-radius:3px;transition:width .5s ease}
+/* 🎯 マイゴール（完全個人の目標・タスク管理 / ADR 032） */
+.mg-goal-strip{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.mg-goal-card{flex:1 1 280px;min-width:260px;max-width:100%;background:linear-gradient(135deg,#1a8c88 0%,#2BB8B4 55%,#3ECFCA 100%);border-radius:14px;padding:18px 20px;color:#fff;box-shadow:0 4px 18px rgba(62,207,202,0.22);cursor:pointer;position:relative;overflow:hidden;transition:transform .15s}
+.mg-goal-card:hover{transform:translateY(-2px)}
+.mg-goal-card.achieved{background:linear-gradient(135deg,#B8860B 0%,#E6B422 60%,#FFD700 100%);box-shadow:0 4px 18px rgba(230,180,34,0.25)}
+.mg-goal-title{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mg-goal-countdown{font-size:12px;font-weight:700;background:rgba(255,255,255,0.22);border-radius:9px;padding:2px 10px;white-space:nowrap}
+.mg-goal-countdown.over{background:rgba(192,57,43,0.85)}
+.mg-goal-purpose{font-size:11.5px;opacity:0.85;margin-top:4px;line-height:1.5}
+.mg-goal-bar-row{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:12px;font-weight:700}
+.mg-goal-bar-row .dash-proj-bar{background:rgba(255,255,255,0.28);height:8px;border-radius:4px}
+.mg-goal-bar-row .dash-proj-fill{background:linear-gradient(90deg,#fff,#EAFFFE)}
+.mg-stats-card{flex:0 1 200px;min-width:170px;background:var(--white);border:0.5px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;justify-content:center;gap:8px}
+.mg-stat-line{font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}
+.mg-stat-line b{font-size:19px;color:var(--em-dark)}
+.mg-tabbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.mg-tab{font-size:13px;padding:6px 14px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .15s}
+.mg-tab.active{background:var(--em);color:#fff;border-color:transparent;font-weight:600}
+.mg-major{background:var(--white);border:0.5px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden}
+.mg-major-head{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;font-size:14px;font-weight:700;user-select:none}
+.mg-major-head:hover{background:var(--em-pale)}
+.mg-major-head .dash-proj-bar{max-width:220px}
+.mg-mid{margin:0 14px 10px 34px;border-left:2px solid var(--border-light);padding-left:12px}
+.mg-mid-head{display:flex;align-items:center;gap:8px;padding:7px 4px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);user-select:none}
+.mg-mid-head:hover{background:var(--em-pale);border-radius:6px}
+.mg-mid-head .dash-proj-bar{max-width:140px}
+.mg-caret{font-size:10px;color:var(--text-muted);width:12px;flex-shrink:0;transition:transform .15s}
+.mg-pct{font-size:11.5px;font-weight:700;color:var(--text-muted);white-space:nowrap}
+.mg-done-badge{font-size:13px;animation:mgPop .45s ease}
+.mg-task-row{display:flex;align-items:flex-start;gap:9px;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:13px;line-height:1.45}
+.mg-task-row:hover{background:var(--em-pale)}
+.mg-task-row input[type=checkbox]{margin-top:2.5px;cursor:pointer;accent-color:var(--em-dark);width:15px;height:15px;flex-shrink:0}
+.mg-task-row.done .mg-task-title{color:var(--text-muted);text-decoration:line-through}
+.mg-task-row.just-done{animation:mgRowDone .5s ease}
+.mg-task-meta{font-size:11px;color:var(--text-muted);white-space:nowrap}
+.mg-task-meta.overdue{color:#C0392B;font-weight:700}
+.mg-status-chip{font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;background:#FEFCE8;color:#7A5F00;white-space:nowrap}
+.mg-flat-list{background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:10px 12px}
+.mg-empty{background:var(--white);border:0.5px solid var(--border);border-radius:14px;padding:40px 24px;text-align:center}
+@keyframes mgPop{0%{transform:scale(0.3);opacity:0}60%{transform:scale(1.35)}100%{transform:scale(1);opacity:1}}
+@keyframes mgRowDone{0%{background:var(--em-pale)}50%{background:#D4F4F2}100%{background:transparent}}
+@media (max-width:768px){
+  .mg-goal-strip{gap:10px}
+  .mg-goal-card{flex:1 1 100%;padding:14px 16px}
+  .mg-stats-card{flex:1 1 100%;flex-direction:row;justify-content:space-around}
+  .mg-mid{margin-left:18px}
+  .mg-major-head .dash-proj-bar{max-width:110px}
+  .mg-mid-head .dash-proj-bar{max-width:70px}
+}
 /* 誕生日 */
 .bday-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
 .bday-card{display:flex;align-items:center;gap:10px;padding:10px 12px;border:0.5px solid var(--border);border-radius:10px;background:#fff}
@@ -2354,6 +2403,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <script src="/js/confirm-dialog.js"></script>
 <!-- 共通: ユーザー名表示ヘルパー（システム標準）— 全画面でこのヘルパー経由で名前を表示。インラインJSより先に読み込む -->
 <script src="/js/name-display.js"></script>
+<!-- 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js を server.js が配信）。インラインJSが参照するため defer なし -->
+<script src="/js/personal-goals.js"></script>
 </head>
 <body>
 <div id="toast-container"></div>
@@ -3909,6 +3960,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
     <button class="nav-btn" id="nav-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">オンボーディング</button>
+    <!-- 🎯 マイゴール: 完全個人ページ（全ロール利用可）のため display:none 不要・applyRoleBasedUI での制御も不要（ADR 032） -->
+    <button class="nav-btn" id="nav-my-goals" data-page="my-goals" onclick="showPage('my-goals',this)">🎯 マイゴール</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
@@ -4035,6 +4088,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
     <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
+    <!-- 🎯 マイゴール: 完全個人ページ（全ロール利用可）のため display:none 不要・applyRoleBasedUI での制御も不要（ADR 032） -->
+    <button class="nav-drawer-btn" id="nav-drawer-my-goals" data-page="my-goals" onclick="showPage('my-goals',this)">🎯 マイゴール</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
@@ -8295,6 +8350,131 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">新メンバーの受け入れ手続き（旧: オンボーディング引き継ぎシート）をチェックリストで管理します。行クリックで詳細を開きます。</div>
     <div id="ob-list">
       <div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- 🎯 マイゴール（完全個人の目標・タスク管理 / ADR 032）
+     requireAuth のみ・全ロール表示。本人以外（admin 含む）はデータに一切アクセス不可（サーバー側で担保） -->
+<div id="page-my-goals" class="page">
+  <div style="max-width:1100px;margin:0 auto;padding:0 4px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <h2 style="margin:0;font-size:18px">🎯 マイゴール</h2>
+      <span style="font-size:11px;color:var(--text-muted);border:0.5px solid var(--border);border-radius:10px;padding:2px 10px" title="管理者を含め、他の人にはこのページの内容は一切見えません">🔒 あなた専用</span>
+      <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn-sm" id="mg-btn-add-goal" onclick="mgOpenGoalModal()">＋ 目標を追加</button>
+        <button class="btn-primary" id="mg-btn-add-task" style="padding:6px 16px;font-size:13px" onclick="mgOpenTaskModal()">＋ タスクを追加</button>
+      </div>
+    </div>
+    <div id="mg-hero"></div>
+    <div class="mg-tabbar" id="mg-tabbar" style="display:none">
+      <button class="mg-tab active" id="mg-tab-tree" onclick="mgSetTab('tree')">🌳 ツリー</button>
+      <button class="mg-tab" id="mg-tab-week" onclick="mgSetTab('week')">📅 今週やること</button>
+      <button class="mg-tab" id="mg-tab-due" onclick="mgSetTab('due')">⏰ 期限順</button>
+      <select id="mg-goal-filter" class="form-input" style="width:auto;max-width:220px;margin-left:auto;padding:5px 8px;font-size:12px" onchange="mgRenderBody()">
+        <option value="">すべての目標</option>
+      </select>
+    </div>
+    <div id="mg-body">
+      <div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- 🎯 マイゴール 目標 作成/編集モーダル -->
+<div class="modal-overlay" id="modal-mg-goal" style="z-index:310">
+  <div class="modal-card" style="width:min(520px,95vw)">
+    <div class="modal-title"><span id="mg-g-title">🎯 目標を追加</span><button class="modal-close" onclick="closeModal('modal-mg-goal')">×</button></div>
+    <div style="display:flex;gap:10px">
+      <div class="form-group" style="width:90px;flex-shrink:0">
+        <label class="form-label">絵文字</label>
+        <input class="form-input" id="mg-g-emoji" placeholder="🏢" maxlength="8" style="text-align:center">
+      </div>
+      <div class="form-group" style="flex:1">
+        <label class="form-label">目標 <span style="color:#C0392B">*</span></label>
+        <input class="form-input" id="mg-g-name" placeholder="例) 会社設立">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">なぜやるのか（任意）</label>
+      <textarea class="form-input" id="mg-g-purpose" rows="2" style="resize:vertical" placeholder="例) 事業を法人として本格化させるため"></textarea>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:150px">
+        <label class="form-label">目標日（カウントダウン表示）</label>
+        <input class="form-input" type="date" id="mg-g-date">
+      </div>
+      <div class="form-group" style="flex:1;min-width:150px" id="mg-g-status-wrap">
+        <label class="form-label">ステータス</label>
+        <select class="form-input" id="mg-g-status">
+          <option value="active">進行中</option>
+          <option value="achieved">達成 🏆</option>
+          <option value="archived">アーカイブ（非表示）</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
+      <button class="btn-sm" id="mg-g-delete" style="color:#C0392B;margin-right:auto;display:none" onclick="mgDeleteGoal()">🗑 削除</button>
+      <button class="btn-sm" onclick="closeModal('modal-mg-goal')">キャンセル</button>
+      <button class="btn-primary" id="mg-g-submit" onclick="mgSubmitGoal()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 🎯 マイゴール タスク 作成/編集モーダル -->
+<div class="modal-overlay" id="modal-mg-task" style="z-index:310">
+  <div class="modal-card" style="width:min(560px,95vw)">
+    <div class="modal-title"><span id="mg-t-title">✅ タスクを追加</span><button class="modal-close" onclick="closeModal('modal-mg-task')">×</button></div>
+    <div class="form-group">
+      <label class="form-label">タスク名 <span style="color:#C0392B">*</span></label>
+      <input class="form-input" id="mg-t-name" placeholder="例) 商号候補を洗い出す">
+    </div>
+    <div class="form-group">
+      <label class="form-label">目標に紐付け（任意）</label>
+      <select class="form-input" id="mg-t-goal"></select>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:150px">
+        <label class="form-label">大分類（任意）</label>
+        <input class="form-input" id="mg-t-major" list="mg-datalist-major" placeholder="例) 設計">
+        <datalist id="mg-datalist-major"></datalist>
+      </div>
+      <div class="form-group" style="flex:1;min-width:150px">
+        <label class="form-label">中分類（任意）</label>
+        <input class="form-input" id="mg-t-mid" list="mg-datalist-mid" placeholder="例) 商号">
+        <datalist id="mg-datalist-mid"></datalist>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:150px">
+        <label class="form-label">期限（任意）</label>
+        <input class="form-input" type="date" id="mg-t-due">
+      </div>
+      <div class="form-group" style="flex:1;min-width:150px">
+        <label class="form-label">ステータス</label>
+        <select class="form-input" id="mg-t-status">
+          <option value="未着手">未着手</option>
+          <option value="進行中">進行中</option>
+          <option value="完了">完了</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">詳細（任意）</label>
+      <textarea class="form-input" id="mg-t-detail" rows="2" style="resize:vertical"></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">メモ（任意）</label>
+      <textarea class="form-input" id="mg-t-memo" rows="2" style="resize:vertical"></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">資料URL（任意）</label>
+      <input class="form-input" id="mg-t-link" placeholder="https://...">
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
+      <button class="btn-sm" id="mg-t-delete" style="color:#C0392B;margin-right:auto;display:none" onclick="mgDeleteTask()">🗑 削除</button>
+      <button class="btn-sm" onclick="closeModal('modal-mg-task')">キャンセル</button>
+      <button class="btn-primary" id="mg-t-submit" onclick="mgSubmitTask()">保存</button>
     </div>
   </div>
 </div>
@@ -17908,6 +18088,8 @@ function setPreviewRole(role) {
   if (document.getElementById('page-bulk-deliver')?.classList.contains('active') && typeof loadBulkDeliverPage === 'function') loadBulkDeliverPage();
   // 🚀 オンボーディング: onboarding.page 限定ページ。VIEW AS 切替で前ロールの表示（削除ボタン等）が残らないよう再描画（ADR 015）
   if (document.getElementById('page-onboarding')?.classList.contains('active') && typeof loadOnboardingPage === 'function') loadOnboardingPage();
+  // 🎯 マイゴール: req.user 本人のデータのみ。VIEW AS でロールを変えても内容は変わらない（本人領域のため）が、描画一貫性のため再ロード（ADR 015）
+  if (document.getElementById('page-my-goals')?.classList.contains('active') && typeof loadMyGoalsPage === 'function') loadMyGoalsPage();
   // 分析ページ表示中に VIEW AS でロールが変わると、サイドバーから消えた項目が main にだけ残る不整合があるため再初期化
   if (document.getElementById('page-analytics')?.classList.contains('active') && typeof initAnalyticsPage === 'function') {
     if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) _analyticsView = 'bug-reports';
@@ -23371,6 +23553,7 @@ function showPage(name, btn) {
   if(name==='work-hours') loadWorkHoursPage();
   if(name==='bulk-deliver') loadBulkDeliverPage();
   if(name==='onboarding') loadOnboardingPage();
+  if(name==='my-goals') loadMyGoalsPage();
   if(name==='material-square') loadMaterialSquarePage();
   else { try { if (typeof msStopListPolling === 'function') msStopListPolling(); } catch (_) {} }
 
@@ -25232,6 +25415,470 @@ async function obDeleteRecord() {
     closeModal('modal-onboarding-detail');
     showToast('削除しました', 'success');
     loadOnboardingPage();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ==================== 🎯 マイゴール（完全個人の目標・タスク管理）— ADR 032 ====================
+//
+// 本人（req.user.id）のデータのみを扱う完全個人ページ。管理者を含め他人からは一切見えない。
+// 表示内容は「ログイン本人」で決まりロール・権限に依存しないため、権限分岐は一切書かない
+// （ADR 015: currentUser.role 直書き禁止にもそのまま適合）。
+// 進捗率・分類ツリー・今週完了数・ストリークは PersonalGoalsUtils
+// （/js/personal-goals.js = utils/personal-goals.js・JST固定・jestテスト済み）でクライアント算出する。
+
+let _mgData = null;   // GET /personal-goals のレスポンス { goals, tasks }
+let _mgTab = 'tree';  // 'tree' | 'week' | 'due'
+let _mgSaving = false;
+const MG_TREE_CLOSED_LS_KEY = 'hfs-mg-tree-closed'; // 閉じたノードのキー集合（既定=すべて開く）
+let _mgClosed = new Set();
+try { _mgClosed = new Set(JSON.parse(localStorage.getItem(MG_TREE_CLOSED_LS_KEY) || '[]')); } catch (_) {}
+let _mgJustCompleted = new Set(); // 直近のチェックで100%になった分類キー（✅ポップ演出用）
+let _mgEditGoalId = null;
+let _mgEditTaskId = null;
+
+function mgTodayJst() { return PersonalGoalsUtils.jstDateStr(new Date()); }
+function mgDateLabel(d) {
+  if (!d) return '';
+  const [y, m, day] = d.split('-').map(Number);
+  return `${y}/${m}/${day}`;
+}
+
+async function loadMyGoalsPage() {
+  const body = document.getElementById('mg-body');
+  if (!body) return;
+  try {
+    const res = await apiFetch(`${API}/personal-goals`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'マイゴールの取得に失敗しました');
+    _mgData = { goals: data.goals || [], tasks: data.tasks || [] };
+    mgRender();
+  } catch (e) {
+    console.error('[my-goals]', e);
+    document.getElementById('mg-hero').innerHTML = '';
+    body.innerHTML = `<div style="padding:32px;text-align:center;color:#C0392B;font-size:13px">${esc(e.message)}</div>`;
+  }
+}
+
+function mgRender() {
+  mgRenderHero();
+  mgRenderGoalFilter();
+  mgRenderBody();
+}
+
+// ---------- 上部固定の目標カード（カウントダウン＋進捗＋今週/ストリーク） ----------
+function mgRenderHero() {
+  const hero = document.getElementById('mg-hero');
+  const tabbar = document.getElementById('mg-tabbar');
+  if (!hero || !_mgData) return;
+  const { goals, tasks } = _mgData;
+  const today = mgTodayJst();
+  const visibleGoals = goals.filter(g => g.status !== 'archived');
+
+  // 目標もタスクも無い → 空状態（使い方の説明＋最初の目標を作るボタン）
+  if (visibleGoals.length === 0 && tasks.length === 0) {
+    tabbar.style.display = 'none';
+    document.getElementById('mg-body').innerHTML = '';
+    hero.innerHTML = `<div class="mg-empty">
+      <div style="font-size:40px;margin-bottom:10px">🎯</div>
+      <div style="font-size:16px;font-weight:800;margin-bottom:8px">マイゴールをはじめよう</div>
+      <div style="font-size:13px;color:var(--text-muted);line-height:1.9;max-width:520px;margin:0 auto 16px">
+        ここは<b>あなた専用</b>の目標・タスク管理ページです（管理者を含め他の人には見えません）。<br>
+        ① まず目標を作る（例:「🏢 会社設立」目標日 2027/7/1）<br>
+        ② タスクを追加して大分類・中分類で整理（例: 設計 &gt; 商号 &gt; 商号候補を洗い出す）<br>
+        ③ チェックを入れるたびに進捗バーが伸びて、目標日までのカウントダウンが進みます
+      </div>
+      <button class="btn-primary" onclick="mgOpenGoalModal()">🎯 最初の目標を作る</button>
+    </div>`;
+    return;
+  }
+
+  tabbar.style.display = 'flex';
+  const weekCountAll = PersonalGoalsUtils.countWeekCompleted(tasks, today);
+  const streak = PersonalGoalsUtils.computeStreak(tasks, today);
+
+  const cards = visibleGoals.map(g => {
+    const gTasks = tasks.filter(t => t.goal_id === g.id);
+    const p = PersonalGoalsUtils.computeProgress(gTasks);
+    const gWeek = PersonalGoalsUtils.countWeekCompleted(gTasks, today);
+    let countdown = '';
+    if (g.status === 'achieved') {
+      countdown = '<span class="mg-goal-countdown">🏆 達成！</span>';
+    } else if (g.target_date) {
+      const days = PersonalGoalsUtils.daysUntil(g.target_date, today);
+      const label = days > 0 ? `⏳あと${days}日` : (days === 0 ? '⏳今日！' : `⚠️${-days}日超過`);
+      countdown = `<span class="mg-goal-countdown${days < 0 ? ' over' : ''}">${label} (${esc(mgDateLabel(g.target_date))})</span>`;
+    }
+    const bar = p.total > 0
+      ? `<div class="mg-goal-bar-row">
+          <div class="dash-proj-bar"><div class="dash-proj-fill" data-mg-w="${p.pct}" style="width:0%"></div></div>
+          <span>${p.pct}% (${p.done}/${p.total})</span>
+        </div>
+        <div style="font-size:11.5px;opacity:0.9;margin-top:8px">💪 今週 ${gWeek}件完了</div>`
+      : '<div style="font-size:11.5px;opacity:0.85;margin-top:10px">タスク未登録 — 「＋ タスクを追加」でこの目標に紐付けできます</div>';
+    return `<div class="mg-goal-card${g.status === 'achieved' ? ' achieved' : ''}" onclick="mgOpenGoalModal('${esc(g.id)}')" title="クリックで編集">
+      <div class="mg-goal-title"><span>${esc(g.emoji || '🎯')} ${esc(g.title)}</span>${countdown}</div>
+      ${g.purpose ? `<div class="mg-goal-purpose">${esc(g.purpose)}</div>` : ''}
+      ${bar}
+    </div>`;
+  }).join('');
+
+  const statsCard = `<div class="mg-stats-card">
+    <div class="mg-stat-line">💪 今週 <b>${weekCountAll}</b> 件完了</div>
+    <div class="mg-stat-line">🔥 <b>${streak}</b> 日連続</div>
+  </div>`;
+
+  hero.innerHTML = `<div class="mg-goal-strip">${cards}${statsCard}</div>`;
+  mgAnimateBars(hero);
+}
+
+// プログレスバーを 0% → 実値へ（.dash-proj-fill の width transition .5s を発火させる）
+function mgAnimateBars(container) {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    container.querySelectorAll('[data-mg-w]').forEach(el => { el.style.width = `${el.dataset.mgW}%`; });
+  }));
+}
+
+function mgRenderGoalFilter() {
+  const sel = document.getElementById('mg-goal-filter');
+  if (!sel || !_mgData) return;
+  const prev = sel.value;
+  const opts = ['<option value="">すべての目標</option>'];
+  _mgData.goals.filter(g => g.status !== 'archived').forEach(g => {
+    opts.push(`<option value="${esc(g.id)}">${esc(g.emoji || '🎯')} ${esc(g.title)}</option>`);
+  });
+  opts.push('<option value="none">（目標に紐付けなし）</option>');
+  sel.innerHTML = opts.join('');
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+function mgFilteredTasks() {
+  const filter = document.getElementById('mg-goal-filter')?.value || '';
+  const tasks = _mgData?.tasks || [];
+  if (!filter) return tasks;
+  if (filter === 'none') return tasks.filter(t => !t.goal_id);
+  return tasks.filter(t => t.goal_id === filter);
+}
+
+function mgSetTab(tab) {
+  _mgTab = tab;
+  ['tree', 'week', 'due'].forEach(t => {
+    document.getElementById(`mg-tab-${t}`)?.classList.toggle('active', t === tab);
+  });
+  mgRenderBody();
+}
+
+// ---------- タスク行（共通） ----------
+function mgTaskRowHtml(t, opts = {}) {
+  const today = mgTodayJst();
+  const done = PersonalGoalsUtils.isDone(t);
+  const overdue = PersonalGoalsUtils.isOverdue(t, today);
+  const metas = [];
+  if (opts.showPath) {
+    const path = [t.major_category, t.mid_category].filter(Boolean).join(' › ');
+    const goal = t.goal_id ? (_mgData.goals.find(g => g.id === t.goal_id) || null) : null;
+    const pathLabel = [goal ? `${goal.emoji || '🎯'}${goal.title}` : '', path].filter(Boolean).join(' / ');
+    if (pathLabel) metas.push(`<span class="mg-task-meta">${esc(pathLabel)}</span>`);
+  }
+  if (t.due_date) {
+    metas.push(`<span class="mg-task-meta${overdue ? ' overdue' : ''}">📅${esc(mgDateLabel(t.due_date))}${overdue ? ' ⚠️期限超過' : ''}</span>`);
+  }
+  if (t.link_url) {
+    metas.push(`<a class="mg-task-meta" href="${esc(t.link_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="資料を開く" style="text-decoration:none">🔗資料</a>`);
+  }
+  if (t.status === '進行中') metas.push('<span class="mg-status-chip">進行中</span>');
+  return `<div class="mg-task-row${done ? ' done' : ''}" id="mg-task-${esc(t.id)}" onclick="mgOpenTaskModal('${esc(t.id)}')" title="クリックで編集">
+    <input type="checkbox" ${done ? 'checked' : ''} onclick="event.stopPropagation()" onchange="mgToggleTask('${esc(t.id)}', this.checked)">
+    <span class="mg-task-title" style="flex:1;min-width:0">${esc(t.title)}</span>
+    ${metas.join(' ')}
+  </div>`;
+}
+
+// ---------- 本体（ツリー / 今週やること / 期限順） ----------
+function mgRenderBody() {
+  const body = document.getElementById('mg-body');
+  if (!body || !_mgData) return;
+  const { goals, tasks } = _mgData;
+  if (goals.filter(g => g.status !== 'archived').length === 0 && tasks.length === 0) { body.innerHTML = ''; return; }
+
+  const filtered = mgFilteredTasks();
+  if (filtered.length === 0) {
+    body.innerHTML = `<div class="mg-flat-list" style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">
+      タスクがありません。「＋ タスクを追加」から登録しましょう。
+    </div>`;
+    return;
+  }
+
+  if (_mgTab === 'tree') {
+    body.innerHTML = mgTreeHtml(filtered);
+    mgAnimateBars(body);
+  } else if (_mgTab === 'week') {
+    const today = mgTodayJst();
+    const list = PersonalGoalsUtils.filterThisWeek(filtered, today);
+    const overdueList = list.filter(t => PersonalGoalsUtils.isOverdue(t, today));
+    const weekList = list.filter(t => !PersonalGoalsUtils.isOverdue(t, today));
+    const range = PersonalGoalsUtils.jstWeekRange(today);
+    if (list.length === 0) {
+      body.innerHTML = `<div class="mg-flat-list" style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">🎉 今週期限のタスクはありません（${esc(mgDateLabel(range.start))}〜${esc(mgDateLabel(range.end))}）</div>`;
+      return;
+    }
+    let html = '';
+    if (overdueList.length > 0) {
+      html += `<div style="font-size:12px;font-weight:700;color:#C0392B;margin:2px 0 6px">⚠️ 期限超過（${overdueList.length}件）</div>`;
+      html += `<div class="mg-flat-list" style="margin-bottom:12px">${overdueList.map(t => mgTaskRowHtml(t, { showPath: true })).join('')}</div>`;
+    }
+    if (weekList.length > 0) {
+      html += `<div style="font-size:12px;font-weight:700;color:var(--em-dark);margin:2px 0 6px">📅 今週（${esc(mgDateLabel(range.start))}〜${esc(mgDateLabel(range.end))}）</div>`;
+      html += `<div class="mg-flat-list">${weekList.map(t => mgTaskRowHtml(t, { showPath: true })).join('')}</div>`;
+    }
+    body.innerHTML = html;
+  } else {
+    const list = PersonalGoalsUtils.sortByDueDate(filtered);
+    body.innerHTML = list.length === 0
+      ? '<div class="mg-flat-list" style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">🎉 未完了のタスクはありません</div>'
+      : `<div class="mg-flat-list">${list.map(t => mgTaskRowHtml(t, { showPath: true })).join('')}</div>`;
+  }
+}
+
+function mgNodeKey(major, mid) { return mid === undefined ? `M:${major}` : `m:${major}|${mid}`; }
+
+function mgTreeHtml(tasks) {
+  const tree = PersonalGoalsUtils.buildCategoryTree(tasks);
+  return tree.map(major => {
+    const mKey = mgNodeKey(major.name);
+    const open = !_mgClosed.has(mKey);
+    const doneBadge = major.pct === 100
+      ? `<span class="${_mgJustCompleted.has(mKey) ? 'mg-done-badge' : ''}">✅</span>` : '';
+    const mids = major.mids.map(mid => {
+      const midKey = mgNodeKey(major.name, mid.name);
+      const midOpen = !_mgClosed.has(midKey);
+      const midBadge = mid.pct === 100
+        ? `<span class="${_mgJustCompleted.has(midKey) ? 'mg-done-badge' : ''}">✅</span>` : '';
+      // 中分類が（未分類）1つだけなら見出しを省いてタスクを直接ぶら下げる（2階層運用でも自然に見えるように）
+      if (mid.name === PersonalGoalsUtils.UNCATEGORIZED && major.mids.length === 1) {
+        return `<div class="mg-mid" style="border-left:none;padding-left:2px">${mid.tasks.map(t => mgTaskRowHtml(t)).join('')}</div>`;
+      }
+      return `<div class="mg-mid">
+        <div class="mg-mid-head" onclick="mgToggleNode('${esc(midKey)}')">
+          <span class="mg-caret">${midOpen ? '▼' : '▶'}</span>
+          <span>${esc(mid.name)}</span>${midBadge}
+          <div class="dash-proj-bar"><div class="dash-proj-fill" data-mg-w="${mid.pct}" style="width:0%"></div></div>
+          <span class="mg-pct">${mid.pct}% (${mid.done}/${mid.total})</span>
+        </div>
+        ${midOpen ? mid.tasks.map(t => mgTaskRowHtml(t)).join('') : ''}
+      </div>`;
+    }).join('');
+    return `<div class="mg-major">
+      <div class="mg-major-head" onclick="mgToggleNode('${esc(mKey)}')">
+        <span class="mg-caret">${open ? '▼' : '▶'}</span>
+        <span>${esc(major.name)}</span>${doneBadge}
+        <div class="dash-proj-bar"><div class="dash-proj-fill" data-mg-w="${major.pct}" style="width:0%"></div></div>
+        <span class="mg-pct">${major.pct}% (${major.done}/${major.total})</span>
+      </div>
+      ${open ? `<div style="padding:0 4px 8px">${mids}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function mgToggleNode(key) {
+  if (_mgClosed.has(key)) _mgClosed.delete(key); else _mgClosed.add(key);
+  try { localStorage.setItem(MG_TREE_CLOSED_LS_KEY, JSON.stringify([..._mgClosed])); } catch (_) {}
+  mgRenderBody();
+}
+
+// ---------- チェックで完了⇔未着手トグル（100%到達で ✅ 演出） ----------
+async function mgToggleTask(taskId, checked) {
+  const task = _mgData?.tasks.find(t => t.id === taskId);
+  if (!task) return;
+  const prevStatus = task.status;
+  const prevCompletedAt = task.completed_at;
+  // 100%演出の判定用に「変更前に100%だった分類」を控える
+  const before100 = mgCompletedKeys();
+
+  // 楽観更新（体感を速く）。失敗したらサーバー値に戻す
+  task.status = checked ? '完了' : '未着手';
+  task.completed_at = checked ? new Date().toISOString() : null;
+  if (checked) {
+    const row = document.getElementById(`mg-task-${taskId}`);
+    if (row) row.classList.add('just-done');
+  }
+  const after100 = mgCompletedKeys();
+  _mgJustCompleted = new Set([...after100].filter(k => !before100.has(k)));
+  mgRender();
+  if (checked && _mgJustCompleted.size > 0) {
+    // キーは 'M:大分類' / 'm:大分類|中分類'。分類名自体に ':' が含まれても壊れないよう先頭2文字だけ剥がす
+    const names = [..._mgJustCompleted].map(k => k.slice(2).split('|').pop());
+    showToast(`🎉 「${names.join('」「')}」のタスクをすべて完了しました！`, 'success');
+  }
+
+  try {
+    const res = await apiFetch(`${API}/personal-tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: checked ? '完了' : '未着手' }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '更新に失敗しました');
+    Object.assign(task, data); // completed_at 等をサーバー値に揃える
+  } catch (e) {
+    task.status = prevStatus;
+    task.completed_at = prevCompletedAt;
+    _mgJustCompleted = new Set();
+    mgRender();
+    showToast(e.message, 'error');
+  }
+}
+
+// 現在100%の分類キー集合（フィルタ状態のツリー基準）
+function mgCompletedKeys() {
+  const keys = new Set();
+  for (const major of PersonalGoalsUtils.buildCategoryTree(mgFilteredTasks())) {
+    if (major.total > 0 && major.pct === 100) keys.add(mgNodeKey(major.name));
+    for (const mid of major.mids) {
+      if (mid.total > 0 && mid.pct === 100) keys.add(mgNodeKey(major.name, mid.name));
+    }
+  }
+  return keys;
+}
+
+// ---------- 目標 作成/編集モーダル ----------
+function mgOpenGoalModal(goalId) {
+  _mgEditGoalId = goalId || null;
+  const g = goalId ? _mgData?.goals.find(x => x.id === goalId) : null;
+  document.getElementById('mg-g-title').textContent = g ? '🎯 目標を編集' : '🎯 目標を追加';
+  document.getElementById('mg-g-emoji').value = g?.emoji || '';
+  document.getElementById('mg-g-name').value = g?.title || '';
+  document.getElementById('mg-g-purpose').value = g?.purpose || '';
+  document.getElementById('mg-g-date').value = g?.target_date || '';
+  document.getElementById('mg-g-status').value = g?.status || 'active';
+  document.getElementById('mg-g-status-wrap').style.display = g ? '' : 'none';
+  document.getElementById('mg-g-delete').style.display = g ? '' : 'none';
+  openModal('modal-mg-goal');
+}
+
+async function mgSubmitGoal() {
+  if (_mgSaving) return;
+  const title = document.getElementById('mg-g-name').value.trim();
+  if (!title) { showToast('目標を入力してください', 'warn'); return; }
+  const payload = {
+    title,
+    emoji: document.getElementById('mg-g-emoji').value.trim() || null,
+    purpose: document.getElementById('mg-g-purpose').value.trim() || null,
+    target_date: document.getElementById('mg-g-date').value || null,
+  };
+  if (_mgEditGoalId) payload.status = document.getElementById('mg-g-status').value;
+  const btn = document.getElementById('mg-g-submit');
+  _mgSaving = true; btn.disabled = true;
+  try {
+    const res = await apiFetch(_mgEditGoalId ? `${API}/personal-goals/${_mgEditGoalId}` : `${API}/personal-goals`, {
+      method: _mgEditGoalId ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '保存に失敗しました');
+    closeModal('modal-mg-goal');
+    showToast(_mgEditGoalId ? '目標を更新しました' : `目標「${title}」を作成しました`, 'success');
+    if (payload.status === 'achieved') showToast(`🏆 目標達成おめでとうございます！`, 'success');
+    await loadMyGoalsPage();
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    _mgSaving = false; btn.disabled = false;
+  }
+}
+
+async function mgDeleteGoal() {
+  if (!_mgEditGoalId) return;
+  const g = _mgData?.goals.find(x => x.id === _mgEditGoalId);
+  if (!confirm(`目標「${g?.title || ''}」を削除します。紐付いたタスクは残ります（紐付けだけ外れます）。よろしいですか？`)) return;
+  try {
+    const res = await apiFetch(`${API}/personal-goals/${_mgEditGoalId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '削除に失敗しました');
+    closeModal('modal-mg-goal');
+    showToast('目標を削除しました', 'success');
+    await loadMyGoalsPage();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ---------- タスク 作成/編集モーダル ----------
+function mgOpenTaskModal(taskId) {
+  _mgEditTaskId = taskId || null;
+  const t = taskId ? _mgData?.tasks.find(x => x.id === taskId) : null;
+  document.getElementById('mg-t-title').textContent = t ? '✅ タスクを編集' : '✅ タスクを追加';
+  // 目標プルダウン（アーカイブ済みは、編集中タスクが紐付いている場合のみ残す）
+  const goalSel = document.getElementById('mg-t-goal');
+  const goalOpts = ['<option value="">（目標に紐付けない）</option>'];
+  (_mgData?.goals || []).filter(g => g.status !== 'archived' || g.id === t?.goal_id).forEach(g => {
+    goalOpts.push(`<option value="${esc(g.id)}">${esc(g.emoji || '🎯')} ${esc(g.title)}</option>`);
+  });
+  goalSel.innerHTML = goalOpts.join('');
+  // 新規作成時は目標フィルタの選択中目標を初期値にする（その目標を見ながら追加する流れが多いため）
+  const filterVal = document.getElementById('mg-goal-filter')?.value || '';
+  goalSel.value = t ? (t.goal_id || '') : (filterVal && filterVal !== 'none' ? filterVal : '');
+  // 大分類・中分類の既存値サジェスト（datalist）
+  const majors = [...new Set((_mgData?.tasks || []).map(x => x.major_category).filter(Boolean))];
+  const mids = [...new Set((_mgData?.tasks || []).map(x => x.mid_category).filter(Boolean))];
+  document.getElementById('mg-datalist-major').innerHTML = majors.map(v => `<option value="${esc(v)}">`).join('');
+  document.getElementById('mg-datalist-mid').innerHTML = mids.map(v => `<option value="${esc(v)}">`).join('');
+  document.getElementById('mg-t-name').value = t?.title || '';
+  document.getElementById('mg-t-major').value = t?.major_category || '';
+  document.getElementById('mg-t-mid').value = t?.mid_category || '';
+  document.getElementById('mg-t-due').value = t?.due_date || '';
+  document.getElementById('mg-t-status').value = t?.status || '未着手';
+  document.getElementById('mg-t-detail').value = t?.detail || '';
+  document.getElementById('mg-t-memo').value = t?.memo || '';
+  document.getElementById('mg-t-link').value = t?.link_url || '';
+  document.getElementById('mg-t-delete').style.display = t ? '' : 'none';
+  openModal('modal-mg-task');
+}
+
+async function mgSubmitTask() {
+  if (_mgSaving) return;
+  const title = document.getElementById('mg-t-name').value.trim();
+  if (!title) { showToast('タスク名を入力してください', 'warn'); return; }
+  const payload = {
+    title,
+    goal_id: document.getElementById('mg-t-goal').value || null,
+    major_category: document.getElementById('mg-t-major').value.trim() || null,
+    mid_category: document.getElementById('mg-t-mid').value.trim() || null,
+    due_date: document.getElementById('mg-t-due').value || null,
+    status: document.getElementById('mg-t-status').value,
+    detail: document.getElementById('mg-t-detail').value.trim() || null,
+    memo: document.getElementById('mg-t-memo').value.trim() || null,
+    link_url: document.getElementById('mg-t-link').value.trim() || null,
+  };
+  const btn = document.getElementById('mg-t-submit');
+  _mgSaving = true; btn.disabled = true;
+  try {
+    const res = await apiFetch(_mgEditTaskId ? `${API}/personal-tasks/${_mgEditTaskId}` : `${API}/personal-tasks`, {
+      method: _mgEditTaskId ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '保存に失敗しました');
+    closeModal('modal-mg-task');
+    showToast(_mgEditTaskId ? 'タスクを更新しました' : 'タスクを追加しました', 'success');
+    await loadMyGoalsPage();
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    _mgSaving = false; btn.disabled = false;
+  }
+}
+
+async function mgDeleteTask() {
+  if (!_mgEditTaskId) return;
+  const t = _mgData?.tasks.find(x => x.id === _mgEditTaskId);
+  if (!confirm(`タスク「${t?.title || ''}」を削除します。よろしいですか？`)) return;
+  try {
+    const res = await apiFetch(`${API}/personal-tasks/${_mgEditTaskId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '削除に失敗しました');
+    closeModal('modal-mg-task');
+    showToast('タスクを削除しました', 'success');
+    await loadMyGoalsPage();
   } catch (e) { showToast(e.message, 'error'); }
 }
 

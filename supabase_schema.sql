@@ -2609,4 +2609,47 @@ CREATE INDEX IF NOT EXISTS idx_creative_deletion_logs_deleted_at
 CREATE INDEX IF NOT EXISTS idx_creative_deletion_logs_file_name
   ON creative_deletion_logs(file_name);
 
+-- ==================== 🎯 マイゴール（完全個人の目標・タスク管理 / ADR 032） ====================
+-- 本人以外（admin 含む）は一切閲覧・操作不可。プライバシーはアプリ層で100%担保
+-- （routes/haruka.js: requireAuth のみ + req.user.id 条件。RLSポリシー・permission key 無し）。
+-- 詳細: migrations/2026-08-21_personal_goals.sql
+
+CREATE TABLE IF NOT EXISTS personal_goals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  title TEXT NOT NULL,
+  purpose TEXT,                -- なぜやるのか（任意）
+  emoji TEXT,                  -- 表示用絵文字（任意）
+  target_date DATE,            -- 目標日（カウントダウン用）
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','achieved','archived')),
+  achieved_at TIMESTAMPTZ,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS personal_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  goal_id UUID REFERENCES personal_goals(id) ON DELETE SET NULL,
+  major_category TEXT,         -- 大分類（任意）
+  mid_category TEXT,           -- 中分類（任意）
+  title TEXT NOT NULL,
+  detail TEXT,
+  memo TEXT,
+  link_url TEXT,               -- 資料URL
+  due_date DATE,
+  status TEXT NOT NULL DEFAULT '未着手' CHECK (status IN ('未着手','進行中','完了')),
+  completed_at TIMESTAMPTZ,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_personal_goals_user_id     ON personal_goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_personal_tasks_user_id     ON personal_tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_personal_tasks_goal_id     ON personal_tasks(goal_id);
+CREATE INDEX IF NOT EXISTS idx_personal_tasks_user_status ON personal_tasks(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_personal_tasks_due_date    ON personal_tasks(due_date);
+
 NOTIFY pgrst, 'reload schema';
