@@ -2656,9 +2656,10 @@ CREATE TABLE IF NOT EXISTS personal_tasks (
   memo TEXT,
   link_url TEXT,               -- 資料URL
   due_date DATE,
-  priority TEXT CHECK (priority IN ('high','mid','low')),  -- 優先度（任意）
+  priority TEXT CHECK (priority IN ('top','high','mid','low')),  -- 優先度（任意。top=最優先だけ画面に赤表示）
   assignee_user_ids UUID[],    -- 担当メモ（複数名・非共有。相手には見えない自分用メモ・FK無し）
-  status TEXT NOT NULL DEFAULT '未着手' CHECK (status IN ('未着手','進行中','完了')),
+  status TEXT NOT NULL DEFAULT '未着手' CHECK (status IN ('未着手','対応中','相手待ち','予約済み','完了')),
+  is_milestone BOOLEAN NOT NULL DEFAULT false,  -- 節目の日（例: 会社設立日）。ステータスの代わりにマイルストーン表示
   completed_at TIMESTAMPTZ,
   sort_order INT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT now(),

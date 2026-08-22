@@ -21,7 +21,7 @@
   'use strict';
 
   const TASK_DONE = '完了';
-  const TASK_STATUSES = ['未着手', '進行中', '完了'];
+  const TASK_STATUSES = ['未着手', '対応中', '相手待ち', '予約済み', '完了']; // 旧「進行中」は「対応中」に改名（2026-08-22c）
   const GOAL_STATUSES = ['active', 'achieved', 'archived'];
   const UNCATEGORIZED = '（未分類）';
 

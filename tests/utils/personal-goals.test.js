@@ -61,7 +61,7 @@ describe('computeProgress（進捗率）', () => {
   test('完了ステータスのみを done に数え、pct は四捨五入', () => {
     const tasks = [
       task({ status: '完了' }),
-      task({ status: '進行中' }),
+      task({ status: '対応中' }),
       task({ status: '未着手' }),
     ];
     expect(PG.computeProgress(tasks)).toEqual({ done: 1, total: 3, pct: 33 });
@@ -109,7 +109,7 @@ describe('countWeekCompleted（今週の完了数・JST）', () => {
       doneAt('2026-08-20T15:00:00Z'),      // JST 8/21 0:00（含む）
       doneAt('2026-08-16T14:59:00Z'),      // JST 8/16 23:59（先週・含まない）
       doneAt('2026-08-24T00:00:00+09:00'), // 来週月曜（含まない）
-      task({ status: '進行中', completed_at: null }), // 未完了は数えない
+      task({ status: '対応中', completed_at: null }), // 未完了は数えない
     ];
     expect(PG.countWeekCompleted(tasks, today)).toBe(2);
   });
