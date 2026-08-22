@@ -8478,6 +8478,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <button type="button" class="mg-quick-due" data-mg-due="tomorrow" onclick="mgQuickDue('tomorrow')">明日</button>
           <button type="button" class="mg-quick-due" data-mg-due="weekend" onclick="mgQuickDue('weekend')">今週末</button>
           <button type="button" class="mg-quick-due" data-mg-due="nextweekend" onclick="mgQuickDue('nextweekend')">来週末</button>
+          <button type="button" class="mg-quick-due" data-mg-due="monthend" onclick="mgQuickDue('monthend')">月末</button>
         </div>
       </div>
       <div class="form-group" style="flex:1;min-width:140px">
@@ -25574,6 +25575,12 @@ function mgThisSundayJst() {
   const dow = new Date(`${t}T00:00:00Z`).getUTCDay();
   return mgAddDays(t, dow === 0 ? 0 : 7 - dow);
 }
+// 月末＝JST今日が属する月の最終日（翌月0日）
+function mgMonthEndJst() {
+  const d = new Date(`${mgTodayJst()}T00:00:00Z`);
+  d.setUTCMonth(d.getUTCMonth() + 1, 0);
+  return d.toISOString().slice(0, 10);
+}
 
 async function loadMyGoalsPage() {
   const body = document.getElementById('mg-body');
@@ -26129,12 +26136,12 @@ function mgOpenTaskModal(taskId) {
   openModal('modal-mg-task');
 }
 
-// 期限クイック選択（今日/明日/今週末/来週末）。日付inputと双方向で同期
-// 週末＝日曜（週は月〜日の既存定義に合わせる）。来週末＝今週日曜の7日後
+// 期限クイック選択（今日/明日/今週末/来週末/月末）。日付inputと双方向で同期
+// 週末＝日曜（週は月〜日の既存定義に合わせる）。来週末＝今週日曜の7日後。月末＝当月最終日
 function mgQuickDueMap() {
   const today = mgTodayJst();
   const sunday = mgThisSundayJst();
-  return { today, tomorrow: mgAddDays(today, 1), weekend: sunday, nextweekend: mgAddDays(sunday, 7) };
+  return { today, tomorrow: mgAddDays(today, 1), weekend: sunday, nextweekend: mgAddDays(sunday, 7), monthend: mgMonthEndJst() };
 }
 function mgQuickDue(kind) {
   const input = document.getElementById('mg-t-due');
