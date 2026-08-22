@@ -48,7 +48,7 @@ async function createSheetWithData(title, rows) {
 // 個人所有シートへの出力: 1枚目シートを全消し→2D配列を書き込み（ヘッダー行固定＋太字）
 // SAのマイドライブは保存容量0でシート新規作成が不可（quota exceeded）のため、
 // マイゴール等の完全個人領域は「ユーザー所有のシートにSAが書き込む」方式をとる
-// format（任意）: { fontSize, hideColumns: [列index], columnWidths: [px], zebra: true }
+// format（任意）: { fontSize, hideColumns: [列index], columnWidths: [px], zebra: true, dropdowns: [{ column, values }] }
 // 再出力時も同じ見た目になるよう、ゼブラ（バンド）は既存を消してから貼り直す
 async function overwriteFirstSheet(spreadsheetId, rows, format = {}) {
   const auth = getAuth();
@@ -108,6 +108,17 @@ async function overwriteFirstSheet(spreadsheetId, rows, format = {}) {
         range: { sheetId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
         properties: { hiddenByUser: true },
         fields: 'hiddenByUser',
+      } });
+    }
+    // プルダウン（データ入力規則）: ヘッダーを除く列全体に適用（後から追記する行にも効く）
+    for (const d of format.dropdowns || []) {
+      requests.push({ setDataValidation: {
+        range: { sheetId, startRowIndex: 1, startColumnIndex: d.column, endColumnIndex: d.column + 1 },
+        rule: {
+          condition: { type: 'ONE_OF_LIST', values: d.values.map(v => ({ userEnteredValue: v })) },
+          strict: false, // 選択肢外は警告どまり（取込側でも警告して弾くため入力自体はブロックしない）
+          showCustomUi: true,
+        },
       } });
     }
     // ゼブラ表示（ヘッダー色つきバンド。データ行が無いときは貼らない）
