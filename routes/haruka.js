@@ -22696,13 +22696,34 @@ router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
     rows.push(PG_SHEET_COLS.map(c => r[c.key]));
   }
   try {
+    const statusCol = PG_SHEET_COLS.findIndex(c => c.key === 'status');
+    const priorityCol = PG_SHEET_COLS.findIndex(c => c.key === 'priority');
     await overwriteFirstSheet(spreadsheetId, rows, {
       fontSize: 12,                                    // デフォルト10だと小さいとの要望（2026-08-22）
       hideColumns: [0],                                // ID列は取込時の照合用なので隠す（削除はしない）
       columnWidths: PG_SHEET_COLS.map(c => c.width),
-      zebra: true,
+      // 法人化WBSシートと同じ色味の要望（2026-08-22）: ティールのヘッダー＋水色の縞
+      zebra: {
+        header: { red: 0.165, green: 0.694, blue: 0.749 },   // ティール #2AB1BF
+        first:  { red: 0.914, green: 0.957, blue: 0.980 },   // 淡い水色 #E9F4FA
+        second: { red: 0.824, green: 0.914, blue: 0.949 },   // 水色 #D2E9F2
+      },
       dropdowns: [
-        { column: PG_SHEET_COLS.findIndex(c => c.key === 'priority'), values: Object.values(PG_SHEET_PRIORITY_LABELS) },
+        { column: statusCol, values: [...PG_TASK_STATUSES] },
+        { column: priorityCol, values: Object.values(PG_SHEET_PRIORITY_LABELS) },
+      ],
+      // ステータス・優先度はチップ風の配色（Google Sheets標準チップの色に合わせる）
+      valueColors: [
+        { column: statusCol, colors: {
+          '未着手': { bg: { red: 1, green: 0.812, blue: 0.788 },     fg: { red: 0.694, green: 0.008, blue: 0.008 } }, // 赤 #FFCFC9/#B10202
+          '進行中': { bg: { red: 1, green: 0.898, blue: 0.627 },     fg: { red: 0.471, green: 0.353, blue: 0 } },     // 黄 #FFE5A0/#785A00
+          '完了':   { bg: { red: 0.749, green: 0.882, blue: 0.965 }, fg: { red: 0.039, green: 0.325, blue: 0.659 } }, // 青 #BFE1F6/#0A53A8
+        } },
+        { column: priorityCol, colors: {
+          '高': { bg: { red: 1, green: 0.784, blue: 0.667 },     fg: { red: 0.459, green: 0.220, blue: 0 } },     // 橙 #FFC8AA/#753800
+          '中': { bg: { red: 1, green: 0.898, blue: 0.627 },     fg: { red: 0.471, green: 0.353, blue: 0 } },     // 黄 #FFE5A0/#785A00
+          '低': { bg: { red: 0.831, green: 0.929, blue: 0.737 }, fg: { red: 0.067, green: 0.451, blue: 0.294 } }, // 緑 #D4EDBC/#11734B
+        } },
       ],
     });
     res.json({ url: req.body.sheet_url, count: rows.length - 1 });

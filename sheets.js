@@ -55,7 +55,7 @@ async function overwriteFirstSheet(spreadsheetId, rows, format = {}) {
   const sheets = google.sheets({ version: 'v4', auth });
   const meta = await sheets.spreadsheets.get({
     spreadsheetId,
-    fields: 'sheets(properties(sheetId,title),bandedRanges(bandedRangeId))',
+    fields: 'sheets(properties(sheetId,title),bandedRanges(bandedRangeId),conditionalFormats)',
   });
   const firstSheet = meta.data.sheets?.[0];
   const first = firstSheet?.properties;
@@ -122,15 +122,41 @@ async function overwriteFirstSheet(spreadsheetId, rows, format = {}) {
       } });
     }
     // ゼブラ表示（ヘッダー色つきバンド。データ行が無いときは貼らない）
+    // format.zebra: true（従来の既定色）または { header, first, second }（0-1のRGBオブジェクト）で色指定
     if (format.zebra && numRows >= 2) {
+      const z = (typeof format.zebra === 'object') ? format.zebra : {};
       requests.push({ addBanding: { bandedRange: {
         range: { sheetId, startRowIndex: 0, endRowIndex: numRows, startColumnIndex: 0, endColumnIndex: numCols },
         rowProperties: {
-          headerColor: { red: 0.835, green: 0.922, blue: 0.910 },   // 薄いティール（ブランド色系）
-          firstBandColor: { red: 1, green: 1, blue: 1 },
-          secondBandColor: { red: 0.957, green: 0.976, blue: 0.973 },
+          headerColor: z.header || { red: 0.835, green: 0.922, blue: 0.910 },   // 既定: 薄いティール（ブランド色系）
+          firstBandColor: z.first || { red: 1, green: 1, blue: 1 },
+          secondBandColor: z.second || { red: 0.957, green: 0.976, blue: 0.973 },
         },
       } } });
+    }
+    // 値→色の条件付き書式（ステータス等のチップ風配色）
+    // format.valueColors: [{ column, colors: { '完了': { bg:{r,g,b}, fg:{r,g,b} }, ... } }]
+    // 再出力でルールが積み重ならないよう、シートの既存ルールを全削除してから貼り直す
+    // （このタブはエクスポートが全面上書きする前提の管理領域。手動で足したルールも消える点は仕様）
+    if (format.valueColors && format.valueColors.length > 0) {
+      const existingRules = (firstSheet.conditionalFormats || []).length;
+      for (let i = 0; i < existingRules; i++) {
+        requests.push({ deleteConditionalFormatRule: { sheetId, index: 0 } });
+      }
+      for (const vc of format.valueColors) {
+        for (const [text, c] of Object.entries(vc.colors || {})) {
+          requests.push({ addConditionalFormatRule: { rule: {
+            ranges: [{ sheetId, startRowIndex: 1, startColumnIndex: vc.column, endColumnIndex: vc.column + 1 }],
+            booleanRule: {
+              condition: { type: 'TEXT_EQ', values: [{ userEnteredValue: text }] },
+              format: {
+                backgroundColor: c.bg,
+                textFormat: { foregroundColor: c.fg, bold: true },
+              },
+            },
+          }, index: 0 } });
+        }
+      }
     }
     await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
   } catch (e) { console.error('overwriteFirstSheet 整形スキップ:', e.message); }
