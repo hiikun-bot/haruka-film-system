@@ -32,21 +32,34 @@ const INACTIVE_STATUSES = ['保留', '納品', '完納', '納品済'];
 // 進行中CRから外して「クラ確認待ち」として別カウントする判定に使う。
 const CLIENT_BALL_TYPE = 'client';
 
-// 高負荷判定の閾値（isHighLoad）。根拠:
-//   - balls >= 4      : ボール4件は「即日対応すべき差し戻し・チェック待ち」が同時に4本ある状態。
-//                       1日で捌ける量（2〜3件/日の実務感覚）を超えるため 'high'
-//   - dueThisWeek >= 5: 週5件納期は稼働日数（5日）と同数＝毎日1本納品ペースで、遅延余地ゼロ
-//   - overdue >= 1    : 期限超過は件数によらず即フォローが必要（クライアント影響が出ている可能性）
-//   'mid' はそれぞりの約半分（balls 2〜3 / dueThisWeek 3〜4）を注意ゾーンとする。
-const HIGH_LOAD = { balls: 4, dueThisWeek: 5, overdue: 1 };
-const MID_LOAD  = { balls: 2, dueThisWeek: 3 };
+// 負荷判定は合成スコア方式（2026-08-22 ユーザー指示で単一指標のOR判定から変更）。
+//   旧方式（balls>=4 / dueThisWeek>=5 / overdue>=1 のどれか1つで即 high）は
+//   「超過1件・ボール2件」程度でも高負荷と出てしまい実感と合わなかった。
+//   1〜2件は負荷ではない。複数の要素が積み重なって初めて「注意」「高負荷」にする。
+//
+// スコア = balls×2 + dueThisWeek×1 + overdue×3（負荷バーの長さと同一式。重みは即応が必要な度合い）
+const SCORE_WEIGHTS = { balls: 2, dueThisWeek: 1, overdue: 3 };
+// 閾値の根拠:
+//   - high >= 16: 例) ボール8件のみ／超過5件超／ボール4件+超過3件 など、
+//                 明らかに1人で捌けずアサイン調整が必要な水準
+//   - mid  >= 8 : 例) ボール4件／超過3件（≒2〜3件/日の実務感覚の上限に近い）
+//   - それ未満は low（余裕）。超過1件+ボール2件=7 は low のまま
+const LOAD_THRESHOLDS = { high: 16, mid: 8 };
+
+/**
+ * 負荷スコア（負荷バー・レベル判定の共通式）。
+ */
+function computeLoadScore({ balls = 0, dueThisWeek = 0, overdue = 0 } = {}) {
+  return balls * SCORE_WEIGHTS.balls + dueThisWeek * SCORE_WEIGHTS.dueThisWeek + overdue * SCORE_WEIGHTS.overdue;
+}
 
 /**
  * 負荷レベル判定。'high' | 'mid' | 'low' を返す。
  */
 function isHighLoad({ balls = 0, dueThisWeek = 0, overdue = 0 } = {}) {
-  if (balls >= HIGH_LOAD.balls || dueThisWeek >= HIGH_LOAD.dueThisWeek || overdue >= HIGH_LOAD.overdue) return 'high';
-  if (balls >= MID_LOAD.balls || dueThisWeek >= MID_LOAD.dueThisWeek) return 'mid';
+  const score = computeLoadScore({ balls, dueThisWeek, overdue });
+  if (score >= LOAD_THRESHOLDS.high) return 'high';
+  if (score >= LOAD_THRESHOLDS.mid) return 'mid';
   return 'low';
 }
 
@@ -125,6 +138,8 @@ function computeTeamLoad({ members = [], creatives = [], todayStr, sundayStr } =
       balls: s.balls,
       due_this_week: s.dueThisWeek,
       overdue: s.overdue,
+      // score はフロントの負荷バーとレベル判定の共通ソース（式のズレを防ぐためサーバーで算出）
+      score: computeLoadScore({ balls: s.balls, dueThisWeek: s.dueThisWeek, overdue: s.overdue }),
       load: isHighLoad({ balls: s.balls, dueThisWeek: s.dueThisWeek, overdue: s.overdue }),
     };
   });
@@ -151,8 +166,9 @@ module.exports = {
   ASSIGNEE_ROLES,
   INACTIVE_STATUSES,
   CLIENT_BALL_TYPE,
-  HIGH_LOAD,
-  MID_LOAD,
+  SCORE_WEIGHTS,
+  LOAD_THRESHOLDS,
+  computeLoadScore,
   isHighLoad,
   computeTeamLoad,
   extractAssigneeUserIds,

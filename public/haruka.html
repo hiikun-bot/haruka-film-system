@@ -26824,9 +26824,10 @@ function renderTeamLoad() {
     return dir === 'desc' ? -cmp : cmp;
   });
 
-  // 負荷バーの長さ: ボール×2 + 今週期限 + 超過×3 の合成スコアを最大値で正規化
-  // （係数は「即応が必要な度合い」の重み。超過が最も重い）
-  const score = r => (r.balls || 0) * 2 + (r.due_this_week || 0) + (r.overdue || 0) * 3;
+  // 負荷バーの長さ: 合成スコア（ボール×2 + 今週期限 + 超過×3）を最大値で正規化。
+  // スコアはサーバー算出（utils/team-load.js computeLoadScore・負荷バッジ判定と同一式）を正とし、
+  // 旧レスポンス（score 無し）へのフォールバックのみ同式をローカル計算する
+  const score = r => (r.score ?? ((r.balls || 0) * 2 + (r.due_this_week || 0) + (r.overdue || 0) * 3));
   const maxScore = Math.max(1, ...rows.map(score));
   const barColor = {
     high: 'linear-gradient(90deg,#C0392B,#E74C3C)',

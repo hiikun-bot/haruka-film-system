@@ -28,7 +28,7 @@
 | 持ちボール数 | `getBallHolder()` の `user_ids[]`（複数ホルダー対応）に本人が含まれる未納品クリエイティブ数。`ball_holder_id` キャッシュ列は通知用の単数値（複数ホルダーの先頭しか入らない）のため**使わない**。クライアント確認待ちは `user_ids` が空なので元々含まれない |
 | 今週期限数 | 担当クリエイティブのうち `final_deadline` が今日〜今週日曜（JST・週=月〜日。`_todayStrJST()` / `_thisSundayStrJST()` を再利用し既存 UI と週定義を一致） |
 | 期限超過数 | 担当クリエイティブのうち `final_deadline` < 今日（JST）・未納品。**保留・クラ確認待ちも期限系には含める**（手元に無くても納期は生きており超過リスクの可視化が目的） |
-| 高負荷判定 | `isHighLoad()`: balls>=4 または dueThisWeek>=5 または overdue>=1 → high ／ balls>=2 または dueThisWeek>=3 → mid ／ それ以外 low。閾値根拠は `utils/team-load.js` のコメント参照 |
+| 高負荷判定 | `isHighLoad()`: 合成スコア `balls×2 + dueThisWeek×1 + overdue×3`（負荷バーと同一式・サーバー算出の `score` をレスポンスに含める）で判定。**score >= 16 → high ／ score >= 8 → mid ／ それ未満 low**。単一指標のOR判定（旧: overdue>=1 で即 high 等）は「超過1件・ボール2件」でも高負荷と出て実感と合わなかったため 2026-08-22 のユーザー指示（1〜2件は負荷ではない。複数要素の積み重なりで初めて負荷）で廃止。閾値根拠は `utils/team-load.js` のコメント参照 |
 
 ## Consequences
 
