@@ -412,13 +412,21 @@ app.post('/auth/logout', (req, res) => {
 // 参照するため、このエンドポイントだけは DB から全列を取り直して従来のレスポンス契約を維持する。
 app.get('/auth/me', async (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ error: 'not authenticated' });
+  // has_onboarding: 自分に紐付いたオンボーディングレコードの有無。
+  // 権限（onboarding.page / onboarding.view）が無い本人にもナビを出すためのフラグ。
+  // ユーザー取得と並列で引き、テーブル未作成などで失敗しても /auth/me 自体は落とさない。
+  const onboardingPromise = supabase
+    .from('onboarding_records').select('id').eq('user_id', req.user.id).limit(1)
+    .then(({ data }) => Array.isArray(data) && data.length > 0, () => false);
   try {
-    const { data: user, error } = await supabase
-      .from('users').select('*').eq('id', req.user.id).maybeSingle();
-    if (error || !user) return res.json(safeUser(req.user)); // 取得失敗時は絞り済みの req.user で代替
-    res.json(safeUser(user));
+    const [{ data: user, error }, hasOnboarding] = await Promise.all([
+      supabase.from('users').select('*').eq('id', req.user.id).maybeSingle(),
+      onboardingPromise,
+    ]);
+    if (error || !user) return res.json({ ...safeUser(req.user), has_onboarding: hasOnboarding }); // 取得失敗時は絞り済みの req.user で代替
+    res.json({ ...safeUser(user), has_onboarding: hasOnboarding });
   } catch (e) {
-    res.json(safeUser(req.user));
+    res.json({ ...safeUser(req.user), has_onboarding: false });
   }
 });
 

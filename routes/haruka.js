@@ -22084,7 +22084,10 @@ router.patch('/creatives/:id/portfolio-note', requireAuth, async (req, res) => {
 //       秘書が回していた新メンバー受け入れ業務を HFS に取り込む（運用者: admin）。
 // テーブル: onboarding_records / onboarding_tasks（migrations/2026-08-20_onboarding.sql）
 // テンプレ・進捗計算・文例生成は utils/onboarding.js（純関数・テスト済み）に集約。
-// 権限: 'onboarding.page'（既定: admin / secretary）。削除のみ admin 限定。
+// 権限: 'onboarding.page'（既定: admin / secretary）= 管理（作成・更新・紐付け）。削除のみ admin 限定。
+//       'onboarding.view'（既定: producer / producer_director）= 全レコードの参照のみ。
+//       権限が無くても user_id 紐付け済みの本人は自分のレコードだけ参照できる
+//       （内部運用メモ note は本人には返さない）。
 // ============================================================
 const {
   ONBOARDING_OCCUPATIONS,
@@ -22108,12 +22111,36 @@ const isMissingOnboardingTable = (err) => {
 const onboardingMigrationHint = (res) =>
   res.status(503).json({ error: 'onboarding テーブルが未作成です。migrations/2026-08-20_onboarding.sql を本番Supabaseに適用してください。' });
 
+// 参照範囲の判定（ADR 015: 集合判定。codes 空の dual-read フォールバックは requireAnyPermission と同経路）
+//   canManage … onboarding.page（管理: 全件参照＋書き込み）
+//   canViewAll … onboarding.view（全件参照のみ）または canManage
+// どちらも false のときは「本人レコードのみ参照可」として呼び出し側で user_id 絞り込みする。
+async function getOnboardingAccess(req) {
+  const codes = await getEffectiveRoleCodes(req);
+  const has = async (key) => codes.length > 0
+    ? roleCodesHavePermission(codes, key)
+    : userHasPermission(getEffectiveRole(req), key);
+  const canManage = await has('onboarding.page');
+  const canViewAll = canManage || await has('onboarding.view');
+  return { canManage, canViewAll };
+}
+
+// 本人参照用に内部運用メモを落とす（note は管理側のメモ欄のため本人には見せない）
+const stripOnboardingInternalFields = (rec) => {
+  const { note, ...rest } = rec;
+  return rest;
+};
+
 // GET /onboarding — 一覧（progress・next_task 付き）
-router.get('/onboarding', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
-  const { data, error } = await supabase
+// 権限なしユーザーも requireAuth のみで通し、自分に紐付いたレコードだけ返す（本人参照）。
+router.get('/onboarding', requireAuth, async (req, res) => {
+  const { canViewAll } = await getOnboardingAccess(req);
+  let query = supabase
     .from('onboarding_records')
     .select(`*, ${ONBOARDING_USER_EMBED}, onboarding_tasks(done, label, phase, sort_order)`)
     .order('created_at', { ascending: false });
+  if (!canViewAll) query = query.eq('user_id', req.user.id); // 本人参照: 自分のレコードのみ
+  const { data, error } = await query;
   if (error) {
     if (isMissingOnboardingTable(error)) return onboardingMigrationHint(res);
     return res.status(500).json({ error: error.message });
@@ -22121,7 +22148,8 @@ router.get('/onboarding', requireAuth, requirePermission('onboarding.page'), asy
   const list = (data || []).map(r => {
     const progress = computeOnboardingProgress(r.onboarding_tasks || []);
     const { onboarding_tasks, ...rest } = r;
-    return { ...rest, progress: { done: progress.done, total: progress.total }, next_task: progress.next_task };
+    const row = { ...rest, progress: { done: progress.done, total: progress.total }, next_task: progress.next_task };
+    return canViewAll ? row : stripOnboardingInternalFields(row);
   });
   res.json(list);
 });
@@ -22166,7 +22194,9 @@ router.post('/onboarding', requireAuth, requirePermission('onboarding.page'), as
 });
 
 // GET /onboarding/:id — 詳細（tasks をフェーズ順・sort順で返す）
-router.get('/onboarding/:id', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
+// 参照権限（onboarding.page / onboarding.view）が無くても、user_id が本人なら参照できる。
+router.get('/onboarding/:id', requireAuth, async (req, res) => {
+  const { canViewAll } = await getOnboardingAccess(req);
   const { data, error } = await supabase
     .from('onboarding_records')
     .select(`*, ${ONBOARDING_USER_EMBED}, onboarding_tasks(*)`)
@@ -22177,16 +22207,19 @@ router.get('/onboarding/:id', requireAuth, requirePermission('onboarding.page'),
     return res.status(500).json({ error: error.message });
   }
   if (!data) return res.status(404).json({ error: 'オンボーディングレコードが見つかりません' });
+  const isSelf = data.user_id && data.user_id === req.user.id;
+  if (!canViewAll && !isSelf) return res.status(403).json({ error: 'この操作の権限がありません' });
   const { onboarding_tasks, ...rest } = data;
   const tasks = sortOnboardingTasks(onboarding_tasks || []);
   const progress = computeOnboardingProgress(tasks);
-  res.json({
+  const payload = {
     ...rest,
     tasks,
     phases: ONBOARDING_PHASES,
     progress: { done: progress.done, total: progress.total },
     next_task: progress.next_task,
-  });
+  };
+  res.json(canViewAll ? payload : stripOnboardingInternalFields(payload));
 });
 
 // PATCH /onboarding/:id — status / note / member_name / user_id の更新
@@ -22270,7 +22303,7 @@ router.delete('/onboarding/:id', requireAuth, requirePermission('onboarding.page
 });
 
 // GET /onboarding/:id/first-message — 初回メッセージ文例（職種別出し分け・コピー用）
-router.get('/onboarding/:id/first-message', requireAuth, requirePermission('onboarding.page'), async (req, res) => {
+router.get('/onboarding/:id/first-message', requireAuth, requireAnyPermission('onboarding.page', 'onboarding.view'), async (req, res) => {
   const { data, error } = await supabase
     .from('onboarding_records')
     .select('id, occupation')
