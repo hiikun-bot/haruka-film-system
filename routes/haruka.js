@@ -22701,6 +22701,9 @@ router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
       hideColumns: [0],                                // ID列は取込時の照合用なので隠す（削除はしない）
       columnWidths: PG_SHEET_COLS.map(c => c.width),
       zebra: true,
+      dropdowns: [
+        { column: PG_SHEET_COLS.findIndex(c => c.key === 'priority'), values: Object.values(PG_SHEET_PRIORITY_LABELS) },
+      ],
     });
     res.json({ url: req.body.sheet_url, count: rows.length - 1 });
   } catch (e) {
