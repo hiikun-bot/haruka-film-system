@@ -1,6 +1,7 @@
 // tests/utils/team-load.test.js
 // 📊 チーム状況（utils/team-load.js）の集計純関数テスト。
-// - 進行中CR数（担当分・保留除外）
+// - 進行中CR数（担当分・保留除外・クライアント確認待ち除外）
+// - クラ確認待ち数（ball_type === 'client' の別カウント）
 // - 持ちボール数（複数ホルダー対応）
 // - 今週期限数 / 期限超過数（JST日付文字列の比較のみ。Date生成なし）
 // - 高負荷判定（isHighLoad の閾値境界）
@@ -9,6 +10,7 @@
 
 const {
   ASSIGNEE_ROLES,
+  CLIENT_BALL_TYPE,
   isHighLoad,
   computeTeamLoad,
   extractAssigneeUserIds,
@@ -82,6 +84,40 @@ describe('computeTeamLoad（メンバー別集計）', () => {
     expect(u1.active).toBe(1); // 保留の c2 は数えない
     expect(u2.active).toBe(1);
     expect(totals.active).toBe(2);
+  });
+
+  test('クラ確認待ち: ball_type=client は進行中CRから除外し client_wait に別カウントする', () => {
+    const creatives = [
+      { id: 'c1', status: '編集',               final_deadline: null, ball_type: 'editor', assignee_user_ids: ['u1'], ball_user_ids: ['u1'] },
+      // クライアントチェック中: ボールは向こう（user_ids は空）。active に入れず client_wait に数える
+      { id: 'c2', status: 'クライアントチェック中', final_deadline: null, ball_type: CLIENT_BALL_TYPE, assignee_user_ids: ['u1'], ball_user_ids: [] },
+      { id: 'c3', status: 'クライアントチェック中', final_deadline: null, ball_type: CLIENT_BALL_TYPE, assignee_user_ids: ['u2'], ball_user_ids: [] },
+    ];
+    const { members: rows, totals } = computeTeamLoad({ members, creatives, todayStr: TODAY, sundayStr: SUNDAY });
+    const u1 = rows.find(r => r.id === 'u1');
+    const u2 = rows.find(r => r.id === 'u2');
+    expect(u1.active).toBe(1);        // c2 は進行中CRに含めない
+    expect(u1.client_wait).toBe(1);
+    expect(u1.balls).toBe(1);         // クラ確認待ちは持ちボールにも入らない（user_ids 空）
+    expect(u2.active).toBe(0);
+    expect(u2.client_wait).toBe(1);
+    expect(totals.active).toBe(1);
+    expect(totals.client_wait).toBe(2);
+  });
+
+  test('クラ確認待ち: 期限系（今週期限・超過）はクラ確認待ちでもカウントする（納期は生きている）', () => {
+    const creatives = [
+      { id: 'c1', status: 'クライアントチェック中', final_deadline: TODAY,        ball_type: CLIENT_BALL_TYPE, assignee_user_ids: ['u1'], ball_user_ids: [] },
+      { id: 'c2', status: 'クライアントチェック中', final_deadline: '2026-08-20', ball_type: CLIENT_BALL_TYPE, assignee_user_ids: ['u1'], ball_user_ids: [] },
+    ];
+    const { members: rows, totals } = computeTeamLoad({ members, creatives, todayStr: TODAY, sundayStr: SUNDAY });
+    const u1 = rows.find(r => r.id === 'u1');
+    expect(u1.due_this_week).toBe(1);
+    expect(u1.overdue).toBe(1);
+    expect(u1.active).toBe(0);
+    expect(totals.active).toBe(0);
+    expect(totals.due_this_week).toBe(1);
+    expect(totals.overdue).toBe(1);
   });
 
   test('持ちボール数: user_ids[] の複数ホルダー全員にカウントされる', () => {
