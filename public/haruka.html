@@ -8477,6 +8477,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <button type="button" class="mg-quick-due" data-mg-due="today" onclick="mgQuickDue('today')">今日</button>
           <button type="button" class="mg-quick-due" data-mg-due="tomorrow" onclick="mgQuickDue('tomorrow')">明日</button>
           <button type="button" class="mg-quick-due" data-mg-due="weekend" onclick="mgQuickDue('weekend')">今週末</button>
+          <button type="button" class="mg-quick-due" data-mg-due="nextweekend" onclick="mgQuickDue('nextweekend')">来週末</button>
         </div>
       </div>
       <div class="form-group" style="flex:1;min-width:140px">
@@ -26062,16 +26063,21 @@ function mgOpenTaskModal(taskId) {
   openModal('modal-mg-task');
 }
 
-// 期限クイック選択（今日/明日/今週末）。日付inputと双方向で同期
+// 期限クイック選択（今日/明日/今週末/来週末）。日付inputと双方向で同期
+// 週末＝日曜（週は月〜日の既存定義に合わせる）。来週末＝今週日曜の7日後
+function mgQuickDueMap() {
+  const today = mgTodayJst();
+  const sunday = mgThisSundayJst();
+  return { today, tomorrow: mgAddDays(today, 1), weekend: sunday, nextweekend: mgAddDays(sunday, 7) };
+}
 function mgQuickDue(kind) {
   const input = document.getElementById('mg-t-due');
-  const map = { today: mgTodayJst(), tomorrow: mgAddDays(mgTodayJst(), 1), weekend: mgThisSundayJst() };
-  input.value = map[kind] || '';
+  input.value = mgQuickDueMap()[kind] || '';
   mgSyncQuickDue();
 }
 function mgSyncQuickDue() {
   const cur = document.getElementById('mg-t-due')?.value || '';
-  const map = { today: mgTodayJst(), tomorrow: mgAddDays(mgTodayJst(), 1), weekend: mgThisSundayJst() };
+  const map = mgQuickDueMap();
   document.querySelectorAll('#modal-mg-task .mg-quick-due').forEach(b => {
     b.classList.toggle('active', !!cur && map[b.dataset.mgDue] === cur);
   });
