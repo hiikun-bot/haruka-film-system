@@ -22300,12 +22300,21 @@ const PG_GOAL_STATUSES = new Set(['active', 'achieved', 'archived']);
 const PG_GOAL_TERMS = new Set(['short', 'mid', 'long']); // 期間区分: 短期/中期/長期
 const PG_TASK_STATUSES = new Set(['未着手', '進行中', '完了']);
 const PG_TASK_PRIORITIES = new Set(['high', 'mid', 'low']); // 優先度（任意）
+// 担当メモ（非共有・自分用）: UUID配列に正規化。undefined=未指定 / null・空=クリア
+const pgParseAssignees = (v) => {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (!Array.isArray(v)) throw new Error('担当メモは配列で指定してください');
+  const ids = [...new Set(v.filter(x => typeof x === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x)))];
+  if (ids.length > 30) throw new Error('担当メモは30名までです');
+  return ids.length ? ids : null;
+};
 const isPgDateStr = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
 const isMissingPersonalGoalsTable = (err) => {
   const msg = (err && err.message) || '';
   return /relation .*personal_(goals|tasks|goal_kpis).* does not exist/.test(msg)
-    || /column .*(term|kpi_id|priority).* does not exist/.test(msg) // 2026-08-22 拡張分の列が未適用
+    || /column .*(term|kpi_id|priority|assignee_user_ids).* does not exist/.test(msg) // 2026-08-22 拡張分の列が未適用
     || (err && err.code === '42P01');
 };
 const personalGoalsMigrationHint = (res) =>
@@ -22458,7 +22467,10 @@ async function pgAssertOwnKpi(kpiId, userId) {
 
 // POST /personal-tasks — タスクの作成
 router.post('/personal-tasks', requireAuth, async (req, res) => {
-  const { goal_id, kpi_id, major_category, mid_category, title, detail, memo, link_url, due_date, priority, status, sort_order } = req.body || {};
+  const { goal_id, kpi_id, major_category, mid_category, title, detail, memo, link_url, due_date, priority, status, sort_order, assignee_user_ids } = req.body || {};
+  // 担当メモは完全個人領域の「自分用メモ」。相手側には何も表示・通知されない（ADR 032 追記参照）
+  let assignees;
+  try { assignees = pgParseAssignees(assignee_user_ids); } catch (e) { return res.status(400).json({ error: e.message }); }
   if (!title || typeof title !== 'string' || !title.trim()) {
     return res.status(400).json({ error: 'タスク名は必須です' });
   }
@@ -22495,6 +22507,7 @@ router.post('/personal-tasks', requireAuth, async (req, res) => {
     link_url: pgTrimOrNull(link_url),
     due_date: due_date || null,
     priority: priority || null,
+    assignee_user_ids: assignees === undefined ? null : assignees,
     status: taskStatus,
     completed_at: taskStatus === '完了' ? new Date().toISOString() : null,
     sort_order: Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0,
@@ -22509,8 +22522,11 @@ router.post('/personal-tasks', requireAuth, async (req, res) => {
 
 // PATCH /personal-tasks/:id — タスクの更新（「完了」にしたら completed_at、戻したら NULL）
 router.patch('/personal-tasks/:id', requireAuth, async (req, res) => {
-  const { goal_id, kpi_id, major_category, mid_category, title, detail, memo, link_url, due_date, priority, status, sort_order } = req.body || {};
+  const { goal_id, kpi_id, major_category, mid_category, title, detail, memo, link_url, due_date, priority, status, sort_order, assignee_user_ids } = req.body || {};
   const update = {};
+  if (assignee_user_ids !== undefined) {
+    try { update.assignee_user_ids = pgParseAssignees(assignee_user_ids); } catch (e) { return res.status(400).json({ error: e.message }); }
+  }
   if (title !== undefined) {
     if (typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'タスク名は空にできません' });
     update.title = title.trim();

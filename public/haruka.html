@@ -8481,9 +8481,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         </div>
       </div>
       <div class="form-group" style="flex:1;min-width:140px">
-        <label class="form-label">担当者</label>
-        <!-- マイゴールは完全個人ページのため担当は常に本人（選択不可） -->
-        <select class="form-input" disabled title="あなた専用ページのため、担当は常に自分です"><option>👤 自分</option></select>
+        <label class="form-label">担当者（自分のメモ）</label>
+        <!-- 完全個人領域のため共有はしない: 選んだ相手には表示も通知もされない「誰とやるか」の自分用メモ（ADR 032 追記） -->
+        <button type="button" class="form-input" id="mg-t-assignees-btn" style="text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onclick="mgOpenAssigneePicker(event)" title="自分用のメモです。選んだ相手には表示も通知もされません">👤 自分</button>
       </div>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -8509,9 +8509,13 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <label class="form-label">関連する目標（任意・進捗率つき）</label>
       <select class="form-input" id="mg-t-goal" onchange="mgSyncTaskKpiSelect()"></select>
     </div>
-    <!-- 通常のタスクは上だけで登録完了（10秒登録）。分類・KPI・メモ等はライト層に見せない折りたたみ -->
+    <div class="form-group">
+      <label class="form-label">メモ（任意）</label>
+      <textarea class="form-input" id="mg-t-memo" rows="2" style="resize:vertical"></textarea>
+    </div>
+    <!-- 通常のタスクは上だけで登録完了（10秒登録）。分類・KPI等はライト層に見せない折りたたみ -->
     <details id="mg-t-details" style="margin:2px 0 12px;border:0.5px solid var(--border-light);border-radius:10px;padding:8px 12px">
-      <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text-muted)">＋ 詳細設定を開く（分類・KPI・メモなど）</summary>
+      <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text-muted)">＋ 詳細設定を開く（分類・KPI・資料URLなど）</summary>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
         <div class="form-group" style="flex:1;min-width:150px">
           <label class="form-label">大分類（任意）</label>
@@ -8532,10 +8536,6 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <div class="form-group">
         <label class="form-label">詳細（任意）</label>
         <textarea class="form-input" id="mg-t-detail" rows="2" style="resize:vertical"></textarea>
-      </div>
-      <div class="form-group">
-        <label class="form-label">メモ（任意）</label>
-        <textarea class="form-input" id="mg-t-memo" rows="2" style="resize:vertical"></textarea>
       </div>
       <div class="form-group">
         <label class="form-label">資料URL（任意）</label>
@@ -25583,6 +25583,12 @@ async function loadMyGoalsPage() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'マイゴールの取得に失敗しました');
     _mgData = { goals: data.goals || [], tasks: data.tasks || [], kpis: data.kpis || [] };
+    // 担当メモに自分以外がいるタスクがあれば、名前表示用にメンバーキャッシュを先に温める
+    const selfId = currentUser?.id;
+    if (!_mgMembers && window.MemberPicker?.loadMembers
+        && _mgData.tasks.some(t => (t.assignee_user_ids || []).some(id => id !== selfId))) {
+      try { _mgMembers = await MemberPicker.loadMembers(); } catch (_) { _mgMembers = []; }
+    }
     mgRender();
   } catch (e) {
     console.error('[my-goals]', e);
@@ -25735,6 +25741,20 @@ function mgTaskRowHtml(t, opts = {}) {
   }
   if (t.priority) {
     metas.push(`<span class="mg-task-meta mg-pri-${esc(t.priority)}">${MG_PRIORITY_LABELS[t.priority] || ''}</span>`);
+  }
+  {
+    // 担当メモ（自分以外を選んだタスクにだけ出す。相手には見えない自分用メモ）
+    const others = (t.assignee_user_ids || []).filter(id => id !== currentUser?.id);
+    if (others.length) {
+      const names = others.map(id => {
+        const m = (_mgMembers || []).find(x => x.id === id);
+        return m ? NameDisplay.short(m) : null;
+      }).filter(Boolean);
+      const label = names.length
+        ? names.slice(0, 2).join('・') + (names.length > 2 ? ` +${names.length - 2}` : '')
+        : `${others.length}名`;
+      metas.push(`<span class="mg-task-meta" title="担当メモ（自分にだけ見えます）">👥${esc(label)}</span>`);
+    }
   }
   if (t.kpi_id) {
     const kpi = (_mgData.kpis || []).find(k => k.id === t.kpi_id);
@@ -26021,6 +26041,45 @@ async function mgDeleteGoal() {
 }
 
 // ---------- タスク 作成/編集モーダル ----------
+let _mgTaskAssignees = []; // 担当メモ（user idの配列。非共有・自分用）
+let _mgMembers = null;     // 担当メモの名前解決用キャッシュ（MemberPicker.loadMembers の結果）
+
+// MemberPicker（共通部品・ADR 014）で複数選択。完全個人領域のため相手には何も起きない
+function mgOpenAssigneePicker(ev) {
+  if (ev) ev.stopPropagation();
+  if (!window.MemberPicker || typeof MemberPicker.open !== 'function') {
+    showToast('メンバー選択部品の読み込みに失敗しました', 'error');
+    return;
+  }
+  MemberPicker.open(document.getElementById('mg-t-assignees-btn'), {
+    mode: 'multi',
+    title: '担当者（自分のメモ・相手には見えません）',
+    value: [..._mgTaskAssignees],
+    onChange: (ids) => {
+      _mgTaskAssignees = Array.isArray(ids) ? ids.filter(Boolean) : [];
+      mgRenderAssigneeLabel();
+    },
+  });
+}
+
+async function mgRenderAssigneeLabel() {
+  const btn = document.getElementById('mg-t-assignees-btn');
+  if (!btn) return;
+  const selfId = currentUser?.id;
+  const others = _mgTaskAssignees.filter(id => id !== selfId);
+  if (others.length === 0) { btn.textContent = '👤 自分'; return; }
+  btn.textContent = `👥 ${others.length + (_mgTaskAssignees.includes(selfId) ? 1 : 0)}名選択中…`;
+  try {
+    if (!_mgMembers) _mgMembers = await MemberPicker.loadMembers();
+  } catch (_) { _mgMembers = _mgMembers || []; }
+  const names = others.map(id => {
+    const m = (_mgMembers || []).find(x => x.id === id);
+    return m ? NameDisplay.short(m) : null;
+  }).filter(Boolean);
+  const selfPart = _mgTaskAssignees.includes(selfId) ? '自分・' : '';
+  btn.textContent = `👥 ${selfPart}${names.join('・') || `${others.length}名`}`;
+}
+
 function mgOpenTaskModal(taskId) {
   _mgEditTaskId = taskId || null;
   const t = taskId ? _mgData?.tasks.find(x => x.id === taskId) : null;
@@ -26051,11 +26110,16 @@ function mgOpenTaskModal(taskId) {
   document.getElementById('mg-t-memo').value = t?.memo || '';
   document.getElementById('mg-t-link').value = t?.link_url || '';
   document.getElementById('mg-t-priority').value = t?.priority || '';
+  // 担当メモ: 既定は自分。編集時は保存済みの選択を復元
+  _mgTaskAssignees = (t?.assignee_user_ids && t.assignee_user_ids.length)
+    ? [...t.assignee_user_ids]
+    : (currentUser?.id ? [currentUser.id] : []);
+  mgRenderAssigneeLabel();
   mgSyncQuickDue();
   mgSyncTaskKpiSelect(t?.kpi_id || null);
   // 詳細設定はデフォルト折りたたみ（10秒登録）。編集時に詳細項目が入っていれば開く
   const details = document.getElementById('mg-t-details');
-  if (details) details.open = !!(t && (t.major_category || t.mid_category || t.kpi_id || t.detail || t.memo || t.link_url));
+  if (details) details.open = !!(t && (t.major_category || t.mid_category || t.kpi_id || t.detail || t.link_url));
   document.getElementById('mg-t-delete').style.display = t ? '' : 'none';
   // 新規＝「タスクを追加」＋連続登録ボタン / 編集＝「保存」のみ
   document.getElementById('mg-t-submit').textContent = t ? '保存' : 'タスクを追加';
@@ -26111,6 +26175,7 @@ async function mgSubmitTask(addNext) {
     mid_category: document.getElementById('mg-t-mid').value.trim() || null,
     due_date: document.getElementById('mg-t-due').value || null,
     priority: document.getElementById('mg-t-priority').value || null,
+    assignee_user_ids: _mgTaskAssignees.length ? _mgTaskAssignees : null,
     status: document.getElementById('mg-t-status').value,
     detail: document.getElementById('mg-t-detail').value.trim() || null,
     memo: document.getElementById('mg-t-memo').value.trim() || null,
