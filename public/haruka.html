@@ -8513,7 +8513,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     </div>
     <div class="form-group">
       <label class="form-label">メモ（任意）</label>
-      <textarea class="form-input" id="mg-t-memo" rows="2" style="resize:vertical"></textarea>
+      <textarea class="form-input" id="mg-t-memo" rows="2" style="resize:vertical" oninput="mgRenderMemoLinks()"></textarea>
+      <div id="mg-t-memo-links" style="display:none;font-size:12px;margin-top:4px;line-height:1.8"></div>
     </div>
     <!-- 通常のタスクは上だけで登録完了（10秒登録）。分類・KPI等はライト層に見せない折りたたみ -->
     <details id="mg-t-details" style="margin:2px 0 12px;border:0.5px solid var(--border-light);border-radius:10px;padding:8px 12px">
@@ -26155,6 +26156,7 @@ function mgOpenTaskModal(taskId) {
   document.getElementById('mg-t-status').value = t?.status || '未着手';
   document.getElementById('mg-t-detail').value = t?.detail || '';
   document.getElementById('mg-t-memo').value = t?.memo || '';
+  mgRenderMemoLinks();
   document.getElementById('mg-t-link').value = t?.link_url || '';
   document.getElementById('mg-t-priority').value = t?.priority || '';
   // 担当メモ: 既定は自分。編集時は保存済みの選択を復元
@@ -26226,6 +26228,27 @@ function mgSyncTaskKpiSelect(selectedKpiId) {
     .concat(kpis.map(k => `<option value="${esc(k.id)}">📌 ${esc(k.title)}（${mgNum(k.current_count)}/${mgNum(k.target_count)}${esc(k.unit || '回')}）</option>`))
     .join('');
   if (selectedKpiId && kpis.some(k => k.id === selectedKpiId)) sel.value = selectedKpiId;
+}
+
+// メモ欄に書いたURLをクリックできるように、textareaの下にリンクを自動表示する
+// （textarea内は<a>化できないため。URL検出はlinkifyText()と同じルール: CJKで停止・末尾の句読点/括弧を除外）
+function mgRenderMemoLinks() {
+  const box = document.getElementById('mg-t-memo-links');
+  if (!box) return;
+  const val = document.getElementById('mg-t-memo')?.value || '';
+  const urls = [];
+  for (const m of val.match(/https?:\/\/[^\s<>"'　-〿぀-鿿＀-￯]+/g) || []) {
+    let url = m;
+    const t = /[)\]}>,.!?:;'"]+$/.exec(url);
+    if (t) url = url.slice(0, t.index);
+    if (url && !urls.includes(url)) urls.push(url);
+  }
+  if (!urls.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = '';
+  box.innerHTML = '🔗 ' + urls.map(u => {
+    const label = u.length > 60 ? `${u.slice(0, 57)}…` : u;
+    return `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--em-dark);text-decoration:underline;word-break:break-all;margin-right:10px" title="${esc(u)}">${esc(label)}</a>`;
+  }).join('');
 }
 
 async function mgSubmitTask(addNext) {
