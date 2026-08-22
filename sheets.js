@@ -50,6 +50,17 @@ async function createSheetWithData(title, rows) {
 // マイゴール等の完全個人領域は「ユーザー所有のシートにSAが書き込む」方式をとる
 // format（任意）: { fontSize, hideColumns: [列index], columnWidths: [px], zebra: true, dropdowns: [{ column, values }] }
 // 再出力時も同じ見た目になるよう、ゼブラ（バンド）は既存を消してから貼り直す
+// 0-origin の列indexをA1表記の列文字に変換（0→A, 25→Z, 26→AA）
+function colLetter(i) {
+  let s = '';
+  let n = i;
+  do {
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return s;
+}
+
 async function overwriteFirstSheet(spreadsheetId, rows, format = {}) {
   const auth = getAuth();
   const sheets = google.sheets({ version: 'v4', auth });
@@ -68,6 +79,19 @@ async function overwriteFirstSheet(spreadsheetId, rows, format = {}) {
     valueInputOption: 'RAW',
     requestBody: { values: rows },
   });
+  // 日付列（format.dateColumns）はRAWだと文字列のままでカレンダー入力（日付ピッカー）が
+  // 効かないため、該当列だけ USER_ENTERED で書き直して実際の日付セルにする。
+  // 値は YYYY-MM-DD 形式の文字列（または空）である前提。
+  for (const col of format.dateColumns || []) {
+    const colValues = rows.slice(1).map(r => [r[col] ?? '']);
+    if (!colValues.length) continue;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${range}!${colLetter(col)}2`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: colValues },
+    });
+  }
   // 整形（失敗しても本体データは成立しているので握りつぶす）
   try {
     const sheetId = first.sheetId;
@@ -108,6 +132,31 @@ async function overwriteFirstSheet(spreadsheetId, rows, format = {}) {
         range: { sheetId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
         properties: { hiddenByUser: true },
         fields: 'hiddenByUser',
+      } });
+    }
+    // 中央揃え（format.centerColumns）: データ行全体に適用（後から追記する行にも効く）
+    for (const col of format.centerColumns || []) {
+      requests.push({ repeatCell: {
+        range: { sheetId, startRowIndex: 1, startColumnIndex: col, endColumnIndex: col + 1 },
+        cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+        fields: 'userEnteredFormat.horizontalAlignment',
+      } });
+    }
+    // 日付列（format.dateColumns）: yyyy-mm-dd 表示に固定（取込側のパーサと揃える）＋
+    // 日付の入力規則を付与（セルをダブルクリックでカレンダー（日付ピッカー）が開く）
+    for (const col of format.dateColumns || []) {
+      requests.push({ repeatCell: {
+        range: { sheetId, startRowIndex: 1, startColumnIndex: col, endColumnIndex: col + 1 },
+        cell: { userEnteredFormat: { numberFormat: { type: 'DATE', pattern: 'yyyy-mm-dd' } } },
+        fields: 'userEnteredFormat.numberFormat',
+      } });
+      requests.push({ setDataValidation: {
+        range: { sheetId, startRowIndex: 1, startColumnIndex: col, endColumnIndex: col + 1 },
+        rule: {
+          condition: { type: 'DATE_IS_VALID' },
+          strict: false, // 手入力の多少の揺れは取込側パーサが吸収するためブロックしない
+          showCustomUi: true,
+        },
       } });
     }
     // プルダウン（データ入力規則）: ヘッダーを除く列全体に適用（後から追記する行にも効く）

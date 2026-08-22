@@ -22620,10 +22620,10 @@ const PG_SHEET_PRIORITY_CODES = { '高': 'high', '中': 'mid', '低': 'low' };
 // ヘッダーは「基準名（補足）」形式を許容。列の並び替えはOK・列削除はその項目を取込対象外にする
 const PG_SHEET_COLS = [
   { key: 'id', label: 'ID', header: 'ID（編集・削除しない）', width: 60 },
-  { key: 'title', label: 'タスク名', header: 'タスク名（必須）', width: 280 },
+  { key: 'title', label: 'タスク名', header: 'タスク名（必須）', width: 340 },
   { key: 'due_date', label: '期限', header: '期限（YYYY-MM-DD）', width: 160 },
-  { key: 'status', label: 'ステータス', header: 'ステータス（未着手/進行中/完了）', width: 230 },
-  { key: 'priority', label: '優先度', header: '優先度（高/中/低）', width: 130 },
+  { key: 'status', label: 'ステータス', header: 'ステータス', width: 110 },
+  { key: 'priority', label: '優先度', header: '優先度', width: 90 },
   { key: 'goal', label: '目標', header: '目標（目標名と完全一致で紐付け）', width: 230 },
   { key: 'major_category', label: '大分類', header: '大分類', width: 120 },
   { key: 'mid_category', label: '中分類', header: '中分類', width: 120 },
@@ -22698,10 +22698,16 @@ router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
   try {
     const statusCol = PG_SHEET_COLS.findIndex(c => c.key === 'status');
     const priorityCol = PG_SHEET_COLS.findIndex(c => c.key === 'priority');
+    const dueDateCol = PG_SHEET_COLS.findIndex(c => c.key === 'due_date');
+    const completedAtCol = PG_SHEET_COLS.findIndex(c => c.key === 'completed_at');
     await overwriteFirstSheet(spreadsheetId, rows, {
       fontSize: 12,                                    // デフォルト10だと小さいとの要望（2026-08-22）
       hideColumns: [0],                                // ID列は取込時の照合用なので隠す（削除はしない）
       columnWidths: PG_SHEET_COLS.map(c => c.width),
+      // 期限・完了日は実際の日付セル＋日付ピッカー（ダブルクリックでカレンダー入力）
+      dateColumns: [dueDateCol, completedAtCol],
+      // 期限・ステータス・優先度・完了日は中央揃え（2026-08-22 要望）
+      centerColumns: [dueDateCol, statusCol, priorityCol, completedAtCol],
       // 法人化WBSシートと同じ色味の要望（2026-08-22）: ティールのヘッダー＋水色の縞
       zebra: {
         header: { red: 0.165, green: 0.694, blue: 0.749 },   // ティール #2AB1BF
