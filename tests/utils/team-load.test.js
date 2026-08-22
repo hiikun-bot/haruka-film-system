@@ -11,6 +11,7 @@
 const {
   ASSIGNEE_ROLES,
   CLIENT_BALL_TYPE,
+  computeLoadScore,
   isHighLoad,
   computeTeamLoad,
   extractAssigneeUserIds,
@@ -21,21 +22,30 @@ const SUNDAY = '2026-08-23'; // 今週日曜
 
 const member = (id, full_name, nickname) => ({ id, full_name, nickname, roles: ['editor'] });
 
-describe('isHighLoad（負荷レベル判定）', () => {
-  test('期限超過が1件でもあれば high', () => {
-    expect(isHighLoad({ balls: 0, dueThisWeek: 0, overdue: 1 })).toBe('high');
+describe('isHighLoad（負荷レベル判定・合成スコア方式）', () => {
+  // スコア = balls×2 + dueThisWeek×1 + overdue×3。high >= 16 / mid >= 8 / それ未満 low
+  test('computeLoadScore: 重み balls×2 + due×1 + overdue×3', () => {
+    expect(computeLoadScore({ balls: 2, dueThisWeek: 1, overdue: 1 })).toBe(8);
+    expect(computeLoadScore({})).toBe(0);
+    expect(computeLoadScore()).toBe(0);
   });
-  test('ボール4件以上で high、2〜3件で mid、1件以下は low', () => {
-    expect(isHighLoad({ balls: 4, dueThisWeek: 0, overdue: 0 })).toBe('high');
-    expect(isHighLoad({ balls: 3, dueThisWeek: 0, overdue: 0 })).toBe('mid');
-    expect(isHighLoad({ balls: 2, dueThisWeek: 0, overdue: 0 })).toBe('mid');
-    expect(isHighLoad({ balls: 1, dueThisWeek: 0, overdue: 0 })).toBe('low');
+  test('少数の件数では負荷にしない（2026-08-22 ユーザー指示: 1〜2件は負荷ではない）', () => {
+    // 旧方式では overdue 1件で即 high だったケース → low
+    expect(isHighLoad({ balls: 0, dueThisWeek: 0, overdue: 1 })).toBe('low');
+    // 超過1件 + ボール2件（score 7）でも low
+    expect(isHighLoad({ balls: 2, dueThisWeek: 0, overdue: 1 })).toBe('low');
+    expect(isHighLoad({ balls: 3, dueThisWeek: 1, overdue: 0 })).toBe('low'); // score 7
   });
-  test('今週期限5件以上で high、3〜4件で mid', () => {
-    expect(isHighLoad({ balls: 0, dueThisWeek: 5, overdue: 0 })).toBe('high');
-    expect(isHighLoad({ balls: 0, dueThisWeek: 4, overdue: 0 })).toBe('mid');
-    expect(isHighLoad({ balls: 0, dueThisWeek: 3, overdue: 0 })).toBe('mid');
-    expect(isHighLoad({ balls: 0, dueThisWeek: 2, overdue: 0 })).toBe('low');
+  test('複数要素の積み重なりで mid（score 8〜15）', () => {
+    expect(isHighLoad({ balls: 4, dueThisWeek: 0, overdue: 0 })).toBe('mid');  // score 8
+    expect(isHighLoad({ balls: 0, dueThisWeek: 0, overdue: 3 })).toBe('mid');  // score 9
+    expect(isHighLoad({ balls: 2, dueThisWeek: 2, overdue: 2 })).toBe('mid');  // score 12
+    expect(isHighLoad({ balls: 4, dueThisWeek: 7, overdue: 0 })).toBe('mid');  // score 15（境界）
+  });
+  test('明らかに捌けない水準で high（score >= 16）', () => {
+    expect(isHighLoad({ balls: 8, dueThisWeek: 0, overdue: 0 })).toBe('high'); // score 16（境界）
+    expect(isHighLoad({ balls: 0, dueThisWeek: 0, overdue: 6 })).toBe('high'); // score 18
+    expect(isHighLoad({ balls: 4, dueThisWeek: 2, overdue: 2 })).toBe('high'); // score 16
   });
   test('全部ゼロ・引数なしは low', () => {
     expect(isHighLoad({})).toBe('low');
@@ -151,7 +161,8 @@ describe('computeTeamLoad（メンバー別集計）', () => {
     const { members: rows, totals } = computeTeamLoad({ members, creatives, todayStr: TODAY, sundayStr: SUNDAY });
     const u1 = rows.find(r => r.id === 'u1');
     expect(u1.overdue).toBe(2);
-    expect(u1.load).toBe('high'); // overdue >= 1 → high
+    expect(u1.score).toBe(7);    // 超過2×3 + 今週期限1 = 7（score は行に含めて返す）
+    expect(u1.load).toBe('low'); // score 7 < 8 → low（超過だけで即 high にはしない）
     expect(totals.overdue).toBe(2);
   });
 
