@@ -25611,9 +25611,11 @@ function mgRenderHero() {
     document.getElementById('mg-body').innerHTML = '';
     hero.innerHTML = `<div class="mg-empty">
       <div style="font-size:40px;margin-bottom:10px">🎯</div>
-      <div style="font-size:16px;font-weight:800;margin-bottom:8px">マイゴールをはじめよう</div>
+      <div style="font-size:16px;font-weight:800;margin-bottom:10px">マイゴールをはじめよう</div>
+      <div style="display:inline-flex;align-items:center;gap:8px;background:var(--em-pale);border:1.5px solid var(--em);border-radius:999px;padding:9px 20px;font-size:14px;font-weight:800;color:var(--em-dark);margin:0 auto 14px;max-width:95%">
+        🔒 あなた専用ページ — 管理者を含め、他の人には一切見えません
+      </div>
       <div style="font-size:13px;color:var(--text-muted);line-height:1.9;max-width:520px;margin:0 auto 16px">
-        ここは<b>あなた専用</b>の目標・タスク管理ページです（管理者を含め他の人には見えません）。<br>
         ① まず目標を作る（例:「💪 技術力向上」「🎓 ◯◯のスキル習得」。短期・中期・長期の区分も選べます）<br>
         ② タスクを追加して大分類・中分類で整理（例: 学習 &gt; After Effects &gt; 講座を1本見る）<br>
         ③ チェックを入れるたびに進捗バーが伸びて、目標日までのカウントダウンが進みます<br>
