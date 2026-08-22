@@ -1426,7 +1426,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .mg-kpi-plus{border:none;border-radius:6px;background:rgba(255,255,255,0.24);color:#fff;font-size:11px;font-weight:700;padding:3px 9px;cursor:pointer;transition:background .12s}
 .mg-kpi-plus:hover{background:rgba(255,255,255,0.45)}
 .mg-kpi-edit-row{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 0;border-bottom:0.5px solid var(--border-light)}
-.mg-quick-due{font-size:12px;padding:7px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .12s}
+.mg-quick-due{font-size:12px;padding:7px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .12s;white-space:nowrap}
 .mg-quick-due:hover{background:var(--em-pale)}
 .mg-quick-due.active{background:var(--em);border-color:var(--em);color:#fff;font-weight:700}
 /* 優先度は「最優先」だけ赤で表示（高/中/低は行に出さない。全部🔴だと判断材料にならないため） */
@@ -1454,8 +1454,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .mg-task-date.overdue{color:#C0392B}
 .mg-task-meta{font-size:11px;color:var(--text-muted);white-space:nowrap}
 .mg-task-meta.overdue{color:#C0392B;font-weight:700}
-/* ステータスチップ（行の右端）。未着手=灰 / 対応中=橙 / 相手待ち=青 / 予約済み=緑 / 完了=ティール / 期限超過・最優先=赤 */
-.mg-chip{flex-shrink:0;font-size:10.5px;font-weight:700;border-radius:8px;padding:1.5px 8px;white-space:nowrap;border:1px solid transparent;margin-left:2px}
+/* ステータスチップ（日付の右横）。未着手=灰 / 対応中=橙 / 相手待ち=青 / 予約済み=緑 / 完了=ティール / 期限超過・最優先=赤 */
+.mg-chip{flex-shrink:0;font-size:10.5px;font-weight:700;border-radius:8px;padding:1.5px 8px;white-space:nowrap;border:1px solid transparent;min-width:56px;text-align:center}
 .mg-chip-todo{background:#EEF1F4;color:#5B6670;border-color:#D8DEE4}
 .mg-chip-doing{background:#FFF3E5;color:#B45309;border-color:#F5CD95}
 .mg-chip-wait{background:#E8F1FE;color:#1D6FD1;border-color:#AECDF5}
@@ -1466,6 +1466,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 /* 完了タスクは既定で畳む（未完了に集中）。トグルで展開 */
 .mg-done-toggle{display:block;border:none;background:none;color:var(--text-muted);font-size:11.5px;font-weight:700;cursor:pointer;padding:5px 8px;border-radius:6px;text-align:left}
 .mg-done-toggle:hover{background:var(--em-pale);color:var(--em-dark)}
+/* 期限順タブ: 日付見出しの下に出す分類（ツリーの中分類）サブ見出し */
+.mg-datecat{font-size:11.5px;font-weight:700;color:var(--text-muted);margin:6px 0 1px;padding-left:4px}
 .mg-flat-list{background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:10px 12px}
 .mg-empty{background:var(--white);border:0.5px solid var(--border);border-radius:14px;padding:40px 24px;text-align:center}
 @keyframes mgPop{0%{transform:scale(0.3);opacity:0}60%{transform:scale(1.35)}100%{transform:scale(1);opacity:1}}
@@ -8476,7 +8478,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 
 <!-- 🎯 マイゴール タスク 作成/編集モーダル -->
 <div class="modal-overlay" id="modal-mg-task" style="z-index:310">
-  <div class="modal-card" style="width:min(560px,95vw)">
+  <div class="modal-card" style="width:min(680px,95vw)">
     <div class="modal-title"><span id="mg-t-title">✅ タスクを追加</span><button class="modal-close" onclick="closeModal('modal-mg-task')">×</button></div>
     <div class="form-group">
       <label class="form-label">タスク名 <span style="font-size:10px;font-weight:800;color:#C0392B;border:1px solid #C0392B;border-radius:5px;padding:1px 6px;vertical-align:1px">必須</span></label>
@@ -8487,19 +8489,22 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <div class="form-group" style="flex:1.2;min-width:180px">
         <label class="form-label">期限</label>
         <input class="form-input" type="date" id="mg-t-due" onchange="mgSyncQuickDue()">
-        <div style="display:flex;gap:6px;margin-top:6px">
-          <button type="button" class="mg-quick-due" data-mg-due="today" onclick="mgQuickDue('today')">今日</button>
-          <button type="button" class="mg-quick-due" data-mg-due="tomorrow" onclick="mgQuickDue('tomorrow')">明日</button>
-          <button type="button" class="mg-quick-due" data-mg-due="weekend" onclick="mgQuickDue('weekend')">今週末</button>
-          <button type="button" class="mg-quick-due" data-mg-due="nextweekend" onclick="mgQuickDue('nextweekend')">来週末</button>
-          <button type="button" class="mg-quick-due" data-mg-due="monthend" onclick="mgQuickDue('monthend')">月末</button>
-        </div>
       </div>
       <div class="form-group" style="flex:1;min-width:140px">
         <label class="form-label">担当者（自分のメモ）</label>
         <!-- 完全個人領域のため共有はしない: 選んだ相手には表示も通知もされない「誰とやるか」の自分用メモ（ADR 032 追記） -->
         <button type="button" class="form-input" id="mg-t-assignees-btn" style="text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onclick="mgOpenAssigneePicker(event)" title="自分用のメモです。選んだ相手には表示も通知もされません">👤 自分</button>
       </div>
+    </div>
+    <!-- クイック期限はモーダル全幅で横並び（狭い列に押し込むと文字が縦になるため） -->
+    <div class="form-group" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:-6px">
+      <button type="button" class="mg-quick-due" data-mg-due="today" onclick="mgQuickDue('today')">今日</button>
+      <button type="button" class="mg-quick-due" data-mg-due="tomorrow" onclick="mgQuickDue('tomorrow')">明日</button>
+      <button type="button" class="mg-quick-due" data-mg-due="weekend" onclick="mgQuickDue('weekend')">今週末</button>
+      <button type="button" class="mg-quick-due" data-mg-due="nextweekend" onclick="mgQuickDue('nextweekend')">来週末</button>
+      <button type="button" class="mg-quick-due" data-mg-due="monthend" onclick="mgQuickDue('monthend')">月末</button>
+      <button type="button" class="mg-quick-due" data-mg-due="nextmonthend" onclick="mgQuickDue('nextmonthend')">来月末</button>
+      <button type="button" class="mg-quick-due" data-mg-due="month2end" onclick="mgQuickDue('month2end')">再来月末</button>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <div class="form-group" style="flex:1;min-width:140px">
@@ -25711,10 +25716,10 @@ function mgThisSundayJst() {
   const dow = new Date(`${t}T00:00:00Z`).getUTCDay();
   return mgAddDays(t, dow === 0 ? 0 : 7 - dow);
 }
-// 月末＝JST今日が属する月の最終日（翌月0日）
-function mgMonthEndJst() {
+// 月末＝JST今日が属する月の最終日（翌月0日）。offset=1で来月末、2で再来月末
+function mgMonthEndJst(offset = 0) {
   const d = new Date(`${mgTodayJst()}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + 1, 0);
+  d.setUTCMonth(d.getUTCMonth() + 1 + offset, 0);
   return d.toISOString().slice(0, 10);
 }
 
@@ -25902,10 +25907,11 @@ function mgTaskRowHtml(t, opts = {}) {
     const kpi = (_mgData.kpis || []).find(k => k.id === t.kpi_id);
     if (kpi) metas.push(`<span class="mg-task-meta" title="KPI: ${esc(kpi.title)}">📌${esc(kpi.title)}</span>`);
   }
-  if (t.link_url) {
-    metas.push(`<a class="mg-task-meta" href="${esc(t.link_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="資料を開く" style="text-decoration:none">🔗資料</a>`);
-  }
-  // 右端チップ: マイルストーン ＞ 完了 ＞ 期限超過 ＞ ステータス（止まっている理由がひと目で分かる）
+  // 資料リンクは行の一番右端に固定
+  const linkHtml = t.link_url
+    ? `<a class="mg-task-meta" href="${esc(t.link_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="資料を開く" style="text-decoration:none">🔗資料</a>`
+    : '';
+  // ステータスチップは日付のすぐ右横: マイルストーン ＞ 完了 ＞ 期限超過 ＞ ステータス（止まっている理由がひと目で分かる）
   let chip;
   if (t.is_milestone) {
     chip = '<span class="mg-chip mg-chip-milestone">マイルストーン</span>';
@@ -25916,14 +25922,16 @@ function mgTaskRowHtml(t, opts = {}) {
   } else {
     chip = `<span class="mg-chip ${MG_STATUS_CHIP_CLASS[t.status] || 'mg-chip-todo'}">${esc(t.status || '未着手')}</span>`;
   }
-  // 期限は左端（月/日。年は今年なら省く）
+  // 期限は左端（月/日。年は今年なら省く）。日付見出しでグループ表示するとき（期限順タブ）は省略
   const dueLabel = t.due_date ? esc(mgDateShortLabel(t.due_date)) : '';
+  const dateHtml = opts.hideDate ? '' : `<span class="mg-task-date${overdue && !done ? ' overdue' : ''}"${t.due_date ? ` title="期限 ${esc(mgDateLabel(t.due_date))}"` : ''}>${dueLabel}</span>`;
   return `<div class="mg-task-row${done ? ' done' : ''}" id="mg-task-${esc(t.id)}" onclick="mgOpenTaskModal('${esc(t.id)}')" title="クリックで編集">
-    <span class="mg-task-date${overdue && !done ? ' overdue' : ''}"${t.due_date ? ` title="期限 ${esc(mgDateLabel(t.due_date))}"` : ''}>${dueLabel}</span>
+    ${dateHtml}
+    ${chip}
     <input type="checkbox" ${done ? 'checked' : ''} onclick="event.stopPropagation()" onchange="mgToggleTask('${esc(t.id)}', this.checked)">
     <span class="mg-task-title" style="flex:1;min-width:0">${esc(t.title)}</span>
     ${metas.join(' ')}
-    ${chip}
+    ${linkHtml}
   </div>`;
 }
 
@@ -25966,11 +25974,59 @@ function mgRenderBody() {
     }
     body.innerHTML = html;
   } else {
-    const list = PersonalGoalsUtils.sortByDueDate(filtered);
-    body.innerHTML = list.length === 0
-      ? '<div class="mg-flat-list" style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">🎉 未完了のタスクはありません</div>'
-      : `<div class="mg-flat-list">${list.map(t => mgTaskRowHtml(t, { showPath: true })).join('')}</div>`;
+    // ⏰ 期限順: 日付を見出しにした時系列表示。日付の下に分類（ツリーの中分類）をサブ見出しとして出す
+    const today = mgTodayJst();
+    const list = mgSortByDue(filtered);
+    const groups = new Map(); // due_date（'' = 期限なし）→ その日のタスク
+    list.forEach(t => { const k = t.due_date || ''; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
+    const keys = [...groups.keys()].filter(k => k).concat(groups.has('') ? [''] : []); // 期限なしは末尾
+    body.innerHTML = keys.map(k => {
+      const gTasks = groups.get(k);
+      const nKey = `D:${k || 'none'}`;
+      const open = !_mgClosed.has(nKey);
+      const doneCount = gTasks.filter(t => PersonalGoalsUtils.isDone(t)).length;
+      const isPast = k && k < today && doneCount < gTasks.length; // 未完了が残る過去日は赤見出し
+      const label = k ? `${mgDateShortLabel(k)}（${mgWeekdayJst(k)}）` : '期限なし';
+      const todayBadge = k === today ? '<span class="mg-chip mg-chip-doing">今日</span>' : '';
+      const undone = gTasks.filter(t => !PersonalGoalsUtils.isDone(t));
+      const doneTasks = gTasks.filter(t => PersonalGoalsUtils.isDone(t));
+      // 分類（大分類 › 中分類）ごとにまとめる（登場順を維持）
+      const cats = new Map();
+      for (const t of undone) {
+        const cat = [t.major_category, t.mid_category].filter(Boolean).join(' › ');
+        if (!cats.has(cat)) cats.set(cat, []);
+        cats.get(cat).push(t);
+      }
+      let inner = [...cats.entries()].map(([cat, ts]) =>
+        `${cat ? `<div class="mg-datecat">${esc(cat)}</div>` : ''}${ts.map(t => mgTaskRowHtml(t, { hideDate: true })).join('')}`
+      ).join('');
+      if (doneTasks.length) {
+        const showing = _mgShowDone.has(nKey);
+        if (showing) inner += doneTasks.map(t => mgTaskRowHtml(t, { hideDate: true, showPath: true })).join('');
+        inner += `<button type="button" class="mg-done-toggle" onclick="event.stopPropagation();mgToggleDone('${esc(nKey)}')">${showing ? '▲ 完了済みを隠す' : `✔ 完了済み ${doneTasks.length}件を表示`}</button>`;
+      }
+      return `<div class="mg-major">
+        <div class="mg-major-head" onclick="mgToggleNode('${esc(nKey)}')">
+          <span class="mg-caret">${open ? '▼' : '▶'}</span>
+          <span${isPast ? ' style="color:#C0392B"' : ''}>${esc(label)}</span>${isPast ? '<span class="mg-chip mg-chip-overdue">期限超過</span>' : ''}${todayBadge}
+          <span class="mg-pct">${doneCount}/${gTasks.length}</span>
+        </div>
+        ${open ? `<div style="padding:0 12px 8px">${inner}</div>` : ''}
+      </div>`;
+    }).join('');
   }
+}
+
+// 期限昇順の安定ソート（期限なしは末尾・同日は元の並びを維持）。表示専用でデータは並べ替えない
+function mgSortByDue(list) {
+  return list.map((t, i) => [t, i]).sort((a, b) => {
+    const da = a[0].due_date || '9999-99-99';
+    const db = b[0].due_date || '9999-99-99';
+    return da < db ? -1 : da > db ? 1 : a[1] - b[1];
+  }).map(x => x[0]);
+}
+function mgWeekdayJst(d) {
+  return ['日', '月', '火', '水', '木', '金', '土'][new Date(`${d}T00:00:00Z`).getUTCDay()];
 }
 
 function mgNodeKey(major, mid) { return mid === undefined ? `M:${major}` : `m:${major}|${mid}`; }
@@ -25982,8 +26038,10 @@ function mgToggleDone(key) {
   mgRenderBody();
 }
 function mgTaskListHtml(tasks, nodeKey) {
-  const undone = tasks.filter(t => !PersonalGoalsUtils.isDone(t));
-  const doneTasks = tasks.filter(t => PersonalGoalsUtils.isDone(t));
+  // 時系列で読めるよう期限昇順（期限なしは末尾）で表示
+  const sorted = mgSortByDue(tasks);
+  const undone = sorted.filter(t => !PersonalGoalsUtils.isDone(t));
+  const doneTasks = sorted.filter(t => PersonalGoalsUtils.isDone(t));
   let html = undone.map(t => mgTaskRowHtml(t)).join('');
   if (doneTasks.length) {
     const showing = _mgShowDone.has(nodeKey);
@@ -26306,7 +26364,7 @@ function mgOpenTaskModal(taskId) {
 function mgQuickDueMap() {
   const today = mgTodayJst();
   const sunday = mgThisSundayJst();
-  return { today, tomorrow: mgAddDays(today, 1), weekend: sunday, nextweekend: mgAddDays(sunday, 7), monthend: mgMonthEndJst() };
+  return { today, tomorrow: mgAddDays(today, 1), weekend: sunday, nextweekend: mgAddDays(sunday, 7), monthend: mgMonthEndJst(), nextmonthend: mgMonthEndJst(1), month2end: mgMonthEndJst(2) };
 }
 function mgQuickDue(kind) {
   const input = document.getElementById('mg-t-due');
