@@ -1399,20 +1399,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .dash-proj-bar{flex:1;height:6px;background:var(--border-light);border-radius:3px;overflow:hidden}
 .dash-proj-fill{height:100%;background:linear-gradient(90deg,var(--em-dark),var(--em));border-radius:3px;transition:width .5s ease}
 /* 🎯 マイゴール（完全個人の目標・タスク管理 / ADR 032） */
-.mg-goal-strip{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px}
-.mg-goal-card{flex:1 1 280px;min-width:260px;max-width:100%;background:linear-gradient(135deg,#1a8c88 0%,#2BB8B4 55%,#3ECFCA 100%);border-radius:14px;padding:18px 20px;color:#fff;box-shadow:0 4px 18px rgba(62,207,202,0.22);cursor:pointer;position:relative;overflow:hidden;transition:transform .15s}
-.mg-goal-card:hover{transform:translateY(-2px)}
-.mg-goal-card.achieved{background:linear-gradient(135deg,#B8860B 0%,#E6B422 60%,#FFD700 100%);box-shadow:0 4px 18px rgba(230,180,34,0.25)}
-.mg-goal-title{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.mg-goal-countdown{font-size:12px;font-weight:700;background:rgba(255,255,255,0.22);border-radius:9px;padding:2px 10px;white-space:nowrap}
+.mg-goal-strip{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;margin-bottom:12px}
+/* 上部カードはコンパクトな1行構成（タイトル＋バー＋進捗＋期限カウントダウン）。説明文は編集モーダルでのみ表示 */
+.mg-goal-card{flex:1 1 340px;min-width:280px;max-width:100%;background:linear-gradient(135deg,#1a8c88 0%,#2BB8B4 55%,#3ECFCA 100%);border-radius:12px;padding:10px 16px;color:#fff;box-shadow:0 3px 12px rgba(62,207,202,0.20);cursor:pointer;position:relative;overflow:hidden;transition:transform .15s}
+.mg-goal-card:hover{transform:translateY(-1px)}
+.mg-goal-card.achieved{background:linear-gradient(135deg,#B8860B 0%,#E6B422 60%,#FFD700 100%);box-shadow:0 3px 12px rgba(230,180,34,0.25)}
+.mg-goal-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.mg-goal-name{font-size:14.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.mg-goal-line .dash-proj-bar{flex:1;min-width:70px;background:rgba(255,255,255,0.28);height:7px;border-radius:4px}
+.mg-goal-line .dash-proj-fill{background:linear-gradient(90deg,#fff,#EAFFFE)}
+.mg-goal-nums{font-size:12px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+.mg-goal-countdown{font-size:11.5px;font-weight:700;background:rgba(255,255,255,0.22);border-radius:9px;padding:2px 9px;white-space:nowrap}
 .mg-goal-countdown.over{background:rgba(192,57,43,0.85)}
-.mg-goal-purpose{font-size:11.5px;opacity:0.85;margin-top:4px;line-height:1.5}
-.mg-goal-bar-row{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:12px;font-weight:700}
-.mg-goal-bar-row .dash-proj-bar{background:rgba(255,255,255,0.28);height:8px;border-radius:4px}
-.mg-goal-bar-row .dash-proj-fill{background:linear-gradient(90deg,#fff,#EAFFFE)}
-.mg-stats-card{flex:0 1 200px;min-width:170px;background:var(--white);border:0.5px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;justify-content:center;gap:8px}
-.mg-stat-line{font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}
-.mg-stat-line b{font-size:19px;color:var(--em-dark)}
+/* 今週完了・ストリークは上部カード列に統合した小さなカードで表示 */
+.mg-stats-inline{flex:0 0 auto;display:flex;align-items:center;gap:10px;background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:8px 14px;font-size:12px;font-weight:700;color:var(--text);white-space:nowrap}
+.mg-stats-inline b{color:var(--em-dark)}
 .mg-emoji-btn{width:34px;height:34px;font-size:18px;line-height:1;border:0.5px solid var(--border);border-radius:8px;background:var(--white);cursor:pointer;transition:all .12s;padding:0}
 .mg-emoji-btn:hover{background:var(--em-pale);transform:scale(1.12)}
 .mg-emoji-btn.active{background:var(--em-pale);border-color:var(--em);box-shadow:0 0 0 2px var(--em-light)}
@@ -1428,41 +1429,53 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .mg-quick-due{font-size:12px;padding:7px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .12s}
 .mg-quick-due:hover{background:var(--em-pale)}
 .mg-quick-due.active{background:var(--em);border-color:var(--em);color:#fff;font-weight:700}
-.mg-task-meta.mg-pri-high{color:#C0392B;font-weight:700}
-.mg-task-meta.mg-pri-mid{color:#B7791F;font-weight:700}
+/* 優先度は「最優先」だけ赤で表示（高/中/低は行に出さない。全部🔴だと判断材料にならないため） */
+.mg-task-meta.mg-pri-top{color:#C0392B;font-weight:800}
 .mg-tabbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .mg-tab{font-size:13px;padding:6px 14px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .15s}
 .mg-tab.active{background:var(--em);color:#fff;border-color:transparent;font-weight:600}
 .mg-major{background:var(--white);border:0.5px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden}
+/* 分類見出しはバー無し・件数（done/total）だけ。進捗バーは上部の目標カード1本に絞る（線を減らして視線を集中） */
 .mg-major-head{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;font-size:14px;font-weight:700;user-select:none}
 .mg-major-head:hover{background:var(--em-pale)}
-.mg-major-head .dash-proj-bar{max-width:220px}
 .mg-mid{margin:0 14px 10px 34px;border-left:2px solid var(--border-light);padding-left:12px}
 .mg-mid-head{display:flex;align-items:center;gap:8px;padding:7px 4px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);user-select:none}
 .mg-mid-head:hover{background:var(--em-pale);border-radius:6px}
-.mg-mid-head .dash-proj-bar{max-width:140px}
 .mg-caret{font-size:10px;color:var(--text-muted);width:12px;flex-shrink:0;transition:transform .15s}
-.mg-pct{font-size:11.5px;font-weight:700;color:var(--text-muted);white-space:nowrap}
+.mg-pct{font-size:11.5px;font-weight:700;color:var(--text-muted);white-space:nowrap;font-variant-numeric:tabular-nums}
 .mg-done-badge{font-size:13px;animation:mgPop .45s ease}
 .mg-task-row{display:flex;align-items:flex-start;gap:9px;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:13px;line-height:1.45}
 .mg-task-row:hover{background:var(--em-pale)}
 .mg-task-row input[type=checkbox]{margin-top:2.5px;cursor:pointer;accent-color:var(--em-dark);width:15px;height:15px;flex-shrink:0}
 .mg-task-row.done .mg-task-title{color:var(--text-muted);text-decoration:line-through}
 .mg-task-row.just-done{animation:mgRowDone .5s ease}
+/* 期限はタスク名の左（上から読むだけでスケジュールが分かる）。幅固定で縦を揃える */
+.mg-task-date{flex-shrink:0;width:44px;font-size:12px;font-weight:700;color:var(--text-muted);font-variant-numeric:tabular-nums;padding-top:0.5px}
+.mg-task-date.overdue{color:#C0392B}
 .mg-task-meta{font-size:11px;color:var(--text-muted);white-space:nowrap}
 .mg-task-meta.overdue{color:#C0392B;font-weight:700}
-.mg-status-chip{font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;background:#FEFCE8;color:#7A5F00;white-space:nowrap}
+/* ステータスチップ（行の右端）。未着手=灰 / 対応中=橙 / 相手待ち=青 / 予約済み=緑 / 完了=ティール / 期限超過・最優先=赤 */
+.mg-chip{flex-shrink:0;font-size:10.5px;font-weight:700;border-radius:8px;padding:1.5px 8px;white-space:nowrap;border:1px solid transparent;margin-left:2px}
+.mg-chip-todo{background:#EEF1F4;color:#5B6670;border-color:#D8DEE4}
+.mg-chip-doing{background:#FFF3E5;color:#B45309;border-color:#F5CD95}
+.mg-chip-wait{background:#E8F1FE;color:#1D6FD1;border-color:#AECDF5}
+.mg-chip-booked{background:#EAF8E7;color:#2F8132;border-color:#B8E0B6}
+.mg-chip-done{background:#E4F7F6;color:#0F6E6A;border-color:#9ADDD9}
+.mg-chip-overdue{background:#FDECEA;color:#C0392B;border-color:#F0B4AC}
+.mg-chip-milestone{background:var(--white);color:#0F6E6A;border-color:#2BB8B4}
+/* 完了タスクは既定で畳む（未完了に集中）。トグルで展開 */
+.mg-done-toggle{display:block;border:none;background:none;color:var(--text-muted);font-size:11.5px;font-weight:700;cursor:pointer;padding:5px 8px;border-radius:6px;text-align:left}
+.mg-done-toggle:hover{background:var(--em-pale);color:var(--em-dark)}
 .mg-flat-list{background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:10px 12px}
 .mg-empty{background:var(--white);border:0.5px solid var(--border);border-radius:14px;padding:40px 24px;text-align:center}
 @keyframes mgPop{0%{transform:scale(0.3);opacity:0}60%{transform:scale(1.35)}100%{transform:scale(1);opacity:1}}
 @keyframes mgRowDone{0%{background:var(--em-pale)}50%{background:#D4F4F2}100%{background:transparent}}
 @media (max-width:768px){
-  .mg-goal-strip{gap:10px}
-  .mg-goal-card{flex:1 1 100%;padding:14px 16px}
-  .mg-stats-card{flex:1 1 100%;flex-direction:row;justify-content:space-around}
+  .mg-goal-strip{gap:8px}
+  .mg-goal-card{flex:1 1 100%;padding:10px 14px}
+  .mg-stats-inline{flex:1 1 100%;justify-content:space-around}
   .mg-mid{margin-left:18px}
-  .mg-major-head .dash-proj-bar{max-width:110px}
-  .mg-mid-head .dash-proj-bar{max-width:70px}
+  .mg-task-date{width:38px;font-size:11px}
 }
 /* 誕生日 */
 .bday-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
@@ -8386,9 +8399,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     </div>
     <div id="mg-hero"></div>
     <div class="mg-tabbar" id="mg-tabbar" style="display:none">
-      <button class="mg-tab active" id="mg-tab-tree" onclick="mgSetTab('tree')">🌳 ツリー</button>
       <button class="mg-tab" id="mg-tab-week" onclick="mgSetTab('week')">📅 今週やること</button>
       <button class="mg-tab" id="mg-tab-due" onclick="mgSetTab('due')">⏰ 期限順</button>
+      <button class="mg-tab active" id="mg-tab-tree" onclick="mgSetTab('tree')">🌳 すべて</button>
       <select id="mg-goal-filter" class="form-input" style="width:auto;max-width:220px;margin-left:auto;padding:5px 8px;font-size:12px" onchange="mgRenderBody()">
         <option value="">すべての目標</option>
       </select>
@@ -8491,16 +8504,21 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <div class="form-group" style="flex:1;min-width:140px">
         <label class="form-label">ステータス</label>
+        <!-- 「相手待ち」＝司法書士・クライアントなど相手の回答待ち。自分の作業と区別できる（2026-08-22 ツリー画面リデザイン） -->
         <select class="form-input" id="mg-t-status">
           <option value="未着手">未着手</option>
-          <option value="進行中">進行中</option>
+          <option value="対応中">対応中</option>
+          <option value="相手待ち">相手待ち</option>
+          <option value="予約済み">予約済み</option>
           <option value="完了">完了</option>
         </select>
       </div>
       <div class="form-group" style="flex:1;min-width:140px">
         <label class="form-label">優先度</label>
+        <!-- 一覧に表示されるのは「最優先」だけ（高/中/低は並び・自分の整理用） -->
         <select class="form-input" id="mg-t-priority">
           <option value="">通常</option>
+          <option value="top">🚨 最優先（一覧に赤で表示）</option>
           <option value="high">🔴 高</option>
           <option value="mid">🟡 中</option>
           <option value="low">⚪ 低</option>
@@ -8544,6 +8562,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <label class="form-label">資料URL（任意）</label>
         <input class="form-input" id="mg-t-link" placeholder="https://...">
       </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;margin-bottom:4px">
+        <input type="checkbox" id="mg-t-milestone" style="width:15px;height:15px;accent-color:var(--em-dark);cursor:pointer">
+        🏁 マイルストーン（会社設立日などの節目。一覧でステータスの代わりに「マイルストーン」と表示）
+      </label>
     </details>
     <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
       <button class="btn-sm" id="mg-t-delete" style="color:#C0392B;margin-right:auto;display:none" onclick="mgDeleteTask()">🗑 削除</button>
@@ -25661,8 +25683,17 @@ function mgDateLabel(d) {
   const [y, m, day] = d.split('-').map(Number);
   return `${y}/${m}/${day}`;
 }
+// タスク行の左端に置く短い期限表示（今年なら 8/24、年跨ぎなら '27 1/15）
+function mgDateShortLabel(d) {
+  if (!d) return '';
+  const [y, m, day] = d.split('-').map(Number);
+  const thisYear = Number(mgTodayJst().slice(0, 4));
+  return y === thisYear ? `${m}/${day}` : `'${String(y).slice(2)} ${m}/${day}`;
+}
 const MG_TERM_LABELS = { short: '短期', mid: '中期', long: '長期' };
-const MG_PRIORITY_LABELS = { high: '🔴高', mid: '🟡中', low: '⚪低' };
+// 行に表示する優先度は「最優先」だけ（ほとんどが🔴高だと判断材料にならないため。高/中/低はモーダル内のみ）
+const MG_PRIORITY_LABELS = { top: '🚨最優先', high: '🔴高', mid: '🟡中', low: '⚪低' };
+const MG_STATUS_CHIP_CLASS = { '未着手': 'mg-chip-todo', '対応中': 'mg-chip-doing', '相手待ち': 'mg-chip-wait', '予約済み': 'mg-chip-booked', '完了': 'mg-chip-done' };
 // KPIの数値表示（NUMERIC 型の "100.00" 等をそのまま出さない）
 function mgNum(v) {
   const n = Number(v) || 0;
@@ -25756,7 +25787,6 @@ function mgRenderHero() {
   const cards = sortedGoals.map(g => {
     const gTasks = tasks.filter(t => t.goal_id === g.id);
     const p = PersonalGoalsUtils.computeProgress(gTasks);
-    const gWeek = PersonalGoalsUtils.countWeekCompleted(gTasks, today);
     // KPI（設定した人のカードにだけ出る。ライト層のカードは今まで通り）
     const gKpis = (_mgData.kpis || []).filter(k => k.goal_id === g.id);
     const kpiHtml = gKpis.map(k => {
@@ -25775,31 +25805,29 @@ function mgRenderHero() {
       countdown = '<span class="mg-goal-countdown">🏆 達成！</span>';
     } else if (g.target_date) {
       const days = PersonalGoalsUtils.daysUntil(g.target_date, today);
-      const label = days > 0 ? `⏳あと${days}日` : (days === 0 ? '⏳今日！' : `⚠️${-days}日超過`);
-      countdown = `<span class="mg-goal-countdown${days < 0 ? ' over' : ''}">${label} (${esc(mgDateLabel(g.target_date))})</span>`;
+      const label = days > 0 ? `⏳期限まで${days}日` : (days === 0 ? '⏳今日が期限！' : `⚠️${-days}日超過`);
+      countdown = `<span class="mg-goal-countdown${days < 0 ? ' over' : ''}" title="${esc(mgDateLabel(g.target_date))}">${label}</span>`;
     }
-    const bar = p.total > 0
-      ? `<div class="mg-goal-bar-row">
-          <div class="dash-proj-bar"><div class="dash-proj-fill" data-mg-w="${p.pct}" style="width:0%"></div></div>
-          <span>${p.pct}% (${p.done}/${p.total})</span>
-        </div>
-        <div style="font-size:11.5px;opacity:0.9;margin-top:8px">💪 今週 ${gWeek}件完了</div>`
-      : '<div style="font-size:11.5px;opacity:0.85;margin-top:10px">タスク未登録 — 「＋ タスクを追加」でこの目標に紐付けできます</div>';
+    // コンパクトな1行（タイトル＋バー＋◯%・done/total完了＋期限）。説明文（なぜやるのか）は編集モーダルでのみ表示
+    const progress = p.total > 0
+      ? `<div class="dash-proj-bar"><div class="dash-proj-fill" data-mg-w="${p.pct}" style="width:0%"></div></div>
+         <span class="mg-goal-nums">${p.pct}%・${p.done}/${p.total}完了</span>`
+      : '<span class="mg-goal-nums" style="opacity:0.85;font-weight:600">タスク未登録</span>';
     const termBadge = g.term ? `<span class="mg-goal-term">${MG_TERM_LABELS[g.term] || ''}</span>` : '';
-    return `<div class="mg-goal-card${g.status === 'achieved' ? ' achieved' : ''}" onclick="mgOpenGoalModal('${esc(g.id)}')" title="クリックで編集">
-      <div class="mg-goal-title"><span>${termBadge}${esc(g.emoji || '🎯')} ${esc(g.title)}</span>${countdown}</div>
-      ${g.purpose ? `<div class="mg-goal-purpose">${esc(g.purpose)}</div>` : ''}
-      ${bar}
+    return `<div class="mg-goal-card${g.status === 'achieved' ? ' achieved' : ''}" onclick="mgOpenGoalModal('${esc(g.id)}')" title="クリックで編集${g.purpose ? `｜${esc(g.purpose)}` : ''}">
+      <div class="mg-goal-line">
+        <span class="mg-goal-name">${termBadge}${esc(g.emoji || '🎯')} ${esc(g.title)}</span>
+        ${progress}
+        ${countdown}
+      </div>
       ${kpiHtml}
     </div>`;
   }).join('');
 
-  const statsCard = `<div class="mg-stats-card">
-    <div class="mg-stat-line">💪 今週 <b>${weekCountAll}</b> 件完了</div>
-    <div class="mg-stat-line">🔥 <b>${streak}</b> 日連続</div>
-  </div>`;
+  // 「今週◯件完了」「◯日連続」は独立カードにせず上部カード列へ統合（タスク一覧を上に詰める）
+  const statsInline = `<div class="mg-stats-inline"><span>💪 今週 <b>${weekCountAll}</b>件完了</span><span>🔥 <b>${streak}</b>日連続</span></div>`;
 
-  hero.innerHTML = `<div class="mg-goal-strip">${cards}${statsCard}</div>`;
+  hero.innerHTML = `<div class="mg-goal-strip">${cards}${statsInline}</div>`;
   mgAnimateBars(hero);
 }
 
@@ -25840,6 +25868,7 @@ function mgSetTab(tab) {
 }
 
 // ---------- タスク行（共通） ----------
+// 並び: [期限] [チェック] [タスク名 …メタ] [ステータスチップ]（期限を左端に置き、上から読むだけで予定が分かる）
 function mgTaskRowHtml(t, opts = {}) {
   const today = mgTodayJst();
   const done = PersonalGoalsUtils.isDone(t);
@@ -25851,8 +25880,9 @@ function mgTaskRowHtml(t, opts = {}) {
     const pathLabel = [goal ? `${goal.emoji || '🎯'}${goal.title}` : '', path].filter(Boolean).join(' / ');
     if (pathLabel) metas.push(`<span class="mg-task-meta">${esc(pathLabel)}</span>`);
   }
-  if (t.priority) {
-    metas.push(`<span class="mg-task-meta mg-pri-${esc(t.priority)}">${MG_PRIORITY_LABELS[t.priority] || ''}</span>`);
+  // 優先度は「最優先」だけ赤で表示（高/中/低は行に出さない。全部🔴だと判断材料にならない）
+  if (t.priority === 'top' && !done) {
+    metas.push(`<span class="mg-task-meta mg-pri-top">${MG_PRIORITY_LABELS.top}</span>`);
   }
   {
     // 担当メモ（自分以外を選んだタスクにだけ出す。相手には見えない自分用メモ）
@@ -25872,17 +25902,28 @@ function mgTaskRowHtml(t, opts = {}) {
     const kpi = (_mgData.kpis || []).find(k => k.id === t.kpi_id);
     if (kpi) metas.push(`<span class="mg-task-meta" title="KPI: ${esc(kpi.title)}">📌${esc(kpi.title)}</span>`);
   }
-  if (t.due_date) {
-    metas.push(`<span class="mg-task-meta${overdue ? ' overdue' : ''}">📅${esc(mgDateLabel(t.due_date))}${overdue ? ' ⚠️期限超過' : ''}</span>`);
-  }
   if (t.link_url) {
     metas.push(`<a class="mg-task-meta" href="${esc(t.link_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="資料を開く" style="text-decoration:none">🔗資料</a>`);
   }
-  if (t.status === '進行中') metas.push('<span class="mg-status-chip">進行中</span>');
+  // 右端チップ: マイルストーン ＞ 完了 ＞ 期限超過 ＞ ステータス（止まっている理由がひと目で分かる）
+  let chip;
+  if (t.is_milestone) {
+    chip = '<span class="mg-chip mg-chip-milestone">マイルストーン</span>';
+  } else if (done) {
+    chip = '<span class="mg-chip mg-chip-done">完了</span>';
+  } else if (overdue) {
+    chip = '<span class="mg-chip mg-chip-overdue">期限超過</span>';
+  } else {
+    chip = `<span class="mg-chip ${MG_STATUS_CHIP_CLASS[t.status] || 'mg-chip-todo'}">${esc(t.status || '未着手')}</span>`;
+  }
+  // 期限は左端（月/日。年は今年なら省く）
+  const dueLabel = t.due_date ? esc(mgDateShortLabel(t.due_date)) : '';
   return `<div class="mg-task-row${done ? ' done' : ''}" id="mg-task-${esc(t.id)}" onclick="mgOpenTaskModal('${esc(t.id)}')" title="クリックで編集">
+    <span class="mg-task-date${overdue && !done ? ' overdue' : ''}"${t.due_date ? ` title="期限 ${esc(mgDateLabel(t.due_date))}"` : ''}>${dueLabel}</span>
     <input type="checkbox" ${done ? 'checked' : ''} onclick="event.stopPropagation()" onchange="mgToggleTask('${esc(t.id)}', this.checked)">
     <span class="mg-task-title" style="flex:1;min-width:0">${esc(t.title)}</span>
     ${metas.join(' ')}
+    ${chip}
   </div>`;
 }
 
@@ -25934,7 +25975,26 @@ function mgRenderBody() {
 
 function mgNodeKey(major, mid) { return mid === undefined ? `M:${major}` : `m:${major}|${mid}`; }
 
+// 完了タスクは既定で畳み、「完了済み ◯件を表示」で展開（未完了だけに集中できる）。展開状態はセッション内のみ保持
+let _mgShowDone = new Set();
+function mgToggleDone(key) {
+  if (_mgShowDone.has(key)) _mgShowDone.delete(key); else _mgShowDone.add(key);
+  mgRenderBody();
+}
+function mgTaskListHtml(tasks, nodeKey) {
+  const undone = tasks.filter(t => !PersonalGoalsUtils.isDone(t));
+  const doneTasks = tasks.filter(t => PersonalGoalsUtils.isDone(t));
+  let html = undone.map(t => mgTaskRowHtml(t)).join('');
+  if (doneTasks.length) {
+    const showing = _mgShowDone.has(nodeKey);
+    if (showing) html += doneTasks.map(t => mgTaskRowHtml(t)).join('');
+    html += `<button type="button" class="mg-done-toggle" onclick="event.stopPropagation();mgToggleDone('${esc(nodeKey)}')">${showing ? '▲ 完了済みを隠す' : `✔ 完了済み ${doneTasks.length}件を表示`}</button>`;
+  }
+  return html;
+}
+
 function mgTreeHtml(tasks) {
+  // 分類見出しは「▼ 名前 done/total」だけのシンプル表示。進捗バーは上部の目標カード1本に絞る
   const tree = PersonalGoalsUtils.buildCategoryTree(tasks);
   return tree.map(major => {
     const mKey = mgNodeKey(major.name);
@@ -25948,24 +26008,22 @@ function mgTreeHtml(tasks) {
         ? `<span class="${_mgJustCompleted.has(midKey) ? 'mg-done-badge' : ''}">✅</span>` : '';
       // 中分類が（未分類）1つだけなら見出しを省いてタスクを直接ぶら下げる（2階層運用でも自然に見えるように）
       if (mid.name === PersonalGoalsUtils.UNCATEGORIZED && major.mids.length === 1) {
-        return `<div class="mg-mid" style="border-left:none;padding-left:2px">${mid.tasks.map(t => mgTaskRowHtml(t)).join('')}</div>`;
+        return `<div class="mg-mid" style="border-left:none;padding-left:2px">${mgTaskListHtml(mid.tasks, midKey)}</div>`;
       }
       return `<div class="mg-mid">
         <div class="mg-mid-head" onclick="mgToggleNode('${esc(midKey)}')">
           <span class="mg-caret">${midOpen ? '▼' : '▶'}</span>
           <span>${esc(mid.name)}</span>${midBadge}
-          <div class="dash-proj-bar"><div class="dash-proj-fill" data-mg-w="${mid.pct}" style="width:0%"></div></div>
-          <span class="mg-pct">${mid.pct}% (${mid.done}/${mid.total})</span>
+          <span class="mg-pct">${mid.done}/${mid.total}</span>
         </div>
-        ${midOpen ? mid.tasks.map(t => mgTaskRowHtml(t)).join('') : ''}
+        ${midOpen ? mgTaskListHtml(mid.tasks, midKey) : ''}
       </div>`;
     }).join('');
     return `<div class="mg-major">
       <div class="mg-major-head" onclick="mgToggleNode('${esc(mKey)}')">
         <span class="mg-caret">${open ? '▼' : '▶'}</span>
         <span>${esc(major.name)}</span>${doneBadge}
-        <div class="dash-proj-bar"><div class="dash-proj-fill" data-mg-w="${major.pct}" style="width:0%"></div></div>
-        <span class="mg-pct">${major.pct}% (${major.done}/${major.total})</span>
+        <span class="mg-pct">${major.done}/${major.total}</span>
       </div>
       ${open ? `<div style="padding:0 4px 8px">${mids}</div>` : ''}
     </div>`;
@@ -26225,6 +26283,7 @@ function mgOpenTaskModal(taskId) {
   mgRenderMemoLinks();
   document.getElementById('mg-t-link').value = t?.link_url || '';
   document.getElementById('mg-t-priority').value = t?.priority || '';
+  document.getElementById('mg-t-milestone').checked = !!t?.is_milestone;
   // 担当メモ: 既定は自分。編集時は保存済みの選択を復元
   _mgTaskAssignees = (t?.assignee_user_ids && t.assignee_user_ids.length)
     ? [...t.assignee_user_ids]
@@ -26234,7 +26293,7 @@ function mgOpenTaskModal(taskId) {
   mgSyncTaskKpiSelect(t?.kpi_id || null);
   // 詳細設定はデフォルト折りたたみ（10秒登録）。編集時に詳細項目が入っていれば開く
   const details = document.getElementById('mg-t-details');
-  if (details) details.open = !!(t && (t.major_category || t.mid_category || t.kpi_id || t.detail || t.link_url));
+  if (details) details.open = !!(t && (t.major_category || t.mid_category || t.kpi_id || t.detail || t.link_url || t.is_milestone));
   document.getElementById('mg-t-delete').style.display = t ? '' : 'none';
   // 新規＝「タスクを追加」＋連続登録ボタン / 編集＝「保存」のみ
   document.getElementById('mg-t-submit').textContent = t ? '保存' : 'タスクを追加';
@@ -26332,6 +26391,7 @@ async function mgSubmitTask(addNext) {
     priority: document.getElementById('mg-t-priority').value || null,
     assignee_user_ids: _mgTaskAssignees.length ? _mgTaskAssignees : null,
     status: document.getElementById('mg-t-status').value,
+    is_milestone: document.getElementById('mg-t-milestone').checked,
     detail: document.getElementById('mg-t-detail').value.trim() || null,
     memo: document.getElementById('mg-t-memo').value.trim() || null,
     link_url: document.getElementById('mg-t-link').value.trim() || null,

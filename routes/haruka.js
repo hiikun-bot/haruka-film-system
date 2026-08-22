@@ -22331,8 +22331,10 @@ router.get('/onboarding/:id/first-message', requireAuth, requireAnyPermission('o
 // ============================================================
 const PG_GOAL_STATUSES = new Set(['active', 'achieved', 'archived']);
 const PG_GOAL_TERMS = new Set(['short', 'mid', 'long']); // 期間区分: 短期/中期/長期
-const PG_TASK_STATUSES = new Set(['未着手', '進行中', '完了']);
-const PG_TASK_PRIORITIES = new Set(['high', 'mid', 'low']); // 優先度（任意）
+const PG_TASK_STATUSES = new Set(['未着手', '対応中', '相手待ち', '予約済み', '完了']);
+// 旧「進行中」は 2026-08-22c で「対応中」に改名。古いシート取込・旧クライアントからの値は読み替える
+const pgNormalizeStatus = (s) => (s === '進行中' ? '対応中' : s);
+const PG_TASK_PRIORITIES = new Set(['top', 'high', 'mid', 'low']); // 優先度（任意。top=最優先だけ画面に表示）
 // 担当メモ（非共有・自分用）: UUID配列に正規化。undefined=未指定 / null・空=クリア
 const pgParseAssignees = (v) => {
   if (v === undefined) return undefined;
@@ -22347,11 +22349,11 @@ const isPgDateStr = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s
 const isMissingPersonalGoalsTable = (err) => {
   const msg = (err && err.message) || '';
   return /relation .*personal_(goals|tasks|goal_kpis).* does not exist/.test(msg)
-    || /column .*(term|kpi_id|priority|assignee_user_ids).* does not exist/.test(msg) // 2026-08-22 拡張分の列が未適用
+    || /column .*(term|kpi_id|priority|assignee_user_ids|is_milestone).* does not exist/.test(msg) // 2026-08-22 拡張分の列が未適用
     || (err && err.code === '42P01');
 };
 const personalGoalsMigrationHint = (res) =>
-  res.status(503).json({ error: 'マイゴールのテーブルが未作成/未更新です。migrations/2026-08-21_personal_goals.sql と 2026-08-22_personal_goals_term_kpi.sql を本番Supabaseに適用してください。' });
+  res.status(503).json({ error: 'マイゴールのテーブルが未作成/未更新です。migrations/2026-08-21_personal_goals.sql・2026-08-22_personal_goals_term_kpi.sql・2026-08-22c_personal_tasks_status_milestone.sql を本番Supabaseに適用してください。' });
 
 // 任意テキスト項目の共通整形: undefined=更新しない / 空文字・空白のみ=null
 const pgTrimOrNull = (v) => {
@@ -22500,7 +22502,7 @@ async function pgAssertOwnKpi(kpiId, userId) {
 
 // POST /personal-tasks — タスクの作成
 router.post('/personal-tasks', requireAuth, async (req, res) => {
-  const { goal_id, kpi_id, major_category, mid_category, title, detail, memo, link_url, due_date, priority, status, sort_order, assignee_user_ids } = req.body || {};
+  const { goal_id, kpi_id, major_category, mid_category, title, detail, memo, link_url, due_date, priority, status, sort_order, assignee_user_ids, is_milestone } = req.body || {};
   // 担当メモは完全個人領域の「自分用メモ」。相手側には何も表示・通知されない（ADR 032 追記参照）
   let assignees;
   try { assignees = pgParseAssignees(assignee_user_ids); } catch (e) { return res.status(400).json({ error: e.message }); }
@@ -22513,7 +22515,7 @@ router.post('/personal-tasks', requireAuth, async (req, res) => {
   if (priority != null && priority !== '' && !PG_TASK_PRIORITIES.has(priority)) {
     return res.status(400).json({ error: `優先度は ${[...PG_TASK_PRIORITIES].join(' / ')} のいずれかで指定してください` });
   }
-  const taskStatus = status === undefined || status === null || status === '' ? '未着手' : status;
+  const taskStatus = status === undefined || status === null || status === '' ? '未着手' : pgNormalizeStatus(status);
   if (!PG_TASK_STATUSES.has(taskStatus)) {
     return res.status(400).json({ error: `status は ${[...PG_TASK_STATUSES].join(' / ')} のいずれかで指定してください` });
   }
@@ -22542,6 +22544,7 @@ router.post('/personal-tasks', requireAuth, async (req, res) => {
     priority: priority || null,
     assignee_user_ids: assignees === undefined ? null : assignees,
     status: taskStatus,
+    is_milestone: is_milestone === true,
     completed_at: taskStatus === '完了' ? new Date().toISOString() : null,
     sort_order: Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0,
   };
@@ -22555,8 +22558,9 @@ router.post('/personal-tasks', requireAuth, async (req, res) => {
 
 // PATCH /personal-tasks/:id — タスクの更新（「完了」にしたら completed_at、戻したら NULL）
 router.patch('/personal-tasks/:id', requireAuth, async (req, res) => {
-  const { goal_id, kpi_id, major_category, mid_category, title, detail, memo, link_url, due_date, priority, status, sort_order, assignee_user_ids } = req.body || {};
+  const { goal_id, kpi_id, major_category, mid_category, title, detail, memo, link_url, due_date, priority, status, sort_order, assignee_user_ids, is_milestone } = req.body || {};
   const update = {};
+  if (is_milestone !== undefined) update.is_milestone = is_milestone === true;
   if (assignee_user_ids !== undefined) {
     try { update.assignee_user_ids = pgParseAssignees(assignee_user_ids); } catch (e) { return res.status(400).json({ error: e.message }); }
   }
@@ -22604,11 +22608,12 @@ router.patch('/personal-tasks/:id', requireAuth, async (req, res) => {
     update.priority = priority || null;
   }
   if (status !== undefined) {
-    if (!PG_TASK_STATUSES.has(status)) {
+    const normalized = pgNormalizeStatus(status);
+    if (!PG_TASK_STATUSES.has(normalized)) {
       return res.status(400).json({ error: `status は ${[...PG_TASK_STATUSES].join(' / ')} のいずれかで指定してください` });
     }
-    update.status = status;
-    update.completed_at = status === '完了' ? new Date().toISOString() : null;
+    update.status = normalized;
+    update.completed_at = normalized === '完了' ? new Date().toISOString() : null;
   }
   if (sort_order !== undefined) update.sort_order = Number.isFinite(Number(sort_order)) ? Number(sort_order) : 0;
   if (Object.keys(update).length === 0) return res.status(400).json({ error: '更新項目がありません' });
@@ -22648,8 +22653,8 @@ router.delete('/personal-tasks/:id', requireAuth, async (req, res) => {
 // ---------- スプレッドシート エクスポート／インポート（2026-08-22 拡張） ----------
 // ADR 032: 完全個人領域。シートは共有ドライブに置かず、SAのマイドライブに作成して本人メールにのみ共有する。
 // インポートは「ID列あり=更新 / ID列空=新規作成」。シートに無いタスクの削除は行わない（安全側）。
-const PG_SHEET_PRIORITY_LABELS = { high: '高', mid: '中', low: '低' };
-const PG_SHEET_PRIORITY_CODES = { '高': 'high', '中': 'mid', '低': 'low' };
+const PG_SHEET_PRIORITY_LABELS = { top: '最優先', high: '高', mid: '中', low: '低' };
+const PG_SHEET_PRIORITY_CODES = { '最優先': 'top', '高': 'high', '中': 'mid', '低': 'low' };
 // ヘッダーは「基準名（補足）」形式を許容。列の並び替えはOK・列削除はその項目を取込対象外にする
 const PG_SHEET_COLS = [
   { key: 'id', label: 'ID', header: 'ID（編集・削除しない）', width: 60 },
@@ -22754,11 +22759,14 @@ router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
       // ステータス・優先度はチップ風の配色（Google Sheets標準チップの色に合わせる）
       valueColors: [
         { column: statusCol, colors: {
-          '未着手': { bg: { red: 1, green: 0.812, blue: 0.788 },     fg: { red: 0.694, green: 0.008, blue: 0.008 } }, // 赤 #FFCFC9/#B10202
-          '進行中': { bg: { red: 1, green: 0.898, blue: 0.627 },     fg: { red: 0.471, green: 0.353, blue: 0 } },     // 黄 #FFE5A0/#785A00
-          '完了':   { bg: { red: 0.749, green: 0.882, blue: 0.965 }, fg: { red: 0.039, green: 0.325, blue: 0.659 } }, // 青 #BFE1F6/#0A53A8
+          '未着手':   { bg: { red: 0.910, green: 0.918, blue: 0.929 }, fg: { red: 0.235, green: 0.251, blue: 0.263 } }, // 灰 #E8EAED/#3C4043
+          '対応中':   { bg: { red: 1, green: 0.784, blue: 0.667 },     fg: { red: 0.459, green: 0.220, blue: 0 } },     // 橙 #FFC8AA/#753800
+          '相手待ち': { bg: { red: 0.749, green: 0.882, blue: 0.965 }, fg: { red: 0.039, green: 0.325, blue: 0.659 } }, // 青 #BFE1F6/#0A53A8
+          '予約済み': { bg: { red: 0.831, green: 0.929, blue: 0.737 }, fg: { red: 0.067, green: 0.451, blue: 0.294 } }, // 緑 #D4EDBC/#11734B
+          '完了':     { bg: { red: 0.788, green: 0.941, blue: 0.933 }, fg: { red: 0.043, green: 0.427, blue: 0.408 } }, // ティール #C9F0EE/#0B6D68
         } },
         { column: priorityCol, colors: {
+          '最優先': { bg: { red: 1, green: 0.812, blue: 0.788 },   fg: { red: 0.694, green: 0.008, blue: 0.008 } }, // 赤 #FFCFC9/#B10202
           '高': { bg: { red: 1, green: 0.784, blue: 0.667 },     fg: { red: 0.459, green: 0.220, blue: 0 } },     // 橙 #FFC8AA/#753800
           '中': { bg: { red: 1, green: 0.898, blue: 0.627 },     fg: { red: 0.471, green: 0.353, blue: 0 } },     // 黄 #FFE5A0/#785A00
           '低': { bg: { red: 0.831, green: 0.929, blue: 0.737 }, fg: { red: 0.067, green: 0.451, blue: 0.294 } }, // 緑 #D4EDBC/#11734B
@@ -22837,13 +22845,13 @@ async function pgBuildImportPlan(user, sheetUrl) {
       fields.due_date = d.value;
     }
     if (colIndex.status !== undefined) {
-      const s = cell('status');
-      if (s && !PG_TASK_STATUSES.has(s)) { warnings.push(`${rowNo}行目「${title}」: ステータス「${s}」は 未着手/進行中/完了 のいずれかにしてください（スキップ）`); continue; }
+      const s = pgNormalizeStatus(cell('status')); // 旧「進行中」表記のシートは「対応中」として取り込む
+      if (s && !PG_TASK_STATUSES.has(s)) { warnings.push(`${rowNo}行目「${title}」: ステータス「${s}」は 未着手/対応中/相手待ち/予約済み/完了 のいずれかにしてください（スキップ）`); continue; }
       if (s) fields.status = s; // 空欄は既存維持（新規はデフォルト未着手）
     }
     if (colIndex.priority !== undefined) {
       const p = cell('priority');
-      if (p && !PG_SHEET_PRIORITY_CODES[p]) { warnings.push(`${rowNo}行目「${title}」: 優先度「${p}」は 高/中/低 のいずれかにしてください（スキップ）`); continue; }
+      if (p && !PG_SHEET_PRIORITY_CODES[p]) { warnings.push(`${rowNo}行目「${title}」: 優先度「${p}」は 最優先/高/中/低 のいずれかにしてください（スキップ）`); continue; }
       fields.priority = p ? PG_SHEET_PRIORITY_CODES[p] : null;
     }
     if (colIndex.goal !== undefined) {
