@@ -8553,14 +8553,27 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
 </div>
 
-<!-- 🎯 マイゴール スプレッドシート連携モーダル（完全個人領域: シートは本人にのみ共有される） -->
+<!-- 🎯 マイゴール スプレッドシート連携モーダル（完全個人領域: あなた所有のシートと連携する） -->
 <div class="modal-overlay" id="modal-mg-sheet">
   <div class="modal-card" style="width:min(620px,95vw)">
     <div class="modal-title"><span>📊 スプレッドシート連携</span><button class="modal-close" onclick="closeModal('modal-mg-sheet')">×</button></div>
-    <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">🔒 作成されるシートはあなたのGoogleアカウントにだけ共有されます。他の人からは見えません。</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">🔒 あなたのGoogleドライブにあるシートと連携します。シートの持ち主はあなたなので、他の人からは見えません。</div>
     <div class="form-group">
-      <label class="form-label">📤 エクスポート</label>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">タスク一覧を新しいスプレッドシートに書き出します。シート上で編集して、下の取込でシステムに反映することもできます。</div>
+      <label class="form-label">連携シートURL</label>
+      <input class="form-input" id="mg-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+      <details id="mg-sheet-setup" style="margin-top:8px">
+        <summary style="font-size:12px;color:var(--text-muted);cursor:pointer">🔰 初回セットアップ（連携するシートがまだない場合）</summary>
+        <ol style="font-size:12px;color:var(--text-muted);line-height:1.9;margin:6px 0 0;padding-left:20px">
+          <li><a href="https://sheets.new" target="_blank" rel="noopener">sheets.new</a> で自分のドライブに新しいシートを作成する</li>
+          <li>シート右上の「共有」で <code id="mg-sheet-sa-email" style="user-select:all">（読み込み中…）</code> <button type="button" class="btn-sm" style="padding:1px 8px;font-size:11px" onclick="mgCopySaEmail()">コピー</button> を<b>「編集者」</b>で追加する（通知はオフでOK）</li>
+          <li>シートのURLをコピーして上の欄に貼り付ける</li>
+        </ol>
+      </details>
+    </div>
+    <hr style="border:none;border-top:0.5px solid var(--border);margin:14px 0">
+    <div class="form-group">
+      <label class="form-label">📤 エクスポート（システム → シート）</label>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">タスク一覧をシートの<b>1枚目のタブに上書き</b>で書き出します。シート上で編集して、下の取込でシステムに反映することもできます。</div>
       <button class="btn-primary" id="mg-sheet-export-btn" style="padding:6px 16px;font-size:13px" onclick="mgExportSheet()">📤 スプシに出力</button>
       <div id="mg-sheet-export-result" style="font-size:12px;margin-top:6px"></div>
     </div>
@@ -8568,8 +8581,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div class="form-group">
       <label class="form-label">📥 インポート（シート → システム）</label>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">ID列が入っている行は更新、ID列が空の行は新規作成します。シートに無いタスクの削除はしません。</div>
-      <input class="form-input" id="mg-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
-      <div style="display:flex;gap:8px;margin-top:8px">
+      <div style="display:flex;gap:8px">
         <button class="btn-sm" id="mg-sheet-preview-btn" onclick="mgImportPreview()">🔍 差分をプレビュー</button>
         <button class="btn-primary" id="mg-sheet-apply-btn" style="padding:6px 16px;font-size:13px;display:none" onclick="mgImportApply()">📥 この内容で取り込む</button>
       </div>
@@ -26280,21 +26292,55 @@ function mgOpenSheetModal() {
   let saved = '';
   try { saved = localStorage.getItem(mgSheetUrlKey()) || ''; } catch (_) {}
   document.getElementById('mg-sheet-url').value = saved;
+  // 連携シート未設定の人には初回セットアップ手順を開いた状態で見せる
+  document.getElementById('mg-sheet-setup').open = !saved;
+  mgLoadSaEmail();
   openModal('modal-mg-sheet');
 }
 
+// セットアップ案内用のSAメールを取得（キャッシュ）
+let _mgSaEmail = null;
+async function mgLoadSaEmail() {
+  const el = document.getElementById('mg-sheet-sa-email');
+  if (_mgSaEmail) { el.textContent = _mgSaEmail; return; }
+  try {
+    const res = await apiFetch(`${API}/personal-tasks/sheet-info`);
+    const data = await res.json();
+    _mgSaEmail = data.sa_email || null;
+    el.textContent = _mgSaEmail || '（取得できませんでした）';
+  } catch (_) {
+    el.textContent = '（取得できませんでした）';
+  }
+}
+function mgCopySaEmail() {
+  if (!_mgSaEmail) { showToast('メールアドレスを取得できていません', 'warn'); return; }
+  navigator.clipboard?.writeText(_mgSaEmail)
+    .then(() => showToast('共有用メールアドレスをコピーしました', 'success'))
+    .catch(() => showToast('コピーできませんでした。表示のアドレスを選択してコピーしてください', 'warn'));
+}
+
 async function mgExportSheet() {
+  const url = document.getElementById('mg-sheet-url').value.trim();
+  if (!url) {
+    showToast('連携シートのURLを入力してください（初回セットアップ参照）', 'warn');
+    document.getElementById('mg-sheet-setup').open = true;
+    return;
+  }
+  if (!confirm('シートの1枚目のタブを、現在のタスク一覧で上書きします。よろしいですか？')) return;
   const btn = document.getElementById('mg-sheet-export-btn');
   const result = document.getElementById('mg-sheet-export-result');
   btn.disabled = true;
-  result.innerHTML = '<span style="color:var(--text-muted)">シートを作成中…（数秒かかります）</span>';
+  result.innerHTML = '<span style="color:var(--text-muted)">シートに書き込み中…（数秒かかります）</span>';
   try {
-    const res = await apiFetch(`${API}/personal-tasks/export-sheet`, { method: 'POST' });
+    const res = await apiFetch(`${API}/personal-tasks/export-sheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheet_url: url }),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'エクスポートに失敗しました');
-    try { localStorage.setItem(mgSheetUrlKey(), data.url); } catch (_) {}
-    document.getElementById('mg-sheet-url').value = data.url;
-    result.innerHTML = `✅ ${data.count}件を出力しました → <a href="${esc(data.url)}" target="_blank" rel="noopener">シートを開く</a>`;
+    try { localStorage.setItem(mgSheetUrlKey(), url); } catch (_) {}
+    result.innerHTML = `✅ ${data.count}件を出力しました → <a href="${esc(url)}" target="_blank" rel="noopener">シートを開く</a>`;
     showToast(`タスク${data.count}件をスプレッドシートに出力しました`, 'success');
   } catch (e) {
     result.innerHTML = `<span style="color:#C0392B">${esc(e.message)}</span>`;

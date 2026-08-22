@@ -8,7 +8,7 @@ const bcrypt = require('bcryptjs');
 const { requireAuth, requireRole, requireLevel, requirePermission, requireAnyPermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache, invalidateUserCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
-const { createSheetWithData, createPrivateSheetWithData, getServiceAccountEmail, extractSpreadsheetId, readSheetData } = require('../sheets');
+const { createSheetWithData, overwriteFirstSheet, getServiceAccountEmail, extractSpreadsheetId, readSheetData } = require('../sheets');
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
 const { createNotification, extractMentions } = require('../utils/notification');
@@ -22667,9 +22667,17 @@ function pgTaskToSheetRow(t, goalTitleById) {
   };
 }
 
-// POST /personal-tasks/export-sheet — タスク一覧を新規スプレッドシートに出力（本人メールにのみ共有）
+// GET /personal-tasks/sheet-info — 初回セットアップ案内用（SAメール）。秘匿情報ではない
+router.get('/personal-tasks/sheet-info', requireAuth, (req, res) => {
+  res.json({ sa_email: getServiceAccountEmail() });
+});
+
+// POST /personal-tasks/export-sheet — タスク一覧をユーザー所有のシート（1枚目タブ）に上書き出力
+// SAのマイドライブは容量0で新規作成不可（quota exceeded）のため、SA所有での作成はしない。
+// ユーザーが自分のドライブで作ったシートをSAに編集者共有してもらい、そこへ書き込む（本人所有＝完全個人のまま）
 router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
-  if (!req.user.email) return res.status(400).json({ error: 'アカウントにメールアドレスが未設定のため、シートを共有できません' });
+  const spreadsheetId = extractSpreadsheetId(req.body?.sheet_url);
+  if (!spreadsheetId) return res.status(400).json({ error: 'スプレッドシートのURLが正しくありません' });
   const [tasksRes, goalsRes] = await Promise.all([
     supabase.from('personal_tasks').select('*')
       .eq('user_id', req.user.id) // 本人のみ（ADR 032）
@@ -22687,14 +22695,14 @@ router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
     const r = pgTaskToSheetRow(t, goalTitleById);
     rows.push(PG_SHEET_COLS.map(c => r[c.key]));
   }
-  const dateStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-  const title = `マイゴール タスク一覧_${req.user.full_name || ''}_${dateStr}`;
   try {
-    const { url } = await createPrivateSheetWithData(title, rows, req.user.email);
-    res.json({ url, count: rows.length - 1 });
+    await overwriteFirstSheet(spreadsheetId, rows);
+    res.json({ url: req.body.sheet_url, count: rows.length - 1 });
   } catch (e) {
     console.error('personal-tasks export-sheet error:', e.message);
-    res.status(500).json({ error: `シート作成に失敗しました: ${e.message}` });
+    const saEmail = getServiceAccountEmail();
+    const hint = saEmail ? `。シートの共有に ${saEmail} を「編集者」で追加されているか確認してください` : '';
+    res.status(500).json({ error: `シートへの書き込みに失敗しました（${e.message}）${hint}` });
   }
 });
 
