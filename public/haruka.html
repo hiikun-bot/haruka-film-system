@@ -8394,6 +8394,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <h2 style="margin:0;font-size:18px">🎯 マイゴール</h2>
       <span style="font-size:11px;color:var(--text-muted);border:0.5px solid var(--border);border-radius:10px;padding:2px 10px" title="管理者を含め、他の人にはこのページの内容は一切見えません">🔒 あなた専用</span>
       <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+        <!-- 連携シートURLを保存済みの端末にだけ出す（未設定なら連携モーダルから） -->
+        <button class="btn-sm" id="mg-btn-open-sheet" style="display:none" onclick="mgOpenLinkedSheet()" title="連携済みのあなた専用シートを新しいタブで開く">📗 スプシを開く</button>
         <button class="btn-sm" id="mg-btn-sheet" onclick="mgOpenSheetModal()" title="タスク一覧をスプレッドシートに出力／シートから取込（あなた専用シート）">📊 スプシ連携</button>
         <button class="btn-sm" id="mg-btn-add-goal" onclick="mgOpenGoalModal()">＋ 目標を追加</button>
         <button class="btn-primary" id="mg-btn-add-task" style="padding:6px 16px;font-size:13px" onclick="mgOpenTaskModal()">＋ タスクを追加</button>
@@ -25738,6 +25740,7 @@ async function loadMyGoalsPage() {
       try { _mgMembers = await MemberPicker.loadMembers(); } catch (_) { _mgMembers = []; }
     }
     mgRender();
+    mgSyncSheetOpenBtn();
   } catch (e) {
     console.error('[my-goals]', e);
     document.getElementById('mg-hero').innerHTML = '';
@@ -26491,6 +26494,19 @@ async function mgSubmitTask(addNext) {
 // ---------- スプレッドシート連携（エクスポート／インポート） ----------
 // 前回エクスポートしたシートURLは端末ごとに記憶（完全個人領域のためサーバーには保存しない）
 const mgSheetUrlKey = () => `mg_sheet_url_${currentUser?.id || ''}`;
+function mgLinkedSheetUrl() {
+  try { return localStorage.getItem(mgSheetUrlKey()) || ''; } catch (_) { return ''; }
+}
+// 「📗 スプシを開く」はシートURLを保存済みのときだけ表示
+function mgSyncSheetOpenBtn() {
+  const btn = document.getElementById('mg-btn-open-sheet');
+  if (btn) btn.style.display = mgLinkedSheetUrl() ? '' : 'none';
+}
+function mgOpenLinkedSheet() {
+  const url = mgLinkedSheetUrl();
+  if (!url) { mgOpenSheetModal(); return; }
+  window.open(url, '_blank', 'noopener');
+}
 
 function mgOpenSheetModal() {
   document.getElementById('mg-sheet-export-result').innerHTML = '';
@@ -26547,6 +26563,7 @@ async function mgExportSheet() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'エクスポートに失敗しました');
     try { localStorage.setItem(mgSheetUrlKey(), url); } catch (_) {}
+    mgSyncSheetOpenBtn();
     result.innerHTML = `✅ ${data.count}件を出力しました → <a href="${esc(url)}" target="_blank" rel="noopener">シートを開く</a>`;
     showToast(`タスク${data.count}件をスプレッドシートに出力しました`, 'success');
   } catch (e) {
@@ -26574,6 +26591,7 @@ async function mgImportPreview() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'プレビューに失敗しました');
     try { localStorage.setItem(mgSheetUrlKey(), url); } catch (_) {}
+    mgSyncSheetOpenBtn();
     const parts = [];
     parts.push(`<div style="font-size:12.5px;font-weight:600;margin-bottom:6px">🆕 新規 ${data.creates.length}件 ／ ✏️ 更新 ${data.updates.length}件 ／ ✔ 変更なし ${data.unchanged}件${data.warnings.length ? ` ／ ⚠ ${data.warnings.length}件` : ''}</div>`);
     const lines = [];
