@@ -8351,7 +8351,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 </div>
 
 <!-- 📦 一括納品完了（月次消込）— admin / secretary 専用（ADR 015: effectiveRole で判定） -->
-<!-- 🚀 オンボーディング管理（新メンバー受け入れチェックリスト）。権限: onboarding.page（既定 admin/secretary） -->
+<!-- 🚀 オンボーディング管理（新メンバー受け入れチェックリスト）。権限: onboarding.page（管理・既定 admin/secretary）/ onboarding.view（参照のみ・既定 producer/PD）/ 本人（自分に紐付いたレコードのみ） -->
 <div id="page-onboarding" class="page">
   <div style="max-width:1100px;margin:0 auto;padding:0 4px">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
@@ -18132,6 +18132,8 @@ const _ROLE_PERMS_FALLBACK = {
   'director|invoice_folder.generate_own': true, 'editor|invoice_folder.generate_own': true, 'designer|invoice_folder.generate_own': true,
   'secretary|invoice_folder.view_any': true,
   'secretary|invoice_folder.generate_any': true,
+  // オンボーディング参照のみ（migration 2026-08-22_onboarding_view_permission.sql。管理側 onboarding.page はDB seedのみ）
+  'producer|onboarding.view': true, 'producer_director|onboarding.view': true,
 };
 async function loadRolePermissions() {
   try {
@@ -18239,7 +18241,7 @@ function setPreviewRole(role) {
   if (document.getElementById('page-portfolio')?.classList.contains('active') && typeof pfReload === 'function') pfReload();
   // 一括納品（月次消込）: admin/secretary 限定ページ。VIEW AS 切替で前ロールの表示が残らないよう再描画（ADR 015）
   if (document.getElementById('page-bulk-deliver')?.classList.contains('active') && typeof loadBulkDeliverPage === 'function') loadBulkDeliverPage();
-  // 🚀 オンボーディング: onboarding.page 限定ページ。VIEW AS 切替で前ロールの表示（削除ボタン等）が残らないよう再描画（ADR 015）
+  // 🚀 オンボーディング: onboarding.page（管理）/ onboarding.view（参照のみ）/ 本人参照。VIEW AS 切替で前ロールの表示（削除ボタン等）が残らないよう再描画（ADR 015）
   if (document.getElementById('page-onboarding')?.classList.contains('active') && typeof loadOnboardingPage === 'function') loadOnboardingPage();
   // 🎯 マイゴール: req.user 本人のデータのみ。VIEW AS でロールを変えても内容は変わらない（本人領域のため）が、描画一貫性のため再ロード（ADR 015）
   if (document.getElementById('page-my-goals')?.classList.contains('active') && typeof loadMyGoalsPage === 'function') loadMyGoalsPage();
@@ -18304,8 +18306,10 @@ function applyRoleBasedUI() {
   if (bulkDeliverNav) bulkDeliverNav.style.display = canBulkDeliver ? '' : 'none';
   const drawerBulkDeliver = document.getElementById('nav-drawer-bulk-deliver');
   if (drawerBulkDeliver) drawerBulkDeliver.style.display = canBulkDeliver ? '' : 'none';
-  // 🚀 オンボーディングナビ — permission 'onboarding.page'（既定 admin/secretary。ADR 015: hasPermission 判定で VIEW AS に追従）
-  const canOnboarding = hasPermission('onboarding.page');
+  // 🚀 オンボーディングナビ — onboarding.page（管理・既定 admin/secretary）or onboarding.view（参照のみ・既定 producer/PD）。
+  // ADR 015: hasPermission 判定で VIEW AS に追従。has_onboarding（自分に紐付いたレコードあり）は
+  // ロールでなく実ユーザー（本人参照）で決まるため currentUser 直参照が正当（/auth/me が返すフラグ）。
+  const canOnboarding = hasPermission('onboarding.page') || hasPermission('onboarding.view') || !!currentUser?.has_onboarding;
   const onboardingNav = document.getElementById('nav-onboarding');
   if (onboardingNav) onboardingNav.style.display = canOnboarding ? '' : 'none';
   const drawerOnboarding = document.getElementById('nav-drawer-onboarding');
@@ -25256,8 +25260,9 @@ function bdCloseModal() {
 // ==================== 🚀 オンボーディング管理（新メンバー受け入れ） ====================
 //
 // 旧: スプレッドシート「オンボーディング引き継ぎシート」（秘書チーム運用）を HFS に取り込み。
-// - 権限UIは ADR 015 準拠: hasPermission('onboarding.page') / apiFetch() のみ使用
+// - 権限UIは ADR 015 準拠: hasPermission('onboarding.page'=管理 / 'onboarding.view'=参照のみ) / apiFetch() のみ使用
 //   （currentUser.role 直書き禁止。VIEW AS 切替は setPreviewRole の再描画リストに登録済み）。
+//   例外: 本人参照（currentUser.has_onboarding）はロールでなく実ユーザーで決まるため直参照が正当。
 // - 名前表示: ユーザー紐付けがあれば NameDisplay 経由（ニックネーム（名前））、無ければ member_name。
 // - 時刻表示は JST 明示（toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })）。
 
@@ -25286,13 +25291,15 @@ function obDisplayName(rec) {
 async function loadOnboardingPage() {
   const listEl = document.getElementById('ob-list');
   if (!listEl) return;
-  // VIEW AS 追従: 権限のないロールでは中身を出さない（ナビも applyRoleBasedUI で非表示）
-  if (!hasPermission('onboarding.page')) {
+  // VIEW AS 追従: 参照可否 = onboarding.page（管理）/ onboarding.view（参照のみ）/ 本人（自分に紐付いたレコードあり）
+  const canManage = hasPermission('onboarding.page');
+  const canView = canManage || hasPermission('onboarding.view') || !!currentUser?.has_onboarding; // has_onboarding は実ユーザー判定（本人参照）のため直参照が正当
+  if (!canView) {
     listEl.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">このページを閲覧する権限がありません</div>';
     return;
   }
   const createBtn = document.getElementById('ob-btn-create');
-  if (createBtn) createBtn.style.display = '';
+  if (createBtn) createBtn.style.display = canManage ? '' : 'none'; // 新規作成は管理権限のみ
   try {
     const res = await apiFetch(`${API}/onboarding`);
     const data = await res.json();
@@ -25359,17 +25366,21 @@ async function openOnboardingCreate() {
   openModal('modal-onboarding-create');
   // メンバー候補（未取得なら取得）。失敗しても紐付けなしで作成できるので握りつぶす
   try {
-    if (!Array.isArray(allMembers) || allMembers.length === 0) {
-      const res = await apiFetch(`${API}/members`);
-      const data = await res.json();
-      if (res.ok && Array.isArray(data)) allMembers = data;
-    }
+    await obEnsureMembers();
     obFillUserSelect(sel, '');
   } catch (e) { console.warn('[onboarding] メンバー候補の取得に失敗', e); }
 }
 
-function obFillUserSelect(sel, selectedId) {
-  const opts = ['<option value="">（未登録・あとで紐付け）</option>'];
+// 紐付け候補用のメンバー一覧を確保（未取得のときだけ取得）
+async function obEnsureMembers() {
+  if (Array.isArray(allMembers) && allMembers.length > 0) return;
+  const res = await apiFetch(`${API}/members`);
+  const data = await res.json();
+  if (res.ok && Array.isArray(data)) allMembers = data;
+}
+
+function obFillUserSelect(sel, selectedId, emptyLabel = '（未登録・あとで紐付け）') {
+  const opts = [`<option value="">${esc(emptyLabel)}</option>`];
   (allMembers || []).filter(m => m.is_active !== false).forEach(m => {
     opts.push(`<option value="${esc(m.id)}" ${m.id === selectedId ? 'selected' : ''}>${esc(NameDisplay.full(m))}</option>`);
   });
@@ -25436,6 +25447,12 @@ function renderOnboardingDetail() {
   const total = r.progress?.total ?? 0;
   const pct = total > 0 ? Math.round(done / total * 100) : 0;
 
+  // 編集可否（ADR 015: hasPermission で VIEW AS 追従）
+  //   canManage … onboarding.page（作成・チェック・ステータス・紐付け・メモ）
+  //   参照のみ（onboarding.view）と本人参照は read-only 表示（チェックボックス disabled・操作ボタン非表示）
+  const canManage = hasPermission('onboarding.page');
+  const canCopyMsg = canManage || hasPermission('onboarding.view');
+
   // フェーズ見出し付きチェックリスト（tasks はサーバーがフェーズ順・sort順で返す）
   const phaseLabels = new Map((r.phases || []).map(p => [p.key, p.label]));
   let checklist = '';
@@ -25446,13 +25463,41 @@ function renderOnboardingDetail() {
       checklist += `<div style="margin:14px 0 6px;font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:.06em">${esc(phaseLabels.get(t.phase) || t.phase)}</div>`;
     }
     const doneInfo = t.done && t.done_at ? `<span style="font-size:11px;color:var(--text-muted);margin-left:8px">${esc(obDateJst(t.done_at))}</span>` : '';
-    checklist += `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 4px;border-radius:6px;cursor:pointer">
-      <input type="checkbox" ${t.done ? 'checked' : ''} onchange="obToggleTask('${esc(t.id)}', this.checked)" style="margin-top:2px;cursor:pointer">
+    checklist += `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 4px;border-radius:6px;cursor:${canManage ? 'pointer' : 'default'}">
+      <input type="checkbox" ${t.done ? 'checked' : ''} ${canManage ? `onchange="obToggleTask('${esc(t.id)}', this.checked)" style="margin-top:2px;cursor:pointer"` : 'disabled style="margin-top:2px"'}>
       <span style="font-size:13px;${t.done ? 'color:var(--text-muted);text-decoration:line-through' : ''}">${esc(t.label)}${doneInfo}</span>
     </label>`;
   });
 
-  const isDeletable = effectiveRole() === 'admin'; // 削除は admin のみ（サーバー側でも実効ロールで再判定）
+  const isDeletable = canManage && effectiveRole() === 'admin'; // 削除は admin のみ（サーバー側でも実効ロールで再判定）
+  const buttons = [
+    canCopyMsg ? `<button class="btn-sm" onclick="obCopyFirstMessage()">📋 初回メッセージ文例をコピー</button>` : '',
+    canManage ? `<button class="btn-sm" onclick="obRenameRecord()">✏️ 名前を変更</button>` : '',
+    canManage ? (r.status === 'in_progress' ? `<button class="btn-sm" onclick="obUpdateStatus('completed')" style="color:#27AE60">✅ 完了にする</button>
+      <button class="btn-sm" onclick="obUpdateStatus('cancelled')" style="color:#95A5A6">中止にする</button>` : `<button class="btn-sm" onclick="obUpdateStatus('in_progress')">↩ 進行中に戻す</button>`) : '',
+    isDeletable ? `<button class="btn-sm" onclick="obDeleteRecord()" style="color:#C0392B;margin-left:auto">🗑 削除</button>` : '',
+  ].filter(Boolean).join('\n      ');
+
+  // 🔗 HFSメンバー紐付け（管理のみ）: 登録時の自動紐付け（utils/onboarding-autolink.js）で
+  // 拾えなかったケースを手動で紐付ける。候補は renderOnboardingDetail 後に非同期で流し込む
+  const linkRow = canManage ? `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <span style="font-size:12px;color:var(--text-muted);font-weight:600;white-space:nowrap">🔗 HFSメンバー紐付け</span>
+      <select id="ob-d-user" class="form-input" style="flex:1;min-width:160px;font-size:12px;padding:4px 8px"></select>
+      <button class="btn-sm" onclick="obSaveUserLink()">保存</button>
+    </div>` : '';
+
+  const memoBlock = canManage ? `
+    <div class="form-group" style="margin-bottom:0">
+      <label class="form-label" style="font-size:12px;color:var(--text-muted);font-weight:600">メモ</label>
+      <textarea class="form-input" id="ob-d-note" rows="3" style="resize:vertical;font-size:13px">${esc(r.note || '')}</textarea>
+      <div style="text-align:right;margin-top:6px"><button class="btn-sm" onclick="obSaveNote()">メモを保存</button></div>
+    </div>` : (r.note ? `
+    <div class="form-group" style="margin-bottom:0">
+      <label class="form-label" style="font-size:12px;color:var(--text-muted);font-weight:600">メモ</label>
+      <div style="font-size:13px;white-space:pre-wrap;border:1px solid var(--border);border-radius:8px;padding:8px 10px">${esc(r.note)}</div>
+    </div>` : ''); // 本人参照はサーバーが note を返さない（内部運用メモのため）
+
   document.getElementById('ob-d-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
       <span style="font-size:11px;font-weight:700;color:${st.color};border:1px solid ${st.color}55;border-radius:10px;padding:2px 10px">${esc(st.label)}</span>
@@ -25464,19 +25509,40 @@ function renderOnboardingDetail() {
       </div>
       <span style="font-size:11px;color:var(--text-muted)">開始: ${esc(obDateJst(r.created_at))}</span>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-      <button class="btn-sm" onclick="obCopyFirstMessage()">📋 初回メッセージ文例をコピー</button>
-      <button class="btn-sm" onclick="obRenameRecord()">✏️ 名前を変更</button>
-      ${r.status === 'in_progress' ? `<button class="btn-sm" onclick="obUpdateStatus('completed')" style="color:#27AE60">✅ 完了にする</button>
-      <button class="btn-sm" onclick="obUpdateStatus('cancelled')" style="color:#95A5A6">中止にする</button>` : `<button class="btn-sm" onclick="obUpdateStatus('in_progress')">↩ 進行中に戻す</button>`}
-      ${isDeletable ? `<button class="btn-sm" onclick="obDeleteRecord()" style="color:#C0392B;margin-left:auto">🗑 削除</button>` : ''}
-    </div>
+    ${buttons ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      ${buttons}
+    </div>` : ''}
+    ${linkRow}
     <div style="border:1px solid var(--border);border-radius:8px;padding:4px 12px 10px;margin-bottom:12px">${checklist}</div>
-    <div class="form-group" style="margin-bottom:0">
-      <label class="form-label" style="font-size:12px;color:var(--text-muted);font-weight:600">メモ</label>
-      <textarea class="form-input" id="ob-d-note" rows="3" style="resize:vertical;font-size:13px">${esc(r.note || '')}</textarea>
-      <div style="text-align:right;margin-top:6px"><button class="btn-sm" onclick="obSaveNote()">メモを保存</button></div>
-    </div>`;
+    ${memoBlock}`;
+
+  // 紐付けセレクトにメンバー候補を流し込む（未取得なら取得してから再構築）
+  const userSel = document.getElementById('ob-d-user');
+  if (userSel) {
+    obFillUserSelect(userSel, r.user_id || '', '（紐付けなし）');
+    obEnsureMembers()
+      .then(() => obFillUserSelect(userSel, r.user_id || '', '（紐付けなし）'))
+      .catch(e => console.warn('[onboarding] メンバー候補の取得に失敗', e));
+  }
+}
+
+// 🔗 HFSメンバー紐付けの保存（PATCH user_id。空選択で解除）
+async function obSaveUserLink() {
+  const sel = document.getElementById('ob-d-user');
+  if (!sel || !_obDetailId) return;
+  const userId = sel.value || null;
+  try {
+    const res = await apiFetch(`${API}/onboarding/${_obDetailId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '紐付けの保存に失敗しました');
+    showToast(userId ? 'HFSメンバーと紐付けました' : '紐付けを解除しました', 'success');
+    await obReloadDetail();
+    loadOnboardingPage(); // 一覧の表示名（ニックネーム（名前））にも反映
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 async function obToggleTask(taskId, done) {
@@ -32601,6 +32667,7 @@ const ROLE_PERM_LIST = [
   { section:'請求管理',       key:'invoice.own',                 label:'自分の請求作成・確認' },
   { section:'請求管理',       key:'invoice.all_view',            label:'全員の請求一覧閲覧' },
   { section:'オンボーディング', key:'onboarding.page',           label:'オンボーディング管理ページ（新メンバー受け入れ）' },
+  { section:'オンボーディング', key:'onboarding.view',           label:'オンボーディング参照のみ（全レコード閲覧・操作不可）' },
   { section:'マスター管理',   key:'master.page',                 label:'マスター管理ページ' },
   { section:'マスター管理',   key:'master.sys_config',           label:'システム設定' },
   { section:'マスター管理',   key:'master.filename_templates',   label:'ファイル名テンプレート管理（マスター管理ページ権限なしでも単独で開放可）' },
