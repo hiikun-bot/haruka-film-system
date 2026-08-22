@@ -23,10 +23,11 @@
 
 | 指標 | 定義 |
 |---|---|
-| 進行中CR数 | 担当（`creative_assignments.role IN ('editor','designer','director_as_editor')`）かつ status が「保留」以外の未納品クリエイティブ数 |
-| 持ちボール数 | `getBallHolder()` の `user_ids[]`（複数ホルダー対応）に本人が含まれる未納品クリエイティブ数。`ball_holder_id` キャッシュ列は通知用の単数値（複数ホルダーの先頭しか入らない）のため**使わない** |
+| 進行中CR数 | 担当（`creative_assignments.role IN ('editor','designer','director_as_editor')`）かつ status が「保留」以外・**クライアント確認待ち以外**の未納品クリエイティブ数 |
+| クラ確認待ち数 | 担当クリエイティブのうちボールがクライアントにあるもの（`getBallHolder().type === 'client'`＝status「クライアントチェック中」）。ボールは向こう＝制作の手が止まっているため、進行中CRから外して別列で見せる（2026-08-22 ユーザー指示: 「制作が重複して手元にある負荷」だけを進行中CRで見たい）。負荷判定・負荷バーには含めない |
+| 持ちボール数 | `getBallHolder()` の `user_ids[]`（複数ホルダー対応）に本人が含まれる未納品クリエイティブ数。`ball_holder_id` キャッシュ列は通知用の単数値（複数ホルダーの先頭しか入らない）のため**使わない**。クライアント確認待ちは `user_ids` が空なので元々含まれない |
 | 今週期限数 | 担当クリエイティブのうち `final_deadline` が今日〜今週日曜（JST・週=月〜日。`_todayStrJST()` / `_thisSundayStrJST()` を再利用し既存 UI と週定義を一致） |
-| 期限超過数 | 担当クリエイティブのうち `final_deadline` < 今日（JST）・未納品。**保留も期限系には含める**（保留でも納期は生きており超過リスクの可視化が目的） |
+| 期限超過数 | 担当クリエイティブのうち `final_deadline` < 今日（JST）・未納品。**保留・クラ確認待ちも期限系には含める**（手元に無くても納期は生きており超過リスクの可視化が目的） |
 | 高負荷判定 | `isHighLoad()`: balls>=4 または dueThisWeek>=5 または overdue>=1 → high ／ balls>=2 または dueThisWeek>=3 → mid ／ それ以外 low。閾値根拠は `utils/team-load.js` のコメント参照 |
 
 ## Consequences

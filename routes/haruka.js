@@ -23166,6 +23166,8 @@ router.get('/team-load', requireAuth, requirePermission('team_load.page'), async
         id: c.id,
         status: c.status,
         final_deadline: c.final_deadline,
+        // 'client'（クライアントチェック中）は進行中CRから外して「クラ確認待ち」に別カウント
+        ball_type: ball?.type || 'unknown',
         assignee_user_ids: extractAssigneeUserIds(c.creative_assignments),
         ball_user_ids: Array.isArray(ball?.user_ids) ? ball.user_ids : [],
       };
@@ -23188,10 +23190,11 @@ router.get('/team-load', requireAuth, requirePermission('team_load.page'), async
       week_end: sundayStr,   // 今週日曜（JST・週=月〜日）
       // 数値の定義（フロント・PR本文と一致させる）
       definitions: {
-        active: '担当（editor/designer/director_as_editor）かつ「保留」以外の未納品クリエイティブ数',
+        active: '担当（editor/designer/director_as_editor）かつ「保留」以外・クライアント確認待ち以外の未納品クリエイティブ数',
+        client_wait: '担当クリエイティブのうちボールがクライアントにあるもの（クライアントチェック中）。制作の手が止まっているため進行中CRとは別カウント',
         balls: 'getBallHolder の user_ids[]（複数ホルダー対応）に本人が含まれる未納品クリエイティブ数',
         due_this_week: '担当クリエイティブのうち final_deadline が今日〜今週日曜（JST・週=月〜日）',
-        overdue: '担当クリエイティブのうち final_deadline < 今日（JST）・未納品（保留含む）',
+        overdue: '担当クリエイティブのうち final_deadline < 今日（JST）・未納品（保留・クラ確認待ち含む）',
       },
       totals: result.totals,
       members: result.members,

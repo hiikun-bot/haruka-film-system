@@ -26645,7 +26645,7 @@ async function loadTeamLoadPage() {
     return;
   }
   // スケルトンローディング
-  kpiEl.innerHTML = [1, 2, 3].map(() =>
+  kpiEl.innerHTML = [1, 2, 3, 4].map(() =>
     '<div class="stat-card"><span class="skel-line" style="width:60%"></span><span class="skel-line" style="width:40%"></span></div>').join('');
   tableEl.innerHTML = '<div style="padding:16px 20px">' +
     [1, 2, 3, 4, 5].map(() => '<div class="skel-row"><span class="skel-circle"></span><span class="skel-line"></span></div>').join('') + '</div>';
@@ -26691,13 +26691,14 @@ function renderTeamLoad() {
     `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${label}</div><div style="font-size:22px;font-weight:700;color:${color}">${Number(value) || 0}</div></div>`;
   kpiEl.innerHTML =
     kpi('進行中クリエイティブ合計', totals.active, 'var(--em-dark)') +
+    kpi('クライアント確認待ち', totals.client_wait, 'var(--text-muted)') +
     kpi('今週期限（〜' + esc((data.week_end || '').slice(5).replace('-', '/')) + '）', totals.due_this_week, '#C05A0A') +
     kpi('期限超過', totals.overdue, (totals.overdue > 0 ? '#C0392B' : 'var(--em-dark)'));
 
   // ソート（メンバー名はふりがな無しなので localeCompare、数値列は数値比較）
   const rows = [...(data.members || [])];
   const { key, dir } = _tlSort;
-  const numKey = { active: 'active', balls: 'balls', due: 'due_this_week', overdue: 'overdue' }[key];
+  const numKey = { active: 'active', client_wait: 'client_wait', balls: 'balls', due: 'due_this_week', overdue: 'overdue' }[key];
   rows.sort((a, b) => {
     let cmp;
     if (numKey) cmp = (a[numKey] || 0) - (b[numKey] || 0);
@@ -26718,12 +26719,12 @@ function renderTeamLoad() {
   const arrow = k => (key === k ? (dir === 'desc' ? ' ▼' : ' ▲') : '');
   const th = (k, label, align) =>
     `<button onclick="tlSetSort('${k}')" style="all:unset;cursor:pointer;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.05em;white-space:nowrap;${align ? 'text-align:right;justify-self:end' : ''}">${label}${arrow(k)}</button>`;
-  const gridCols = 'grid-template-columns:minmax(200px,1fr) 80px 80px 80px 64px 84px';
+  const gridCols = 'grid-template-columns:minmax(200px,1fr) 80px 84px 80px 80px 64px 84px';
 
-  let html = `<div style="min-width:640px">`;
+  let html = `<div style="min-width:720px">`;
   html += `<div style="display:grid;${gridCols};gap:8px;align-items:center;padding:10px 16px;border-bottom:0.5px solid var(--border)">` +
     th('name', 'メンバー') +
-    th('active', '進行中CR', 1) + th('balls', '持ちボール', 1) + th('due', '今週期限', 1) + th('overdue', '超過', 1) +
+    th('active', '進行中CR', 1) + th('client_wait', 'クラ確認待ち', 1) + th('balls', '持ちボール', 1) + th('due', '今週期限', 1) + th('overdue', '超過', 1) +
     `<span style="font-size:11px;font-weight:600;color:var(--text-muted);justify-self:end">負荷</span></div>`;
 
   if (rows.length === 0) {
@@ -26735,12 +26736,15 @@ function renderTeamLoad() {
     const name = (window.NameDisplay ? NameDisplay.full(r) : (r.nickname || r.full_name));
     const num = (v, hot) =>
       `<span style="font-size:14px;font-weight:600;justify-self:end;color:${hot && v > 0 ? '#C0392B' : 'var(--text)'}">${v || 0}</span>`;
+    // クラ確認待ちは負荷ではない（ボールは向こう）ので muted 表示で区別
+    const numMuted = v =>
+      `<span style="font-size:14px;font-weight:600;justify-self:end;color:var(--text-muted)">${v || 0}</span>`;
     html += `<div style="display:grid;${gridCols};gap:8px;align-items:center;padding:10px 16px;border-bottom:0.5px solid var(--border-light)">` +
       `<div style="min-width:0">` +
         `<div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${badge.icon} ${esc(name)}</div>` +
         `<div class="dash-proj-bar" style="margin-top:6px"><div class="dash-proj-fill" style="width:${pct}%;background:${barColor[r.load] || barColor.low}"></div></div>` +
       `</div>` +
-      num(r.active) + num(r.balls) + num(r.due_this_week) + num(r.overdue, true) +
+      num(r.active) + numMuted(r.client_wait) + num(r.balls) + num(r.due_this_week) + num(r.overdue, true) +
       `<span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;justify-self:end;background:${badge.bg};color:${badge.color}">${badge.label}</span>` +
       `</div>`;
   });
@@ -26753,6 +26757,7 @@ function renderTeamLoad() {
     const d = data.definitions || {};
     defsEl.innerHTML =
       `<div>・進行中CR: ${esc(d.active || '')}</div>` +
+      `<div>・クラ確認待ち: ${esc(d.client_wait || '')}</div>` +
       `<div>・持ちボール: ${esc(d.balls || '')}</div>` +
       `<div>・今週期限: ${esc(d.due_this_week || '')}／超過: ${esc(d.overdue || '')}</div>`;
   }

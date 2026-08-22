@@ -9,19 +9,28 @@
 //
 // 集計定義（レスポンス definitions / PR 本文と一致させること）:
 //   - 進行中CR数     : 担当（creative_assignments.role IN ('editor','designer','director_as_editor')）
-//                      かつ status が「保留」以外の未納品クリエイティブ数
+//                      かつ status が「保留」以外・クライアント確認待ち以外の未納品クリエイティブ数
+//   - クラ確認待ち数 : 担当クリエイティブのうちボールがクライアントにあるもの
+//                      （getBallHolder().type === 'client'＝status「クライアントチェック中」）。
+//                      ボールは向こう＝制作の手は止まっているため進行中CRとは別カウントにする
+//                      （2026-08-22 ユーザー指示: 制作が重複して手元にある負荷だけを見たい）
 //   - 持ちボール数   : getBallHolder() の user_ids[]（複数ホルダー対応）に自分が含まれる
-//                      未納品クリエイティブ数（ball_holder_id キャッシュ列は通知用の単数値のため使わない）
+//                      未納品クリエイティブ数（ball_holder_id キャッシュ列は通知用の単数値のため使わない。
+//                      クライアント確認待ちは user_ids が空なので元々含まれない）
 //   - 今週期限数     : 担当クリエイティブのうち final_deadline が今日〜今週日曜（JST・週=月〜日）のもの
 //   - 期限超過数     : 担当クリエイティブのうち final_deadline < 今日（JST）のもの（未納品）
-//   ※ 期限系（今週期限・期限超過）は「保留」も含む担当分全体で数える
-//     （保留でも納期は生きており、超過リスクの可視化が目的のため）。
+//   ※ 期限系（今週期限・期限超過）は「保留」「クライアント確認待ち」も含む担当分全体で数える
+//     （手元に無くても納期は生きており、超過リスクの可視化が目的のため）。
 
 // 担当とみなす assignment ロール（getBallHolder の editor 判定と同一集合）
 const ASSIGNEE_ROLES = ['editor', 'designer', 'director_as_editor'];
 
 // 進行中カウントから除外するステータス（納品系はデータ取得時点で除外済みの前提だが二重ガード）
 const INACTIVE_STATUSES = ['保留', '納品', '完納', '納品済'];
+
+// ボールがクライアントにある getBallHolder().type（status「クライアントチェック中」）。
+// 進行中CRから外して「クラ確認待ち」として別カウントする判定に使う。
+const CLIENT_BALL_TYPE = 'client';
 
 // 高負荷判定の閾値（isHighLoad）。根拠:
 //   - balls >= 4      : ボール4件は「即日対応すべき差し戻し・チェック待ち」が同時に4本ある状態。
@@ -53,30 +62,34 @@ function _isDateStr(s) {
  * @param {Array}  args.members   [{ id, full_name, nickname, roles }]（is_active かつ社内メンバーのみ）
  * @param {Array}  args.creatives 未納品クリエイティブの配列。各要素:
  *                 { id, status, final_deadline,
+ *                   ball_type: string,            // getBallHolder().type（'client' でクラ確認待ち判定）
  *                   assignee_user_ids: string[],  // role IN ASSIGNEE_ROLES の user_id 集合（呼び出し側で抽出）
  *                   ball_user_ids: string[] }     // getBallHolder().user_ids（複数ホルダー対応・呼び出し側で解決）
  * @param {string} args.todayStr  今日（JST）の 'YYYY-MM-DD'
  * @param {string} args.sundayStr 今週日曜（JST・週=月〜日）の 'YYYY-MM-DD'
- * @returns {{ totals: {active:number, due_this_week:number, overdue:number},
+ * @returns {{ totals: {active:number, client_wait:number, due_this_week:number, overdue:number},
  *             members: Array }}  members は持ちボール数降順 → 進行中CR数降順
  */
 function computeTeamLoad({ members = [], creatives = [], todayStr, sundayStr } = {}) {
-  const stats = new Map(); // userId -> { active, balls, dueThisWeek, overdue }
+  const stats = new Map(); // userId -> { active, clientWait, balls, dueThisWeek, overdue }
   for (const m of members) {
-    stats.set(m.id, { active: 0, balls: 0, dueThisWeek: 0, overdue: 0 });
+    stats.set(m.id, { active: 0, clientWait: 0, balls: 0, dueThisWeek: 0, overdue: 0 });
   }
 
   // 全体KPI（クリエイティブ単位・メンバー横断の重複なし）
-  const totals = { active: 0, due_this_week: 0, overdue: 0 };
+  const totals = { active: 0, client_wait: 0, due_this_week: 0, overdue: 0 };
 
   for (const c of creatives || []) {
     if (!c) continue;
-    const isActive = !INACTIVE_STATUSES.includes(c.status);
+    // クラ確認待ち（ボール＝クライアント）は「制作の手が止まっている」ため進行中CRから除外して別カウント
+    const isClientWait = c.ball_type === CLIENT_BALL_TYPE;
+    const isActive = !isClientWait && !INACTIVE_STATUSES.includes(c.status);
     const dl = _isDateStr(c.final_deadline) ? c.final_deadline.slice(0, 10) : null;
     const isDueThisWeek = !!(dl && dl >= todayStr && dl <= sundayStr);
     const isOverdue = !!(dl && dl < todayStr);
 
     if (isActive) totals.active++;
+    if (isClientWait) totals.client_wait++;
     if (isDueThisWeek) totals.due_this_week++;
     if (isOverdue) totals.overdue++;
 
@@ -86,6 +99,7 @@ function computeTeamLoad({ members = [], creatives = [], todayStr, sundayStr } =
       const s = stats.get(uid);
       if (!s) continue; // 非アクティブ・外部メンバーは対象外
       if (isActive) s.active++;
+      if (isClientWait) s.clientWait++;
       if (isDueThisWeek) s.dueThisWeek++;
       if (isOverdue) s.overdue++;
     }
@@ -107,6 +121,7 @@ function computeTeamLoad({ members = [], creatives = [], todayStr, sundayStr } =
       nickname: m.nickname || '',
       roles: m.roles || [],
       active: s.active,
+      client_wait: s.clientWait,
       balls: s.balls,
       due_this_week: s.dueThisWeek,
       overdue: s.overdue,
@@ -135,6 +150,7 @@ function extractAssigneeUserIds(assignments) {
 module.exports = {
   ASSIGNEE_ROLES,
   INACTIVE_STATUSES,
+  CLIENT_BALL_TYPE,
   HIGH_LOAD,
   MID_LOAD,
   isHighLoad,
