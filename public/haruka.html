@@ -25317,6 +25317,12 @@ function obDisplayName(rec) {
   return (rec && rec.member_name) || '';
 }
 
+// アバター: ユーザー紐付けがあれば本人の写真（avatar_url はサーバーが配信URLを注入）、
+// 未紐付け・写真未設定は member_name のイニシャルにフォールバック（avatarHtml の既定挙動）
+function obAvatarHtml(rec, size) {
+  return avatarHtml((rec && rec.user) || { full_name: (rec && rec.member_name) || '?' }, size);
+}
+
 async function loadOnboardingPage() {
   const listEl = document.getElementById('ob-list');
   if (!listEl) return;
@@ -25357,7 +25363,9 @@ function renderOnboardingList() {
     const pct = total > 0 ? Math.round(done / total * 100) : 0;
     const next = r.status === 'in_progress' ? (r.next_task || '—') : '—';
     return `<tr onclick="openOnboardingDetail('${esc(r.id)}')" style="cursor:pointer;border-bottom:1px solid var(--border)">
-      <td style="padding:10px 12px;font-weight:600;white-space:nowrap">${esc(obDisplayName(r))}</td>
+      <td style="padding:10px 12px;font-weight:600;white-space:nowrap">
+        <span style="display:inline-flex;align-items:center;gap:8px;vertical-align:middle">${obAvatarHtml(r, 28)}<span>${esc(obDisplayName(r))}</span></span>
+      </td>
       <td style="padding:10px 12px;white-space:nowrap;font-size:12px">${esc(OB_OCCUPATION_LABELS[r.occupation] || r.occupation)}</td>
       <td style="padding:10px 12px;min-width:160px">
         <div style="display:flex;align-items:center;gap:8px">
@@ -25529,6 +25537,7 @@ function renderOnboardingDetail() {
 
   document.getElementById('ob-d-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      ${obAvatarHtml(r, 36)}
       <span style="font-size:11px;font-weight:700;color:${st.color};border:1px solid ${st.color}55;border-radius:10px;padding:2px 10px">${esc(st.label)}</span>
       <div style="flex:1;min-width:140px;display:flex;align-items:center;gap:8px">
         <div style="flex:1;height:8px;border-radius:4px;background:var(--border);overflow:hidden">
