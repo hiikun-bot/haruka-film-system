@@ -22131,6 +22131,23 @@ const stripOnboardingInternalFields = (rec) => {
   return rest;
 };
 
+// user embed に avatar_url（配信URL・数十バイト）を注入する。
+// embed で users(avatar_url) を select しない方針（base64 最大300KB × 行数の DB 転送対策）は
+// creatives 一覧と同じで、avatar 参照キャッシュ（utils/avatar-ref.js）から引く。
+// 取得失敗時は avatar_url 無しのまま返す（フロントはイニシャル表示にフォールバック。一覧を 500 にしない）。
+async function injectOnboardingAvatars(records) {
+  const users = (Array.isArray(records) ? records : [records])
+    .map(r => r && r.user)
+    .filter(Boolean);
+  if (users.length === 0) return;
+  try {
+    const avatarMap = await getAvatarRefMap(supabase);
+    users.forEach(u => applyAvatarRef(u, avatarMap));
+  } catch (e) {
+    console.warn('[onboarding] avatar 参照キャッシュ取得失敗 → avatar_url は null で返す:', e.message);
+  }
+}
+
 // GET /onboarding — 一覧（progress・next_task 付き）
 // 権限なしユーザーも requireAuth のみで通し、自分に紐付いたレコードだけ返す（本人参照）。
 router.get('/onboarding', requireAuth, async (req, res) => {
@@ -22151,6 +22168,7 @@ router.get('/onboarding', requireAuth, async (req, res) => {
     const row = { ...rest, progress: { done: progress.done, total: progress.total }, next_task: progress.next_task };
     return canViewAll ? row : stripOnboardingInternalFields(row);
   });
+  await injectOnboardingAvatars(list);
   res.json(list);
 });
 
@@ -22219,6 +22237,7 @@ router.get('/onboarding/:id', requireAuth, async (req, res) => {
     progress: { done: progress.done, total: progress.total },
     next_task: progress.next_task,
   };
+  await injectOnboardingAvatars(payload);
   res.json(canViewAll ? payload : stripOnboardingInternalFields(payload));
 });
 
