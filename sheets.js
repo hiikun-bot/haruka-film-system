@@ -45,6 +45,55 @@ async function createSheetWithData(title, rows) {
   return { id: file.data.id, url: file.data.webViewLink };
 }
 
+// 個人向け: 共有ドライブには置かず、SAのマイドライブに作成して指定メールにのみ編集共有
+// （マイゴール等の完全個人領域用。共有ドライブに置くと他メンバーから見えてしまうため）
+async function createPrivateSheetWithData(title, rows, shareEmail) {
+  const auth = getAuth();
+  const drive = google.drive({ version: 'v3', auth });
+  const sheets = google.sheets({ version: 'v4', auth });
+  const file = await drive.files.create({
+    requestBody: { name: title, mimeType: 'application/vnd.google-apps.spreadsheet' },
+    fields: 'id, webViewLink',
+  });
+  if (rows && rows.length) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: file.data.id,
+      range: 'A1',
+      valueInputOption: 'RAW',
+      requestBody: { values: rows },
+    });
+  }
+  // ヘッダー行を固定＋太字（失敗しても本体は成立しているので握りつぶす）
+  try {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: file.data.id,
+      requestBody: {
+        requests: [
+          { updateSheetProperties: { properties: { sheetId: 0, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
+          { repeatCell: { range: { sheetId: 0, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } },
+        ],
+      },
+    });
+  } catch (_) { /* 整形は任意 */ }
+  if (shareEmail) {
+    await drive.permissions.create({
+      fileId: file.data.id,
+      requestBody: { type: 'user', role: 'writer', emailAddress: shareEmail },
+      sendNotificationEmail: false,
+    });
+  }
+  return { id: file.data.id, url: file.data.webViewLink };
+}
+
+// SAのメールアドレス（ユーザーが自分のシートをSAに共有する際の案内用）
+function getServiceAccountEmail() {
+  try {
+    return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}').client_email || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 // URLからspreadsheetIdを抽出
 function extractSpreadsheetId(url) {
   if (!url) return null;
@@ -67,4 +116,4 @@ async function readSheetData(spreadsheetId) {
   return res.data.values || [];
 }
 
-module.exports = { createSheetWithData, extractSpreadsheetId, readSheetData };
+module.exports = { createSheetWithData, createPrivateSheetWithData, getServiceAccountEmail, extractSpreadsheetId, readSheetData };

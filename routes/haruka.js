@@ -8,7 +8,7 @@ const bcrypt = require('bcryptjs');
 const { requireAuth, requireRole, requireLevel, requirePermission, requireAnyPermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache, invalidateUserCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
-const { createSheetWithData, extractSpreadsheetId, readSheetData } = require('../sheets');
+const { createSheetWithData, createPrivateSheetWithData, getServiceAccountEmail, extractSpreadsheetId, readSheetData } = require('../sheets');
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
 const { createNotification, extractMentions } = require('../utils/notification');
@@ -22610,6 +22610,271 @@ router.delete('/personal-tasks/:id', requireAuth, async (req, res) => {
   }
   if (!data) return res.status(404).json({ error: 'タスクが見つかりません' });
   res.json({ ok: true });
+});
+
+// ---------- スプレッドシート エクスポート／インポート（2026-08-22 拡張） ----------
+// ADR 032: 完全個人領域。シートは共有ドライブに置かず、SAのマイドライブに作成して本人メールにのみ共有する。
+// インポートは「ID列あり=更新 / ID列空=新規作成」。シートに無いタスクの削除は行わない（安全側）。
+const PG_SHEET_PRIORITY_LABELS = { high: '高', mid: '中', low: '低' };
+const PG_SHEET_PRIORITY_CODES = { '高': 'high', '中': 'mid', '低': 'low' };
+// ヘッダーは「基準名（補足）」形式を許容。列の並び替えはOK・列削除はその項目を取込対象外にする
+const PG_SHEET_COLS = [
+  { key: 'id', label: 'ID', header: 'ID（編集・削除しない）' },
+  { key: 'title', label: 'タスク名', header: 'タスク名（必須）' },
+  { key: 'due_date', label: '期限', header: '期限（YYYY-MM-DD）' },
+  { key: 'status', label: 'ステータス', header: 'ステータス（未着手/進行中/完了）' },
+  { key: 'priority', label: '優先度', header: '優先度（高/中/低）' },
+  { key: 'goal', label: '目標', header: '目標（目標名と完全一致で紐付け）' },
+  { key: 'major_category', label: '大分類', header: '大分類' },
+  { key: 'mid_category', label: '中分類', header: '中分類' },
+  { key: 'detail', label: '詳細', header: '詳細' },
+  { key: 'memo', label: 'メモ', header: 'メモ' },
+  { key: 'link_url', label: '資料URL', header: '資料URL' },
+  { key: 'completed_at', label: '完了日', header: '完了日（自動・取込では無視）' },
+];
+
+// 期限セルの正規化: '2026-08-31' / '2026/8/31' / '2026.8.31' を YYYY-MM-DD に。不正なら null を返しつつ ok=false
+function pgSheetParseDate(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return { ok: true, value: null };
+  const m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (!m) return { ok: false, value: null };
+  const [, y, mo, d] = m;
+  const mm = String(mo).padStart(2, '0');
+  const dd = String(d).padStart(2, '0');
+  // 実在日チェック（2/30 等を弾く。UTC文字列演算でTZ非依存）
+  const iso = `${y}-${mm}-${dd}`;
+  const dt = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== iso) return { ok: false, value: null };
+  return { ok: true, value: iso };
+}
+
+// エクスポート行の組み立て（インポートのプレビュー比較でも同じ整形を使う）
+function pgTaskToSheetRow(t, goalTitleById) {
+  return {
+    id: t.id,
+    title: t.title || '',
+    due_date: t.due_date || '',
+    status: t.status || '未着手',
+    priority: PG_SHEET_PRIORITY_LABELS[t.priority] || '',
+    goal: (t.goal_id && goalTitleById[t.goal_id]) || '',
+    major_category: t.major_category || '',
+    mid_category: t.mid_category || '',
+    detail: t.detail || '',
+    memo: t.memo || '',
+    link_url: t.link_url || '',
+    completed_at: t.completed_at ? new Date(t.completed_at).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) : '',
+  };
+}
+
+// POST /personal-tasks/export-sheet — タスク一覧を新規スプレッドシートに出力（本人メールにのみ共有）
+router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
+  if (!req.user.email) return res.status(400).json({ error: 'アカウントにメールアドレスが未設定のため、シートを共有できません' });
+  const [tasksRes, goalsRes] = await Promise.all([
+    supabase.from('personal_tasks').select('*')
+      .eq('user_id', req.user.id) // 本人のみ（ADR 032）
+      .order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+    supabase.from('personal_goals').select('id, title').eq('user_id', req.user.id),
+  ]);
+  const err = tasksRes.error || goalsRes.error;
+  if (err) {
+    if (isMissingPersonalGoalsTable(err)) return personalGoalsMigrationHint(res);
+    return res.status(500).json({ error: err.message });
+  }
+  const goalTitleById = Object.fromEntries((goalsRes.data || []).map(g => [g.id, g.title]));
+  const rows = [PG_SHEET_COLS.map(c => c.header)];
+  for (const t of tasksRes.data || []) {
+    const r = pgTaskToSheetRow(t, goalTitleById);
+    rows.push(PG_SHEET_COLS.map(c => r[c.key]));
+  }
+  const dateStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const title = `マイゴール タスク一覧_${req.user.full_name || ''}_${dateStr}`;
+  try {
+    const { url } = await createPrivateSheetWithData(title, rows, req.user.email);
+    res.json({ url, count: rows.length - 1 });
+  } catch (e) {
+    console.error('personal-tasks export-sheet error:', e.message);
+    res.status(500).json({ error: `シート作成に失敗しました: ${e.message}` });
+  }
+});
+
+// シートを読み取り、取込プラン（新規/更新/変更なし/警告）を組み立てる共通処理
+async function pgBuildImportPlan(user, sheetUrl) {
+  const spreadsheetId = extractSpreadsheetId(sheetUrl);
+  if (!spreadsheetId) throw Object.assign(new Error('スプレッドシートのURLが正しくありません'), { statusCode: 400 });
+  let values;
+  try {
+    values = await readSheetData(spreadsheetId);
+  } catch (e) {
+    const saEmail = getServiceAccountEmail();
+    const hint = saEmail ? `。自分で作成したシートの場合は ${saEmail} に閲覧共有してください` : '';
+    throw Object.assign(new Error(`シートを読み込めませんでした（${e.message}）${hint}`), { statusCode: 400 });
+  }
+  if (!values.length) throw Object.assign(new Error('シートにデータがありません'), { statusCode: 400 });
+
+  // ヘッダー行 → 列indexのマップ（「基準名（補足）」の基準名部分でマッチ。並び替え・補足文言の違いを許容）
+  const headerRow = values[0].map(h => String(h ?? '').trim());
+  const colIndex = {};
+  for (const col of PG_SHEET_COLS) {
+    const idx = headerRow.findIndex(h => h === col.header || h === col.label || h.replace(/（.*）$/, '') === col.label);
+    if (idx >= 0) colIndex[col.key] = idx;
+  }
+  if (colIndex.title === undefined) {
+    throw Object.assign(new Error('ヘッダー行に「タスク名」列が見つかりません。エクスポートしたシートの形式で読み込んでください'), { statusCode: 400 });
+  }
+
+  const [tasksRes, goalsRes] = await Promise.all([
+    supabase.from('personal_tasks').select('*').eq('user_id', user.id),
+    supabase.from('personal_goals').select('id, title').eq('user_id', user.id),
+  ]);
+  const err = tasksRes.error || goalsRes.error;
+  if (err) throw err;
+  const taskById = Object.fromEntries((tasksRes.data || []).map(t => [t.id, t]));
+  const goalTitleById = Object.fromEntries((goalsRes.data || []).map(g => [g.id, g.title]));
+  const goalIdByTitle = {};
+  for (const g of goalsRes.data || []) if (!(g.title in goalIdByTitle)) goalIdByTitle[g.title] = g.id;
+
+  const creates = [];
+  const updates = [];
+  const warnings = [];
+  let unchanged = 0;
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] || [];
+    const cell = (key) => colIndex[key] === undefined ? undefined : String(row[colIndex[key]] ?? '').trim();
+    const rowNo = i + 1; // シート上の行番号（1-origin＋ヘッダー）
+    const isEmptyRow = PG_SHEET_COLS.every(c => !cell(c.key));
+    if (isEmptyRow) continue;
+
+    const title = cell('title');
+    if (!title) { warnings.push(`${rowNo}行目: タスク名が空のためスキップしました`); continue; }
+
+    const id = cell('id') || null;
+    if (id && !taskById[id]) { warnings.push(`${rowNo}行目: ID「${id}」のタスクが見つからないためスキップしました（ID列を消せば新規作成されます）`); continue; }
+
+    // 各フィールドの解釈（列自体が無い項目は「触らない」、セルが空は「空にする」）
+    const fields = {};
+    fields.title = title;
+    if (colIndex.due_date !== undefined) {
+      const d = pgSheetParseDate(cell('due_date'));
+      if (!d.ok) { warnings.push(`${rowNo}行目「${title}」: 期限「${cell('due_date')}」が日付として読めないためスキップしました`); continue; }
+      fields.due_date = d.value;
+    }
+    if (colIndex.status !== undefined) {
+      const s = cell('status');
+      if (s && !PG_TASK_STATUSES.has(s)) { warnings.push(`${rowNo}行目「${title}」: ステータス「${s}」は 未着手/進行中/完了 のいずれかにしてください（スキップ）`); continue; }
+      if (s) fields.status = s; // 空欄は既存維持（新規はデフォルト未着手）
+    }
+    if (colIndex.priority !== undefined) {
+      const p = cell('priority');
+      if (p && !PG_SHEET_PRIORITY_CODES[p]) { warnings.push(`${rowNo}行目「${title}」: 優先度「${p}」は 高/中/低 のいずれかにしてください（スキップ）`); continue; }
+      fields.priority = p ? PG_SHEET_PRIORITY_CODES[p] : null;
+    }
+    if (colIndex.goal !== undefined) {
+      const gTitle = cell('goal');
+      if (gTitle && !goalIdByTitle[gTitle]) {
+        warnings.push(`${rowNo}行目「${title}」: 目標「${gTitle}」が見つからないため紐付けなしで取り込みます`);
+        fields.goal_id = null;
+      } else {
+        fields.goal_id = gTitle ? goalIdByTitle[gTitle] : null;
+      }
+    }
+    for (const key of ['major_category', 'mid_category', 'detail', 'memo', 'link_url']) {
+      if (colIndex[key] !== undefined) fields[key] = cell(key) || null;
+    }
+
+    if (!id) {
+      creates.push({ rowNo, fields });
+      continue;
+    }
+    // 既存タスクとの差分検出（シート表現に揃えて比較）
+    const existing = taskById[id];
+    const before = pgTaskToSheetRow(existing, goalTitleById);
+    const changes = [];
+    const changedFields = {};
+    const compare = (key, sheetVal, beforeVal, label) => {
+      if (String(sheetVal ?? '') !== String(beforeVal ?? '')) {
+        changes.push(`${label}: ${beforeVal || '（空）'} → ${sheetVal || '（空）'}`);
+        return true;
+      }
+      return false;
+    };
+    if (compare('title', fields.title, before.title, 'タスク名')) changedFields.title = fields.title;
+    if ('due_date' in fields && compare('due_date', fields.due_date || '', before.due_date, '期限')) changedFields.due_date = fields.due_date;
+    if ('status' in fields && compare('status', fields.status, before.status, 'ステータス')) changedFields.status = fields.status;
+    if ('priority' in fields && compare('priority', PG_SHEET_PRIORITY_LABELS[fields.priority] || '', before.priority, '優先度')) changedFields.priority = fields.priority;
+    if ('goal_id' in fields && compare('goal', fields.goal_id ? goalTitleById[fields.goal_id] : '', before.goal, '目標')) changedFields.goal_id = fields.goal_id;
+    const textLabels = { major_category: '大分類', mid_category: '中分類', detail: '詳細', memo: 'メモ', link_url: '資料URL' };
+    for (const [key, label] of Object.entries(textLabels)) {
+      if (key in fields && compare(key, fields[key] || '', before[key], label)) changedFields[key] = fields[key];
+    }
+    if (Object.keys(changedFields).length === 0) { unchanged++; continue; }
+    updates.push({ rowNo, id, title: existing.title, changes, changedFields });
+  }
+
+  return { creates, updates, unchanged, warnings };
+}
+
+// POST /personal-tasks/import-sheet/preview — 取込前の差分プレビュー（DBは変更しない）
+router.post('/personal-tasks/import-sheet/preview', requireAuth, async (req, res) => {
+  try {
+    const plan = await pgBuildImportPlan(req.user, req.body?.sheet_url);
+    res.json({
+      creates: plan.creates.map(c => ({ rowNo: c.rowNo, title: c.fields.title, due_date: c.fields.due_date || null })),
+      updates: plan.updates.map(u => ({ rowNo: u.rowNo, title: u.title, changes: u.changes })),
+      unchanged: plan.unchanged,
+      warnings: plan.warnings,
+    });
+  } catch (e) {
+    if (isMissingPersonalGoalsTable(e)) return personalGoalsMigrationHint(res);
+    res.status(e.statusCode || 500).json({ error: e.message });
+  }
+});
+
+// POST /personal-tasks/import-sheet/apply — シートを再読込して取込を実行（新規INSERT＋差分UPDATE。削除はしない）
+router.post('/personal-tasks/import-sheet/apply', requireAuth, async (req, res) => {
+  let plan;
+  try {
+    plan = await pgBuildImportPlan(req.user, req.body?.sheet_url);
+  } catch (e) {
+    if (isMissingPersonalGoalsTable(e)) return personalGoalsMigrationHint(res);
+    return res.status(e.statusCode || 500).json({ error: e.message });
+  }
+  try {
+    if (plan.creates.length) {
+      const inserts = plan.creates.map(c => ({
+        user_id: req.user.id, // 常に本人（ADR 032）
+        title: c.fields.title,
+        goal_id: c.fields.goal_id ?? null,
+        major_category: c.fields.major_category ?? null,
+        mid_category: c.fields.mid_category ?? null,
+        detail: c.fields.detail ?? null,
+        memo: c.fields.memo ?? null,
+        link_url: c.fields.link_url ?? null,
+        due_date: c.fields.due_date ?? null,
+        priority: c.fields.priority ?? null,
+        status: c.fields.status || '未着手',
+        completed_at: c.fields.status === '完了' ? new Date().toISOString() : null,
+      }));
+      const { error } = await supabase.from('personal_tasks').insert(inserts);
+      if (error) throw error;
+    }
+    for (const u of plan.updates) {
+      const update = { ...u.changedFields, updated_at: new Date().toISOString() };
+      if ('status' in update) {
+        update.completed_at = update.status === '完了' ? new Date().toISOString() : null;
+      }
+      const { error } = await supabase
+        .from('personal_tasks')
+        .update(update)
+        .eq('id', u.id)
+        .eq('user_id', req.user.id); // IDOR防止
+      if (error) throw error;
+    }
+    res.json({ created: plan.creates.length, updated: plan.updates.length, unchanged: plan.unchanged, warnings: plan.warnings });
+  } catch (e) {
+    res.status(500).json({ error: `取込に失敗しました: ${e.message}` });
+  }
 });
 
 // ---------- KPI（何を何回する）: しっかりやる人向けの任意機能（2026-08-22 拡張） ----------
