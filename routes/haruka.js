@@ -22619,18 +22619,18 @@ const PG_SHEET_PRIORITY_LABELS = { high: '高', mid: '中', low: '低' };
 const PG_SHEET_PRIORITY_CODES = { '高': 'high', '中': 'mid', '低': 'low' };
 // ヘッダーは「基準名（補足）」形式を許容。列の並び替えはOK・列削除はその項目を取込対象外にする
 const PG_SHEET_COLS = [
-  { key: 'id', label: 'ID', header: 'ID（編集・削除しない）' },
-  { key: 'title', label: 'タスク名', header: 'タスク名（必須）' },
-  { key: 'due_date', label: '期限', header: '期限（YYYY-MM-DD）' },
-  { key: 'status', label: 'ステータス', header: 'ステータス（未着手/進行中/完了）' },
-  { key: 'priority', label: '優先度', header: '優先度（高/中/低）' },
-  { key: 'goal', label: '目標', header: '目標（目標名と完全一致で紐付け）' },
-  { key: 'major_category', label: '大分類', header: '大分類' },
-  { key: 'mid_category', label: '中分類', header: '中分類' },
-  { key: 'detail', label: '詳細', header: '詳細' },
-  { key: 'memo', label: 'メモ', header: 'メモ' },
-  { key: 'link_url', label: '資料URL', header: '資料URL' },
-  { key: 'completed_at', label: '完了日', header: '完了日（自動・取込では無視）' },
+  { key: 'id', label: 'ID', header: 'ID（編集・削除しない）', width: 60 },
+  { key: 'title', label: 'タスク名', header: 'タスク名（必須）', width: 280 },
+  { key: 'due_date', label: '期限', header: '期限（YYYY-MM-DD）', width: 160 },
+  { key: 'status', label: 'ステータス', header: 'ステータス（未着手/進行中/完了）', width: 230 },
+  { key: 'priority', label: '優先度', header: '優先度（高/中/低）', width: 130 },
+  { key: 'goal', label: '目標', header: '目標（目標名と完全一致で紐付け）', width: 230 },
+  { key: 'major_category', label: '大分類', header: '大分類', width: 120 },
+  { key: 'mid_category', label: '中分類', header: '中分類', width: 120 },
+  { key: 'detail', label: '詳細', header: '詳細', width: 240 },
+  { key: 'memo', label: 'メモ', header: 'メモ', width: 280 },
+  { key: 'link_url', label: '資料URL', header: '資料URL', width: 200 },
+  { key: 'completed_at', label: '完了日', header: '完了日（自動・取込では無視）', width: 200 },
 ];
 
 // 期限セルの正規化: '2026-08-31' / '2026/8/31' / '2026.8.31' を YYYY-MM-DD に。不正なら null を返しつつ ok=false
@@ -22696,7 +22696,12 @@ router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
     rows.push(PG_SHEET_COLS.map(c => r[c.key]));
   }
   try {
-    await overwriteFirstSheet(spreadsheetId, rows);
+    await overwriteFirstSheet(spreadsheetId, rows, {
+      fontSize: 12,                                    // デフォルト10だと小さいとの要望（2026-08-22）
+      hideColumns: [0],                                // ID列は取込時の照合用なので隠す（削除はしない）
+      columnWidths: PG_SHEET_COLS.map(c => c.width),
+      zebra: true,
+    });
     res.json({ url: req.body.sheet_url, count: rows.length - 1 });
   } catch (e) {
     console.error('personal-tasks export-sheet error:', e.message);

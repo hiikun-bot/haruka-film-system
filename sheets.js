@@ -48,11 +48,17 @@ async function createSheetWithData(title, rows) {
 // 個人所有シートへの出力: 1枚目シートを全消し→2D配列を書き込み（ヘッダー行固定＋太字）
 // SAのマイドライブは保存容量0でシート新規作成が不可（quota exceeded）のため、
 // マイゴール等の完全個人領域は「ユーザー所有のシートにSAが書き込む」方式をとる
-async function overwriteFirstSheet(spreadsheetId, rows) {
+// format（任意）: { fontSize, hideColumns: [列index], columnWidths: [px], zebra: true }
+// 再出力時も同じ見た目になるよう、ゼブラ（バンド）は既存を消してから貼り直す
+async function overwriteFirstSheet(spreadsheetId, rows, format = {}) {
   const auth = getAuth();
   const sheets = google.sheets({ version: 'v4', auth });
-  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties(sheetId,title)' });
-  const first = meta.data.sheets?.[0]?.properties;
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets(properties(sheetId,title),bandedRanges(bandedRangeId))',
+  });
+  const firstSheet = meta.data.sheets?.[0];
+  const first = firstSheet?.properties;
   if (!first) throw new Error('スプレッドシートにシートが存在しません');
   const range = `'${String(first.title).replace(/'/g, "''")}'`;
   await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${range}!A:ZZ` });
@@ -62,18 +68,61 @@ async function overwriteFirstSheet(spreadsheetId, rows) {
     valueInputOption: 'RAW',
     requestBody: { values: rows },
   });
-  // ヘッダー行を固定＋太字（失敗しても本体は成立しているので握りつぶす）
+  // 整形（失敗しても本体データは成立しているので握りつぶす）
   try {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        requests: [
-          { updateSheetProperties: { properties: { sheetId: first.sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
-          { repeatCell: { range: { sheetId: first.sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } },
-        ],
-      },
-    });
-  } catch (_) { /* 整形は任意 */ }
+    const sheetId = first.sheetId;
+    const numRows = rows.length;
+    const numCols = rows[0]?.length || 0;
+    const requests = [];
+    // 前回貼ったゼブラを削除（重複貼りはAPIエラーになる）
+    for (const b of firstSheet.bandedRanges || []) {
+      requests.push({ deleteBanding: { bandedRangeId: b.bandedRangeId } });
+    }
+    // ヘッダー行固定
+    requests.push({ updateSheetProperties: { properties: { sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } });
+    // 全体フォントサイズ
+    if (format.fontSize) {
+      requests.push({ repeatCell: {
+        range: { sheetId, startRowIndex: 0, endRowIndex: numRows, startColumnIndex: 0, endColumnIndex: numCols },
+        cell: { userEnteredFormat: { textFormat: { fontSize: format.fontSize } } },
+        fields: 'userEnteredFormat.textFormat.fontSize',
+      } });
+    }
+    // ヘッダー行 太字
+    requests.push({ repeatCell: {
+      range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+      cell: { userEnteredFormat: { textFormat: { bold: true } } },
+      fields: 'userEnteredFormat.textFormat.bold',
+    } });
+    // 列幅
+    for (let i = 0; i < (format.columnWidths || []).length; i++) {
+      requests.push({ updateDimensionProperties: {
+        range: { sheetId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
+        properties: { pixelSize: format.columnWidths[i] },
+        fields: 'pixelSize',
+      } });
+    }
+    // 列の非表示（ID列など）
+    for (const i of format.hideColumns || []) {
+      requests.push({ updateDimensionProperties: {
+        range: { sheetId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
+        properties: { hiddenByUser: true },
+        fields: 'hiddenByUser',
+      } });
+    }
+    // ゼブラ表示（ヘッダー色つきバンド。データ行が無いときは貼らない）
+    if (format.zebra && numRows >= 2) {
+      requests.push({ addBanding: { bandedRange: {
+        range: { sheetId, startRowIndex: 0, endRowIndex: numRows, startColumnIndex: 0, endColumnIndex: numCols },
+        rowProperties: {
+          headerColor: { red: 0.835, green: 0.922, blue: 0.910 },   // 薄いティール（ブランド色系）
+          firstBandColor: { red: 1, green: 1, blue: 1 },
+          secondBandColor: { red: 0.957, green: 0.976, blue: 0.973 },
+        },
+      } } });
+    }
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+  } catch (e) { console.error('overwriteFirstSheet 整形スキップ:', e.message); }
 }
 
 // SAのメールアドレス（ユーザーが自分のシートをSAに共有する際の案内用）
