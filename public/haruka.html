@@ -8507,7 +8507,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     </div>
     <div class="form-group">
       <label class="form-label">関連する目標（任意・進捗率つき）</label>
-      <select class="form-input" id="mg-t-goal" onchange="mgSyncTaskKpiSelect()"></select>
+      <select class="form-input" id="mg-t-goal" onchange="mgOnTaskGoalChange()"></select>
     </div>
     <div class="form-group">
       <label class="form-label">メモ（任意）</label>
@@ -26104,6 +26104,8 @@ function mgOpenTaskModal(taskId) {
   document.getElementById('mg-t-name').value = t?.title || '';
   document.getElementById('mg-t-major').value = t?.major_category || '';
   document.getElementById('mg-t-mid').value = t?.mid_category || '';
+  _mgMajorAutoFilled = '';
+  if (!t) mgAutoFillMajorFromGoal(); // 新規時: 選択中の目標名を大分類に自動入力（目標名とリンク）
   document.getElementById('mg-t-due').value = t?.due_date || '';
   document.getElementById('mg-t-status').value = t?.status || '未着手';
   document.getElementById('mg-t-detail').value = t?.detail || '';
@@ -26145,6 +26147,25 @@ function mgSyncQuickDue() {
   document.querySelectorAll('#modal-mg-task .mg-quick-due').forEach(b => {
     b.classList.toggle('active', !!cur && map[b.dataset.mgDue] === cur);
   });
+}
+
+// 大分類は目標名と自動リンク（毎回の手入力を省く・ユーザー要望 2026-08-22）。
+// 空欄 or 直前の自動入力値のままのときだけ上書きし、手入力した値は尊重する
+let _mgMajorAutoFilled = '';
+function mgAutoFillMajorFromGoal() {
+  const majorInput = document.getElementById('mg-t-major');
+  if (!majorInput) return;
+  const goalId = document.getElementById('mg-t-goal')?.value || '';
+  const goal = goalId ? (_mgData?.goals || []).find(g => g.id === goalId) : null;
+  const cur = majorInput.value.trim();
+  if (!cur || cur === _mgMajorAutoFilled) {
+    majorInput.value = goal ? goal.title : '';
+    _mgMajorAutoFilled = goal ? goal.title : '';
+  }
+}
+function mgOnTaskGoalChange() {
+  mgAutoFillMajorFromGoal();
+  mgSyncTaskKpiSelect();
 }
 
 // 選択中の目標にKPIがあるときだけKPIプルダウンを表示（ライト層には見せない）
