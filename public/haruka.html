@@ -1429,6 +1429,15 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .mg-quick-due{font-size:12px;padding:7px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--white);color:var(--text-muted);cursor:pointer;transition:all .12s;white-space:nowrap}
 .mg-quick-due:hover{background:var(--em-pale)}
 .mg-quick-due.active{background:var(--em);border-color:var(--em);color:#fff;font-weight:700}
+/* 🎯 マイゴール: 分類コンボボックス（フリー入力＋登録済み値をクリックで一覧選択）。
+   datalist は値が入っていると候補が絞られ「一覧から選ぶ」ができないため、カスタム実装 */
+.mg-combo{position:relative}
+.mg-combo .form-input{width:100%;padding-right:32px}
+.mg-combo-toggle{position:absolute;right:2px;top:50%;transform:translateY(-50%);border:0;background:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:6px 8px;line-height:1}
+.mg-combo-list{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:60;background:var(--white);border:0.5px solid var(--border);border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,.12);max-height:190px;overflow-y:auto;padding:4px}
+.mg-combo-item{padding:7px 10px;border-radius:7px;font-size:13px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mg-combo-item:hover{background:var(--em-pale)}
+.mg-combo-empty{padding:7px 10px;font-size:12px;color:var(--text-muted);line-height:1.5}
 /* 優先度は「最優先」だけ赤で表示（高/中/低は行に出さない。全部🔴だと判断材料にならないため） */
 .mg-task-meta.mg-pri-top{color:#C0392B;font-weight:800}
 .mg-tabbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
@@ -8545,15 +8554,28 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <details id="mg-t-details" style="margin:2px 0 12px;border:0.5px solid var(--border-light);border-radius:10px;padding:8px 12px">
       <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text-muted)">＋ 詳細設定を開く（分類・KPI・資料URLなど）</summary>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
+        <!-- 分類はコンボボックス: フリー入力＋クリック/▾で登録済み値の全一覧から選択（入力中は部分一致で絞り込み） -->
         <div class="form-group" style="flex:1;min-width:150px">
           <label class="form-label">大分類（任意）</label>
-          <input class="form-input" id="mg-t-major" list="mg-datalist-major" placeholder="例) 学習">
-          <datalist id="mg-datalist-major"></datalist>
+          <div class="mg-combo">
+            <input class="form-input" id="mg-t-major" placeholder="例) 学習" autocomplete="off"
+                   oninput="mgComboRender('major', true)" onfocus="mgComboRender('major', false)"
+                   onblur="mgComboClose('major')" onkeydown="if(event.key==='Escape'||event.key==='Enter')mgComboClose('major')">
+            <button type="button" class="mg-combo-toggle" tabindex="-1" aria-label="登録済みの大分類から選ぶ"
+                    onmousedown="event.preventDefault();mgComboToggle('major')">▼</button>
+            <div class="mg-combo-list" id="mg-combo-major" style="display:none"></div>
+          </div>
         </div>
         <div class="form-group" style="flex:1;min-width:150px">
           <label class="form-label">中分類（任意）</label>
-          <input class="form-input" id="mg-t-mid" list="mg-datalist-mid" placeholder="例) After Effects">
-          <datalist id="mg-datalist-mid"></datalist>
+          <div class="mg-combo">
+            <input class="form-input" id="mg-t-mid" placeholder="例) After Effects" autocomplete="off"
+                   oninput="mgComboRender('mid', true)" onfocus="mgComboRender('mid', false)"
+                   onblur="mgComboClose('mid')" onkeydown="if(event.key==='Escape'||event.key==='Enter')mgComboClose('mid')">
+            <button type="button" class="mg-combo-toggle" tabindex="-1" aria-label="登録済みの中分類から選ぶ"
+                    onmousedown="event.preventDefault();mgComboToggle('mid')">▼</button>
+            <div class="mg-combo-list" id="mg-combo-mid" style="display:none"></div>
+          </div>
         </div>
       </div>
       <!-- 選んだ目標にKPIがあるときだけ表示 -->
@@ -26336,11 +26358,10 @@ function mgOpenTaskModal(taskId) {
   // 新規作成時は目標フィルタの選択中目標を初期値にする（その目標を見ながら追加する流れが多いため）
   const filterVal = document.getElementById('mg-goal-filter')?.value || '';
   goalSel.value = t ? (t.goal_id || '') : (filterVal && filterVal !== 'none' ? filterVal : '');
-  // 大分類・中分類の既存値サジェスト（datalist）
-  const majors = [...new Set((_mgData?.tasks || []).map(x => x.major_category).filter(Boolean))];
-  const mids = [...new Set((_mgData?.tasks || []).map(x => x.mid_category).filter(Boolean))];
-  document.getElementById('mg-datalist-major').innerHTML = majors.map(v => `<option value="${esc(v)}">`).join('');
-  document.getElementById('mg-datalist-mid').innerHTML = mids.map(v => `<option value="${esc(v)}">`).join('');
+  // 大分類・中分類のコンボボックス候補（他のタスクで登録済みの値・使用回数順）。
+  // フリー入力した値も保存後の再読込（loadMyGoalsPage）で次回から候補に載る
+  _mgComboValues = { major: mgCategoryValues('major_category'), mid: mgCategoryValues('mid_category') };
+  mgComboClose('major'); mgComboClose('mid');
   document.getElementById('mg-t-name').value = t?.title || '';
   document.getElementById('mg-t-major').value = t?.major_category || '';
   document.getElementById('mg-t-mid').value = t?.mid_category || '';
@@ -26389,6 +26410,58 @@ function mgSyncQuickDue() {
   document.querySelectorAll('#modal-mg-task .mg-quick-due').forEach(b => {
     b.classList.toggle('active', !!cur && map[b.dataset.mgDue] === cur);
   });
+}
+
+// ---------- 分類コンボボックス（フリー入力＋登録済み値の一覧選択・ユーザー要望 2026-08-23） ----------
+// datalist は値が入っていると候補が絞られ「他のタスクで使った分類を一覧から選ぶ」ができないため、
+// クリック/▼で全候補が開くカスタムコンボに置換。候補はモーダルを開くたびに mgOpenTaskModal が最新化する
+let _mgComboValues = { major: [], mid: [] };
+
+// 既存タスクから分類の登録済み値を使用回数の多い順で返す（よく使う分類が上に来るように）
+function mgCategoryValues(field) {
+  const counts = new Map();
+  (_mgData?.tasks || []).forEach(t => { const v = t[field]; if (v) counts.set(v, (counts.get(v) || 0) + 1); });
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v);
+}
+
+function mgComboInput(kind) { return document.getElementById(kind === 'major' ? 'mg-t-major' : 'mg-t-mid'); }
+
+// filterByInput=true（入力中）は部分一致で絞り込み、false（フォーカス/▼）は全候補を表示
+function mgComboRender(kind, filterByInput) {
+  const input = mgComboInput(kind);
+  const list = document.getElementById(`mg-combo-${kind}`);
+  if (!input || !list) return;
+  const q = filterByInput ? input.value.trim().toLowerCase() : '';
+  const items = q ? _mgComboValues[kind].filter(v => v.toLowerCase().includes(q)) : _mgComboValues[kind];
+  const label = kind === 'major' ? '大分類' : '中分類';
+  list.innerHTML = items.length
+    // 候補クリックは mousedown で処理（click だと input の blur → onblur の close が先に走って拾えない）
+    ? items.map(v => `<div class="mg-combo-item" onmousedown="event.preventDefault();mgComboPick('${kind}', this)">${esc(v)}</div>`).join('')
+    : `<div class="mg-combo-empty">${q ? `「${esc(input.value.trim())}」に一致する${label}はありません。` : `登録済みの${label}はまだありません。`}そのまま入力すると新しい${label}として登録されます</div>`;
+  list.style.display = '';
+}
+
+function mgComboPick(kind, el) {
+  const input = mgComboInput(kind);
+  if (input) input.value = el.textContent;
+  if (kind === 'major') _mgMajorAutoFilled = ''; // 一覧から選んだ値は手入力と同じ扱い（目標変更で上書きしない）
+  mgComboClose(kind);
+}
+
+function mgComboClose(kind) {
+  const list = document.getElementById(`mg-combo-${kind}`);
+  if (list) list.style.display = 'none';
+}
+
+function mgComboToggle(kind) {
+  const list = document.getElementById(`mg-combo-${kind}`);
+  if (!list) return;
+  if (list.style.display === 'none') {
+    mgComboInput(kind)?.focus(); // 閉じる契機を input の blur に一本化するためフォーカスを移す
+    mgComboRender(kind, false);
+  } else {
+    mgComboClose(kind);
+  }
 }
 
 // 大分類は目標名と自動リンク（毎回の手入力を省く・ユーザー要望 2026-08-22）。
