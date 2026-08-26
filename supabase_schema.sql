@@ -1088,6 +1088,8 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','dashboard.monthly_forecast',true),
   -- 案件
   ('admin','project.create_edit',true),('secretary','project.create_edit',true),('producer','project.create_edit',true),('producer_director','project.create_edit',true),
+  -- 案件・クライアントの新規作成のみ（単価・既存編集は含まない）。director にも開放（migration 2026-08-26_project_create_permission.sql）
+  ('admin','project.create',true),('secretary','project.create',true),('producer','project.create',true),('producer_director','project.create',true),('director','project.create',true),
   ('admin','project.unit_price_view',true),('producer','project.unit_price_view',true),('producer_director','project.unit_price_view',true),
   ('admin','project.fee_view',true),('secretary','project.fee_view',true),
   -- クライアント単価（client_unit_price）の閲覧・編集。
