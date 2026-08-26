@@ -556,7 +556,9 @@ async function syncClientTeams(clientId, teamIds) {
 }
 
 // クライアント作成
-router.post('/clients', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+// project.create（新規作成のみの限定権限。director に開放、migration 2026-08-26）でも作成可。
+// 既存クライアントの編集（PUT）や単価系は従来どおり project.create_edit のまま。
+router.post('/clients', requireAuth, requireAnyPermission('project.create_edit', 'project.create'), async (req, res) => {
   const { name, client_code, note, sales_start_date, status, persona, slack_channel_url, chatwork_room_id, invoice_registration_number } = req.body;
   if (!name) return res.status(400).json({ error: 'クライアント名は必須です' });
   const code = client_code ? client_code.toUpperCase().slice(0, 3) : null;
@@ -1084,7 +1086,9 @@ async function replaceProjectTags(projectId, tags) {
 }
 
 // 案件作成
-router.post('/projects', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+// project.create（新規作成のみの限定権限。director に開放、migration 2026-08-26）でも作成可。
+// 既存案件の編集（PUT）・成果物グループ/単価/D費/分割請求などは従来どおり project.create_edit のまま。
+router.post('/projects', requireAuth, requireAnyPermission('project.create_edit', 'project.create'), async (req, res) => {
   const {
     client_id, name, status, producer_id, director_id,
     sheet_url, regulation_url, admin_note, start_date, end_date,
@@ -20235,7 +20239,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'dashboard.sales_summary','dashboard.monthly_forecast',
   // project.notification_edit は migration 2026-08-19 / ROLE_PERM_LIST に存在するのに
   // このリストから漏れており、権限マトリクスから保存すると 400 になるバグがあった（本PRで追記修正）
-  'project.create_edit','project.notification_edit','project.client_price','project.unit_price_view','project.fee_view','project.delete',
+  'project.create','project.create_edit','project.notification_edit','project.client_price','project.unit_price_view','project.fee_view','project.delete',
   'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others','creative.wcheck_toggle',
   'member.list','member.edit_password','member.deactivate','member.reactivate','member.delete',
   'team.manage','team.assign','team.delete',

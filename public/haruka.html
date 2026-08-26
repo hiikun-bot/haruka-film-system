@@ -11368,7 +11368,7 @@ function renderProjectsView() {
   if (!allClients.length) {
     list.innerHTML = `<div style="text-align:center;padding:60px;color:var(--text-muted)">
       <div style="font-size:15px;margin-bottom:12px">クライアントがまだいません</div>
-      <button class="btn-primary" onclick="openNewClientModal()">＋ 最初のクライアントを追加</button>
+      ${canCreateProject() ? `<button class="btn-primary" onclick="openNewClientModal()">＋ 最初のクライアントを追加</button>` : ''}
     </div>`;
     return;
   }
@@ -11501,7 +11501,7 @@ function renderProjectsView() {
             </div>` : ''}
           ${projectRows}
           <div style="padding:12px 20px">
-            ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectModal('${client.id}')">＋ 案件追加</button>` : ''}
+            ${canCreateProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectModal('${client.id}')">＋ 案件追加</button>` : ''}
           </div>
         </div>
       </div>`;
@@ -17515,7 +17515,9 @@ function updateProjectHourlyRow() {
   if (!row || !sel) return;
   const cat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
     ? _categoriesCache.find(c => c && c.id === (sel.value || '')) : null;
-  const isHourly = cat?.code === 'hourly';
+  // 時給の設定は PUT /projects/:id/director-fee（project.create_edit ガード）を使うため、
+  // 新規作成のみの project.create 保持者（director）には行ごと非表示（時給はP層が後から設定）。
+  const isHourly = cat?.code === 'hourly' && (typeof canEditProject !== 'function' || canEditProject());
   row.style.display = isHourly ? 'flex' : 'none';
   if (isHourly) {
     const clientWrap = document.getElementById('p-hourly-client-wrap');
@@ -18147,6 +18149,8 @@ const _ROLE_PERMS_FALLBACK = {
   // 既存挙動と一致（DB読込失敗時の安全策）
   'admin|*': true, // admin は全許可
   'secretary|project.create_edit': true, 'producer|project.create_edit': true, 'producer_director|project.create_edit': true,
+  // 案件・クライアントの新規作成のみ（単価・既存編集は含まない）。director に開放（migration 2026-08-26_project_create_permission.sql）
+  'secretary|project.create': true, 'producer|project.create': true, 'producer_director|project.create': true, 'director|project.create': true,
   // 通知連携先（Slack/Chatwork）の設定。director 以上に開放（migration 2026-08-19_project_notification_edit_permission.sql）
   'secretary|project.notification_edit': true, 'producer|project.notification_edit': true, 'producer_director|project.notification_edit': true, 'director|project.notification_edit': true,
   'producer|project.unit_price_view': true, 'producer_director|project.unit_price_view': true,
@@ -18333,7 +18337,7 @@ function applyRoleBasedUI() {
   const addTeamBtn = document.getElementById('btn-add-team');
   if (addTeamBtn) addTeamBtn.style.display = hasPermission('team.manage') ? '' : 'none';
   const addClientBtn = document.getElementById('btn-add-client');
-  if (addClientBtn) addClientBtn.style.display = canEditProject() ? '' : 'none';
+  if (addClientBtn) addClientBtn.style.display = canCreateProject() ? '' : 'none';
   // マスター管理ナビ
   // master.page が無くても master.filename_templates（ファイル名テンプレート管理のみ）でナビを出す。
   // どのセクションを見せるかは loadMasterPage() 側で絞る。
@@ -18435,6 +18439,12 @@ function canSeeMember(m) {
 
 function canEditProject() {
   return hasPermission('project.create_edit');
+}
+
+// 案件・クライアントの「新規作成」可否。project.create は新規作成のみの限定権限
+// （director に開放）。create_edit 保持者は従来どおり作成も編集も可（ADR 015・hasPermission 判定）。
+function canCreateProject() {
+  return hasPermission('project.create') || canEditProject();
 }
 
 // 通知連携先（Slack/Chatwork）の設定可否。director 以上に開放（ADR 015 準拠・hasPermission 判定）。
@@ -23649,7 +23659,9 @@ async function submitProject() {
       const _selCat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
         ? _categoriesCache.find(c => c && c.id === primary_category_id) : null;
       const payRaw = (document.getElementById('p-hourly-pay-input')?.value || '').trim();
-      if (_selCat?.code === 'hourly' && savedId && payRaw !== '') {
+      // director-fee API は project.create_edit ガードのため、project.create のみの保持者では呼ばない
+      // （入力行自体も updateProjectHourlyRow で非表示。二重ガード）
+      if (_selCat?.code === 'hourly' && savedId && payRaw !== '' && canEditProject()) {
         const clientRaw = (document.getElementById('p-hourly-client-input')?.value || '').trim();
         const body = { pricing_type: 'hourly', unit_price: Math.max(0, parseInt(payRaw, 10) || 0) };
         if (clientRaw !== '') body.client_unit_price = Math.max(0, parseInt(clientRaw, 10) || 0);
@@ -32869,6 +32881,7 @@ function _buildRolePermRoles() {
 const ROLE_PERM_LIST = [
   { section:'ダッシュボード', key:'dashboard.sales_summary',     label:'売上サマリー閲覧' },
   { section:'ダッシュボード', key:'dashboard.monthly_forecast',  label:'月次予測閲覧' },
+  { section:'案件管理',       key:'project.create',              label:'案件・クライアントの新規追加（既存の編集・単価は含まない）' },
   { section:'案件管理',       key:'project.create_edit',         label:'案件作成・編集' },
   { section:'案件管理',       key:'project.notification_edit',   label:'通知連携先の設定（Slack/Chatwork）' },
   { section:'案件管理',       key:'project.client_price',        label:'クライアント単価の閲覧・編集' },
