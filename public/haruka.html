@@ -27416,7 +27416,7 @@ function renderPayout() {
 
     html += `<tr class="${paid ? 'po-paid' : ''}">` +
       `<td style="font-size:15px">${paid ? '✅' : '⬜'}</td>` +
-      `<td style="font-weight:600;white-space:nowrap">${name}</td>` +
+      `<td style="font-weight:600;white-space:nowrap"><a href="javascript:void(0)" onclick="poOpenMember('${esc(String(r.user_id))}')" title="メンバーマスターを開く" style="color:inherit;text-decoration:none;border-bottom:1px dashed var(--border)">${name}</a></td>` +
       `<td>${bankCell}</td>` +
       `<td style="text-align:right;white-space:nowrap">${amountCell}</td>` +
       `<td style="white-space:nowrap">${pdfCell}</td>` +
@@ -27617,6 +27617,26 @@ async function poChatworkSync(btn) {
     showToast(e.message, 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔗 ChatworkDM同期'; }
+  }
+}
+
+// 氏名クリックでメンバーマスター（編集モーダル）を開く。
+// メンバータブ未訪問で allMembers が空の場合は /members を取得してから開く。
+async function poOpenMember(userId) {
+  try {
+    let m = (allMembers || []).find(x => String(x.id) === String(userId));
+    if (!m) {
+      const res = await apiFetch(`${API}/members`);
+      const data = await res.json();
+      if (res.ok && Array.isArray(data)) {
+        allMembers = data;
+        m = allMembers.find(x => String(x.id) === String(userId));
+      }
+    }
+    if (m && typeof openEditMember === 'function') openEditMember(m);
+    else showToast('メンバー情報を取得できませんでした', 'error');
+  } catch (e) {
+    showToast(e.message || 'メンバー情報の取得に失敗しました', 'error');
   }
 }
 
