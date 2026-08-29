@@ -45,6 +45,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 /* Flow diagram（5ステップ用に可変） */
 .flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
 .flow-row.flow-5{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr auto 1fr}
+.flow-row.flow-6{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr}
 .flow-step{text-align:center;padding:8px 4px}
 .flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
 .flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
@@ -131,7 +132,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   .step-section-num{width:38px;height:38px;font-size:15px}
   .step-section h2{font-size:17px}
   .step-card{padding:14px 16px}
-  .flow-row,.flow-row.flow-5{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-row,.flow-row.flow-5,.flow-row.flow-6{grid-template-columns:1fr;gap:6px;padding:14px 12px}
   .flow-arrow{transform:rotate(90deg);height:14px}
   .must-card{padding:14px 16px;gap:12px}
   .must-card-icon{font-size:24px}
@@ -149,7 +150,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ 動画編集者向け</span>
     <h1>💴 請求書ドラフト → 提出<span>納品したぶんを、月末にきちんと受け取るまで</span></h1>
-    <div class="hero-eta">⏱ 読了 約 7 分</div>
+    <div class="hero-eta">⏱ 読了 約 9 分</div>
   </div>
 </header>
 
@@ -163,7 +164,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 このページは <b>デザイナーも共通</b> です（静止画クリエイティブでも操作は同じ）。ディレクター・プロデューサーの方もディレクション費・プロデュース費が同じ流れで請求できます。</p>
   </div>
 
-  <div class="flow-row flow-5">
+  <div class="flow-row flow-6">
     <div class="flow-step">
       <div class="flow-step-icon">🚚</div>
       <div class="flow-step-label">クリエイティブを<br>納品する</div>
@@ -177,6 +178,11 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="flow-step">
       <div class="flow-step-icon">📤</div>
       <div class="flow-step-label">「提出する」を<br>押す</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📂</div>
+      <div class="flow-step-label">PDFを請求書<br>フォルダに格納</div>
     </div>
     <div class="flow-arrow">→</div>
     <div class="flow-step">
@@ -314,6 +320,74 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="step-section-num">3</div>
     <div class="step-section-meta">
       <div class="step-section-eyebrow">STEP 3</div>
+      <h2>請求書PDFを「請求書フォルダ」に格納する</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📂 提出先は Google Drive の「自分の月フォルダ」</div>
+    <p>請求書のPDFは、毎月 <b>Google Drive のあなた専用フォルダ</b> に入れて提出します。フォルダは Drive を探しに行かなくて OK。<b>システムのボタンから毎月ワンクリックで作れて、そのまま Drive が開きます。</b>中身はあなた本人と管理側（ひーくん・秘書）だけが見られます。</p>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">👤</div>
+      <div class="flow-step-label">ヘッダーの<br>「メンバー」タブ</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">➕</div>
+      <div class="flow-step-label">自分の欄の🧾で<br>「＋ ◯月を作成」</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📤</div>
+      <div class="flow-step-label">開いたフォルダに<br>PDFをアップロード</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🖱 ボタンの見た目はこう変わる</div>
+    <p>メンバー一覧の自分の欄に、🧾マークの小さなボタンが出ています。色で状態がわかります。</p>
+    <div class="mock">
+      <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;background:#fff8e1;color:#e65100;border:1px solid #ffe082">＋ 08月を作成</span>
+          <span style="color:#6b7280">まだ今月のフォルダが無い状態。<b>クリックすると自動で作られ、新しいタブで Drive が開きます</b></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9">📂 08月を開く（空）</span>
+          <span style="color:#6b7280">フォルダはあるが、まだ中身が空。クリックで Drive が開くので PDF を入れましょう</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;background:#e8f5e9;color:#1b5e20;border:1px solid #2e7d32">📂 08月を開く</span>
+          <span style="color:#6b7280">緑＝<b>ファイルが入っている（提出済み）</b>状態。ここまで来れば完了です</span>
+        </div>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 作られるフォルダは「請求書 › 2026年 › 08月 › あなたの名前 2026年08月」のような階層に自動で整理されます。フォルダ名やリンクを自分で管理する必要はありません。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">先月のフォルダを使い回さない！</div>
+    <p>先月のフォルダの名前を変えて今月分にする…は <strong>NG</strong> です（管理側から今月の提出として認識されません）。<strong>毎月「＋ ◯月を作成」ボタンで新しく作る</strong> のが正解。ボタンひとつで済みます。</p>
+  </div>
+
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">📨 提出期間とDM報告</div>
+    <p>毎月20日ごろに Chatwork／Slack で「請求書送付についてのご案内」が届きます。<b>提出期間は毎月26〜28日</b>。フォルダにPDFを入れたら、<b>そのPDFのURLをひーくんにDMで送って報告</b> するところまでがワンセットです。請求書フォーマット（スプレッドシート）のリンクも案内に載っています。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step4">STEP 4 へ進む</a></div>
+</section>
+
+<!-- STEP 4 -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
       <h2>提出後の流れ（承認 → 振込）</h2>
       <div class="step-section-eta">⏱ 読むだけ 約 2 分</div>
     </div>
@@ -340,7 +414,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="done-banner">
     <span class="done-icon">✅</span>
-    <div class="done-text">請求フロー、マスター完了！<small>納品 → 月末に作成 → 提出 → 承認 → 振込。毎月これだけ</small></div>
+    <div class="done-text">請求フロー、マスター完了！<small>納品 → 月末に作成 → 提出 → PDFをフォルダへ → 承認 → 振込。毎月これだけ</small></div>
   </div>
 </section>
 
@@ -371,6 +445,10 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="trouble-item">
       <span class="trouble-icon">🏦</span>
       <div><div class="trouble-q">PDFに「⚠ 振込先が未設定です」と出る</div><div class="trouble-a">プロフィールの口座情報タブが未登録です。<a href="/guide-member-register.html" style="color:var(--em-dark);font-weight:700">登録チュートリアル STEP 3</a> の手順で登録を</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">📂</span>
+      <div><div class="trouble-q">請求書フォルダ（今月）がどこにあるかわからない</div><div class="trouble-a">Drive を探しに行く必要はありません。ヘッダーの「メンバー」タブ → 自分の欄の🧾にある <b>「＋ ◯月を作成」ボタン</b> を押せば、今月のフォルダが自動で作られてそのまま開きます（作成済みなら「📂 ◯月を開く」ボタンになっています）。先月のフォルダの名前を変えて使い回すのはNGです</div></div>
     </div>
   </div>
 </section>
