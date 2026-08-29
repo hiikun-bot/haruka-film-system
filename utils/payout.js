@@ -8,7 +8,13 @@
 function buildPayoutMessage({ displayName, month, memo }) {
   const name = String(displayName || '').trim() || 'メンバー';
   const m = Number(month);
-  const base = `${name}さん\n今月もお疲れ様でした。${m}月分を振り込みましたので、ご確認をお願いします。`;
+  const base = [
+    `${name}さん`,
+    '今月もお疲れ様でした！',
+    `${m}月分を振り込みましたので、ご確認をお願いします。`,
+    'いつも助かっております！',
+    '来月もどうぞよろしくお願いいたします！',
+  ].join('\n');
   const note = String(memo || '').trim();
   return note ? `${base}\n\n${note}` : base;
 }
