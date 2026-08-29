@@ -8751,14 +8751,14 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
      ナビ表示は applyRoleBasedUI、ページ内は loadPayoutPage 冒頭の二重ガードで制御（ADR 015）。 -->
 <div id="page-payout" class="page">
   <style>
-    #page-payout .po-tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:1060px}
-    #page-payout .po-tbl th{font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;padding:10px;border-bottom:0.5px solid var(--border);white-space:nowrap}
-    #page-payout .po-tbl td{padding:10px;border-bottom:0.5px solid var(--border-light);vertical-align:top}
+    #page-payout .po-tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:1120px}
+    #page-payout .po-tbl th{font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;padding:8px 8px;border-bottom:0.5px solid var(--border);white-space:nowrap}
+    #page-payout .po-tbl td{padding:8px 8px;border-bottom:0.5px solid var(--border-light);vertical-align:top}
     #page-payout .po-tbl tr.po-paid td{background:#e8f5e9}
     .po-badge{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;border:none;cursor:default}
     button.po-badge{cursor:pointer}
   </style>
-  <div style="max-width:1200px;margin:0 auto;padding:0 4px">
+  <div style="max-width:1560px;margin:0 auto;padding:0 4px">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px">
       <h2 style="margin:0;font-size:18px">💸 振込管理</h2>
       <div style="display:flex;align-items:center;gap:4px">
@@ -27351,6 +27351,8 @@ function renderPayout() {
     let pdfCell = pdfs.length === 0
       ? '<span style="color:var(--text-muted);font-size:12px">未提出</span>'
       : pdfs.map(f => `<a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" style="font-size:16px;text-decoration:none">📄</a>`).join(' ');
+    if (r.folder_url) pdfCell = `<a href="${esc(r.folder_url)}" target="_blank" rel="noopener" title="Driveの請求書フォルダを開く（不要PDFの整理はこちらから）" style="font-size:16px;text-decoration:none">📁</a> ` + pdfCell;
+    if (pdfs.length >= 2) pdfCell += ` <span class="po-badge" style="background:#fdecea;color:#C0392B" title="PDFが複数あります。フォルダを開いて整理してください">${pdfs.length}件</span>`;
     if (r.is_new) pdfCell += ' <span class="po-badge" style="background:#e3f2fd;color:#1565c0">🆕</span>';
 
     // 差分チェック
@@ -27368,7 +27370,7 @@ function renderPayout() {
     // メモ（未振込=入力・送信時にPOST／振込済=テキスト表示のみ）
     const memoCell = paid
       ? `<span style="font-size:12px;color:var(--text-muted)">${esc(r.memo || '')}</span>`
-      : `<input class="form-input" id="po-memo-${rid}" value="${esc(r.memo || '')}" placeholder="メモ" style="width:140px;padding:4px 8px;font-size:12px">`;
+      : `<input class="form-input" id="po-memo-${rid}" value="${esc(r.memo || '')}" placeholder="メモ" style="width:120px;padding:4px 8px;font-size:12px">`;
 
     // チャット（個別チャットを開く）— Chatwork がある人は Chatwork、無い人は Slack を表示
     // （Slack の人は送信ボタンの自動送信対象外なので 📋 文面コピーを添える）
@@ -27393,11 +27395,11 @@ function renderPayout() {
     } else {
       opCell = `<button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="poPay('${rid}')">振込完了→送信</button>`;
       if (!r.has_chatwork && !r.has_chatwork_dm) {
-        opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ Chatwork未設定（送信されません）</div>';
+        opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ 送信なし（Chatwork未設定）</div>';
       } else if (r.has_chatwork_dm) {
-        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💬 個別チャットへ送信</div>';
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💬 DMへ送信</div>';
       } else {
-        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📢 全体チャット+To（DM未紐付け）</div>';
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📢 全体+To送信</div>';
       }
     }
 
