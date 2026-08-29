@@ -24539,8 +24539,7 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
       .eq('id', rec.user_id).maybeSingle();
 
     const { buildPayoutMessage } = require('../utils/payout');
-    const displayName = user?.nickname || user?.full_name || 'メンバー';
-    const text = customMessage || buildPayoutMessage({ displayName, month: rec.month, memo });
+    const text = customMessage || buildPayoutMessage({ month: rec.month, memo });
 
     let sent = false;
     let sentVia = null; // 'dm' | 'room'

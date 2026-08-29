@@ -27647,11 +27647,9 @@ function poCopyText(text, label) {
     .catch(() => showToast('コピーに失敗しました', 'error'));
 }
 
-// 振込完了メッセージ本文（サーバー utils/payout.js buildPayoutMessage と同一ロジック・宛名も送信実物と同じ）
-function poMessageText(r, month, memo) {
-  const name = r.nickname || r.full_name || 'メンバー';
+// 振込完了メッセージ本文（サーバー utils/payout.js buildPayoutMessage と同一ロジック・宛名行なし）
+function poMessageText(month, memo) {
   let text = [
-    `${name}さん`,
     '今月もお疲れ様でした！',
     `${month}月分を振り込みましたので、ご確認をお願いします。`,
     'いつも助かっております！',
@@ -27669,7 +27667,7 @@ function poCopyMessage(id) {
   const memoInput = document.getElementById(`po-memo-${id}`);
   const memo = (memoInput ? memoInput.value : (r.memo || '')).trim();
   const month = _poData ? _poData.month : '';
-  const text = poMessageText(r, month, memo);
+  const text = poMessageText(month, memo);
   navigator.clipboard.writeText(text)
     .then(() => showToast('振込完了メッセージをコピーしました（DMに貼り付けてください）', 'success'))
     .catch(() => showToast('コピーに失敗しました', 'error'));
@@ -27726,7 +27724,7 @@ function poPay(id) {
   const renderMsg = () => {
     if (_poPayEditing) return; // ✏️ 直接編集中は自動生成プレビューで上書きしない
     const m = (memoEl.value || '').trim();
-    let text = poMessageText(r, month, m);
+    let text = poMessageText(month, m);
     msgEl.textContent = text;
   };
   _poPayEditing = false;
