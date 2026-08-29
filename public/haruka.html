@@ -27325,7 +27325,7 @@ function renderPayout() {
   }
 
   let html = '<table class="po-tbl"><thead><tr>' +
-    '<th style="width:36px">状態</th><th>氏名</th><th style="text-align:right">請求額</th><th>振込先</th><th>PDF</th><th>チャット</th><th>差分</th><th>メモ</th><th>操作</th>' +
+    '<th style="width:36px">状態</th><th>氏名</th><th>振込先</th><th style="text-align:right">請求額</th><th>PDF</th><th>チャット</th><th>差分</th><th>メモ</th><th>操作</th>' +
     '</tr></thead><tbody>';
 
   rows.forEach(r => {
@@ -27337,11 +27337,10 @@ function renderPayout() {
     let amountCell;
     if (r.invoice_amount == null) {
       amountCell = '<span style="color:var(--text-muted)">金額不明</span>';
+      if (!paid) amountCell += ` <button class="btn-sm" style="padding:1px 6px" title="請求額を手入力" onclick="poEditAmount('${rid}')">✏</button>`;
     } else {
-      amountCell = `<span style="font-weight:600">${poYen(r.invoice_amount)}</span>`;
-    }
-    if (!paid) {
-      amountCell += ` <button class="btn-sm" style="padding:1px 6px" title="請求額を手入力" onclick="poEditAmount('${rid}')">✏</button>`;
+      amountCell = `<span style="font-weight:600;cursor:pointer" title="クリックで手修正" onclick="poEditAmount('${rid}')">${poYen(r.invoice_amount)}</span>` +
+        ` <button class="btn-sm" style="padding:1px 6px" title="金額をコピー（¥・カンマなしの数字のみ。振込画面への貼り付け用）" onclick="poCopyText('${Number(r.invoice_amount)}','金額')">📋</button>`;
     }
     if (r.amount_source === 'manual') {
       amountCell += '<div><span class="po-badge" style="background:#fff8e1;color:#7A5F00">手入力</span></div>';
@@ -27353,7 +27352,7 @@ function renderPayout() {
       `<div style="font-size:12px;line-height:1.6;color:var(--text)">` +
         `<div>${dash(r.bank_name)}(${dash(r.bank_code)}) ${dash(r.branch_name)}(${dash(r.branch_code)})</div>` +
         `<div>${dash(r.account_type)} ${dash(r.account_number)}</div>` +
-        `<div style="color:var(--text-muted)">${dash(r.account_holder_kana)}</div>` +
+        `<div style="color:var(--text-muted)">${dash(r.account_holder_kana)}${r.account_holder_kana ? ` <button class="btn-sm" style="padding:0 5px;font-size:10px" title="口座名義をコピー（振込画面への貼り付け用）" onclick="poCopyText('${esc(String(r.account_holder_kana).replace(/'/g, ''))}','口座名義')">📋</button>` : ''}</div>` +
       `</div>`;
 
     // PDF（複数対応・無ければ未提出）
@@ -27418,8 +27417,8 @@ function renderPayout() {
     html += `<tr class="${paid ? 'po-paid' : ''}">` +
       `<td style="font-size:15px">${paid ? '✅' : '⬜'}</td>` +
       `<td style="font-weight:600;white-space:nowrap">${name}</td>` +
-      `<td style="text-align:right;white-space:nowrap">${amountCell}</td>` +
       `<td>${bankCell}</td>` +
+      `<td style="text-align:right;white-space:nowrap">${amountCell}</td>` +
       `<td style="white-space:nowrap">${pdfCell}</td>` +
       `<td>${chatCell}</td>` +
       `<td>${diffCell}</td>` +
@@ -27619,6 +27618,13 @@ async function poChatworkSync(btn) {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔗 ChatworkDM同期'; }
   }
+}
+
+// 汎用クリップボードコピー（振込画面への貼り付け用）
+function poCopyText(text, label) {
+  navigator.clipboard.writeText(String(text))
+    .then(() => showToast(`${label}をコピーしました`, 'success'))
+    .catch(() => showToast('コピーに失敗しました', 'error'));
 }
 
 // 振込完了メッセージ本文（サーバー utils/payout.js buildPayoutMessage と同一ロジック・宛名も送信実物と同じ）
