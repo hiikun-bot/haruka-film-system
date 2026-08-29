@@ -24198,6 +24198,7 @@ function payoutRecordToJson(rec, user, extra = {}) {
     account_number: user?.account_number || null,
     account_holder_kana: user?.account_holder_kana || null,
     has_chatwork: /^\d+$/.test(dm),
+    has_chatwork_dm: /^\d+$/.test(String(user?.chatwork_direct_room_id || '').trim()),
     invoice_amount: rec.invoice_amount ?? null,
     amount_source: rec.amount_source || null,
     pdf_files: Array.isArray(rec.pdf_files) ? rec.pdf_files : [],
@@ -24224,7 +24225,7 @@ router.get('/admin/payouts', requireAuth, requirePermission('payout.page'), asyn
 
     const { data: users, error: uErr } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana');
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana');
     if (uErr) throw new Error(`users 取得失敗: ${uErr.message}`);
     const userById = new Map((users || []).map(u => [u.id, u]));
     const userIdByNorm = new Map();
@@ -24382,7 +24383,7 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
 
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
       .eq('id', rec.user_id).maybeSingle();
 
     const { buildPayoutMessage } = require('../utils/payout');
@@ -24390,6 +24391,7 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
     const text = buildPayoutMessage({ displayName, month: rec.month, memo });
 
     let sent = false;
+    let sentVia = null; // 'dm' | 'room'
     let sentReason = null;
     let messageBody = null;
     const dm = String(user?.chatwork_dm_id || '').trim();
@@ -24399,14 +24401,24 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
       // memory: 非数字の Chatwork ID は To が silent 失敗するため送信自体を行わない
       sentReason = 'Chatwork アカウントID（数字）が未設定のため送信していません';
     } else {
-      const { data: setting } = await supabase
-        .from('system_settings').select('value').eq('key', PAYOUT_CHATWORK_ROOM_SETTING_KEY).maybeSingle();
-      const roomId = (setting && setting.value) || PAYOUT_DEFAULT_CHATWORK_ROOM_ID;
       const { sendChatworkRoom } = require('../notifications');
-      messageBody = `[To:${dm}]${text}`;
-      const r = await sendChatworkRoom(roomId, messageBody);
-      if (r.ok) sent = true;
-      else sentReason = `Chatwork 送信に失敗しました（${r.reason || r.status}）。振込済みにはしています`;
+      // 送信先の優先順: 個別チャット（chatwork_direct_room_id）→ 全体チャット + [To:]
+      const directRoom = String(user.chatwork_direct_room_id || '').trim();
+      if (/^\d+$/.test(directRoom)) {
+        messageBody = text; // DM は To 不要
+        const r = await sendChatworkRoom(directRoom, messageBody);
+        if (r.ok) { sent = true; sentVia = 'dm'; }
+        else sentReason = `Chatwork DM 送信に失敗（${r.reason || r.status}）。全体チャットへフォールバックします`;
+      }
+      if (!sent) {
+        const { data: setting } = await supabase
+          .from('system_settings').select('value').eq('key', PAYOUT_CHATWORK_ROOM_SETTING_KEY).maybeSingle();
+        const roomId = (setting && setting.value) || PAYOUT_DEFAULT_CHATWORK_ROOM_ID;
+        messageBody = `[To:${dm}]${text}`;
+        const r = await sendChatworkRoom(roomId, messageBody);
+        if (r.ok) { sent = true; sentVia = 'room'; sentReason = sentReason || null; }
+        else sentReason = `Chatwork 送信に失敗しました（${r.reason || r.status}）。振込済みにはしています`;
+      }
     }
 
     const patch = {
@@ -24423,7 +24435,7 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
       .from('payout_records').update(patch).eq('id', rec.id).select('*').maybeSingle();
     if (upErr) throw new Error(upErr.message);
 
-    res.json({ ok: true, sent, sent_reason: sentReason, record: payoutRecordToJson(updated, user) });
+    res.json({ ok: true, sent, sent_via: sentVia, sent_reason: sentReason, record: payoutRecordToJson(updated, user) });
   } catch (e) {
     console.error('[payouts][POST pay]', e);
     res.status(500).json({ error: e.message || '振込完了処理に失敗しました' });
@@ -24444,7 +24456,7 @@ router.post('/admin/payouts/:id/unpay', requireAuth, requirePermission('payout.p
     if (upErr) throw new Error(upErr.message);
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
       .eq('id', rec.user_id).maybeSingle();
     res.json({ ok: true, record: payoutRecordToJson(updated, user) });
   } catch (e) {
@@ -24478,7 +24490,7 @@ router.patch('/admin/payouts/:id', requireAuth, requirePermission('payout.page')
     if (!updated) return res.status(404).json({ error: '対象の振込レコードが見つかりません' });
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
       .eq('id', updated.user_id).maybeSingle();
     res.json({ ok: true, record: payoutRecordToJson(updated, user) });
   } catch (e) {
@@ -24594,12 +24606,89 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
 
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
       .eq('id', rec.user_id).maybeSingle();
     res.json({ ok: true, record: payoutRecordToJson(updated, user) });
   } catch (e) {
     console.error('[payouts][POST diff-check]', e);
     res.status(500).json({ error: e.message || '差分チェックに失敗しました' });
+  }
+});
+
+
+// POST /api/haruka/admin/payouts/chatwork-sync
+// Chatwork の DM ルーム（type=direct）を一覧し、相手 account_id を users.chatwork_dm_id と
+// 突合して users.chatwork_direct_room_id を自動更新する。
+// ルームIDは二者間で共通だが、API 送信にはトークン名義人がそのルームの参加者である必要が
+// あるため、応答に token_account（トークンの名義）を含めて画面で確認できるようにする。
+router.post('/admin/payouts/chatwork-sync', requireAuth, requirePermission('payout.page'), async (req, res) => {
+  try {
+    const axios = require('axios');
+    const token = (process.env.CHATWORK_API_TOKEN || '').trim();
+    if (!token) return res.status(400).json({ error: 'CHATWORK_API_TOKEN が未設定です（Railway の環境変数を確認してください）' });
+    const hdr = { headers: { 'X-ChatWorkToken': token }, timeout: 10000, validateStatus: () => true };
+
+    const me = await axios.get('https://api.chatwork.com/v2/me', hdr);
+    if (me.status !== 200 || !me.data?.account_id) {
+      return res.status(502).json({ error: `Chatwork /me の取得に失敗しました（${me.status}）` });
+    }
+    const myId = String(me.data.account_id);
+
+    const roomsRes = await axios.get('https://api.chatwork.com/v2/rooms', hdr);
+    if (roomsRes.status !== 200 || !Array.isArray(roomsRes.data)) {
+      return res.status(502).json({ error: `Chatwork /rooms の取得に失敗しました（${roomsRes.status}）` });
+    }
+    const directRooms = roomsRes.data.filter(r => r.type === 'direct');
+
+    // 各DMルームの相手 account_id を取得（レート制限 300req/5min に配慮して並列4）
+    const roomByAccount = new Map(); // account_id -> { room_id, partner_name }
+    await mapLimit(directRooms, 4, async (r) => {
+      try {
+        const m = await axios.get(`https://api.chatwork.com/v2/rooms/${r.room_id}/members`, hdr);
+        if (m.status !== 200 || !Array.isArray(m.data)) return;
+        const partner = m.data.find(x => String(x.account_id) !== myId);
+        if (partner) roomByAccount.set(String(partner.account_id), { room_id: String(r.room_id), partner_name: partner.name });
+      } catch (e) {
+        console.warn(`[payouts][chatwork-sync] members 取得失敗 room=${r.room_id}: ${e.message}`);
+      }
+    });
+
+    const { data: users, error: uErr } = await supabase
+      .from('users')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id');
+    if (uErr) throw new Error(uErr.message);
+
+    let matched = 0;
+    let updated = 0;
+    const unmatched = []; // chatwork_dm_id はあるが DM ルームが見つからないメンバー
+    for (const u of (users || [])) {
+      const dm = String(u.chatwork_dm_id || '').trim();
+      if (!/^\d+$/.test(dm)) continue;
+      const hit = roomByAccount.get(dm);
+      if (!hit) {
+        if (u.is_active !== false) unmatched.push(u.nickname || u.full_name);
+        continue;
+      }
+      matched++;
+      if (String(u.chatwork_direct_room_id || '') !== hit.room_id) {
+        const { error: upErr } = await supabase
+          .from('users').update({ chatwork_direct_room_id: hit.room_id }).eq('id', u.id);
+        if (upErr) console.warn(`[payouts][chatwork-sync] 更新失敗 ${u.full_name}: ${upErr.message}`);
+        else updated++;
+      }
+    }
+
+    res.json({
+      ok: true,
+      token_account: { name: me.data.name, account_id: myId },
+      direct_rooms: directRooms.length,
+      matched,
+      updated,
+      unmatched,
+    });
+  } catch (e) {
+    console.error('[payouts][POST chatwork-sync]', e);
+    res.status(500).json({ error: e.message || 'Chatwork DM 同期に失敗しました' });
   }
 });
 

@@ -8767,6 +8767,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <button class="btn-sm" onclick="poShiftMonth(1)">翌月 ▶</button>
       </div>
       <button class="btn-sm" id="po-rescan" onclick="poFetch()">🔄 再スキャン</button>
+      <button class="btn-sm" id="po-cw-sync" onclick="poChatworkSync(this)" title="ChatworkのDMルームを自動取得してメンバーに紐付けます">🔗 ChatworkDM同期</button>
       <span id="po-updated" style="margin-left:auto;font-size:11px;color:var(--text-muted)"></span>
     </div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">メンバーの月次請求書PDF（Drive）と振込状況の消し込みを管理します。読み込み時にDriveを再スキャンします（新しいPDFがある月は数十秒かかることがあります）。</div>
@@ -27336,6 +27337,10 @@ function renderPayout() {
       opCell = `<button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="poPay('${rid}',this)">振込完了→送信</button>`;
       if (r.has_chatwork === false) {
         opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ Chatwork未設定（送信されません）</div>';
+      } else if (r.has_chatwork_dm) {
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💬 個別チャットへ送信</div>';
+      } else {
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📢 全体チャット+To（DM未紐付け）</div>';
       }
     }
 
@@ -27476,6 +27481,28 @@ function poRenderDiffModal(id) {
 }
 
 // 振込完了（confirm → POST pay → 行を緑に）。sent=false でも record は paid（sent_reason をトースト表示）
+// Chatwork の DM ルームを一覧取得し、users.chatwork_direct_room_id へ自動紐付け
+async function poChatworkSync(btn) {
+  if (!confirm('ChatworkのDMルーム一覧を取得して、各メンバーの個別チャットを自動で紐付けます。よろしいですか？')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '同期中…'; }
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/chatwork-sync`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'DM同期に失敗しました');
+    let msg = `トークン名義: ${data.token_account?.name || '不明'} ／ DM ${data.direct_rooms}件中 ${data.matched}名分を紐付け（今回更新 ${data.updated}件）`;
+    if (Array.isArray(data.unmatched) && data.unmatched.length) {
+      const head = data.unmatched.slice(0, 5).join('、');
+      msg += ` ／ DMが見つからない: ${head}${data.unmatched.length > 5 ? ` ほか${data.unmatched.length - 5}名` : ''}`;
+    }
+    showToast(msg, 'success', 9000);
+    poFetch(); // 紐付け結果（💬/📢 バッジ）を反映
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔗 ChatworkDM同期'; }
+  }
+}
+
 async function poPay(id, btn) {
   const r = poRecord(id);
   if (!r) return;
@@ -27493,7 +27520,7 @@ async function poPay(id, btn) {
     if (!res.ok) throw new Error(data.error || '振込完了の登録に失敗しました');
     poApplyRecord(data.record);
     if (data.sent) {
-      showToast(`${poName(r)}さんへ振込完了メッセージを送信し、消し込みました`, 'success');
+      showToast(`${poName(r)}さんへ振込完了メッセージを${data.sent_via === 'dm' ? '個別チャット' : '全体チャット'}に送信し、消し込みました`, 'success');
     } else {
       showToast(`消し込みました（メッセージ未送信: ${data.sent_reason || '理由不明'}）`, 'warn');
     }
