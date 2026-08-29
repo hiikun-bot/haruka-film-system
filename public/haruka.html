@@ -50606,6 +50606,9 @@ async function deleteSelectedCreatives() {
 // 1件ずつ既存エンドポイントを叩くクライアント側バルク（サーバー側の検証・副作用をそのまま通す）:
 //   - 工程上の直接遷移（_quickStatusTransitions で direct）→ PUT /creatives/:id { status }
 //     （納品時の delivered_at 自動セット・ADR 009 スナップショット等はサーバー側で従来どおり動く）
+//   - 「納品」への変更は工程上 direct 遷移が存在しない（承認コメント必須）ため、
+//     一括納品完了（月次消込）と同じ POST /creatives/bulk-deliver-preview → bulk-deliver を使う
+//     （admin/secretary/producer/PD が対象・理由必須・請求書整合性ガード＋楽観ロックはサーバー側）
 //   - それ以外は admin のみ POST /creatives/:id/admin-status（理由必須・請求書整合性ガードはサーバー側）
 //   - LP/HP/LINE（工程テンプレ案件）・工程制約で進められないものはスキップして結果で報告
 let _bulkStatusCtx = null;
@@ -50620,10 +50623,17 @@ function _bulkIsTemplateCategory(c) {
   const catCode = proj ? (getProjectCategory(proj)?.code || null) : null;
   return !!(catCode && ['lp', 'hp', 'line'].includes(catCode));
 }
-// 対象1件の実行計画: { mode: 'direct' | 'jump' | 'skip', reason? }
+// 対象1件の実行計画: { mode: 'direct' | 'jump' | 'deliver' | 'skip', reason? }
 function _bulkPlanFor(c, target, isAdmin) {
   if (_bulkIsTemplateCategory(c)) return { mode: 'skip', reason: '工程テンプレ案件（LP/HP/LINE）のため対象外' };
   if ((c.status || '') === target) return { mode: 'skip', reason: 'すでにこのステータスです' };
+  // 「納品」は工程上の direct 遷移が存在しない（クラチェック承認はコメント必須）ため、
+  // 一括納品完了（月次消込）と同じ bulk-deliver API 経路で実行する。
+  // 権限も同ページと同一（bdIsAllowed: admin / secretary / producer / producer_director）。
+  if (target === '納品') {
+    if (bdIsAllowed()) return { mode: 'deliver' };
+    return { mode: 'skip', reason: '納品への一括変更は管理者・秘書・プロデューサーのみ実行できます（詳細画面から個別に進めてください）' };
+  }
   if (target.startsWith('Pチェック') && !c.projects?.producer_id) return { mode: 'skip', reason: 'プロデューサー無し案件のため Pチェックへ進められません' };
   const tr = _quickStatusTransitions(c).find(t => t.status === target);
   if (tr && tr.direct) {
@@ -50659,16 +50669,18 @@ function onBulkStatusSelectChange() {
   if (!target) { hintEl.style.display = 'none'; reasonGroup.style.display = 'none'; return; }
   const isAdmin = !!_bulkStatusCtx?.isAdmin;
   const plans = _bulkSelectedCreatives().map(c => _bulkPlanFor(c, target, isAdmin));
-  const nDirect = plans.filter(p => p.mode === 'direct').length;
-  const nJump   = plans.filter(p => p.mode === 'jump').length;
-  const nSkip   = plans.filter(p => p.mode === 'skip').length;
+  const nDirect  = plans.filter(p => p.mode === 'direct').length;
+  const nJump    = plans.filter(p => p.mode === 'jump').length;
+  const nDeliver = plans.filter(p => p.mode === 'deliver').length;
+  const nSkip    = plans.filter(p => p.mode === 'skip').length;
   const parts = [];
-  if (nDirect) parts.push(`✅ ${nDirect}件を通常遷移で変更`);
-  if (nJump)   parts.push(`⚠️ ${nJump}件は工程を跨ぐ管理者ジャンプ（理由必須・監査ログに記録・請求書整合性チェックあり）`);
-  if (nSkip)   parts.push(`− ${nSkip}件はスキップ（工程テンプレ案件・工程制約など。実行後に内訳を表示）`);
+  if (nDirect)  parts.push(`✅ ${nDirect}件を通常遷移で変更`);
+  if (nDeliver) parts.push(`📦 ${nDeliver}件を一括納品（理由必須・納品完了日時は現在時刻・請求書整合性チェックあり）`);
+  if (nJump)    parts.push(`⚠️ ${nJump}件は工程を跨ぐ管理者ジャンプ（理由必須・監査ログに記録・請求書整合性チェックあり）`);
+  if (nSkip)    parts.push(`− ${nSkip}件はスキップ（工程テンプレ案件・工程制約など。実行後に内訳を表示）`);
   hintEl.textContent = parts.join(' ／ ');
   hintEl.style.display = parts.length ? '' : 'none';
-  reasonGroup.style.display = nJump > 0 ? '' : 'none';
+  reasonGroup.style.display = (nJump > 0 || nDeliver > 0) ? '' : 'none';
 }
 async function applyBulkStatusChange() {
   const target = document.getElementById('bulk-status-select')?.value;
@@ -50678,8 +50690,10 @@ async function applyBulkStatusChange() {
   if (!targets.length) { closeModal('modal-bulk-status'); return; }
   const plans = targets.map(c => ({ c, plan: _bulkPlanFor(c, target, isAdmin) }));
   const reason = document.getElementById('bulk-status-reason')?.value.trim() || '';
-  if (plans.some(p => p.plan.mode === 'jump') && !reason) {
-    showToast('工程ジャンプを含むため変更理由を入力してください（監査ログに残ります）', 'warn');
+  if (plans.some(p => p.plan.mode === 'jump' || p.plan.mode === 'deliver') && !reason) {
+    showToast(plans.some(p => p.plan.mode === 'deliver')
+      ? '一括納品には理由の入力が必要です（記録に残ります）'
+      : '工程ジャンプを含むため変更理由を入力してください（監査ログに残ります）', 'warn');
     document.getElementById('bulk-status-reason')?.focus();
     return;
   }
@@ -50715,10 +50729,71 @@ async function applyBulkStatusChange() {
     btn.textContent = `変更中… (${done}/${runnable.length})`;
   };
   // 4並列の順次処理（Railway/Supabase への同時リクエスト数を絞りつつ件数が多くても待たせすぎない）
-  const queue = runnable.slice();
+  // ※ 納品（deliver）は 1 リクエストでまとめて処理するため per-item キューから除外する
+  const queue = runnable.filter(p => p.plan.mode !== 'deliver');
   await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
     while (queue.length) await runOne(queue.shift());
   }));
+
+  // 納品: 一括納品完了（月次消込）と同じ2段階 API（preview で最新 updated_at と請求書ガードを
+  // 取得 → bulk-deliver に expected_updated_at を渡して楽観ロック実行）。
+  // delivered_at は未指定 = 各件の処理時刻 now()（確認ダイアログの文言どおり現在時刻）。
+  const deliverPlans = runnable.filter(p => p.plan.mode === 'deliver');
+  if (deliverPlans.length) {
+    const byId = new Map(deliverPlans.map(p => [String(p.c.id), p.c]));
+    const markAllFailed = (msg) => {
+      byId.forEach(c => {
+        if (!okIds.includes(c.id) && !failed.some(f => f.c.id === c.id)) failed.push({ c, msg });
+      });
+    };
+    btn.textContent = `納品処理中… (${deliverPlans.length}件)`;
+    try {
+      const pvRes = await apiFetch(`${API}/creatives/bulk-deliver-preview`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creative_ids: Array.from(byId.keys()) }),
+      });
+      if (!pvRes.ok) {
+        const e = await pvRes.json().catch(() => ({}));
+        markAllFailed(String(e?.error || `HTTP ${pvRes.status}`).split('\n')[0]);
+      } else {
+        const pv = await pvRes.json().catch(() => ({}));
+        const items = [];
+        (pv.items || []).forEach(it => {
+          const c = byId.get(String(it.id));
+          if (!c) return;
+          if (!it.deliverable) {
+            failed.push({ c, msg: String(it.blocked_reason || '納品できません').split('\n')[0] });
+          } else {
+            items.push({ id: it.id, expected_updated_at: it.updated_at });
+          }
+        });
+        if (items.length) {
+          const res = await apiFetch(`${API}/creatives/bulk-deliver`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason, items }),
+          });
+          if (!res.ok) {
+            const e = await res.json().catch(() => ({}));
+            markAllFailed(String(e?.error || `HTTP ${res.status}`).split('\n')[0]);
+          } else {
+            const j = await res.json().catch(() => ({}));
+            (j.results || []).forEach(r => {
+              const c = byId.get(String(r.id));
+              if (!c) return;
+              if (r.status === 'delivered') {
+                okIds.push(c.id);
+                try { _cdInvalidateCache(c.id); } catch (_) {}
+              } else {
+                failed.push({ c, msg: String(r.reason || r.status).split('\n')[0] });
+              }
+            });
+          }
+        }
+      }
+    } catch (e) {
+      markAllFailed(e.message);
+    }
+  }
   btn.disabled = false;
   btn.textContent = '一括変更する';
   closeModal('modal-bulk-status');
