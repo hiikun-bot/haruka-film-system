@@ -27392,7 +27392,7 @@ function renderPayout() {
       opCell += `<div><a href="javascript:void(0)" onclick="poUnpay('${rid}')" style="color:#C0392B;font-size:11px">取消</a></div></div>`;
     } else {
       opCell = `<button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="poPay('${rid}')">振込完了→送信</button>`;
-      if (r.has_chatwork === false) {
+      if (!r.has_chatwork && !r.has_chatwork_dm) {
         opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ Chatwork未設定（送信されません）</div>';
       } else if (r.has_chatwork_dm) {
         opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💬 個別チャットへ送信</div>';
@@ -27548,6 +27548,9 @@ async function poChatworkSync(btn) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'DM同期に失敗しました');
     let msg = `トークン名義: ${data.token_account?.name || '不明'} ／ DM ${data.direct_rooms}件中 ${data.matched}名分を紐付け（今回更新 ${data.updated}件）`;
+    if (Array.isArray(data.backfilled) && data.backfilled.length) {
+      msg += ` ／ 名前一致でID自動補完: ${data.backfilled.slice(0, 5).join('、')}${data.backfilled.length > 5 ? ` ほか${data.backfilled.length - 5}名` : ''}`;
+    }
     if (Array.isArray(data.unmatched) && data.unmatched.length) {
       const head = data.unmatched.slice(0, 5).join('、');
       msg += ` ／ DMが見つからない: ${head}${data.unmatched.length > 5 ? ` ほか${data.unmatched.length - 5}名` : ''}`;
@@ -27584,6 +27587,7 @@ function poPay(id) {
   const month = _poData.month;
 
   // 送信先（サーバー側 pay の優先順と同じ表示）
+  const canSend = r.has_chatwork || r.has_chatwork_dm;
   let dest, destColor = 'var(--text)';
   if (r.has_chatwork_dm) dest = '💬 Chatwork 個別チャット';
   else if (r.has_chatwork) dest = '📢 Chatwork 全体チャット＋[To:]（DM未紐付け）';
@@ -27611,7 +27615,7 @@ function poPay(id) {
     `<input class="form-input" id="po-pay-memo" style="width:100%;font-size:13px" placeholder="例）リサイズ分は来月に回します">` +
     '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">' +
       `<button class="btn-sm" onclick="closeModal('modal-po-pay')">キャンセル</button>` +
-      `<button class="btn-primary" id="po-pay-submit" style="font-size:13px;padding:8px 14px" onclick="poPaySubmit('${esc(id)}')">${r.has_chatwork ? '✅ 送信して消し込む' : '✅ 消し込む（送信なし）'}</button>` +
+      `<button class="btn-primary" id="po-pay-submit" style="font-size:13px;padding:8px 14px" onclick="poPaySubmit('${esc(id)}')">${canSend ? '✅ 送信して消し込む' : '✅ 消し込む（送信なし）'}</button>` +
     '</div>';
 
   const memoEl = document.getElementById('po-pay-memo');
