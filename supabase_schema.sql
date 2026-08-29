@@ -988,6 +988,26 @@ CREATE INDEX IF NOT EXISTS idx_creatives_delivered_at
   ON creatives (delivered_at)
   WHERE delivered_at IS NOT NULL;
 
+-- ==================== ADR 034: 計上タイミング（納品時 / 初稿提出時） ====================
+-- 案件ごとの計上タイミング区分。既定 on_delivery = 現行どおり納品完了月（delivered_at）に計上。
+-- on_first_draft = 初稿提出（「クライアントチェック中」初到達）月に計上（支払い・売上の両方）。
+-- 一式 line（line_payment_installments を持つ line）は ADR 029 の target_month 計上のままで本区分は作用しない。
+-- 本番適用・過去分 backfill は migrations/2026-08-29c_billing_timing.sql を参照。
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS billing_timing TEXT NOT NULL DEFAULT 'on_delivery';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'projects_billing_timing_check'
+  ) THEN
+    ALTER TABLE projects
+      ADD CONSTRAINT projects_billing_timing_check
+      CHECK (billing_timing IN ('on_delivery', 'on_first_draft'));
+  END IF;
+END $$;
+-- 初稿提出日時（「クライアントチェック中」へ初到達した時刻。手戻りでも NULL に戻さない不可逆イベント）
+ALTER TABLE creatives ADD COLUMN IF NOT EXISTS first_draft_submitted_at TIMESTAMPTZ;
+
 -- team_id への FK を確実に付与（過去にカラムだけが FK 無しで追加された場合の修復）
 -- これが無いと PostgREST は creatives → teams の埋め込み select を解決できず、
 -- /api/creatives が 500 を返してフロントが allCreatives.forEach is not a function で落ちる
