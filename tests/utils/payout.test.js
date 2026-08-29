@@ -7,16 +7,16 @@ const {
 } = require('../../utils/payout');
 
 describe('buildPayoutMessage', () => {
-  test('メモなしは定型文のみ（1文ごとに改行）', () => {
-    expect(buildPayoutMessage({ displayName: 'ぴょん', month: 8, memo: '' }))
-      .toBe('ぴょんさん\n今月もお疲れ様でした！\n8月分を振り込みましたので、ご確認をお願いします。\nいつも助かっております！\n来月もどうぞよろしくお願いいたします！');
+  test('メモなしは定型文のみ（宛名行なし・1文ごとに改行）', () => {
+    expect(buildPayoutMessage({ month: 8, memo: '' }))
+      .toBe('今月もお疲れ様でした！\n8月分を振り込みましたので、ご確認をお願いします。\nいつも助かっております！\n来月もどうぞよろしくお願いいたします！');
   });
   test('空白のみのメモは付けない', () => {
-    expect(buildPayoutMessage({ displayName: 'ぴょん', month: 8, memo: '   \n ' }))
+    expect(buildPayoutMessage({ month: 8, memo: '   \n ' }))
       .not.toContain('\n\n');
   });
   test('メモありは空行を挟んで付与', () => {
-    const msg = buildPayoutMessage({ displayName: 'あんこ', month: 12, memo: 'リサイズ分は来月に回します' });
+    const msg = buildPayoutMessage({ month: 12, memo: 'リサイズ分は来月に回します' });
     expect(msg).toContain('12月分を振り込みましたので');
     expect(msg.endsWith('来月もどうぞよろしくお願いいたします！\n\nリサイズ分は来月に回します')).toBe(true);
   });

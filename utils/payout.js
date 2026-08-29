@@ -4,12 +4,11 @@
 // - テスト: tests/utils/payout.test.js
 
 // 振込完了メッセージ（定型文＋任意メモ）。
+// 宛名行（「◯◯さん」）は付けない（ユーザー指示 2026-08-29: 修正が多いため名前は不要）。
 // メモが空/空白のみのときは定型文だけを返す（メモ表記は付けない）。
-function buildPayoutMessage({ displayName, month, memo }) {
-  const name = String(displayName || '').trim() || 'メンバー';
+function buildPayoutMessage({ month, memo }) {
   const m = Number(month);
   const base = [
-    `${name}さん`,
     '今月もお疲れ様でした！',
     `${m}月分を振り込みましたので、ご確認をお願いします。`,
     'いつも助かっております！',
