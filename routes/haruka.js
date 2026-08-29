@@ -24251,9 +24251,11 @@ async function payoutExtractPdfText(drive, file) {
   if (file.size != null && Number(file.size) > 15 * 1024 * 1024) return null;
   let tempId = null;
   try {
+    // parents は指定しない＝元PDFと同じフォルダ（共有ドライブ）にコピーされる。
+    // SA のマイドライブ('root')は保存容量が 0 のため storageQuotaExceeded で必ず失敗する（2026-08-30 判明）。
     const copy = await drive.files.copy({
       fileId: file.id,
-      requestBody: { mimeType: 'application/vnd.google-apps.document', name: `_payout_tmp_${file.id}`, parents: ['root'] },
+      requestBody: { mimeType: 'application/vnd.google-apps.document', name: `_payout_tmp_${file.id}` },
       supportsAllDrives: true,
     });
     tempId = copy.data.id;
@@ -24264,7 +24266,11 @@ async function payoutExtractPdfText(drive, file) {
     return null;
   } finally {
     if (tempId) {
-      try { await drive.files.delete({ fileId: tempId, supportsAllDrives: true }); } catch (_) { /* noop */ }
+      try { await drive.files.delete({ fileId: tempId, supportsAllDrives: true }); }
+      catch (_) {
+        // 共有ドライブで完全削除権限が無い場合はゴミ箱送りにフォールバック（残骸防止）
+        try { await drive.files.update({ fileId: tempId, requestBody: { trashed: true }, supportsAllDrives: true }); } catch (_) { /* noop */ }
+      }
     }
   }
 }
@@ -24281,7 +24287,9 @@ async function payoutExtractPdfAmount(drive, file) {
 // 金額が取れたファイルがちょうど 1 件のときだけその値を採用（作業時間報告書など
 // 請求書以外の PDF の「合計」を誤って足し込まないため）。
 function payoutSumInvoiceAmount(pdfFiles) {
-  const priced = (pdfFiles || []).filter(f => Number.isFinite(Number(f.amount)) && Number(f.amount) > 0);
+  // 「削除」「テンプレ」を冠したPDFは差し替え前の旧版・雛形なので合算対象から除外する
+  const candidates = (pdfFiles || []).filter(f => !/削除|テンプレ/.test(String(f.name || '')));
+  const priced = candidates.filter(f => Number.isFinite(Number(f.amount)) && Number(f.amount) > 0);
   const seikyu = priced.filter(f => f.amount_source === 'seikyu');
   if (seikyu.length) return seikyu.reduce((s, f) => s + Number(f.amount), 0);
   if (priced.length === 1) return Number(priced[0].amount);
@@ -24487,7 +24495,10 @@ async function scanPayoutDriveMonth(year, month) {
         const kids = await payoutListChildren(drive, sf.id);
         // 過去バグの残骸（_payout_tmp_）を見つけたら自動削除して自己修復する
         for (const stray of kids.filter(f => (f.name || '').startsWith('_payout_tmp_'))) {
-          try { await drive.files.delete({ fileId: stray.id, supportsAllDrives: true }); } catch (_) { /* noop */ }
+          try { await drive.files.delete({ fileId: stray.id, supportsAllDrives: true }); }
+          catch (_) {
+            try { await drive.files.update({ fileId: stray.id, requestBody: { trashed: true }, supportsAllDrives: true }); } catch (_) { /* noop */ }
+          }
         }
         // 請求書PDF等の実ファイルのみ（Googleドキュメント等のネイティブ形式・一時ファイルは除外）
         const files = kids.filter(f =>
@@ -24537,7 +24548,7 @@ async function scanPayoutDriveMonth(year, month) {
   const recByUser = new Map((recs || []).map(r => [r.user_id, r]));
 
   const pendingExtract = []; // { entry, driveFile }
-  const upserts = new Map(); // user_id -> { pdf_files, is_new }
+  const upserts = new Map(); // user_id -> { pdf_files, is_new, write }
   for (const scan of scans) {
     const existing = recByUser.get(scan.user_id);
     const prevFiles = Array.isArray(existing && existing.pdf_files) ? existing.pdf_files : [];
@@ -24546,7 +24557,16 @@ async function scanPayoutDriveMonth(year, month) {
     let changed = false;
     for (const f of scan.files) {
       const prev = prevById.get(f.id);
-      if (prev && prev.modified_at === f.modifiedTime) { nextFiles.push(prev); continue; }
+      if (prev && prev.modified_at === f.modifiedTime) {
+        const entry = { ...prev };
+        nextFiles.push(entry);
+        // 抽出失敗（null）と「合計」由来（gokei）は毎スキャン再抽出して自己修復する
+        // （SA容量超過などの一時失敗の固定化防止＋「ご請求金額」認識改善の後追い反映）
+        if (drive && (entry.amount == null || entry.amount_source === 'gokei')) {
+          pendingExtract.push({ entry, driveFile: f, user_id: scan.user_id, refresh: true });
+        }
+        continue;
+      }
       changed = true;
       const entry = {
         id: f.id,
@@ -24557,19 +24577,24 @@ async function scanPayoutDriveMonth(year, month) {
         amount_source: null,
       };
       nextFiles.push(entry);
-      if (drive) pendingExtract.push({ entry, driveFile: f });
+      if (drive) pendingExtract.push({ entry, driveFile: f, user_id: scan.user_id });
     }
     if (nextFiles.length !== prevFiles.length) changed = true;
-    if (changed || !existing) upserts.set(scan.user_id, { pdf_files: nextFiles, is_new: changed });
+    upserts.set(scan.user_id, { pdf_files: nextFiles, is_new: changed, write: changed || !existing });
   }
 
-  // 新規/更新ファイルだけ金額抽出（並列3。既存ファイルは再抽出しない）
+  // 新規/更新ファイル＋抽出未確定ファイルの金額抽出（並列3）
   await mapLimit(pendingExtract, 3, async (p) => {
     const hit = await payoutExtractPdfAmount(drive, p.driveFile);
-    if (hit) { p.entry.amount = hit.amount; p.entry.amount_source = hit.source; }
+    if (!hit) return;
+    if (p.refresh && hit.amount === p.entry.amount && hit.source === p.entry.amount_source) return; // 変化なし
+    p.entry.amount = hit.amount;
+    p.entry.amount_source = hit.source;
+    if (p.refresh) { const u = upserts.get(p.user_id); if (u) u.write = true; }
   });
 
   for (const [userId, u] of upserts) {
+    if (!u.write) continue;
     const existing = recByUser.get(userId);
     const payload = {
       user_id: userId,
