@@ -152,6 +152,35 @@ export function attachCardClickHandlers(root, options = {}) {
   });
 }
 
+// 通知クリック直後の遅延（既読化API → openCreativeDetail などの fetch + DOM構築）
+// で「クリックしたのに何も起きていないように見える」事故を防ぐためのフィードバック。
+//   ・画面最上部に indeterminate な進捗バーを出す
+//   ・押されたカード自体を半透明＋ポインター無効化して "処理中" を示す
+//   ・遷移完了 / モーダル展開 / location.href 後に hideActivationProgress() で片付ける
+function ensureProgressBarEl() {
+  let el = document.getElementById('notification-activation-progress');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'notification-activation-progress';
+    el.className = 'notification-activation-progress';
+    el.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function showActivationProgress(cardEl) {
+  const bar = ensureProgressBarEl();
+  bar.classList.add('active');
+  if (cardEl) cardEl.classList.add('is-activating');
+}
+
+function hideActivationProgress(cardEl) {
+  const bar = document.getElementById('notification-activation-progress');
+  if (bar) bar.classList.remove('active');
+  if (cardEl) cardEl.classList.remove('is-activating');
+}
+
 async function activateCard(cardEl, options = {}) {
   const id = cardEl.dataset.notificationId;
   const linkUrl = cardEl.dataset.linkUrl || '';
@@ -160,6 +189,11 @@ async function activateCard(cardEl, options = {}) {
   const aggregatedIds = aggregatedIdsRaw
     ? aggregatedIdsRaw.split(',').filter(Boolean)
     : [];
+
+  // 二重起動ガード — 連打しても通信が増えない
+  if (cardEl.dataset.activating === '1') return;
+  cardEl.dataset.activating = '1';
+  showActivationProgress(cardEl);
 
   // 既読化（未読時のみ）
   if (wasUnread) {
@@ -205,7 +239,11 @@ async function activateCard(cardEl, options = {}) {
   }
 
   if (typeof options.onCardActivated === 'function') {
-    options.onCardActivated({ id, linkUrl, cardEl });
+    try { options.onCardActivated({ id, linkUrl, cardEl }); }
+    finally {
+      cardEl.dataset.activating = '';
+      hideActivationProgress(cardEl);
+    }
     return;
   }
 
@@ -218,6 +256,8 @@ async function activateCard(cardEl, options = {}) {
     // 既に既読化は済んでいるので、せめてパネルを閉じることで「クリックしても何も起きない」
     // という体感をなくす（PR #TBD: 全体連絡督促系の link_url 修正と合わせて）
     document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
+    cardEl.dataset.activating = '';
+    hideActivationProgress(cardEl);
     return;
   }
 
@@ -226,9 +266,14 @@ async function activateCard(cardEl, options = {}) {
     // パネルを閉じてからモーダルを開くと自然
     document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
     try {
-      window.openCreativeDetail(creativeMatch[1]);
+      // openCreativeDetail は async (fetch + 大量 DOM 構築) なので await して
+      // モーダルが開ききったタイミングで進捗バーを消す
+      await window.openCreativeDetail(creativeMatch[1]);
     } catch (e) {
       console.warn('[notification-card] openCreativeDetail 失敗', e);
+    } finally {
+      cardEl.dataset.activating = '';
+      hideActivationProgress(cardEl);
     }
     return;
   }
@@ -252,9 +297,12 @@ async function activateCard(cardEl, options = {}) {
 
   // /announcements/* 等の社内URLはそのまま遷移（クエリ ?creative= でディープリンクを保つ既存仕組みあり）
   if (linkUrl.startsWith('/')) {
+    // 進捗バーは出したまま — 次ページがロードされる瞬間に DOM ごと消えるので自然
     window.location.href = linkUrl;
   } else {
     window.open(linkUrl, '_blank', 'noopener');
+    cardEl.dataset.activating = '';
+    hideActivationProgress(cardEl);
   }
 }
 

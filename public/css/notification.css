@@ -693,3 +693,62 @@
     min-height: 44px;
   }
 }
+
+/* -----------------------------
+ * 11. 通知クリック → 遷移までの進捗フィードバック
+ *     クリック後 1〜2 秒「動いているのか分からない」事故を防ぐ。
+ *     画面最上部に細い indeterminate バー、押されたカードを半透明化。
+ * ----------------------------- */
+.notification-activation-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 500; /* 通知パネル(401) より前面 */
+  background: rgba(62, 207, 202, 0.15);
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.notification-activation-progress.active {
+  opacity: 1;
+}
+.notification-activation-progress::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, #3ECFCA 50%, transparent);
+  animation: notification-progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes notification-progress-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+/* 押されたカード自身も "処理中" を伝える */
+.notification-card.is-activating {
+  opacity: 0.55;
+  pointer-events: none;
+  background: #F0FDFC;
+}
+.notification-card.is-activating::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border: 2px solid #3ECFCA;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: notification-card-spin 0.7s linear infinite;
+}
+@keyframes notification-card-spin {
+  to { transform: rotate(360deg); }
+}
