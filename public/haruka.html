@@ -8134,6 +8134,23 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
 </div>
 
+<!-- 👥 案件のみんなの作業時間（ユーザー指示 2026-08-30）
+     同じ案件で作業しているメンバー同士が、お互いの作業報告と案件全体の累計時間を
+     クイックに見られるモーダル。行の案件セルの 👥 ボタンから開く。
+     単価プライバシー（#934/#971）: サーバーが時間・業務内容・メンバー名しか返さないため
+     金額系は一切表示されない。 -->
+<div class="modal-overlay" id="modal-wh-project-hours">
+  <div class="modal-card" style="width:820px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column">
+    <div class="modal-title" style="flex-shrink:0">
+      <span id="wh-ph-title">👥 みんなの作業時間</span>
+      <button class="modal-close" onclick="closeModal('modal-wh-project-hours')">×</button>
+    </div>
+    <div id="wh-ph-body" style="overflow-y:auto;padding:14px 16px">
+      <div style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
 <!-- 🏆 作品（ポートフォリオ・ギャラリー）
      納品済みクリエイティブを「案件 → 向き（縦 / 正方 / 横）レーン」で並べるギャラリー。
      ・カードはホバーで無音ループ再生 ＋ 説明文を下からオーバーレイ
@@ -28178,6 +28195,126 @@ function whOnProjectChange(sel) {
   whMarkDirty(sel);
 }
 
+// ---- 👥 案件のみんなの作業時間（ユーザー指示 2026-08-30） ----
+// 同じ案件のメンバー同士が、お互いの作業報告と案件全体の累計をクイックに見られるモーダル。
+// 権限判定はサーバー側（同一案件メンバー or admin）。フロントはボタンを常時出し、
+// 対象外なら 403 のメッセージをそのまま表示する（ロール別の UI 出し分けなし / ADR 015）。
+function whPhDateLabel(wd) {
+  const [y, m, d] = String(wd || '').slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return String(wd || '');
+  // Date.UTC ベースで曜日を出す（閲覧環境のタイムゾーンに依存しない）
+  const dow = ['日', '月', '火', '水', '木', '金', '土'][new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  return `${m}/${d}(${dow})`;
+}
+function whPhName(u) {
+  if (!u) return 'メンバー';
+  return (window.NameDisplay && typeof NameDisplay.full === 'function')
+    ? NameDisplay.full(u)
+    : (u.nickname || u.full_name || 'メンバー');
+}
+async function whOpenProjectHours(btn) {
+  const tr = btn.closest('tr');
+  const sel = tr?.querySelector('[data-f="project_id"]');
+  const pid = sel?.value;
+  if (!pid || pid === WH_SHOW_ALL_VALUE) {
+    showToast('案件が選択されている行で使えます', 'warn');
+    return;
+  }
+  const body = document.getElementById('wh-ph-body');
+  const title = document.getElementById('wh-ph-title');
+  if (title) title.textContent = '👥 みんなの作業時間';
+  if (body) body.innerHTML = '<div style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>';
+  openModal('modal-wh-project-hours');
+  try {
+    const res = await apiFetch(`${API}/work-hours/project-summary?project_id=${encodeURIComponent(pid)}`);
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (body) body.innerHTML = `<div style="padding:28px;text-align:center;color:#B91C1C;font-size:13px">${esc(d.error || '読み込みに失敗しました')}</div>`;
+      return;
+    }
+    whRenderProjectHours(d);
+  } catch (e) {
+    if (body) body.innerHTML = `<div style="padding:28px;text-align:center;color:#B91C1C;font-size:13px">通信エラー: ${esc(e.message || '')}</div>`;
+  }
+}
+function whRenderProjectHours(d) {
+  const body = document.getElementById('wh-ph-body');
+  const title = document.getElementById('wh-ph-title');
+  if (!body) return;
+  const p = d.project || {};
+  if (title) title.textContent = `👥 みんなの作業時間 — ${p.client_name ? `${p.client_name}／` : ''}${p.name || ''}`;
+  const members = d.members || [];
+  const entries = d.entries || [];
+  if (!entries.length) {
+    body.innerHTML = '<div style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">この案件の作業報告はまだありません。</div>';
+    return;
+  }
+  // 上段: 案件全体の累計＋メンバー数
+  const summaryChips = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px">
+        <span style="color:var(--text-muted)">案件合計</span>
+        <strong style="font-size:15px">${whHoursLabel(d.total_minutes)}h</strong>
+        <span style="font-size:11px;color:var(--text-muted)">（${(d.total_minutes || 0).toLocaleString()}分）</span>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px">
+        <span style="color:var(--text-muted)">メンバー</span> <strong>${members.length}人</strong>
+      </div>
+    </div>`;
+  // メンバー別累計（時間の多い順）
+  const memberChips = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      ${members.map(m => `
+        <div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:8px 12px;font-size:12px">
+          <div style="font-weight:600">${esc(whPhName(m.user))}</div>
+          <div style="margin-top:2px"><strong style="font-size:14px">${whHoursLabel(m.total_minutes)}h</strong>
+            <span style="color:var(--text-muted);font-size:11px">・${m.entry_count}件${m.last_work_date ? `・最終 ${esc(whPhDateLabel(m.last_work_date))}` : ''}</span></div>
+        </div>`).join('')}
+    </div>`;
+  // 月別（新しい月が先・最新月だけ開く）。明細は 日付/メンバー/時間帯/稼働/業務内容 のみ（金額なし）
+  const byMonth = new Map();
+  for (const e of entries) {
+    const ym = String(e.work_date || '').slice(0, 7);
+    if (!byMonth.has(ym)) byMonth.set(ym, []);
+    byMonth.get(ym).push(e);
+  }
+  const monthKeys = Array.from(byMonth.keys()).sort((a, b) => b.localeCompare(a));
+  const monthBlocks = monthKeys.map((ym, idx) => {
+    const list = byMonth.get(ym);
+    const monthMinutes = list.reduce((s, e) => s + (e.minutes || 0), 0);
+    const [y, m] = ym.split('-').map(Number);
+    const rows = list.map(e => `
+      <tr style="border-bottom:0.5px solid var(--border-light)">
+        <td style="padding:5px 8px;white-space:nowrap;font-size:12px">${esc(whPhDateLabel(e.work_date))}</td>
+        <td style="padding:5px 8px;white-space:nowrap;font-size:12px;font-weight:600">${esc(whPhName(e.user))}</td>
+        <td style="padding:5px 8px;white-space:nowrap;font-size:12px;color:var(--text-muted)">${e.start_time ? esc(String(e.start_time).slice(0, 5)) : ''}${(e.start_time || e.end_time) ? '–' : ''}${e.end_time ? esc(String(e.end_time).slice(0, 5)) : ''}</td>
+        <td style="padding:5px 8px;text-align:right;white-space:nowrap;font-size:12px"><strong>${whHoursLabel(e.minutes)}h</strong> <span style="color:var(--text-muted);font-size:10px">(${e.minutes || 0}分)</span></td>
+        <td style="padding:5px 8px;font-size:12px">${esc(e.description || '')}</td>
+      </tr>`).join('');
+    return `
+      <details ${idx === 0 ? 'open' : ''} style="margin-bottom:10px;border:0.5px solid var(--border);border-radius:8px;background:#fff">
+        <summary style="cursor:pointer;padding:9px 12px;font-size:13px;font-weight:600;user-select:none">${y}年${m}月 — ${whHoursLabel(monthMinutes)}h<span style="font-weight:400;color:var(--text-muted);font-size:11px">（${list.length}件）</span></summary>
+        <div style="overflow-x:auto;border-top:0.5px solid var(--border-light)">
+          <table style="width:100%;border-collapse:collapse;min-width:560px">
+            <thead><tr style="background:var(--em-pale)">
+              <th style="padding:6px 8px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">日付</th>
+              <th style="padding:6px 8px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">メンバー</th>
+              <th style="padding:6px 8px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">時間帯</th>
+              <th style="padding:6px 8px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">稼働</th>
+              <th style="padding:6px 8px;text-align:left;font-size:11px;color:var(--em-dark)">業務内容</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </details>`;
+  }).join('');
+  body.innerHTML = `
+    ${summaryChips}
+    ${memberChips}
+    ${monthBlocks}
+    <div style="font-size:11px;color:var(--text-muted);margin-top:4px">🔒 表示されるのは時間と業務内容のみです（時給・金額・経費は本人と管理者のみ）。</div>`;
+}
+
 // 1 行分の <tr>。id 無し（data-id=""）は未保存の新規行。
 function whRowHtml(e) {
   const isNew = !e || !e.id;
@@ -28193,7 +28330,10 @@ function whRowHtml(e) {
   const v = (x) => esc(x ?? '');
   const timeVal = (t) => t ? String(t).slice(0, 5) : '';
   return `<tr data-id="${isNew ? '' : esc(e.id)}" style="border-bottom:0.5px solid var(--border-light);vertical-align:top;${rowStyle}">
-    <td style="padding:6px 6px"><select data-f="project_id" ${dis} style="${st}" onchange="whOnProjectChange(this)">${whProjectOptionsHtml(isNew ? whDefaultProjectId() : e.project_id, isNew ? '' : e.project?.name)}</select>
+    <td style="padding:6px 6px"><div style="display:flex;gap:4px;align-items:center">
+      <select data-f="project_id" ${dis} style="${st};flex:1;min-width:0" onchange="whOnProjectChange(this)">${whProjectOptionsHtml(isNew ? whDefaultProjectId() : e.project_id, isNew ? '' : e.project?.name)}</select>
+      <button type="button" class="btn-sm" style="font-size:11px;padding:3px 6px;flex-shrink:0" onclick="whOpenProjectHours(this)" title="この案件のみんなの作業時間（案件合計・メンバー別）">👥</button>
+      </div>
       ${!isNew && e.hourly_rate_applied ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">適用時給 ¥${Number(e.hourly_rate_applied).toLocaleString()}/h</div>` : ''}</td>
     <td style="padding:6px 8px"><input type="date" data-f="work_date" value="${v(isNew ? e?.work_date : e.work_date)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="start_time" value="${timeVal(isNew ? (e?.start_time || '') : e.start_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>

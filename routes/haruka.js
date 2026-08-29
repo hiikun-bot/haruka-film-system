@@ -7504,6 +7504,103 @@ router.get('/work-hours/projects', requireAuth, async (req, res) => {
   res.json(list);
 });
 
+// 案件別の作業時間サマリー（ユーザー指示 2026-08-30: 同じ案件のメンバー同士の相互閲覧）。
+// 同じ案件で作業報告しているメンバーが、お互いの作業時間と案件全体の累計をクイックに見られる。
+// - 閲覧可: admin 実効ロール / 案件の P・D / この案件に自分の作業行がある人 /
+//   案件の line_costs で支払先（user_id）に指定されている人。それ以外は 403。
+// - 単価プライバシー（#934/#971 と同方針）: 時給・金額・立替経費は一切返さない。
+//   返すのは「時間・業務内容・メンバー名」のみ（見積もり・分担把握用途に必要な範囲）。
+// - requirePermission ではなく「同一案件メンバー」というデータ由来の条件で認可するため
+//   requireAuth ＋個別チェック（ADR 015 B 項の確認済み・意図した設計）。
+router.get('/work-hours/project-summary', requireAuth, async (req, res) => {
+  const projectId = String(req.query.project_id || '').trim();
+  if (!projectId) return res.status(400).json({ error: 'project_id は必須です' });
+  try {
+    const [projRes, entriesRes, isAdmin] = await Promise.all([
+      supabase.from('projects')
+        .select('id, name, producer_id, director_id, clients(name)')
+        .eq('id', projectId).maybeSingle(),
+      // avatar_url 等の base64 列はペイロード肥大のため含めない（PR #940 と同方針）
+      supabase.from('work_hour_entries')
+        .select('id, user_id, work_date, start_time, end_time, minutes, description, status, user:users(id, full_name, nickname)')
+        .eq('project_id', projectId)
+        .order('work_date', { ascending: false })
+        .order('start_time', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false }),
+      whHasAnyEffectiveRole(req, ['admin']),
+    ]);
+    if (projRes.error) return res.status(500).json({ error: projRes.error.message });
+    if (!projRes.data) return res.status(404).json({ error: '案件が見つかりません' });
+    if (entriesRes.error) return res.status(500).json({ error: entriesRes.error.message });
+    const entries = entriesRes.data || [];
+
+    // 同一案件メンバー判定は実ユーザー（req.user.id）で行う（自己データ判定のため直書き可 / ADR 015）
+    let allowed = isAdmin
+      || projRes.data.producer_id === req.user.id
+      || projRes.data.director_id === req.user.id
+      || entries.some(e => e.user_id === req.user.id);
+    if (!allowed) {
+      // 時給行の支払先に指定されているがまだ行を入れていないメンバーも「案件メンバー」扱い
+      const lcRes = await supabase
+        .from('project_estimate_line_costs')
+        .select('id, line:project_estimate_lines!inner(project_id)')
+        .eq('user_id', req.user.id)
+        .eq('line.project_id', projectId)
+        .limit(1);
+      allowed = !lcRes.error && (lcRes.data || []).length > 0;
+    }
+    if (!allowed) {
+      return res.status(403).json({ error: 'この案件の作業時間を閲覧できるのは、同じ案件のメンバーと管理者のみです' });
+    }
+
+    // 集計: 全体累計・メンバー別累計・月別（メンバー内訳つき）
+    let totalMinutes = 0;
+    const byUser = new Map();   // user_id -> { user, total_minutes, entry_count, last_work_date }
+    const byMonth = new Map();  // 'YYYY-MM' -> { month, total_minutes, by_user: {uid: minutes} }
+    for (const e of entries) {
+      const mins = e.minutes || 0;
+      totalMinutes += mins;
+      const u = byUser.get(e.user_id) || {
+        user_id: e.user_id,
+        user: e.user || null,
+        total_minutes: 0,
+        entry_count: 0,
+        last_work_date: null,
+      };
+      u.total_minutes += mins;
+      u.entry_count += 1;
+      if (!u.last_work_date || String(e.work_date) > String(u.last_work_date)) u.last_work_date = e.work_date;
+      byUser.set(e.user_id, u);
+      const ym = String(e.work_date || '').slice(0, 7);
+      const m = byMonth.get(ym) || { month: ym, total_minutes: 0, by_user: {} };
+      m.total_minutes += mins;
+      m.by_user[e.user_id] = (m.by_user[e.user_id] || 0) + mins;
+      byMonth.set(ym, m);
+    }
+    const members = Array.from(byUser.values())
+      .map(u => ({ ...u, total_hours: whHoursOf(u.total_minutes) }))
+      .sort((a, b) => b.total_minutes - a.total_minutes);
+    const months = Array.from(byMonth.values())
+      .map(m => ({ ...m, total_hours: whHoursOf(m.total_minutes) }))
+      .sort((a, b) => b.month.localeCompare(a.month));
+    res.json({
+      project: {
+        id: projRes.data.id,
+        name: projRes.data.name,
+        client_name: projRes.data.clients?.name || '',
+      },
+      total_minutes: totalMinutes,
+      total_hours: whHoursOf(totalMinutes),
+      members,
+      months,
+      entries,
+    });
+  } catch (e) {
+    console.error('[work-hours/project-summary GET]', e);
+    res.status(500).json({ error: e.message || '取得に失敗しました' });
+  }
+});
+
 // 行追加。単価は登録時にスナップショット（ADR 028）。
 router.post('/work-hours', requireAuth, async (req, res) => {
   const b = req.body || {};
