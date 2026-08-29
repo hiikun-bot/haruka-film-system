@@ -77,10 +77,34 @@ function normalizePersonName(name) {
   return String(name || '').replace(/[\s　]+/g, '');
 }
 
+// 複数の実データ候補（当月のみ / +前月 / +未納品 / +前月+未納品）に対して請求額を突合し、
+// 最初に一致した根拠を返す。どれとも合わなければ当月基準の diff を返す。
+function evaluatePayoutDiffMulti({ invoiceAmount, currentTotal, prevTotal, undeliveredTotal }) {
+  const cur = Number(currentTotal) || 0;
+  const prev = Number(prevTotal) || 0;
+  const und = Number(undeliveredTotal) || 0;
+  const candidates = [
+    { basis: 'current', label: '当月納品分', total: cur },
+    { basis: 'current_prev', label: '当月＋前月納品分', total: cur + prev },
+    { basis: 'current_undelivered', label: '当月＋未納品先行分', total: cur + und },
+    { basis: 'current_prev_undelivered', label: '当月＋前月＋未納品先行分', total: cur + prev + und },
+  ];
+  for (const c of candidates) {
+    const v = evaluatePayoutDiff({ invoiceAmount, actualTotal: c.total });
+    if (v.status === 'match') {
+      return { ...v, matched_basis: c.basis, matched_label: c.label, matched_total: c.total };
+    }
+    if (v.status === 'unknown') return { ...v, matched_basis: null, matched_label: null, matched_total: null };
+  }
+  const base = evaluatePayoutDiff({ invoiceAmount, actualTotal: cur });
+  return { ...base, matched_basis: null, matched_label: null, matched_total: null };
+}
+
 module.exports = {
   buildPayoutMessage,
   extractInvoiceAmount,
   evaluatePayoutDiff,
+  evaluatePayoutDiffMulti,
   normalizeFolderPersonName,
   normalizePersonName,
 };

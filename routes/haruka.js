@@ -24529,22 +24529,21 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
     let messageBody = null;
     const dm = String(user?.chatwork_dm_id || '').trim();
     const directRoom = String(user?.chatwork_direct_room_id || '').trim();
+    const slackId = String(user?.slack_dm_id || '').trim();
     const hasDm = /^\d+$/.test(dm);
     const hasDirectRoom = /^\d+$/.test(directRoom);
+    const hasSlack = /^[UW][A-Z0-9]+$/i.test(slackId);
     if (!user) {
       sentReason = 'メンバーが見つからないため送信していません';
-    } else if (!hasDm && !hasDirectRoom) {
-      // memory: 非数字の Chatwork ID は To が silent 失敗するため送信自体を行わない。
-      // ただし個別チャットのルームIDがあればアカウントID無しでも DM 送信は可能。
-      sentReason = 'Chatwork のアカウントID・個別チャットが未登録のため送信していません';
     } else {
-      const { sendChatworkRoom } = require('../notifications');
-      // 送信先の優先順: 個別チャット（chatwork_direct_room_id）→ 全体チャット + [To:]
+      const { sendChatworkRoom, sendSlackDm } = require('../notifications');
+      // 送信先の優先順: Chatwork 個別チャット → Chatwork 全体チャット+[To:] → Slack DM（Bot名義）
+      // memory: 非数字の Chatwork ID は To が silent 失敗するため To 送信は数値IDのときだけ行う。
       if (hasDirectRoom) {
         messageBody = text; // DM は To 不要
         const r = await sendChatworkRoom(directRoom, messageBody);
         if (r.ok) { sent = true; sentVia = 'dm'; }
-        else sentReason = `Chatwork DM 送信に失敗（${r.reason || r.status}）${hasDm ? '。全体チャットへフォールバックします' : ''}`;
+        else sentReason = `Chatwork DM 送信に失敗（${r.reason || r.status}）`;
       }
       if (!sent && hasDm) {
         const { data: setting } = await supabase
@@ -24552,9 +24551,19 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
         const roomId = (setting && setting.value) || PAYOUT_DEFAULT_CHATWORK_ROOM_ID;
         messageBody = `[To:${dm}]${text}`;
         const r = await sendChatworkRoom(roomId, messageBody);
-        if (r.ok) { sent = true; sentVia = 'room'; sentReason = sentReason || null; }
-        else sentReason = `Chatwork 送信に失敗しました（${r.reason || r.status}）。振込済みにはしています`;
+        if (r.ok) { sent = true; sentVia = 'room'; sentReason = null; }
+        else sentReason = `Chatwork 送信に失敗しました（${r.reason || r.status}）`;
       }
+      if (!sent && hasSlack) {
+        messageBody = text;
+        const r = await sendSlackDm(slackId, messageBody);
+        if (r.ok) { sent = true; sentVia = 'slack'; sentReason = null; }
+        else sentReason = `${sentReason ? sentReason + ' / ' : ''}Slack DM 送信に失敗（${r.reason || r.status}）`;
+      }
+      if (!sent && !sentReason) {
+        sentReason = 'Chatwork・Slack とも未登録のため送信していません';
+      }
+      if (!sent && sentReason) sentReason += '。振込済みにはしています';
     }
 
     const patch = {
@@ -24636,8 +24645,10 @@ router.patch('/admin/payouts/:id', requireAuth, requirePermission('payout.page')
 });
 
 // POST /api/haruka/admin/payouts/:id/diff-check
-// 本人が担当した対象月納品クリエイティブの per-unit 支払単価（utils/pricing.js の
-// resolveCreativeRoleCost）をクライアント別に集計し、請求額（PDF額面）と突合する。
+// 本人が担当したクリエイティブの per-unit 支払単価（utils/pricing.js の resolveCreativeRoleCost）を
+// 「当月納品」「前月納品（参考）」「未納品先行（参考）」の3バケットで集計し、請求額（PDF額面）と突合する。
+// 請求書は前月末納品分や納品前の先行請求を含むことが多いため、組み合わせのいずれかと一致すれば
+// match（根拠ラベル付き）とする（例: 迫さんのように当月納品0でも前月+先行で説明できるケース）。
 router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('payout.page'), async (req, res) => {
   try {
     const { data: rec, error: rErr } = await supabase
@@ -24646,33 +24657,40 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
     if (!rec) return res.status(404).json({ error: '対象の振込レコードが見つかりません' });
 
     const { resolveCreativeRoleCost } = require('../utils/pricing');
-    const { evaluatePayoutDiff } = require('../utils/payout');
-    const jst = jstMonthRangeIso(rec.year, rec.month);
+    const { evaluatePayoutDiffMulti } = require('../utils/payout');
+    const jstCur = jstMonthRangeIso(rec.year, rec.month);
+    const prevYear = rec.month === 1 ? rec.year - 1 : rec.year;
+    const prevMonth = rec.month === 1 ? 12 : rec.month - 1;
+    const jstPrev = jstMonthRangeIso(prevYear, prevMonth);
 
-    const { data: asgs, error: aErr } = await supabase
-      .from('creative_assignments')
-      .select(`
+    const ASG_SELECT = `
         role, rank_applied,
         creative:creatives!inner(
           id, file_name, creative_type, status, delivered_at, project_id, line_id, category_id,
           projects(name, clients(name, billing_org))
         )
-      `)
-      .eq('user_id', rec.user_id)
-      .eq('creative.status', '納品')
-      .gte('creative.delivered_at', jst.startIso)
-      .lt('creative.delivered_at', jst.endIso);
-    if (aErr) throw new Error(aErr.message);
+      `;
+    const fetchAsgs = async (build) => {
+      const { data, error } = await build(
+        supabase.from('creative_assignments').select(ASG_SELECT).eq('user_id', rec.user_id),
+      );
+      if (error) throw new Error(error.message);
+      return (data || []).filter(a => a.creative);
+    };
+    const [curRows, prevRows, undRows] = await Promise.all([
+      fetchAsgs(q => q.eq('creative.status', '納品').gte('creative.delivered_at', jstCur.startIso).lt('creative.delivered_at', jstCur.endIso)),
+      fetchAsgs(q => q.eq('creative.status', '納品').gte('creative.delivered_at', jstPrev.startIso).lt('creative.delivered_at', jstPrev.endIso)),
+      fetchAsgs(q => q.is('creative.delivered_at', null).not('creative.status', 'in', '("中止","キャンセル","差戻し")')),
+    ]);
 
-    const rows = (asgs || []).filter(a => a.creative);
-    const projIds = Array.from(new Set(rows.map(a => a.creative.project_id).filter(Boolean)));
+    const projIds = Array.from(new Set([...curRows, ...prevRows, ...undRows].map(a => a.creative.project_id).filter(Boolean)));
     const linesByProject = new Map();
     const lineCostsByLine = {};
-    for (let i = 0; i < projIds.length; i += 100) {
+    for (let k = 0; k < projIds.length; k += 100) {
       const { data: lines, error: lErr } = await supabase
         .from('project_estimate_lines')
         .select('id, project_id, name, status, category_id, planned_count, client_unit_price, rank, category:creative_categories(code, name), costs:project_estimate_line_costs(id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, roles(code, label))')
-        .in('project_id', projIds.slice(i, i + 100));
+        .in('project_id', projIds.slice(k, k + 100));
       if (lErr) throw new Error(lErr.message);
       for (const l of (lines || [])) {
         if (!linesByProject.has(l.project_id)) linesByProject.set(l.project_id, []);
@@ -24681,51 +24699,70 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
       }
     }
 
-    const clientMap = new Map();
-    let actualTotal = 0;
-    let zeroPriceCount = 0;
-    for (const a of rows) {
-      const role = a.role;
-      const isCreator = PAYOUT_CREATOR_ROLES.has(role);
-      const isDfee = PAYOUT_DFEE_ROLES.has(role);
-      if (!isCreator && !isDfee) continue; // wcheck 等は支払対象外
-      const c = a.creative;
-      const resolved = resolveCreativeRoleCost({
-        creative: c, roleCode: role, rankApplied: a.rank_applied, linesByProject, lineCostsByLine,
-      }) || {};
-      const price = Number(resolved.unit_price) || 0;
-      const clientName = c.projects?.clients?.name || '(クライアント不明)';
-      const billingOrg = c.projects?.clients?.billing_org || null;
-      if (!clientMap.has(clientName)) {
-        clientMap.set(clientName, { name: clientName, billing_org: billingOrg, creator_count: 0, creator_amount: 0, dfee_amount: 0 });
+    // rows → { total, count, zeroPriceCount, clients? } に集計
+    const aggregateRows = (rows, withClients) => {
+      const clientMap = withClients ? new Map() : null;
+      let total = 0;
+      let count = 0;
+      let zeroPriceCount = 0;
+      for (const a of rows) {
+        const role = a.role;
+        const isCreator = PAYOUT_CREATOR_ROLES.has(role);
+        const isDfee = PAYOUT_DFEE_ROLES.has(role);
+        if (!isCreator && !isDfee) continue; // wcheck 等は支払対象外
+        const c = a.creative;
+        const resolved = resolveCreativeRoleCost({
+          creative: c, roleCode: role, rankApplied: a.rank_applied, linesByProject, lineCostsByLine,
+        }) || {};
+        const price = Number(resolved.unit_price) || 0;
+        total += price;
+        count += 1;
+        if (isCreator && price === 0) zeroPriceCount += 1;
+        if (clientMap) {
+          const clientName = c.projects?.clients?.name || '(クライアント不明)';
+          const billingOrg = c.projects?.clients?.billing_org || null;
+          if (!clientMap.has(clientName)) {
+            clientMap.set(clientName, { name: clientName, billing_org: billingOrg, creator_count: 0, creator_amount: 0, dfee_amount: 0 });
+          }
+          const bucket = clientMap.get(clientName);
+          if (isCreator) { bucket.creator_count += 1; bucket.creator_amount += price; }
+          else bucket.dfee_amount += price;
+        }
       }
-      const bucket = clientMap.get(clientName);
-      if (isCreator) {
-        bucket.creator_count += 1;
-        bucket.creator_amount += price;
-        if (price === 0) zeroPriceCount += 1;
-      } else {
-        bucket.dfee_amount += price;
-      }
-      actualTotal += price;
-    }
+      const clients = clientMap
+        ? Array.from(clientMap.values()).sort((x, y) => (y.creator_amount + y.dfee_amount) - (x.creator_amount + x.dfee_amount))
+        : undefined;
+      return { total, count, zeroPriceCount, clients };
+    };
 
-    const clients = Array.from(clientMap.values())
-      .sort((x, y) => (y.creator_amount + y.dfee_amount) - (x.creator_amount + x.dfee_amount));
+    const cur = aggregateRows(curRows, true);
+    const prev = aggregateRows(prevRows, false);
+    const und = aggregateRows(undRows, false);
+
     const notes = [
       '実データはHFS登録の per-unit 支払単価の集計（税抜ベースのことが多い）。請求書は税込額面のため約10%の差は消費税の可能性があります。',
-      'LP/HP一式・時給（秘書業務/時給ディレクション）・立替経費・納品前の先行請求・HFS未登録案件は実データ集計に含まれません。',
-      '前月納品分の後追い請求／請求書側の先行請求により、単月比較では構造的にズレることがあります（差分＝誤りとは限りません）。',
+      '「前月納品」「未納品先行」は参考値です。前月分の後追い請求・納品前の先行請求を含む請求書は、これらとの組み合わせで一致判定します。',
+      'LP/HP一式・時給（秘書業務/時給ディレクション）・立替経費・HFS未登録案件は、どのバケットにも含まれません（差分＝誤りとは限りません）。',
     ];
-    if (zeroPriceCount > 0) notes.push(`単価が解決できない（¥0）クリエイティブが ${zeroPriceCount} 件あります（line 未紐付けの可能性）。`);
+    if (cur.zeroPriceCount > 0) notes.push(`当月納品に単価が解決できない（¥0）クリエイティブが ${cur.zeroPriceCount} 件あります（line 未紐付けの可能性）。`);
 
-    const verdict = evaluatePayoutDiff({ invoiceAmount: rec.invoice_amount, actualTotal });
+    const verdict = evaluatePayoutDiffMulti({
+      invoiceAmount: rec.invoice_amount,
+      currentTotal: cur.total,
+      prevTotal: prev.total,
+      undeliveredTotal: und.total,
+    });
     const detail = {
       invoice_amount: rec.invoice_amount ?? null,
-      actual_total: actualTotal,
+      actual_total: cur.total,
       delta: verdict.delta,
       delta_with_tax: verdict.delta_with_tax,
-      clients,
+      matched_basis: verdict.matched_basis || null,
+      matched_label: verdict.matched_label || null,
+      matched_total: verdict.matched_total ?? null,
+      prev_month: { year: prevYear, month: prevMonth, total: prev.total, count: prev.count },
+      undelivered: { total: und.total, count: und.count },
+      clients: cur.clients,
       notes,
     };
 
@@ -24750,7 +24787,6 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
     res.status(500).json({ error: e.message || '差分チェックに失敗しました' });
   }
 });
-
 
 // POST /api/haruka/admin/payouts/chatwork-sync
 // Chatwork の DM ルーム（type=direct）を一覧し、相手 account_id を users.chatwork_dm_id と

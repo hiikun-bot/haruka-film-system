@@ -27394,12 +27394,14 @@ function renderPayout() {
       opCell += `<div><a href="javascript:void(0)" onclick="poUnpay('${rid}')" style="color:#C0392B;font-size:11px">取消</a></div></div>`;
     } else {
       opCell = `<button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="poPay('${rid}')">振込完了→送信</button>`;
-      if (!r.has_chatwork && !r.has_chatwork_dm) {
-        opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ 送信なし（Chatwork未設定）</div>';
-      } else if (r.has_chatwork_dm) {
-        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💬 DMへ送信</div>';
+      if (r.has_chatwork_dm) {
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💬 ChatworkDMへ送信</div>';
+      } else if (r.has_chatwork) {
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📢 Chatwork全体+To送信</div>';
+      } else if (r.slack_user_id) {
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💜 SlackDMへ送信</div>';
       } else {
-        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📢 全体+To送信</div>';
+        opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ 送信なし（チャット未設定）</div>';
       }
     }
 
@@ -27455,7 +27457,16 @@ async function poEditAmount(id) {
 function poApplyRecord(record) {
   if (!record || !_poData || !_poData.records) { poFetch(); return; }
   const i = _poData.records.findIndex(x => String(x.id) === String(record.id));
-  if (i >= 0) _poData.records[i] = record; else _poData.records.push(record);
+  if (i >= 0) {
+    // pay/diff-check 等の応答はスキャン由来のフィールドを含まないため旧値を引き継ぐ
+    // （差分チェック後に📁フォルダリンクが消えるバグの修正）
+    const prev = _poData.records[i];
+    if (record.folder_url == null) record.folder_url = prev.folder_url || null;
+    record.is_new = prev.is_new;
+    _poData.records[i] = record;
+  } else {
+    _poData.records.push(record);
+  }
   // サマリーの件数・金額をローカル再計算（paid_count / unpaid_amount の整合）
   const s = _poData.summary || (_poData.summary = {});
   s.total_records = _poData.records.length;
@@ -27507,7 +27518,15 @@ function poRenderDiffModal(id) {
       `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">請求額</div><div style="font-size:18px;font-weight:700">${d.invoice_amount != null ? poYen(d.invoice_amount) : '−'}</div></div>` +
       `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">実データ計</div><div style="font-size:18px;font-weight:700">${d.actual_total != null ? poYen(d.actual_total) : '−'}</div></div>` +
       `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">差額${d.delta_with_tax != null ? '（税込差 ' + esc(poYen(d.delta_with_tax)) + '）' : ''}</div><div style="font-size:18px;font-weight:700;color:${delta === 0 ? 'var(--em-dark)' : '#C0392B'}">${d.delta != null ? poYen(d.delta) : '−'}</div></div>` +
+      (d.prev_month ? `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">前月納品（参考・${esc(String(d.prev_month.month))}月）</div><div style="font-size:18px;font-weight:700">${poYen(d.prev_month.total)}<span style="font-size:11px;font-weight:400;color:var(--text-muted)"> ${Number(d.prev_month.count) || 0}件</span></div></div>` : '') +
+      (d.undelivered ? `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">未納品先行（参考）</div><div style="font-size:18px;font-weight:700">${poYen(d.undelivered.total)}<span style="font-size:11px;font-weight:400;color:var(--text-muted)"> ${Number(d.undelivered.count) || 0}件</span></div></div>` : '') +
     `</div>`;
+  if (r.diff_status === 'match' && d.matched_label && d.matched_basis !== 'current') {
+    html += `<div style="margin:-4px 0 12px;font-size:12px;color:var(--em-dark)">✅ ${esc(d.matched_label)}の合計 ${poYen(d.matched_total)} と一致しています（当月納品だけでは請求額に届きませんが、請求書がその範囲をカバーしているためです）</div>`;
+  } else if (r.diff_status === 'diff' && d.prev_month && d.undelivered) {
+    const explained = (Number(d.actual_total) || 0) + (Number(d.prev_month.total) || 0) + (Number(d.undelivered.total) || 0);
+    html += `<div style="margin:-4px 0 12px;font-size:12px;color:var(--text-muted)">参考: 当月＋前月＋未納品先行の合計は ${poYen(explained)}（請求額との差 ${poYen((Number(d.invoice_amount) || 0) - explained)}。残る差はLP一式・HFS未登録案件・単価差などの可能性）</div>`;
+  }
   const clients = d.clients || [];
   if (clients.length > 0) {
     html += '<div style="font-size:12px;font-weight:600;margin-bottom:6px">クライアント別内訳（実データ）</div>' +
@@ -27589,11 +27608,12 @@ function poPay(id) {
   const month = _poData.month;
 
   // 送信先（サーバー側 pay の優先順と同じ表示）
-  const canSend = r.has_chatwork || r.has_chatwork_dm;
+  const canSend = r.has_chatwork || r.has_chatwork_dm || !!r.slack_user_id;
   let dest, destColor = 'var(--text)';
   if (r.has_chatwork_dm) dest = '💬 Chatwork 個別チャット';
   else if (r.has_chatwork) dest = '📢 Chatwork 全体チャット＋[To:]（DM未紐付け）';
-  else { dest = '⚠️ 送信されません（Chatwork未設定）— 消し込みのみ行われます。Slackの方は📋コピーで手動連絡してください'; destColor = '#C05A0A'; }
+  else if (r.slack_user_id) dest = '💜 Slack DM（HARUKA FILMボット名義で送信されます）';
+  else { dest = '⚠️ 送信されません（Chatwork・Slackとも未登録）— 消し込みのみ行われます'; destColor = '#C05A0A'; }
 
   const dash = v => (v == null || v === '') ? '−' : esc(v);
   const bankLine = `${dash(r.bank_name)}(${dash(r.bank_code)}) ${dash(r.branch_name)}(${dash(r.branch_code)}) ${dash(r.account_type)} ${dash(r.account_number)}`;
@@ -27653,7 +27673,7 @@ async function poPaySubmit(id) {
     closeModal('modal-po-pay');
     poApplyRecord(data.record);
     if (data.sent) {
-      showToast(`${poName(r)}さんへ振込完了メッセージを${data.sent_via === 'dm' ? '個別チャット' : '全体チャット'}に送信し、消し込みました`, 'success');
+      showToast(`${poName(r)}さんへ振込完了メッセージを${data.sent_via === 'dm' ? 'ChatworkのDM' : data.sent_via === 'slack' ? 'SlackのDM' : 'Chatwork全体チャット'}に送信し、消し込みました`, 'success');
     } else {
       showToast(`消し込みました（メッセージ未送信: ${data.sent_reason || '理由不明'}）`, 'warn');
     }
