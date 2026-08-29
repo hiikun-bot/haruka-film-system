@@ -8790,6 +8790,14 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
 </div>
 
+<!-- 💸 振込管理 送信前プレビューモーダル（誰に・いくら・どこへ・どんな文面かを確認して送信） -->
+<div class="modal-overlay" id="modal-po-pay" style="z-index:300">
+  <div class="modal-card" style="width:min(560px,95vw);max-height:88vh;overflow-y:auto">
+    <div class="modal-title"><span id="po-pay-title">📨 送信前の確認</span><button class="modal-close" onclick="closeModal('modal-po-pay')">×</button></div>
+    <div id="po-pay-body"></div>
+  </div>
+</div>
+
 <!-- 🚀 オンボーディング 新規作成モーダル -->
 <div class="modal-overlay" id="modal-onboarding-create" style="z-index:310">
   <div class="modal-card" style="width:min(520px,95vw)">
@@ -27383,7 +27391,7 @@ function renderPayout() {
       if (!r.message_sent_at) opCell += '<div style="color:var(--text-muted)">送信なし</div>';
       opCell += `<div><a href="javascript:void(0)" onclick="poUnpay('${rid}')" style="color:#C0392B;font-size:11px">取消</a></div></div>`;
     } else {
-      opCell = `<button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="poPay('${rid}',this)">振込完了→送信</button>`;
+      opCell = `<button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="poPay('${rid}')">振込完了→送信</button>`;
       if (r.has_chatwork === false) {
         opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ Chatwork未設定（送信されません）</div>';
       } else if (r.has_chatwork_dm) {
@@ -27567,12 +27575,66 @@ function poCopyMessage(id) {
     .catch(() => showToast('コピーに失敗しました', 'error'));
 }
 
-async function poPay(id, btn) {
+// 「振込完了→送信」: まず送信前プレビュー（誰に・いくら・どこへ・どんな文面か）を表示
+function poPay(id) {
   const r = poRecord(id);
-  if (!r) return;
-  if (!confirm(`${poName(r)}さんに振込完了メッセージを送信して消し込みます。よろしいですか？`)) return;
+  if (!r || !_poData) return;
   const memoInput = document.getElementById(`po-memo-${id}`);
   const memo = memoInput ? memoInput.value.trim() : (r.memo || '');
+  const month = _poData.month;
+
+  // 送信先（サーバー側 pay の優先順と同じ表示）
+  let dest, destColor = 'var(--text)';
+  if (r.has_chatwork_dm) dest = '💬 Chatwork 個別チャット';
+  else if (r.has_chatwork) dest = '📢 Chatwork 全体チャット＋[To:]（DM未紐付け）';
+  else { dest = '⚠️ 送信されません（Chatwork未設定）— 消し込みのみ行われます。Slackの方は📋コピーで手動連絡してください'; destColor = '#C05A0A'; }
+
+  const dash = v => (v == null || v === '') ? '−' : esc(v);
+  const bankLine = `${dash(r.bank_name)}(${dash(r.bank_code)}) ${dash(r.branch_name)}(${dash(r.branch_code)}) ${dash(r.account_type)} ${dash(r.account_number)}`;
+  const amount = (r.invoice_amount == null)
+    ? '<span style="color:#C05A0A">金額不明（請求額が未入力です）</span>'
+    : `<strong style="font-size:16px">${poYen(r.invoice_amount)}</strong>`;
+
+  const body = document.getElementById('po-pay-body');
+  const title = document.getElementById('po-pay-title');
+  if (title) title.textContent = `📨 送信前の確認 — ${poName(r)}`;
+  if (!body) return;
+  body.innerHTML =
+    '<div style="font-size:13px;line-height:1.9">' +
+      `<div><span style="color:var(--text-muted)">振込額：</span>${amount}<span style="color:var(--text-muted)">（${esc(String(_poData.year))}年${esc(String(month))}月分）</span></div>` +
+      `<div><span style="color:var(--text-muted)">振込先：</span>${bankLine}<span style="color:var(--text-muted)"> ${dash(r.account_holder_kana)}</span></div>` +
+      `<div><span style="color:var(--text-muted)">送信先：</span><span style="color:${destColor}">${dest}</span></div>` +
+    '</div>' +
+    '<div style="margin:10px 0 4px;font-size:11px;font-weight:600;color:var(--text-muted)">送信される文面</div>' +
+    `<pre id="po-pay-msg" style="margin:0;padding:12px;background:var(--bg);border:0.5px solid var(--border);border-radius:8px;font-size:13px;line-height:1.7;white-space:pre-wrap;font-family:inherit"></pre>` +
+    '<div style="margin:12px 0 4px;font-size:11px;font-weight:600;color:var(--text-muted)">メモ（空なら定型文のみ・編集すると文面に即反映）</div>' +
+    `<input class="form-input" id="po-pay-memo" style="width:100%;font-size:13px" placeholder="例）リサイズ分は来月に回します">` +
+    '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">' +
+      `<button class="btn-sm" onclick="closeModal('modal-po-pay')">キャンセル</button>` +
+      `<button class="btn-primary" id="po-pay-submit" style="font-size:13px;padding:8px 14px" onclick="poPaySubmit('${esc(id)}')">${r.has_chatwork ? '✅ 送信して消し込む' : '✅ 消し込む（送信なし）'}</button>` +
+    '</div>';
+
+  const memoEl = document.getElementById('po-pay-memo');
+  const msgEl = document.getElementById('po-pay-msg');
+  const renderMsg = () => {
+    const m = (memoEl.value || '').trim();
+    let text = `${poName(r)}さん\n今月もお疲れ様でした。${month}月分を振り込みましたので、ご確認をお願いします。`;
+    if (m) text += `\n\n${m}`;
+    msgEl.textContent = text;
+  };
+  memoEl.value = memo;
+  memoEl.addEventListener('input', renderMsg);
+  renderMsg();
+  openModal('modal-po-pay');
+}
+
+// プレビューで OK → 実送信＋消し込み
+async function poPaySubmit(id) {
+  const r = poRecord(id);
+  if (!r) return;
+  const memoEl = document.getElementById('po-pay-memo');
+  const memo = memoEl ? memoEl.value.trim() : (r.memo || '');
+  const btn = document.getElementById('po-pay-submit');
   if (btn) { btn.disabled = true; btn.textContent = '送信中…'; }
   try {
     const res = await apiFetch(`${API}/admin/payouts/${encodeURIComponent(id)}/pay`, {
@@ -27582,6 +27644,7 @@ async function poPay(id, btn) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '振込完了の登録に失敗しました');
+    closeModal('modal-po-pay');
     poApplyRecord(data.record);
     if (data.sent) {
       showToast(`${poName(r)}さんへ振込完了メッセージを${data.sent_via === 'dm' ? '個別チャット' : '全体チャット'}に送信し、消し込みました`, 'success');
@@ -27590,7 +27653,7 @@ async function poPay(id, btn) {
     }
   } catch (e) {
     showToast(e.message, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '振込完了→送信'; }
+    if (btn) { btn.disabled = false; btn.textContent = '✅ 送信して消し込む'; }
   }
 }
 
