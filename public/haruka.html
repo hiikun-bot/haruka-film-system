@@ -18203,7 +18203,8 @@ const _ROLE_PERMS_FALLBACK = {
   'secretary|master.page': true,
   // ファイル名テンプレート管理（ディレクター層以上に開放。producer_director は producer/director 継承で許可）
   'secretary|master.filename_templates': true, 'producer|master.filename_templates': true, 'director|master.filename_templates': true,
-  'secretary|analytics.view': true,
+  // 分析・集計（経営系）はプロデューサー層にも開放（migration 2026-08-29_analytics_view_producer.sql）
+  'secretary|analytics.view': true, 'producer|analytics.view': true, 'producer_director|analytics.view': true,
   // analytics.bug_reports.view は全ロール開放
   'secretary|analytics.bug_reports.view': true,
   'producer|analytics.bug_reports.view': true,
@@ -18405,7 +18406,7 @@ function applyRoleBasedUI() {
   if (drawerOnboarding) drawerOnboarding.style.display = canOnboarding ? '' : 'none';
 
   // 分析・集計ナビ
-  // - analytics.view (経営系・全集計): admin / secretary のみ
+  // - analytics.view (経営系・全集計): admin / secretary / producer / producer_director
   // - analytics.bug_reports.view (バグ報告件数): 全ロール開放
   // - analytics.billing_recon.view (請求突合チェッカー・経理向け): admin / secretary のみ
   // いずれか片方でも持っていればナビは表示し、サイドバーで該当項目だけ出し分ける。
