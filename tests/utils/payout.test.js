@@ -70,3 +70,31 @@ describe('normalizeFolderPersonName / normalizePersonName', () => {
     expect(normalizeFolderPersonName('山田 太郎 (taro123) 2026年08月')).toBe('山田太郎');
   });
 });
+
+describe('evaluatePayoutDiffMulti', () => {
+  const { evaluatePayoutDiffMulti } = require('../../utils/payout');
+  test('当月のみで一致', () => {
+    const r = evaluatePayoutDiffMulti({ invoiceAmount: 42000, currentTotal: 42000, prevTotal: 5000, undeliveredTotal: 0 });
+    expect(r.status).toBe('match');
+    expect(r.matched_basis).toBe('current');
+  });
+  test('当月＋前月納品分で一致（前月末納品を当月請求するケース）', () => {
+    const r = evaluatePayoutDiffMulti({ invoiceAmount: 33000, currentTotal: 0, prevTotal: 30000, undeliveredTotal: 18000 });
+    expect(r.status).toBe('match');
+    expect(r.matched_basis).toBe('current_prev');
+  });
+  test('未納品先行込みで一致', () => {
+    const r = evaluatePayoutDiffMulti({ invoiceAmount: 48000, currentTotal: 0, prevTotal: 30000, undeliveredTotal: 18000 });
+    expect(r.status).toBe('match');
+    expect(r.matched_basis).toBe('current_prev_undelivered');
+  });
+  test('どれとも合わなければ当月基準の diff', () => {
+    const r = evaluatePayoutDiffMulti({ invoiceAmount: 120000, currentTotal: 0, prevTotal: 30000, undeliveredTotal: 18000 });
+    expect(r.status).toBe('diff');
+    expect(r.delta).toBe(120000);
+    expect(r.matched_basis).toBeNull();
+  });
+  test('請求額なしは unknown', () => {
+    expect(evaluatePayoutDiffMulti({ invoiceAmount: null, currentTotal: 100, prevTotal: 0, undeliveredTotal: 0 }).status).toBe('unknown');
+  });
+});
