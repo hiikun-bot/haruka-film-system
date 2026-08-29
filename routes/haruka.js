@@ -24144,33 +24144,35 @@ async function payoutListChildren(drive, parentId) {
   return out;
 }
 
-// PDF→Google ドキュメント変換→text export で請求額を抽出（失敗時 null）。
-// 一時ドキュメントは SA のマイドライブに作られるため必ず削除する。
-async function payoutExtractPdfAmount(drive, file) {
-  const { extractInvoiceAmount } = require('../utils/payout');
-  if (Number(file.size) > 15 * 1024 * 1024) return null;
+// PDF→Google ドキュメント変換→text export でテキストを取得（失敗時 null）。
+// 一時ドキュメントは SA のマイドライブ直下に作り（メンバーフォルダを汚さない）、必ず削除する。
+async function payoutExtractPdfText(drive, file) {
+  if (file.size != null && Number(file.size) > 15 * 1024 * 1024) return null;
   let tempId = null;
   try {
     const copy = await drive.files.copy({
       fileId: file.id,
-      // parents を明示しないと元PDFと同じメンバーフォルダにコピーが作られ、
-      // 同時実行中のスキャンに「2個目のPDF」として混入する（2026-08-29 のバグ）。
-      // SA のマイドライブ直下に作り、メンバーフォルダを汚さない。
       requestBody: { mimeType: 'application/vnd.google-apps.document', name: `_payout_tmp_${file.id}`, parents: ['root'] },
       supportsAllDrives: true,
     });
     tempId = copy.data.id;
     const exp = await drive.files.export({ fileId: tempId, mimeType: 'text/plain' });
-    const text = typeof exp.data === 'string' ? exp.data : String(exp.data || '');
-    return extractInvoiceAmount(text); // { amount, source } | null
+    return typeof exp.data === 'string' ? exp.data : String(exp.data || '');
   } catch (e) {
-    console.warn(`[payouts] PDF金額抽出失敗 ${file.name}: ${e.message}`);
+    console.warn(`[payouts] PDFテキスト化失敗 ${file.name}: ${e.message}`);
     return null;
   } finally {
     if (tempId) {
       try { await drive.files.delete({ fileId: tempId, supportsAllDrives: true }); } catch (_) { /* noop */ }
     }
   }
+}
+
+// PDFテキストから請求額を抽出（失敗時 null）
+async function payoutExtractPdfAmount(drive, file) {
+  const { extractInvoiceAmount } = require('../utils/payout');
+  const text = await payoutExtractPdfText(drive, file);
+  return text ? extractInvoiceAmount(text) : null; // { amount, source } | null
 }
 
 // pdf_files 配列から請求額合計を組み立てる。
@@ -24660,10 +24662,12 @@ router.patch('/admin/payouts/:id', requireAuth, requirePermission('payout.page')
 });
 
 // POST /api/haruka/admin/payouts/:id/diff-check
-// 本人が担当したクリエイティブの per-unit 支払単価（utils/pricing.js の resolveCreativeRoleCost）を
-// 「当月納品」「前月納品（参考）」「未納品先行（参考）」の3バケットで集計し、請求額（PDF額面）と突合する。
-// 請求書は前月末納品分や納品前の先行請求を含むことが多いため、組み合わせのいずれかと一致すれば
-// match（根拠ラベル付き）とする（例: 迫さんのように当月納品0でも前月+先行で説明できるケース）。
+// 差分チェック（PDF申告が正）:
+//   1) 請求書PDFのテキストから CR 連番/ファイル名キーを抽出し、明細1件ずつ HFS と照合する
+//      （✅本人担当[当月/前月/それ以前] / ⏳本人担当・未納品(先行) / ⚠️他者担当 / ❓HFSに該当なし）。
+//      逆方向として「当月納品・本人制作なのにPDFに記載が無い」請求漏れ候補も列挙する。
+//   2) 連番の記載が無い請求書は明細突合不可のため、金額ベース（当月/前月/未納品の
+//      組み合わせ一致 evaluatePayoutDiffMulti）にフォールバックする。
 router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('payout.page'), async (req, res) => {
   try {
     const { data: rec, error: rErr } = await supabase
@@ -24672,11 +24676,36 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
     if (!rec) return res.status(404).json({ error: '対象の振込レコードが見つかりません' });
 
     const { resolveCreativeRoleCost } = require('../utils/pricing');
-    const { evaluatePayoutDiffMulti } = require('../utils/payout');
+    const { evaluatePayoutDiffMulti, extractCreativeKeys } = require('../utils/payout');
+
+    // ---------- 1) PDFから明細キーを抽出（PDF申告が正） ----------
+    let keys = { tails: [], names: [] };
+    let extractNote = null;
+    const pdfFiles = Array.isArray(rec.pdf_files) ? rec.pdf_files : [];
+    if (!pdfFiles.length) {
+      extractNote = '請求書PDFが未提出のため明細突合はできません。';
+    } else {
+      try {
+        const drive = await getDriveService();
+        const texts = [];
+        await mapLimit(pdfFiles, 2, async (f) => {
+          const t = await payoutExtractPdfText(drive, f);
+          if (t) texts.push(t);
+        });
+        if (!texts.length) extractNote = 'PDFのテキスト化に失敗したため明細キーを抽出できませんでした（金額ベースで判定します）。';
+        else keys = extractCreativeKeys(texts.join('\n'));
+      } catch (e) {
+        extractNote = `PDF読み取りに失敗しました: ${e.message}（金額ベースで判定します）`;
+      }
+    }
+    const keyMode = (keys.tails.length + keys.names.length) > 0;
+
+    // ---------- 2) 本人担当クリエイティブ（過去4ヶ月納品＋未納品）を取得・単価解決 ----------
     const jstCur = jstMonthRangeIso(rec.year, rec.month);
     const prevYear = rec.month === 1 ? rec.year - 1 : rec.year;
     const prevMonth = rec.month === 1 ? 12 : rec.month - 1;
     const jstPrev = jstMonthRangeIso(prevYear, prevMonth);
+    const windowStartIso = new Date(Date.UTC(rec.year, rec.month - 1 - 4, 1) - 9 * 3600e3).toISOString();
 
     const ASG_SELECT = `
         role, rank_applied,
@@ -24692,13 +24721,13 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
       if (error) throw new Error(error.message);
       return (data || []).filter(a => a.creative);
     };
-    const [curRows, prevRows, undRows] = await Promise.all([
-      fetchAsgs(q => q.eq('creative.status', '納品').gte('creative.delivered_at', jstCur.startIso).lt('creative.delivered_at', jstCur.endIso)),
-      fetchAsgs(q => q.eq('creative.status', '納品').gte('creative.delivered_at', jstPrev.startIso).lt('creative.delivered_at', jstPrev.endIso)),
+    const [delivRows, undRows] = await Promise.all([
+      fetchAsgs(q => q.eq('creative.status', '納品').gte('creative.delivered_at', windowStartIso).lt('creative.delivered_at', jstCur.endIso)),
       fetchAsgs(q => q.is('creative.delivered_at', null).not('creative.status', 'in', '("中止","キャンセル","差戻し")')),
     ]);
+    const allRows = [...delivRows, ...undRows];
 
-    const projIds = Array.from(new Set([...curRows, ...prevRows, ...undRows].map(a => a.creative.project_id).filter(Boolean)));
+    const projIds = Array.from(new Set(allRows.map(a => a.creative.project_id).filter(Boolean)));
     const linesByProject = new Map();
     const lineCostsByLine = {};
     for (let k = 0; k < projIds.length; k += 100) {
@@ -24714,77 +24743,183 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
       }
     }
 
-    // rows → { total, count, zeroPriceCount, clients? } に集計
-    const aggregateRows = (rows, withClients) => {
-      const clientMap = withClients ? new Map() : null;
-      let total = 0;
-      let count = 0;
-      let zeroPriceCount = 0;
-      for (const a of rows) {
-        const role = a.role;
-        const isCreator = PAYOUT_CREATOR_ROLES.has(role);
-        const isDfee = PAYOUT_DFEE_ROLES.has(role);
-        if (!isCreator && !isDfee) continue; // wcheck 等は支払対象外
-        const c = a.creative;
-        const resolved = resolveCreativeRoleCost({
-          creative: c, roleCode: role, rankApplied: a.rank_applied, linesByProject, lineCostsByLine,
-        }) || {};
-        const price = Number(resolved.unit_price) || 0;
-        total += price;
-        count += 1;
-        if (isCreator && price === 0) zeroPriceCount += 1;
-        if (clientMap) {
-          const clientName = c.projects?.clients?.name || '(クライアント不明)';
-          const billingOrg = c.projects?.clients?.billing_org || null;
-          if (!clientMap.has(clientName)) {
-            clientMap.set(clientName, { name: clientName, billing_org: billingOrg, creator_count: 0, creator_amount: 0, dfee_amount: 0 });
-          }
-          const bucket = clientMap.get(clientName);
-          if (isCreator) { bucket.creator_count += 1; bucket.creator_amount += price; }
-          else bucket.dfee_amount += price;
-        }
-      }
-      const clients = clientMap
-        ? Array.from(clientMap.values()).sort((x, y) => (y.creator_amount + y.dfee_amount) - (x.creator_amount + x.dfee_amount))
-        : undefined;
-      return { total, count, zeroPriceCount, clients };
+    // creative 単位に集約: 本人の制作単価/D費・バケット（current/prev/older/undelivered）
+    const bucketOf = (c) => {
+      if (!c.delivered_at) return 'undelivered';
+      if (c.delivered_at >= jstCur.startIso && c.delivered_at < jstCur.endIso) return 'current';
+      if (c.delivered_at >= jstPrev.startIso && c.delivered_at < jstPrev.endIso) return 'prev';
+      return 'older';
     };
+    const mine = new Map(); // creative_id -> { file_name, bucket, client, billing_org, creatorPrice, dfeePrice, creatorCount }
+    let zeroPriceCount = 0;
+    for (const a of allRows) {
+      const role = a.role;
+      const isCreator = PAYOUT_CREATOR_ROLES.has(role);
+      const isDfee = PAYOUT_DFEE_ROLES.has(role);
+      if (!isCreator && !isDfee) continue;
+      const c = a.creative;
+      const resolved = resolveCreativeRoleCost({
+        creative: c, roleCode: role, rankApplied: a.rank_applied, linesByProject, lineCostsByLine,
+      }) || {};
+      const price = Number(resolved.unit_price) || 0;
+      if (!mine.has(c.id)) {
+        mine.set(c.id, {
+          file_name: c.file_name || '(無題)',
+          bucket: bucketOf(c),
+          client: c.projects?.clients?.name || '(クライアント不明)',
+          billing_org: c.projects?.clients?.billing_org || null,
+          creatorPrice: 0, dfeePrice: 0, creatorCount: 0,
+        });
+      }
+      const entry = mine.get(c.id);
+      if (isCreator) {
+        entry.creatorPrice += price;
+        entry.creatorCount += 1;
+        if (entry.bucket === 'current' && price === 0) zeroPriceCount += 1;
+      } else {
+        entry.dfeePrice += price;
+      }
+    }
 
-    const cur = aggregateRows(curRows, true);
-    const prev = aggregateRows(prevRows, false);
-    const und = aggregateRows(undRows, false);
+    // バケット合計（金額タイル用）とクライアント別内訳（当月）
+    const totals = { current: 0, prev: 0, older: 0, undelivered: 0 };
+    const clientMap = new Map();
+    for (const e of mine.values()) {
+      totals[e.bucket] += e.creatorPrice + e.dfeePrice;
+      if (e.bucket === 'current') {
+        if (!clientMap.has(e.client)) clientMap.set(e.client, { name: e.client, billing_org: e.billing_org, creator_count: 0, creator_amount: 0, dfee_amount: 0 });
+        const b = clientMap.get(e.client);
+        b.creator_count += e.creatorCount;
+        b.creator_amount += e.creatorPrice;
+        b.dfee_amount += e.dfeePrice;
+      }
+    }
+    const clients = Array.from(clientMap.values())
+      .sort((x, y) => (y.creator_amount + y.dfee_amount) - (x.creator_amount + x.dfee_amount));
+
+    // ---------- 3) キー照合（明細突合） ----------
+    const fileHasTail = (fn, tail) => {
+      let idx = -1;
+      while ((idx = fn.indexOf(tail, idx + 1)) !== -1) {
+        const before = idx > 0 ? fn[idx - 1] : '';
+        const after = idx + tail.length < fn.length ? fn[idx + tail.length] : '';
+        if (!/[0-9]/.test(before) && !/[0-9]/.test(after)) return true;
+      }
+      return false;
+    };
+    let lineCheck = null;
+    let status;
+    let verdict = evaluatePayoutDiffMulti({
+      invoiceAmount: rec.invoice_amount,
+      currentTotal: totals.current,
+      prevTotal: totals.prev,
+      undeliveredTotal: totals.undelivered,
+    });
+
+    if (keyMode) {
+      const mineList = Array.from(mine.values());
+      const matchedByBucket = { current: 0, prev: 0, older: 0, undelivered: 0 };
+      const coveredFileNames = new Set();
+      const unresolved = [];
+      const checkKey = (key, isName) => {
+        const hits = mineList.filter(e => isName
+          ? (e.file_name.startsWith(key) || e.file_name.includes(key))
+          : fileHasTail(e.file_name, key));
+        if (hits.length) {
+          // 同一連番の複数サイズ版は最も新しいバケット側を代表にカウント
+          const order = ['current', 'prev', 'undelivered', 'older'];
+          const rep = hits.sort((a, b) => order.indexOf(a.bucket) - order.indexOf(b.bucket))[0];
+          matchedByBucket[rep.bucket] += 1;
+          hits.forEach(h => coveredFileNames.add(h.file_name));
+          return true;
+        }
+        unresolved.push({ key, isName });
+        return false;
+      };
+      keys.tails.forEach(k => checkKey(k, false));
+      keys.names.forEach(k => checkKey(k, true));
+
+      // 未解決キーは全体から検索して「他者担当」か「HFSに該当なし」かを切り分け
+      const issues = [];
+      const toClassify = unresolved.slice(0, 40);
+      await mapLimit(toClassify, 5, async (u) => {
+        try {
+          const { data: gc } = await supabase
+            .from('creatives')
+            .select('id, file_name, status, delivered_at, creative_assignments(role, users(full_name, nickname))')
+            .ilike('file_name', `%${u.key}%`)
+            .limit(3);
+          if (gc && gc.length) {
+            const holders = Array.from(new Set(gc.flatMap(c =>
+              (c.creative_assignments || [])
+                .filter(a => PAYOUT_CREATOR_ROLES.has(a.role) || PAYOUT_DFEE_ROLES.has(a.role))
+                .map(a => a.users?.nickname || a.users?.full_name)
+                .filter(Boolean))));
+            issues.push({ key: u.key, type: 'other', file_name: gc[0].file_name, holders });
+          } else {
+            issues.push({ key: u.key, type: 'missing' });
+          }
+        } catch (e) {
+          issues.push({ key: u.key, type: 'missing' });
+        }
+      });
+      if (unresolved.length > toClassify.length) {
+        issues.push({ key: `ほか${unresolved.length - toClassify.length}件`, type: 'missing' });
+      }
+      issues.sort((a, b) => (a.type === b.type ? 0 : a.type === 'other' ? -1 : 1));
+
+      // 請求漏れ候補: 当月納品・本人制作（単価>0）でPDFに記載が無いもの
+      const unbilled = mineList
+        .filter(e => e.bucket === 'current' && e.creatorPrice > 0 && !coveredFileNames.has(e.file_name))
+        .map(e => ({ file_name: e.file_name, price: e.creatorPrice }))
+        .slice(0, 20);
+
+      status = issues.length ? 'diff' : 'match';
+      lineCheck = {
+        mode: 'keys',
+        total_keys: keys.tails.length + keys.names.length,
+        matched_current: matchedByBucket.current,
+        matched_prev: matchedByBucket.prev,
+        matched_older: matchedByBucket.older,
+        matched_undelivered: matchedByBucket.undelivered,
+        issues,
+        unbilled,
+        note: extractNote,
+      };
+    } else {
+      status = verdict.status;
+      lineCheck = {
+        mode: 'amount',
+        note: extractNote || '請求書にCR連番の記載が無いため、明細突合はできず金額ベースで判定しました。',
+      };
+    }
 
     const notes = [
+      '明細突合はPDFに記載されたCR連番/ファイル名を正として、本人担当・納品状況をHFSと照合しています（金額タイルは参考値）。',
       '実データはHFS登録の per-unit 支払単価の集計（税抜ベースのことが多い）。請求書は税込額面のため約10%の差は消費税の可能性があります。',
-      '「前月納品」「未納品先行」は参考値です。前月分の後追い請求・納品前の先行請求を含む請求書は、これらとの組み合わせで一致判定します。',
-      'LP/HP一式・時給（秘書業務/時給ディレクション）・立替経費・HFS未登録案件は、どのバケットにも含まれません（差分＝誤りとは限りません）。',
+      'LP/HP一式・時給（秘書業務/時給ディレクション）・立替経費・HFS未登録案件は突合対象外です（差分＝誤りとは限りません）。',
     ];
-    if (cur.zeroPriceCount > 0) notes.push(`当月納品に単価が解決できない（¥0）クリエイティブが ${cur.zeroPriceCount} 件あります（line 未紐付けの可能性）。`);
+    if (zeroPriceCount > 0) notes.push(`当月納品に単価が解決できない（¥0）クリエイティブが ${zeroPriceCount} 件あります（line 未紐付けの可能性）。`);
 
-    const verdict = evaluatePayoutDiffMulti({
-      invoiceAmount: rec.invoice_amount,
-      currentTotal: cur.total,
-      prevTotal: prev.total,
-      undeliveredTotal: und.total,
-    });
     const detail = {
       invoice_amount: rec.invoice_amount ?? null,
-      actual_total: cur.total,
+      actual_total: totals.current,
       delta: verdict.delta,
       delta_with_tax: verdict.delta_with_tax,
-      matched_basis: verdict.matched_basis || null,
-      matched_label: verdict.matched_label || null,
-      matched_total: verdict.matched_total ?? null,
-      prev_month: { year: prevYear, month: prevMonth, total: prev.total, count: prev.count },
-      undelivered: { total: und.total, count: und.count },
-      clients: cur.clients,
+      matched_basis: keyMode ? null : (verdict.matched_basis || null),
+      matched_label: keyMode ? null : (verdict.matched_label || null),
+      matched_total: keyMode ? null : (verdict.matched_total ?? null),
+      prev_month: { year: prevYear, month: prevMonth, total: totals.prev, count: Array.from(mine.values()).filter(e => e.bucket === 'prev').length },
+      undelivered: { total: totals.undelivered, count: Array.from(mine.values()).filter(e => e.bucket === 'undelivered').length },
+      line_check: lineCheck,
+      clients,
       notes,
     };
 
     const { data: updated, error: upErr } = await supabase
       .from('payout_records')
       .update({
-        diff_status: verdict.status,
+        diff_status: status,
         diff_detail: detail,
         diff_checked_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

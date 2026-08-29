@@ -98,3 +98,26 @@ describe('evaluatePayoutDiffMulti', () => {
     expect(evaluatePayoutDiffMulti({ invoiceAmount: null, currentTotal: 100, prevTotal: 0, undeliveredTotal: 0 }).status).toBe('unknown');
   });
 });
+
+describe('extractCreativeKeys', () => {
+  const { extractCreativeKeys } = require('../../utils/payout');
+  test('末尾7桁連番と短命名を抽出（重複除去）', () => {
+    const text = '品目名：260801_SW_FB_mv_ap016_1080_1920_0000345\n内訳：0000346、0000346\nハビー 044_bn_1080_1920\n単価3,500';
+    const k = extractCreativeKeys(text);
+    expect(k.tails.sort()).toEqual(['0000345', '0000346']);
+    expect(k.names).toEqual(['044_bn_1080_1920']);
+  });
+  test('電話番号・口座番号・郵便番号は拾わない', () => {
+    const text = 'TEL:090-1151-4191 〒939-8081 口座番号：9329099 銀行コード0038 支店107';
+    const k = extractCreativeKeys(text);
+    expect(k.tails).toEqual([]);
+    expect(k.names).toEqual([]);
+  });
+  test('全角数字も正規化して拾う', () => {
+    const k = extractCreativeKeys('０００００９１');
+    expect(k.tails).toEqual(['0000091']);
+  });
+  test('空テキストは空配列', () => {
+    expect(extractCreativeKeys('')).toEqual({ tails: [], names: [] });
+  });
+});
