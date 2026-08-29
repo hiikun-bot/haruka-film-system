@@ -24493,22 +24493,25 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
     let sentReason = null;
     let messageBody = null;
     const dm = String(user?.chatwork_dm_id || '').trim();
+    const directRoom = String(user?.chatwork_direct_room_id || '').trim();
+    const hasDm = /^\d+$/.test(dm);
+    const hasDirectRoom = /^\d+$/.test(directRoom);
     if (!user) {
       sentReason = 'メンバーが見つからないため送信していません';
-    } else if (!/^\d+$/.test(dm)) {
-      // memory: 非数字の Chatwork ID は To が silent 失敗するため送信自体を行わない
-      sentReason = 'Chatwork アカウントID（数字）が未設定のため送信していません';
+    } else if (!hasDm && !hasDirectRoom) {
+      // memory: 非数字の Chatwork ID は To が silent 失敗するため送信自体を行わない。
+      // ただし個別チャットのルームIDがあればアカウントID無しでも DM 送信は可能。
+      sentReason = 'Chatwork のアカウントID・個別チャットが未登録のため送信していません';
     } else {
       const { sendChatworkRoom } = require('../notifications');
       // 送信先の優先順: 個別チャット（chatwork_direct_room_id）→ 全体チャット + [To:]
-      const directRoom = String(user.chatwork_direct_room_id || '').trim();
-      if (/^\d+$/.test(directRoom)) {
+      if (hasDirectRoom) {
         messageBody = text; // DM は To 不要
         const r = await sendChatworkRoom(directRoom, messageBody);
         if (r.ok) { sent = true; sentVia = 'dm'; }
-        else sentReason = `Chatwork DM 送信に失敗（${r.reason || r.status}）。全体チャットへフォールバックします`;
+        else sentReason = `Chatwork DM 送信に失敗（${r.reason || r.status}）${hasDm ? '。全体チャットへフォールバックします' : ''}`;
       }
-      if (!sent) {
+      if (!sent && hasDm) {
         const { data: setting } = await supabase
           .from('system_settings').select('value').eq('key', PAYOUT_CHATWORK_ROOM_SETTING_KEY).maybeSingle();
         const roomId = (setting && setting.value) || PAYOUT_DEFAULT_CHATWORK_ROOM_ID;
@@ -24756,9 +24759,14 @@ router.post('/admin/payouts/chatwork-sync', requireAuth, requirePermission('payo
       .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id');
     if (uErr) throw new Error(uErr.message);
 
+    const { normalizePersonName } = require('../utils/payout');
     let matched = 0;
     let updated = 0;
     const unmatched = []; // chatwork_dm_id はあるが DM ルームが見つからないメンバー
+    const backfilled = []; // 名前マッチで Chatwork ID ごと自動補完したメンバー
+    const usedAccountIds = new Set();
+
+    // 1) アカウントID起点の突合（従来）
     for (const u of (users || [])) {
       const dm = String(u.chatwork_dm_id || '').trim();
       if (!/^\d+$/.test(dm)) continue;
@@ -24768,11 +24776,47 @@ router.post('/admin/payouts/chatwork-sync', requireAuth, requirePermission('payo
         continue;
       }
       matched++;
+      usedAccountIds.add(dm);
       if (String(u.chatwork_direct_room_id || '') !== hit.room_id) {
         const { error: upErr } = await supabase
           .from('users').update({ chatwork_direct_room_id: hit.room_id }).eq('id', u.id);
         if (upErr) console.warn(`[payouts][chatwork-sync] 更新失敗 ${u.full_name}: ${upErr.message}`);
         else updated++;
+      }
+    }
+
+    // 2) 名前マッチによる補完: Chatwork ID 未登録メンバーを、未使用DMルームの相手表示名と
+    //    正規化（空白除去）一致で突合し、一意に決まる場合のみ ID とルームIDを両方セットする。
+    //    （例: 請求書はHFS発行でチャットIDが未登録のまま、というメンバーの自動救済）
+    const noIdUsers = (users || []).filter(u => !/^\d+$/.test(String(u.chatwork_dm_id || '').trim()) && u.is_active !== false);
+    if (noIdUsers.length) {
+      const partnerByNorm = new Map(); // 正規化名 -> [{account_id, room_id, partner_name}]
+      for (const [accountId, info] of roomByAccount) {
+        if (usedAccountIds.has(accountId)) continue;
+        const key = normalizePersonName(info.partner_name);
+        if (!key) continue;
+        if (!partnerByNorm.has(key)) partnerByNorm.set(key, []);
+        partnerByNorm.get(key).push({ account_id: accountId, ...info });
+      }
+      for (const u of noIdUsers) {
+        const keys = [normalizePersonName(u.full_name), normalizePersonName(u.nickname)].filter(Boolean);
+        let hits = [];
+        for (const k of keys) {
+          const arr = partnerByNorm.get(k);
+          if (arr) hits = hits.concat(arr);
+        }
+        const uniq = Array.from(new Map(hits.map(h => [h.account_id, h])).values());
+        if (uniq.length !== 1) continue; // 一意に決まらない場合は誤紐付けを避けて何もしない
+        const hit = uniq[0];
+        const { error: upErr } = await supabase
+          .from('users')
+          .update({ chatwork_dm_id: hit.account_id, chatwork_direct_room_id: hit.room_id })
+          .eq('id', u.id);
+        if (upErr) { console.warn(`[payouts][chatwork-sync] 補完失敗 ${u.full_name}: ${upErr.message}`); continue; }
+        usedAccountIds.add(hit.account_id);
+        matched++;
+        updated++;
+        backfilled.push(`${u.nickname || u.full_name}（${hit.partner_name}）`);
       }
     }
 
@@ -24782,6 +24826,7 @@ router.post('/admin/payouts/chatwork-sync', requireAuth, requirePermission('payo
       direct_rooms: directRooms.length,
       matched,
       updated,
+      backfilled,
       unmatched,
     });
   } catch (e) {
