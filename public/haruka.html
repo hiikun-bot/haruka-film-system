@@ -14097,8 +14097,11 @@ function renderCreatives() {
   // filtered     = baseFiltered にビュー絞り込み (mine/ball) を追加（作業エリアで使う）
   // ────────────────────────────────────────────────────────────────
   const baseFiltered = allCreatives.filter(c => {
-    // 取引終了クライアントの案件は既定で除外（トグルONなら表示）
-    if (!showEndedInCreatives && c.projects?.clients?.status === 'クライアント取引終了') return false;
+    // 取引終了クライアントの案件は既定で除外（トグルONなら表示）。
+    // ただしキーワード検索中は除外しない: 取引終了クライアントの過去CRを検索しても
+    // 0件になり「CRが消えた・紛失した」ように見えるため（検索は全期間・全スコープ横断。
+    // ボール/ビューの検索バイパス #db00a22b / PR #1039 と同じ発想）。
+    if (!searchText && !showEndedInCreatives && c.projects?.clients?.status === 'クライアント取引終了') return false;
     // クライアント複数選択フィルタ（OR）
     if (currentClientIds.size > 0 && !currentClientIds.has(c.projects?.clients?.id)) return false;
     if (searchText) {
@@ -14139,10 +14142,17 @@ function renderCreatives() {
       || c.creative_type === 'hp'
       || c.creative_type === 'line'
       || assigneeUserRole === 'designer';
-    if (_role === 'designer' && !isDesign) return false;
-    if (_role === 'editor' && isDesign) return false;
-    // 詳細フィルター（ステータス/SOS/納品済み/遅延のみ）
-    if (typeof _cvApplyAdvFilter === 'function' && !_cvApplyAdvFilter(c)) return false;
+    // キーワード検索中はロール別フィルターを適用しない（editor がデザインCRを
+    // ファイル名で検索しても 0件になるのを防ぐ。検索は全種別横断）。
+    if (!searchText && _role === 'designer' && !isDesign) return false;
+    if (!searchText && _role === 'editor' && isDesign) return false;
+    // 詳細フィルター（ステータス/SOS/納品済み/遅延のみ）。
+    // キーワード検索中は適用しない: サーバーは検索時に納品済みも含めて全期間から
+    // 返す（バグ #db00a22b 対応）のに、ここで「納品済み除外」やメンバーマスター由来の
+    // ステータス既定 OFF（例: Wチェックの検索消失バグと同型）が掛かると、
+    // 納期が過去のCR・納品済みCRが検索してもヒットせず「該当なし」になる。
+    // ボール/ビューの検索バイパスと同条件で、検索は全フィルタ横断に揃える。
+    if (!searchText && typeof _cvApplyAdvFilter === 'function' && !_cvApplyAdvFilter(c)) return false;
     return true;
   });
   // ビュー絞り込み（自分の案件/自分のボール）— 作業エリア用フィルタ
