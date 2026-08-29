@@ -24246,7 +24246,13 @@ async function buildPayoutListResponse(year, month, scanExtra = null) {
   } catch (_) { /* noop */ }
 
   const newUserIds = (scanExtra && scanExtra.new_user_ids) || new Set();
-  const records = (recs || []).map(r => payoutRecordToJson(r, userById.get(r.user_id), {
+  // 退職者（is_active=false）の未振込レコードは一覧から除外（振込済みは支払履歴として残す）
+  const visibleRecs = (recs || []).filter(r => {
+    const u = userById.get(r.user_id);
+    if (!u || u.is_active === false) return r.status === 'paid';
+    return true;
+  });
+  const records = visibleRecs.map(r => payoutRecordToJson(r, userById.get(r.user_id), {
     is_new: newUserIds.has(r.user_id),
     folder_url: folderUrlByUser.get(r.user_id) || null,
   }));
@@ -24327,10 +24333,14 @@ async function scanPayoutDriveMonth(year, month) {
   };
 
   const { data: users, error: uErr } = await supabase
-    .from('users').select('id, full_name, nickname');
+    .from('users').select('id, full_name, nickname, is_active');
   if (uErr) throw new Error(`users 取得失敗: ${uErr.message}`);
+  // 退職者（is_active=false）は振込対象外: 名前マッチにもフォルダマッピングにも乗せない
+  const activeUsers = (users || []).filter(u => u.is_active !== false);
+  const activeIds = new Set(activeUsers.map(u => u.id));
+  const inactiveNameById = new Map((users || []).filter(u => u.is_active === false).map(u => [u.id, u.nickname || u.full_name]));
   const userIdByNorm = new Map();
-  for (const u of (users || [])) {
+  for (const u of activeUsers) {
     const keys = [normalizePersonName(u.full_name), normalizePersonName(u.nickname)].filter(Boolean);
     for (const k of keys) if (!userIdByNorm.has(k)) userIdByNorm.set(k, u.id);
   }
@@ -24340,7 +24350,7 @@ async function scanPayoutDriveMonth(year, month) {
     .from('member_invoice_folders')
     .select('user_id, folder_id')
     .eq('year', year).eq('month', month);
-  const userIdByFolderId = new Map((mif || []).filter(m => m.folder_id).map(m => [m.folder_id, m.user_id]));
+  const userIdByFolderId = new Map((mif || []).filter(m => m.folder_id && activeIds.has(m.user_id)).map(m => [m.folder_id, m.user_id]));
 
   const scans = []; // { user_id, files: [driveFile] }
   const matchedFolders = []; // { user_id, folder_id } — member_invoice_folders への補完用
@@ -24375,7 +24385,12 @@ async function scanPayoutDriveMonth(year, month) {
           || userIdByNorm.get(normalizeFolderPersonName(sf.name))
           || null;
         if (!uid) {
-          if (files.length) result.unmatched_folders.push({ name: sf.name, url: `https://drive.google.com/drive/folders/${sf.id}` });
+          if (files.length) {
+            // 退職者のフォルダは要確認として名前に注記を付けて表示（振込対象には載せない）
+            const inactiveHit = (mif || []).find(m => m.folder_id === sf.id && inactiveNameById.has(m.user_id));
+            const label = inactiveHit ? `${sf.name}（退職済み: ${inactiveNameById.get(inactiveHit.user_id)}）` : sf.name;
+            result.unmatched_folders.push({ name: label, url: `https://drive.google.com/drive/folders/${sf.id}` });
+          }
           return;
         }
         matchedFolders.push({ user_id: uid, folder_id: sf.id });
