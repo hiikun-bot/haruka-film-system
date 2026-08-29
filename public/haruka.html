@@ -27507,7 +27507,7 @@ function poRenderDiffModal(id) {
   const d = r.diff_detail || {};
   const statusBadge =
     r.diff_status === 'match' ? '<span class="po-badge" style="background:var(--em-pale);color:var(--em-dark)">✅ 一致</span>' :
-    r.diff_status === 'diff' ? '<span class="po-badge" style="background:#FDECEA;color:#C0392B">⚠️ 差分あり</span>' :
+    r.diff_status === 'diff' ? `<span class="po-badge" style="background:#FDECEA;color:#C0392B">⚠️ ${(d.line_check && d.line_check.mode === 'keys') ? `要確認（明細${(d.line_check.issues || []).length}件）` : '差分あり'}</span>` :
     '<span class="po-badge" style="background:var(--border-light);color:var(--text-muted)">❓ 判定不可</span>';
   const delta = Number(d.delta) || 0;
   let html =
@@ -27527,6 +27527,32 @@ function poRenderDiffModal(id) {
     const explained = (Number(d.actual_total) || 0) + (Number(d.prev_month.total) || 0) + (Number(d.undelivered.total) || 0);
     html += `<div style="margin:-4px 0 12px;font-size:12px;color:var(--text-muted)">参考: 当月＋前月＋未納品先行の合計は ${poYen(explained)}（請求額との差 ${poYen((Number(d.invoice_amount) || 0) - explained)}。残る差はLP一式・HFS未登録案件・単価差などの可能性）</div>`;
   }
+  // 明細突合（PDF申告が正）セクション
+  const lc = d.line_check || null;
+  if (lc && lc.mode === 'keys') {
+    const issues = lc.issues || [];
+    const unbilled = lc.unbilled || [];
+    html += `<div style="margin-bottom:14px;padding:10px 12px;border:0.5px solid var(--border);border-radius:8px;background:var(--bg)">` +
+      `<div style="font-size:12px;font-weight:600;margin-bottom:6px">📋 明細突合（PDFの申告内容が正・キー${Number(lc.total_keys) || 0}件）</div>` +
+      `<div style="font-size:12px;line-height:1.8">✅ 本人担当: 当月納品 ${Number(lc.matched_current) || 0}件 ／ 前月納品 ${Number(lc.matched_prev) || 0}件 ／ それ以前 ${Number(lc.matched_older) || 0}件 ／ ⏳ 未納品（先行請求） ${Number(lc.matched_undelivered) || 0}件</div>`;
+    if (issues.length) {
+      html += `<div style="font-size:12px;color:#C0392B;margin-top:6px;font-weight:600">⚠️ 要確認 ${issues.length}件</div>` +
+        issues.map(it => `<div style="font-size:12px;margin-top:2px">・${esc(it.key)} … ${it.type === 'other'
+          ? `HFS上の担当は ${esc((it.holders || []).join('、') || '不明')}（本人の担当登録なし）${it.file_name ? `<span style="color:var(--text-muted)"> ${esc(it.file_name)}</span>` : ''}`
+          : 'HFSに該当なし（未登録・書き間違い・過去請求分の可能性）'}</div>`).join('');
+    } else {
+      html += `<div style="font-size:12px;color:var(--em-dark);margin-top:6px">申告された明細はすべて本人担当としてHFSと整合しています</div>`;
+    }
+    if (unbilled.length) {
+      html += `<div style="font-size:12px;margin-top:8px;color:#C05A0A;font-weight:600">📝 請求書に見当たらない当月納品（請求漏れ候補 ${unbilled.length}件）</div>` +
+        unbilled.map(u => `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">・${esc(u.file_name)}（${poYen(u.price)}）</div>`).join('');
+    }
+    if (lc.note) html += `<div style="font-size:11px;color:var(--text-muted);margin-top:6px">${esc(lc.note)}</div>`;
+    html += '</div>';
+  } else if (lc && lc.note) {
+    html += `<div style="margin-bottom:12px;font-size:12px;color:var(--text-muted)">${esc(lc.note)}</div>`;
+  }
+
   const clients = d.clients || [];
   if (clients.length > 0) {
     html += '<div style="font-size:12px;font-weight:600;margin-bottom:6px">クライアント別内訳（実データ）</div>' +

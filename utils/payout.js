@@ -100,11 +100,29 @@ function evaluatePayoutDiffMulti({ invoiceAmount, currentTotal, prevTotal, undel
   return { ...base, matched_basis: null, matched_label: null, matched_total: null };
 }
 
+// 請求書PDFテキストから、HFS照合用のクリエイティブキーを抽出する。
+// - tails: ファイル名末尾の7桁連番（0始まり。例 0000345）
+// - names: 短命名（例 044_bn_1080_1920 のようなハビー型）
+// 電話番号・口座番号などの連続数字に埋もれた誤検出を避けるため前後に数字が無いことを要求する。
+function extractCreativeKeys(text) {
+  const t = String(text || '')
+    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  const tails = new Set();
+  const names = new Set();
+  let m;
+  const tailRe = /(?<![0-9])(0[0-9]{6})(?![0-9])/g;
+  while ((m = tailRe.exec(t)) !== null) tails.add(m[1]);
+  const nameRe = /(?<![0-9_])([0-9]{3}_[A-Za-z]{1,4}_[0-9]{3,4}_[0-9]{3,4})(?![0-9])/g;
+  while ((m = nameRe.exec(t)) !== null) names.add(m[1]);
+  return { tails: Array.from(tails), names: Array.from(names) };
+}
+
 module.exports = {
   buildPayoutMessage,
   extractInvoiceAmount,
   evaluatePayoutDiff,
   evaluatePayoutDiffMulti,
+  extractCreativeKeys,
   normalizeFolderPersonName,
   normalizePersonName,
 };
