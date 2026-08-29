@@ -7029,6 +7029,12 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <button class="an-menu-btn an-menu-active" data-view="monthly-revenue" data-an-perm="analytics.view" onclick="switchAnalyticsView('monthly-revenue')">
         <span style="font-size:14px">💰</span><span>月次売上・粗利</span>
       </button>
+      <button class="an-menu-btn" data-view="monthly-trend" data-an-perm="analytics.view" onclick="switchAnalyticsView('monthly-trend')">
+        <span style="font-size:14px">📈</span><span>月次推移</span>
+      </button>
+      <button class="an-menu-btn" data-view="client-profit-ranking" data-an-perm="analytics.view" onclick="switchAnalyticsView('client-profit-ranking')">
+        <span style="font-size:14px">🏆</span><span>クライアント別採算</span>
+      </button>
       <div class="an-menu-section" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">本数集計</div>
       <button class="an-menu-btn" data-view="creator-summary" data-an-perm="analytics.view" onclick="switchAnalyticsView('creator-summary')">
         <span style="font-size:14px">👤</span><span>クリエイター別作成本数</span>
@@ -7040,6 +7046,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <button class="an-menu-btn" data-view="filename-export" data-an-perm="analytics.view" onclick="switchAnalyticsView('filename-export')">
         <span style="font-size:14px">📄</span><span>案件別ファイル名一覧</span>
       </button>
+      <div class="an-menu-section" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">納期・品質</div>
+      <button class="an-menu-btn" data-view="delivery-quality" data-an-perm="analytics.view" onclick="switchAnalyticsView('delivery-quality')">
+        <span style="font-size:14px">🚚</span><span>納期遵守・修正回数</span>
+      </button>
       <div class="an-menu-section" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">データ品質</div>
       <button class="an-menu-btn" data-view="cost-coverage" data-an-perm="analytics.view" onclick="switchAnalyticsView('cost-coverage')">
         <span style="font-size:14px">⚠️</span><span>単価未設定チェッカー</span>
@@ -7050,7 +7060,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </button>
       <div id="an-menu-footer" data-an-perm="analytics.view" style="font-size:10px;color:var(--text-muted);margin:14px 6px 0;line-height:1.5">
         他の集計は順次追加予定<br>
-        （月次推移・チーム別・納期遵守率 等）
+        （チーム別 等）
       </div>
     </aside>
 
@@ -7093,6 +7103,23 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
               <option value="in_progress">進行中のみ（未納品）</option>
               <option value="delivered">納品済みのみ</option>
             </select>
+          </div>
+          <div id="an-trend-months-wrap" style="display:none">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">期間</div>
+            <select id="an-trend-months" class="form-select" style="font-size:13px;padding:8px 10px;height:38px">
+              <option value="6">直近6ヶ月</option>
+              <option value="12" selected>直近12ヶ月</option>
+              <option value="18">直近18ヶ月</option>
+              <option value="24">直近24ヶ月</option>
+            </select>
+          </div>
+          <div id="an-cpr-range-wrap" style="display:none">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">期間（from 〜 to）</div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <input type="month" id="an-cpr-from" class="form-input" style="font-size:13px;padding:8px 10px;height:38px">
+              <span style="color:var(--text-muted);font-size:12px">〜</span>
+              <input type="month" id="an-cpr-to" class="form-input" style="font-size:13px;padding:8px 10px;height:38px">
+            </div>
           </div>
           <button class="btn-primary" id="an-load-btn" onclick="loadAnalytics()" style="font-size:13px;padding:8px 16px;height:38px">集計</button>
           <button class="btn" id="an-reload-coverage-btn" onclick="loadCostCoverage()" style="font-size:13px;padding:8px 16px;height:38px;display:none">🔄 再チェック</button>
@@ -43915,9 +43942,49 @@ function switchAnalyticsView(view, skipReset) {
   const reloadBtn   = document.getElementById('an-reload-coverage-btn');
   // ファイル名一覧専用フィルタは既定で隠し、当該ビューのみで表示する
   if (fnStatusWrap) fnStatusWrap.style.display = 'none';
+  // 月次推移（直近Nヶ月セレクタ）/ クライアント別採算（from〜to 月ピッカー）専用フィルタも同様に既定で隠す
+  const trendMonthsWrap = document.getElementById('an-trend-months-wrap');
+  const cprRangeWrap = document.getElementById('an-cpr-range-wrap');
+  if (trendMonthsWrap) trendMonthsWrap.style.display = 'none';
+  if (cprRangeWrap) cprRangeWrap.style.display = 'none';
   if (view === 'monthly-revenue') {
     if (titleEl) titleEl.textContent = '💰 月次売上・粗利';
     if (descEl)  descEl.textContent  = '当月の売上（確定+見込み）/原価/粗利/粗利率をクライアント別に集計します。';
+    if (clientWrap) clientWrap.style.display = 'none';
+    if (statusFilterWrap) statusFilterWrap.style.display = 'none';
+    if (monthWrap) monthWrap.style.display = '';
+    if (sheetBtn)  sheetBtn.style.display  = '';
+    if (loadBtn)   loadBtn.style.display   = '';
+    if (reloadBtn) reloadBtn.style.display = 'none';
+  } else if (view === 'monthly-trend') {
+    if (titleEl) titleEl.textContent = '📈 月次推移';
+    if (descEl)  descEl.textContent  = '直近Nヶ月の売上（確定+見込み）/原価/粗利/粗利率の推移をチャートと月別テーブルで表示します。';
+    if (clientWrap) clientWrap.style.display = 'none';
+    if (statusFilterWrap) statusFilterWrap.style.display = 'none';
+    if (monthWrap) monthWrap.style.display = 'none';
+    if (trendMonthsWrap) trendMonthsWrap.style.display = '';
+    if (sheetBtn)  sheetBtn.style.display  = '';
+    if (loadBtn)   loadBtn.style.display   = '';
+    if (reloadBtn) reloadBtn.style.display = 'none';
+  } else if (view === 'client-profit-ranking') {
+    if (titleEl) titleEl.textContent = '🏆 クライアント別採算ランキング';
+    if (descEl)  descEl.textContent  = '期間内の売上・原価をクライアント別に累計し、粗利額の降順でランキング表示します（既定: 当年1月〜当月）。';
+    if (clientWrap) clientWrap.style.display = 'none';
+    if (statusFilterWrap) statusFilterWrap.style.display = 'none';
+    if (monthWrap) monthWrap.style.display = 'none';
+    if (cprRangeWrap) cprRangeWrap.style.display = '';
+    // 期間の既定値: 当年1月〜当月（未入力のときだけ埋める）
+    const cprFrom = document.getElementById('an-cpr-from');
+    const cprTo = document.getElementById('an-cpr-to');
+    const nowCpr = new Date();
+    if (cprFrom && !cprFrom.value) cprFrom.value = `${nowCpr.getFullYear()}-01`;
+    if (cprTo && !cprTo.value) cprTo.value = `${nowCpr.getFullYear()}-${String(nowCpr.getMonth() + 1).padStart(2, '0')}`;
+    if (sheetBtn)  sheetBtn.style.display  = '';
+    if (loadBtn)   loadBtn.style.display   = '';
+    if (reloadBtn) reloadBtn.style.display = 'none';
+  } else if (view === 'delivery-quality') {
+    if (titleEl) titleEl.textContent = '🚚 納期遵守・修正回数';
+    if (descEl)  descEl.textContent  = '対象月に納品したクリエイティブの納期遵守率と修正回数（クライアントチェックの2回目以降を修正とカウント）をクライアント別に集計します。';
     if (clientWrap) clientWrap.style.display = 'none';
     if (statusFilterWrap) statusFilterWrap.style.display = 'none';
     if (monthWrap) monthWrap.style.display = '';
@@ -43994,6 +44061,13 @@ async function loadAnalytics() {
   if (_analyticsView === 'filename-export') {
     return loadFilenameExport();
   }
+  // 月次推移（直近Nヶ月）/ クライアント別採算（from〜to 期間）は対象月フィルタを使わないので専用ロードに委譲
+  if (_analyticsView === 'monthly-trend') {
+    return loadMonthlyTrend();
+  }
+  if (_analyticsView === 'client-profit-ranking') {
+    return loadClientProfitRanking();
+  }
   const ym = document.getElementById('an-month').value;
   if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
   const [year, month] = ym.split('-');
@@ -44010,6 +44084,8 @@ async function loadAnalytics() {
     url = `${API}/analytics/creator-summary?year=${year}&month=${parseInt(month,10)}&status=${status}`;
   } else if (_analyticsView === 'bug-reports') {
     url = `${API}/analytics/bug-reports?year=${year}&month=${parseInt(month,10)}`;
+  } else if (_analyticsView === 'delivery-quality') {
+    url = `${API}/analytics/delivery-quality?year=${year}&month=${parseInt(month,10)}`;
   } else {
     const client_id = document.getElementById('an-client').value || '';
     url = `${API}/analytics/creative-by-assignee?year=${year}&month=${parseInt(month,10)}` +
@@ -44027,6 +44103,7 @@ async function loadAnalytics() {
   if (_analyticsView === 'monthly-revenue') renderMonthlyRevenueTable(data);
   else if (_analyticsView === 'creator-summary') renderCreatorSummaryTable(data);
   else if (_analyticsView === 'bug-reports') renderBugReportsAnalytics(data);
+  else if (_analyticsView === 'delivery-quality') renderDeliveryQuality(data);
   else renderAnalyticsTable(data);
 }
 
@@ -45009,23 +45086,39 @@ function renderBugReportsAnalytics(data) {
 
 // スプレッドシート出力（CSV ではなく Sheets を基本とする方針）
 async function exportAnalyticsToSheet() {
-  const ym = document.getElementById('an-month').value;
-  if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
-  const [year, month] = ym.split('-');
-  const status = document.getElementById('an-status-filter').value || 'delivered';
   let endpoint, body;
-  if (_analyticsView === 'monthly-revenue') {
-    endpoint = `${API}/analytics/monthly-revenue/export-sheet`;
-    body = { year: parseInt(year, 10), month: parseInt(month, 10) };
-  } else if (_analyticsView === 'creator-summary') {
-    endpoint = `${API}/analytics/creator-summary/export-sheet`;
-    body = { year: parseInt(year, 10), month: parseInt(month, 10), status };
-  } else if (_analyticsView === 'bug-reports') {
-    endpoint = `${API}/analytics/bug-reports/export-sheet`;
-    body = { year: parseInt(year, 10), month: parseInt(month, 10) };
+  if (_analyticsView === 'monthly-trend') {
+    // 月次推移は対象月ではなく「直近Nヶ月」で出力する
+    endpoint = `${API}/analytics/monthly-trend/export-sheet`;
+    body = { months: parseInt(document.getElementById('an-trend-months')?.value, 10) || 12 };
+  } else if (_analyticsView === 'client-profit-ranking') {
+    // クライアント別採算は from〜to の期間で出力する
+    endpoint = `${API}/analytics/client-profit-ranking/export-sheet`;
+    body = {
+      from: document.getElementById('an-cpr-from')?.value || '',
+      to:   document.getElementById('an-cpr-to')?.value || '',
+    };
   } else {
-    endpoint = `${API}/analytics/creative-by-assignee/export-sheet`;
-    body = { year: parseInt(year, 10), month: parseInt(month, 10), client_id: document.getElementById('an-client').value || '', status };
+    const ym = document.getElementById('an-month').value;
+    if (!ym) { showToast('対象月を選んでください', 'warn'); return; }
+    const [year, month] = ym.split('-');
+    const status = document.getElementById('an-status-filter').value || 'delivered';
+    if (_analyticsView === 'monthly-revenue') {
+      endpoint = `${API}/analytics/monthly-revenue/export-sheet`;
+      body = { year: parseInt(year, 10), month: parseInt(month, 10) };
+    } else if (_analyticsView === 'creator-summary') {
+      endpoint = `${API}/analytics/creator-summary/export-sheet`;
+      body = { year: parseInt(year, 10), month: parseInt(month, 10), status };
+    } else if (_analyticsView === 'bug-reports') {
+      endpoint = `${API}/analytics/bug-reports/export-sheet`;
+      body = { year: parseInt(year, 10), month: parseInt(month, 10) };
+    } else if (_analyticsView === 'delivery-quality') {
+      endpoint = `${API}/analytics/delivery-quality/export-sheet`;
+      body = { year: parseInt(year, 10), month: parseInt(month, 10) };
+    } else {
+      endpoint = `${API}/analytics/creative-by-assignee/export-sheet`;
+      body = { year: parseInt(year, 10), month: parseInt(month, 10), client_id: document.getElementById('an-client').value || '', status };
+    }
   }
 
   const btn = document.getElementById('an-sheet-btn');
@@ -45051,6 +45144,323 @@ async function exportAnalyticsToSheet() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = orig || '📊 スプレッドシート出力'; }
   }
+}
+
+// =============== 月次推移（直近Nヶ月の売上/原価/粗利/粗利率） ===============
+
+async function loadMonthlyTrend() {
+  const wrap = document.getElementById('an-table-content');
+  wrap.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">集計中...（月数分の集計を行うため少し時間がかかります）</div>';
+  document.getElementById('an-summary').innerHTML = '';
+  const months = parseInt(document.getElementById('an-trend-months')?.value, 10) || 12;
+  const res = await apiFetch(`${API}/analytics/monthly-trend?months=${months}`);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    wrap.innerHTML = `<div style="padding:20px;text-align:center;color:#E24B4A">エラー: ${esc(e?.error || res.status)}</div>`;
+    return;
+  }
+  const data = await res.json();
+  _analyticsLastResult = data;
+  renderMonthlyTrend(data);
+}
+
+// 複合チャート（インラインSVG）: 棒=売上・粗利（左軸・円）、線=粗利率（右軸・%）
+// 外部チャートライブラリは使わない（CDN追加禁止のため）。
+function buildTrendChartSvg(rows) {
+  if (!rows.length) return '';
+  const W = 960, H = 320;
+  const padL = 74, padR = 60, padT = 18, padB = 36;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = rows.length;
+
+  // 左軸（円）: 売上・原価・粗利を包含。粗利マイナスなら 0 より下も描く
+  const rawMax = Math.max(1, ...rows.map(r => Math.max(r.revenue, r.cost, r.gross_profit)));
+  const rawMin = Math.min(0, ...rows.map(r => r.gross_profit));
+  const niceStep = (range) => {
+    const pow = Math.pow(10, Math.floor(Math.log10(range / 4 || 1)));
+    const base = (range / 4) / pow;
+    return (base <= 1 ? 1 : base <= 2 ? 2 : base <= 5 ? 5 : 10) * pow;
+  };
+  const step = niceStep(rawMax - rawMin);
+  const yMax = Math.ceil(rawMax / step) * step;
+  const yMin = Math.floor(rawMin / step) * step;
+  const yOf = (v) => padT + plotH * (1 - (v - yMin) / (yMax - yMin));
+
+  // 右軸（%）: 粗利率。0〜50% を最低レンジとし、外れたら拡張
+  const margins = rows.map(r => r.gross_margin);
+  const mMax = Math.max(0.5, ...margins);
+  const mMin = Math.min(0, ...margins);
+  const myOf = (v) => padT + plotH * (1 - (v - mMin) / (mMax - mMin));
+
+  const yenShort = (v) => {
+    const a = Math.abs(v);
+    if (a >= 10000) return `${(v / 10000).toLocaleString(undefined, { maximumFractionDigits: 0 })}万`;
+    return v.toLocaleString();
+  };
+
+  // グリッド線 + 左右軸ラベル
+  let grid = '';
+  for (let v = yMin; v <= yMax + step / 2; v += step) {
+    const y = yOf(v);
+    grid += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${v === 0 ? '#94A3B8' : '#E2E8F0'}" stroke-width="1"/>`;
+    grid += `<text x="${padL - 8}" y="${y + 4}" text-anchor="end" font-size="10" fill="#64748B">${yenShort(v)}</text>`;
+  }
+  const mTicks = 5;
+  for (let i = 0; i <= mTicks; i++) {
+    const v = mMin + (mMax - mMin) * i / mTicks;
+    grid += `<text x="${W - padR + 8}" y="${myOf(v) + 4}" text-anchor="start" font-size="10" fill="#6D28D9">${(v * 100).toFixed(0)}%</text>`;
+  }
+
+  // 棒（売上=水色 / 粗利=緑・マイナスは赤）
+  const groupW = plotW / n;
+  const barW = Math.min(26, Math.max(6, groupW * 0.28));
+  const gap = Math.min(6, barW * 0.3);
+  let bars = '', linePts = [], dots = '', xLabels = '';
+  rows.forEach((r, i) => {
+    const cx = padL + groupW * (i + 0.5);
+    const revX = cx - barW - gap / 2;
+    const gpX = cx + gap / 2;
+    const y0 = yOf(0);
+    const revY = yOf(r.revenue);
+    bars += `<rect x="${revX}" y="${Math.min(revY, y0)}" width="${barW}" height="${Math.max(1, Math.abs(y0 - revY))}" fill="#38BDF8" rx="2"><title>${r.year}年${r.month}月 売上 ¥${r.revenue.toLocaleString()}</title></rect>`;
+    const gpY = yOf(r.gross_profit);
+    const gpColor = r.gross_profit >= 0 ? '#34D399' : '#F87171';
+    bars += `<rect x="${gpX}" y="${Math.min(gpY, y0)}" width="${barW}" height="${Math.max(1, Math.abs(y0 - gpY))}" fill="${gpColor}" rx="2"><title>${r.year}年${r.month}月 粗利 ¥${r.gross_profit.toLocaleString()}</title></rect>`;
+    const my = myOf(r.gross_margin);
+    linePts.push(`${cx},${my}`);
+    dots += `<circle cx="${cx}" cy="${my}" r="3.5" fill="#6D28D9"><title>${r.year}年${r.month}月 粗利率 ${(r.gross_margin * 100).toFixed(1)}%</title></circle>`;
+    const showLabel = n <= 12 || i % 2 === 0 || i === n - 1;
+    if (showLabel) {
+      xLabels += `<text x="${cx}" y="${H - padB + 16}" text-anchor="middle" font-size="10" fill="#64748B">${String(r.year).slice(2)}/${r.month}</text>`;
+    }
+  });
+  const line = `<polyline points="${linePts.join(' ')}" fill="none" stroke="#6D28D9" stroke-width="2"/>`;
+
+  const legend = `
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:12px 16px 0;font-size:11px;color:var(--text-muted)">
+      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#38BDF8;border-radius:2px;display:inline-block"></span>売上（確定+見込み）</span>
+      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#34D399;border-radius:2px;display:inline-block"></span>粗利（マイナスは赤）</span>
+      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:2px;background:#6D28D9;display:inline-block"></span>粗利率（右軸）</span>
+    </div>`;
+
+  return `${legend}
+    <div style="overflow-x:auto;padding:4px 8px 0">
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:680px;height:auto;display:block" role="img" aria-label="月次推移チャート">
+        ${grid}${bars}${line}${dots}${xLabels}
+      </svg>
+    </div>`;
+}
+
+function renderMonthlyTrend(data) {
+  const yen = (n) => '¥' + Number(n || 0).toLocaleString();
+  const pct = (n) => `${(Number(n || 0) * 100).toFixed(1)}%`;
+  const rows = data.rows || [];
+  const sumEl = document.getElementById('an-summary');
+  const wrap = document.getElementById('an-table-content');
+  if (!rows.length) {
+    sumEl.innerHTML = '';
+    wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">データがありません</div>';
+    return;
+  }
+  const first = rows[0], last = rows[rows.length - 1];
+  const sumRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+  const sumCost = rows.reduce((s, r) => s + r.cost, 0);
+  const sumProfit = sumRevenue - sumCost;
+  const sumMargin = sumRevenue > 0 ? sumProfit / sumRevenue : 0;
+  const marginColor = (m) => m >= 0.30 ? '#15803D' : m >= 0.15 ? '#B45309' : '#B91C1C';
+  sumEl.innerHTML = `
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間</span> <strong>${first.year}年${first.month}月〜${last.year}年${last.month}月（${data.months}ヶ月）</strong></div>
+    <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間売上合計</span> <strong style="font-size:14px">${yen(sumRevenue)}</strong></div>
+    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間原価合計</span> <strong style="font-size:14px">${yen(sumCost)}</strong></div>
+    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間粗利合計</span> <strong style="font-size:14px">${yen(sumProfit)}</strong></div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間粗利率</span> <strong style="font-size:14px;color:${marginColor(sumMargin)}">${pct(sumMargin)}</strong></div>
+  `;
+
+  const tbody = rows.map(r => {
+    const profitColor = r.gross_profit >= 0 ? '#15803D' : '#B91C1C';
+    return `<tr style="border-bottom:1px solid var(--border-light)">
+      <td style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">${r.year}年${r.month}月</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:600;color:#0369a1;white-space:nowrap">${yen(r.revenue)}<div style="font-size:10px;font-weight:400;color:var(--text-muted)">確定 ${yen(r.confirmed_revenue)} / 見込 ${yen(r.forecast_revenue)}</div></td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:600;color:#b45309;white-space:nowrap">${yen(r.cost)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:${profitColor};white-space:nowrap">${yen(r.gross_profit)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:${marginColor(r.gross_margin)};background:var(--em-pale);white-space:nowrap">${pct(r.gross_margin)}</td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `
+    ${buildTrendChartSvg(rows)}
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;min-width:680px">
+      <thead>
+        <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">月</th>
+          <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">売上（確定+見込み）</th>
+          <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">原価</th>
+          <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">粗利</th>
+          <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">粗利率</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tbody}
+        <tr style="border-top:2px solid var(--em);background:var(--em);color:#fff;font-weight:700">
+          <td style="padding:11px 12px;font-size:12px">期間合計</td>
+          <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(sumRevenue)}</td>
+          <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(sumCost)}</td>
+          <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(sumProfit)}</td>
+          <td style="padding:11px 10px;text-align:right;font-size:13px">${pct(sumMargin)}</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>`;
+}
+
+// =============== クライアント別採算ランキング ===============
+
+async function loadClientProfitRanking() {
+  const wrap = document.getElementById('an-table-content');
+  const from = document.getElementById('an-cpr-from')?.value || '';
+  const to = document.getElementById('an-cpr-to')?.value || '';
+  if (from && to && from > to) { showToast('期間の from は to 以前の月にしてください', 'warn'); return; }
+  wrap.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">集計中...（月数分の集計を行うため少し時間がかかります）</div>';
+  document.getElementById('an-summary').innerHTML = '';
+  const qs = [];
+  if (from) qs.push(`from=${encodeURIComponent(from)}`);
+  if (to) qs.push(`to=${encodeURIComponent(to)}`);
+  const res = await apiFetch(`${API}/analytics/client-profit-ranking${qs.length ? '?' + qs.join('&') : ''}`);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    wrap.innerHTML = `<div style="padding:20px;text-align:center;color:#E24B4A">エラー: ${esc(e?.error || res.status)}</div>`;
+    return;
+  }
+  const data = await res.json();
+  _analyticsLastResult = data;
+  renderClientProfitRanking(data);
+}
+
+function renderClientProfitRanking(data) {
+  const yen = (n) => '¥' + Number(n || 0).toLocaleString();
+  const pct = (n) => `${(Number(n || 0) * 100).toFixed(1)}%`;
+  const sumEl = document.getElementById('an-summary');
+  const wrap = document.getElementById('an-table-content');
+  const marginColor = (m) => m >= 0.30 ? '#15803D' : m >= 0.15 ? '#B45309' : '#B91C1C';
+  sumEl.innerHTML = `
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">期間</span> <strong>${esc(data.from)}〜${esc(data.to)}（${data.months}ヶ月）</strong></div>
+    <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">売上累計</span> <strong style="font-size:14px">${yen(data.total.revenue)}</strong></div>
+    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">原価累計</span> <strong style="font-size:14px">${yen(data.total.cost)}</strong></div>
+    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">粗利累計</span> <strong style="font-size:14px">${yen(data.total.gross_profit)}</strong></div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">粗利率</span> <strong style="font-size:14px;color:${marginColor(data.total.gross_margin)}">${pct(data.total.gross_margin)}</strong></div>
+  `;
+  if (!(data.ranking || []).length) {
+    wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">期間内に売上・原価データのあるクライアントがありません</div>';
+    return;
+  }
+  const medal = (rank) => rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '';
+  const rows = data.ranking.map(c => {
+    const negative = c.gross_profit < 0;
+    const lowMargin = !negative && c.gross_margin < 0.15;
+    // マイナス粗利=赤系 / 粗利率15%未満=警告色 で行を強調
+    const rowBg = negative ? 'background:#FEF2F2;' : lowMargin ? 'background:#FFFBEB;' : '';
+    const profitColor = negative ? '#B91C1C' : '#15803D';
+    return `<tr style="border-bottom:1px solid var(--border-light);${rowBg}">
+      <td style="padding:8px 12px;font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;text-align:center">${medal(c.rank)} ${c.rank}位</td>
+      <td style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">${esc(c.name)}${negative ? ' <span style="font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">赤字</span>' : lowMargin ? ' <span style="font-size:10px;padding:1px 6px;border-radius:5px;background:#FEF3C7;color:#92400E">低採算</span>' : ''}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:600;color:#0369a1;white-space:nowrap">${yen(c.revenue)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;color:#b45309;white-space:nowrap">${yen(c.cost)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:${profitColor};white-space:nowrap">${yen(c.gross_profit)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:${marginColor(c.gross_margin)};background:var(--em-pale);white-space:nowrap">${pct(c.gross_margin)}</td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:780px">
+    <thead>
+      <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+        <th style="padding:9px 12px;text-align:center;font-size:11px;color:var(--em-dark);white-space:nowrap">順位</th>
+        <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">クライアント</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">売上累計</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">原価</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">粗利</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">粗利率</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+      <tr style="border-top:2px solid var(--em);background:var(--em);color:#fff;font-weight:700">
+        <td style="padding:11px 12px;font-size:12px" colspan="2">全体合計</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(data.total.revenue)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(data.total.cost)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(data.total.gross_profit)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${pct(data.total.gross_margin)}</td>
+      </tr>
+    </tbody>
+  </table>`;
+}
+
+// =============== 納期・品質（納期遵守率・修正回数） ===============
+// 修正回数の定義: creative_status_transitions の to_status='クライアントチェック中' への遷移回数 - 1（最小0）。
+// 初回提出で必ず1回「クライアントチェック中」を通るため、2回目以降を「修正」と数える。
+
+function renderDeliveryQuality(data) {
+  const sumEl = document.getElementById('an-summary');
+  const wrap = document.getElementById('an-table-content');
+  const t = data.total || {};
+  const pctOrDash = (v) => v == null ? '—' : `${(v * 100).toFixed(1)}%`;
+  const rateColor = (v) => v == null ? '#64748B' : v >= 0.9 ? '#15803D' : v >= 0.8 ? '#B45309' : '#B91C1C';
+  const revColor = (v) => v >= 3 ? '#B91C1C' : v >= 1.5 ? '#B45309' : '#15803D';
+  const avgRev = Math.round((t.avg_revisions || 0) * 100) / 100;
+  sumEl.innerHTML = `
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">対象月</span> <strong>${data.year}年${data.month}月</strong></div>
+    <div style="background:#DCFCE7;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">納期遵守率</span> <strong style="font-size:15px;color:${rateColor(t.on_time_rate)}">${pctOrDash(t.on_time_rate)}</strong><div style="font-size:10px;color:var(--text-muted);margin-top:2px">納期あり ${t.with_deadline_count || 0}件中 ${t.on_time_count || 0}件</div></div>
+    <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">納品件数</span> <strong style="font-size:15px">${t.delivered_count || 0}件</strong></div>
+    <div style="background:#EDE9FE;border:1px solid #C4B5FD;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">平均修正回数</span> <strong style="font-size:15px;color:${revColor(avgRev)}">${avgRev}回</strong></div>
+    ${(t.no_deadline_count || 0) > 0 ? `
+      <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E" title="納期（final_deadline）が未設定のクリエイティブ。遵守率の分母には含めていません">
+        <strong>納期未設定</strong> ${t.no_deadline_count}件<div style="font-size:10px;margin-top:2px">遵守率の分母から除外</div>
+      </div>` : ''}
+  `;
+  if (!(data.by_client || []).length) {
+    wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">対象月に納品されたクリエイティブがありません</div>';
+    return;
+  }
+  const rows = data.by_client.map(b => {
+    const bAvg = Math.round((b.avg_revisions || 0) * 100) / 100;
+    const lowRate = b.on_time_rate != null && b.on_time_rate < 0.8;
+    const highRev = bAvg >= 3;
+    // 遵守率<80% or 平均修正回数>=3 の行は警告表示
+    const rowBg = (lowRate || highRev) ? 'background:#FFFBEB;' : '';
+    return `<tr style="border-bottom:1px solid var(--border-light);${rowBg}">
+      <td style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">${esc(b.client_name)}${lowRate ? ' <span style="font-size:10px;padding:1px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">遵守率低</span>' : ''}${highRev ? ' <span style="font-size:10px;padding:1px 6px;border-radius:5px;background:#FEF3C7;color:#92400E">修正多</span>' : ''}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:600;white-space:nowrap">${b.delivered_count}件</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text-muted);white-space:nowrap">${b.with_deadline_count}件</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text);white-space:nowrap">${b.on_time_count}件</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:${rateColor(b.on_time_rate)};white-space:nowrap">${pctOrDash(b.on_time_rate)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:${revColor(bAvg)};white-space:nowrap">${bAvg}回</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:${b.no_deadline_count > 0 ? '#B45309' : 'var(--text-muted)'};white-space:nowrap">${b.no_deadline_count}件</td>
+    </tr>`;
+  }).join('');
+  const totalAvg = Math.round((t.avg_revisions || 0) * 100) / 100;
+  wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;min-width:820px">
+    <thead>
+      <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+        <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">クライアント</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">納品件数</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap" title="納期（final_deadline）が設定されている納品件数（遵守率の分母）">納期あり</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap" title="納品完了日（JST）が納期以内だった件数">納期内納品</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">遵守率</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap" title="クライアントチェック中への遷移回数-1（最小0）の平均">平均修正回数</th>
+        <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap" title="納期未設定のため遵守率の分母から除外した件数">納期未設定</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+      <tr style="border-top:2px solid var(--em);background:var(--em);color:#fff;font-weight:700">
+        <td style="padding:11px 12px;font-size:12px">全体合計</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${t.delivered_count || 0}件</td>
+        <td style="padding:11px 10px;text-align:right;font-size:12px">${t.with_deadline_count || 0}件</td>
+        <td style="padding:11px 10px;text-align:right;font-size:12px">${t.on_time_count || 0}件</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${pctOrDash(t.on_time_rate)}</td>
+        <td style="padding:11px 10px;text-align:right;font-size:13px">${totalAvg}回</td>
+        <td style="padding:11px 10px;text-align:right;font-size:12px">${t.no_deadline_count || 0}件</td>
+      </tr>
+    </tbody>
+  </table>`;
 }
 
 // ==================== ナレッジページ ====================
