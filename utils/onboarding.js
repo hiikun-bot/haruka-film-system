@@ -41,6 +41,8 @@ const ONBOARDING_TASK_TEMPLATE = [
   { task_key: 'chatwork_all_chat', phase: 'final', label: 'Chatwork全体チャットへの追加' },
   { task_key: 'slack_all_chat',    phase: 'final', label: 'Slack全体チャットへの追加' },
   { task_key: 'work_chats_add',    phase: 'final', label: '業務上必要となるチャットへの追加' },
+  { task_key: 'slack_id_register',    phase: 'final', label: 'Slack IDをメンバー情報に登録' },
+  { task_key: 'chatwork_id_register', phase: 'final', label: 'Chatwork ID（数字のアカウントID）をメンバー情報に登録' },
   { task_key: 'gnd_info_share',   phase: 'final', label: 'GOOD NEW Design関連の情報共有' },
   { task_key: 'invoice_guide',    phase: 'final', label: '請求書発行手続きの案内' },
   { task_key: 'team_assignment',  phase: 'final', label: 'チーム配属の決定' },
