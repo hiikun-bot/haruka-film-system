@@ -24218,179 +24218,255 @@ function payoutRecordToJson(rec, user, extra = {}) {
   };
 }
 
-// GET /api/haruka/admin/payouts?year=2026&month=8
+// ---------- 一覧レスポンス（DBのみ・高速） ----------
+// scanExtra は scanPayoutDriveMonth の結果（省略時はスキャン情報なしで返す）
+async function buildPayoutListResponse(year, month, scanExtra = null) {
+  const { data: users, error: uErr } = await supabase
+    .from('users')
+    .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, slack_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana');
+  if (uErr) throw new Error(`users 取得失敗: ${uErr.message}`);
+  const userById = new Map((users || []).map(u => [u.id, u]));
+
+  const { data: recs, error: rErr } = await supabase
+    .from('payout_records').select('*').eq('year', year).eq('month', month);
+  if (rErr) throw new Error(`payout_records 取得失敗: ${rErr.message}（migration 2026-08-29d_payout_records.sql が未適用の可能性）`);
+
+  const newUserIds = (scanExtra && scanExtra.new_user_ids) || new Set();
+  const records = (recs || []).map(r => payoutRecordToJson(r, userById.get(r.user_id), { is_new: newUserIds.has(r.user_id) }));
+  const paidCount = records.filter(r => r.status === 'paid').length;
+  const totalAmount = records.reduce((sum, r) => sum + (Number(r.invoice_amount) || 0), 0);
+  const unpaidAmount = records.filter(r => r.status !== 'paid').reduce((sum, r) => sum + (Number(r.invoice_amount) || 0), 0);
+
+  // Slack DM リンク用の team id（https://slack.com/app_redirect?team=...&channel=<U...> は
+  // 閲覧者自身と相手のDMへ飛ぶため、SlackはDMチャンネルID(D...)のマスター管理が不要）
+  let slackTeamId = 'T094ST9L5MH';
+  try {
+    const { data: st } = await supabase
+      .from('system_settings').select('value').eq('key', 'slack_team_id').maybeSingle();
+    if (st && st.value) slackTeamId = st.value;
+  } catch (_) { /* noop */ }
+
+  return {
+    year, month,
+    slack_team_id: slackTeamId,
+    scanned: !!scanExtra,
+    month_folder_found: scanExtra ? scanExtra.month_folder_found : null,
+    scan_warning: scanExtra ? scanExtra.scan_warning : null,
+    records,
+    unmatched_folders: scanExtra ? scanExtra.unmatched_folders : [],
+    summary: {
+      total_records: records.length,
+      paid_count: paidCount,
+      total_amount: totalAmount,
+      unpaid_amount: unpaidAmount,
+      new_pdf_count: scanExtra ? scanExtra.new_pdf_count : 0,
+    },
+  };
+}
+
+// ---------- 月フォルダIDキャッシュ ----------
+// 請求書ルート→年→月のフォルダ探索（3〜5 Drive呼び出し＋ルート解決の権限付与副作用）を
+// 毎回行わないよう、解決済みIDを system_settings 1キーの JSON に保持する。
+const PAYOUT_MONTH_FOLDER_CACHE_KEY = 'payout_month_folder_cache';
+async function payoutResolveMonthFolderId(drive, year, month, { skipCache = false } = {}) {
+  const cacheKey = `${year}-${String(month).padStart(2, '0')}`;
+  let cache = {};
+  try {
+    const { data: st } = await supabase
+      .from('system_settings').select('value').eq('key', PAYOUT_MONTH_FOLDER_CACHE_KEY).maybeSingle();
+    if (st && st.value) cache = JSON.parse(st.value) || {};
+  } catch (_) { cache = {}; }
+  if (!skipCache && cache[cacheKey]) return cache[cacheKey];
+
+  // ルートIDは system_settings を直接読む（getInvoiceRootFolderId は外部管理者への
+  // 権限付与まで行い遅いため、スキャン経路では未設定時のフォールバックに限定）
+  const { data: rootSetting } = await supabase
+    .from('system_settings').select('value').eq('key', 'invoice_root_folder_id').maybeSingle();
+  const rootId = (rootSetting && rootSetting.value) ? rootSetting.value : await getInvoiceRootFolderId(drive);
+  if (!rootId) return null;
+  const yearFolder = await payoutFindChildFolder(drive, rootId, `${year}年`);
+  if (!yearFolder) return null;
+  const monthFolder = await payoutFindChildFolder(drive, yearFolder.id, `${String(month).padStart(2, '0')}月`);
+  if (!monthFolder) return null;
+  cache[cacheKey] = monthFolder.id;
+  try {
+    await supabase.from('system_settings').upsert(
+      { key: PAYOUT_MONTH_FOLDER_CACHE_KEY, value: JSON.stringify(cache), updated_at: new Date().toISOString() },
+      { onConflict: 'key' },
+    );
+  } catch (_) { /* noop */ }
+  return monthFolder.id;
+}
+
+// ---------- Drive スキャン本体（新PDF検出→金額抽出→payout_records upsert） ----------
+async function scanPayoutDriveMonth(year, month) {
+  const { normalizeFolderPersonName, normalizePersonName } = require('../utils/payout');
+  const result = {
+    month_folder_found: false,
+    scan_warning: null,
+    unmatched_folders: [],
+    new_pdf_count: 0,
+    new_user_ids: new Set(),
+  };
+
+  const { data: users, error: uErr } = await supabase
+    .from('users').select('id, full_name, nickname');
+  if (uErr) throw new Error(`users 取得失敗: ${uErr.message}`);
+  const userIdByNorm = new Map();
+  for (const u of (users || [])) {
+    const keys = [normalizePersonName(u.full_name), normalizePersonName(u.nickname)].filter(Boolean);
+    for (const k of keys) if (!userIdByNorm.has(k)) userIdByNorm.set(k, u.id);
+  }
+
+  // member_invoice_folders の folder_id → user_id マッピング（手作業フォルダは名前一致でフォールバック）
+  const { data: mif } = await supabase
+    .from('member_invoice_folders')
+    .select('user_id, folder_id')
+    .eq('year', year).eq('month', month);
+  const userIdByFolderId = new Map((mif || []).filter(m => m.folder_id).map(m => [m.folder_id, m.user_id]));
+
+  const scans = []; // { user_id, files: [driveFile] }
+  let drive = null;
+  try {
+    drive = await getDriveService();
+    let monthFolderId = await payoutResolveMonthFolderId(drive, year, month);
+    let children = null;
+    if (monthFolderId) {
+      try {
+        children = await payoutListChildren(drive, monthFolderId);
+      } catch (e) {
+        // キャッシュが古い（フォルダ移動/削除）場合は解決し直して1回だけリトライ
+        monthFolderId = await payoutResolveMonthFolderId(drive, year, month, { skipCache: true });
+        children = monthFolderId ? await payoutListChildren(drive, monthFolderId) : null;
+      }
+    }
+    if (children) {
+      result.month_folder_found = true;
+      const subfolders = children.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
+      await mapLimit(subfolders, 8, async (sf) => {
+        const kids = await payoutListChildren(drive, sf.id);
+        // 過去バグの残骸（_payout_tmp_）を見つけたら自動削除して自己修復する
+        for (const stray of kids.filter(f => (f.name || '').startsWith('_payout_tmp_'))) {
+          try { await drive.files.delete({ fileId: stray.id, supportsAllDrives: true }); } catch (_) { /* noop */ }
+        }
+        // 請求書PDF等の実ファイルのみ（Googleドキュメント等のネイティブ形式・一時ファイルは除外）
+        const files = kids.filter(f =>
+          !(f.mimeType || '').startsWith('application/vnd.google-apps')
+          && !(f.name || '').startsWith('_payout_tmp_'));
+        const uid = userIdByFolderId.get(sf.id)
+          || userIdByNorm.get(normalizeFolderPersonName(sf.name))
+          || null;
+        if (!uid) {
+          if (files.length) result.unmatched_folders.push({ name: sf.name, url: `https://drive.google.com/drive/folders/${sf.id}` });
+          return;
+        }
+        if (files.length) scans.push({ user_id: uid, files });
+      });
+    }
+  } catch (e) {
+    result.scan_warning = `Driveスキャンに失敗しました: ${e.message}`;
+    console.warn('[payouts] drive scan failed:', e.message);
+    return result;
+  }
+
+  const { data: recs, error: rErr } = await supabase
+    .from('payout_records').select('*').eq('year', year).eq('month', month);
+  if (rErr) throw new Error(`payout_records 取得失敗: ${rErr.message}（migration 2026-08-29d_payout_records.sql が未適用の可能性）`);
+  const recByUser = new Map((recs || []).map(r => [r.user_id, r]));
+
+  const pendingExtract = []; // { entry, driveFile }
+  const upserts = new Map(); // user_id -> { pdf_files, is_new }
+  for (const scan of scans) {
+    const existing = recByUser.get(scan.user_id);
+    const prevFiles = Array.isArray(existing && existing.pdf_files) ? existing.pdf_files : [];
+    const prevById = new Map(prevFiles.map(f => [f.id, f]));
+    const nextFiles = [];
+    let changed = false;
+    for (const f of scan.files) {
+      const prev = prevById.get(f.id);
+      if (prev && prev.modified_at === f.modifiedTime) { nextFiles.push(prev); continue; }
+      changed = true;
+      const entry = {
+        id: f.id,
+        name: f.name,
+        url: `https://drive.google.com/file/d/${f.id}/view`,
+        modified_at: f.modifiedTime,
+        amount: null,
+        amount_source: null,
+      };
+      nextFiles.push(entry);
+      if (drive) pendingExtract.push({ entry, driveFile: f });
+    }
+    if (nextFiles.length !== prevFiles.length) changed = true;
+    if (changed || !existing) upserts.set(scan.user_id, { pdf_files: nextFiles, is_new: changed });
+  }
+
+  // 新規/更新ファイルだけ金額抽出（並列3。既存ファイルは再抽出しない）
+  await mapLimit(pendingExtract, 3, async (p) => {
+    const hit = await payoutExtractPdfAmount(drive, p.driveFile);
+    if (hit) { p.entry.amount = hit.amount; p.entry.amount_source = hit.source; }
+  });
+
+  for (const [userId, u] of upserts) {
+    const existing = recByUser.get(userId);
+    const payload = {
+      user_id: userId,
+      year,
+      month,
+      pdf_files: u.pdf_files,
+      updated_at: new Date().toISOString(),
+    };
+    // 手入力金額は尊重。auto のときだけ再計算
+    if (!existing || existing.amount_source !== 'manual') {
+      const total = payoutSumInvoiceAmount(u.pdf_files);
+      payload.invoice_amount = total;
+      payload.amount_source = total != null ? 'auto' : null;
+    }
+    const { error: upErr } = await supabase
+      .from('payout_records')
+      .upsert(payload, { onConflict: 'user_id,year,month' });
+    if (upErr) { console.warn(`[payouts] upsert 失敗 user=${userId}: ${upErr.message}`); continue; }
+    if (u.is_new) {
+      result.new_user_ids.add(userId);
+      result.new_pdf_count += u.pdf_files.length;
+    }
+  }
+
+  return result;
+}
+
+function payoutParseYearMonth(rawYear, rawMonth) {
+  const year = parseInt(rawYear, 10);
+  const month = parseInt(rawMonth, 10);
+  if (!Number.isFinite(year) || year < 2000 || year > 2100 || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return { year, month };
+}
+
+// GET /api/haruka/admin/payouts?year=2026&month=8[&scan=0]
+// scan=0 なら DB のみ即返し（画面の初期表示用・数百ms）。既定は従来互換でスキャンも実行。
 router.get('/admin/payouts', requireAuth, requirePermission('payout.page'), async (req, res) => {
   try {
-    const year = parseInt(req.query.year, 10);
-    const month = parseInt(req.query.month, 10);
-    if (!Number.isFinite(year) || year < 2000 || year > 2100 || !Number.isFinite(month) || month < 1 || month > 12) {
-      return res.status(400).json({ error: 'year / month を正しく指定してください' });
-    }
-    const { normalizeFolderPersonName, normalizePersonName } = require('../utils/payout');
-
-    const { data: users, error: uErr } = await supabase
-      .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, slack_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana');
-    if (uErr) throw new Error(`users 取得失敗: ${uErr.message}`);
-    const userById = new Map((users || []).map(u => [u.id, u]));
-    const userIdByNorm = new Map();
-    for (const u of (users || [])) {
-      const keys = [normalizePersonName(u.full_name), normalizePersonName(u.nickname)].filter(Boolean);
-      for (const k of keys) if (!userIdByNorm.has(k)) userIdByNorm.set(k, u.id);
-    }
-
-    // member_invoice_folders の folder_id → user_id マッピング（手作業フォルダは名前一致でフォールバック）
-    const { data: mif } = await supabase
-      .from('member_invoice_folders')
-      .select('user_id, folder_id')
-      .eq('year', year).eq('month', month);
-    const userIdByFolderId = new Map((mif || []).filter(m => m.folder_id).map(m => [m.folder_id, m.user_id]));
-
-    // ---------- Drive スキャン ----------
-    let monthFolderFound = false;
-    let scanWarning = null;
-    const scans = [];            // { user_id, files: [driveFile] }
-    const unmatchedFolders = []; // メンバーに紐付かないフォルダ
-    let drive = null;
-    try {
-      drive = await getDriveService();
-      const rootId = await getInvoiceRootFolderId(drive);
-      const yearFolder = await payoutFindChildFolder(drive, rootId, `${year}年`);
-      const monthFolder = yearFolder
-        ? await payoutFindChildFolder(drive, yearFolder.id, `${String(month).padStart(2, '0')}月`)
-        : null;
-      if (monthFolder) {
-        monthFolderFound = true;
-        const children = await payoutListChildren(drive, monthFolder.id);
-        const subfolders = children.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
-        await mapLimit(subfolders, 8, async (sf) => {
-          const children = await payoutListChildren(drive, sf.id);
-          // 過去バグの残骸（_payout_tmp_）を見つけたら自動削除して自己修復する
-          for (const stray of children.filter(f => (f.name || '').startsWith('_payout_tmp_'))) {
-            try { await drive.files.delete({ fileId: stray.id, supportsAllDrives: true }); } catch (_) { /* noop */ }
-          }
-          // 請求書PDF等の実ファイルのみ（Googleドキュメント等のネイティブ形式・一時ファイルは除外）
-          const files = children.filter(f =>
-            !(f.mimeType || '').startsWith('application/vnd.google-apps')
-            && !(f.name || '').startsWith('_payout_tmp_'));
-          const uid = userIdByFolderId.get(sf.id)
-            || userIdByNorm.get(normalizeFolderPersonName(sf.name))
-            || null;
-          if (!uid) {
-            if (files.length) unmatchedFolders.push({ name: sf.name, url: `https://drive.google.com/drive/folders/${sf.id}` });
-            return;
-          }
-          if (files.length) scans.push({ user_id: uid, files });
-        });
-      }
-    } catch (e) {
-      scanWarning = `Driveスキャンに失敗しました: ${e.message}`;
-      console.warn('[payouts] drive scan failed:', e.message);
-    }
-
-    // ---------- payout_records と突合して upsert ----------
-    const { data: recs, error: rErr } = await supabase
-      .from('payout_records').select('*').eq('year', year).eq('month', month);
-    if (rErr) throw new Error(`payout_records 取得失敗: ${rErr.message}（migration 2026-08-29d_payout_records.sql が未適用の可能性）`);
-    const recByUser = new Map((recs || []).map(r => [r.user_id, r]));
-
-    const pendingExtract = []; // { fileEntry, driveFile }
-    const upserts = new Map(); // user_id -> { pdf_files, changed }
-    for (const scan of scans) {
-      const existing = recByUser.get(scan.user_id);
-      const prevFiles = Array.isArray(existing?.pdf_files) ? existing.pdf_files : [];
-      const prevById = new Map(prevFiles.map(f => [f.id, f]));
-      const nextFiles = [];
-      let changed = false;
-      for (const f of scan.files) {
-        const prev = prevById.get(f.id);
-        if (prev && prev.modified_at === f.modifiedTime) { nextFiles.push(prev); continue; }
-        changed = true;
-        const entry = {
-          id: f.id,
-          name: f.name,
-          url: `https://drive.google.com/file/d/${f.id}/view`,
-          modified_at: f.modifiedTime,
-          amount: null,
-          amount_source: null,
-        };
-        nextFiles.push(entry);
-        if (drive) pendingExtract.push({ entry, driveFile: f });
-      }
-      if (nextFiles.length !== prevFiles.length) changed = true;
-      if (changed || !existing) upserts.set(scan.user_id, { pdf_files: nextFiles, is_new: changed });
-    }
-
-    // 新規/更新ファイルだけ金額抽出（並列3。既存ファイルは再抽出しない）
-    await mapLimit(pendingExtract, 3, async (p) => {
-      const hit = await payoutExtractPdfAmount(drive, p.driveFile);
-      if (hit) { p.entry.amount = hit.amount; p.entry.amount_source = hit.source; }
-    });
-
-    const newUserIds = new Set();
-    let newPdfCount = 0;
-    for (const [userId, u] of upserts) {
-      const existing = recByUser.get(userId);
-      const payload = {
-        user_id: userId,
-        year,
-        month,
-        pdf_files: u.pdf_files,
-        updated_at: new Date().toISOString(),
-      };
-      // 手入力金額は尊重。auto のときだけ再計算
-      if (existing?.amount_source !== 'manual') {
-        const sum = payoutSumInvoiceAmount(u.pdf_files);
-        payload.invoice_amount = sum;
-        payload.amount_source = sum != null ? 'auto' : null;
-      }
-      const { error: upErr } = await supabase
-        .from('payout_records')
-        .upsert(payload, { onConflict: 'user_id,year,month' });
-      if (upErr) { console.warn(`[payouts] upsert 失敗 user=${userId}: ${upErr.message}`); continue; }
-      if (u.is_new) {
-        newUserIds.add(userId);
-        newPdfCount += u.pdf_files.length;
-      }
-    }
-
-    // upsert 後の最新状態を読み直す
-    const { data: finalRecs, error: fErr } = await supabase
-      .from('payout_records').select('*').eq('year', year).eq('month', month);
-    if (fErr) throw new Error(fErr.message);
-
-    const records = (finalRecs || []).map(r => payoutRecordToJson(r, userById.get(r.user_id), { is_new: newUserIds.has(r.user_id) }));
-    const paidCount = records.filter(r => r.status === 'paid').length;
-    const totalAmount = records.reduce((s, r) => s + (Number(r.invoice_amount) || 0), 0);
-    const unpaidAmount = records.filter(r => r.status !== 'paid').reduce((s, r) => s + (Number(r.invoice_amount) || 0), 0);
-
-    // Slack DM リンク用の team id（https://slack.com/app_redirect?team=...&channel=<U...> は
-    // 閲覧者自身と相手のDMへ飛ぶため、SlackはDMチャンネルID(D...)のマスター管理が不要）
-    let slackTeamId = 'T094ST9L5MH';
-    try {
-      const { data: st } = await supabase
-        .from('system_settings').select('value').eq('key', 'slack_team_id').maybeSingle();
-      if (st && st.value) slackTeamId = st.value;
-    } catch (_) { /* noop */ }
-
-    res.json({
-      year, month,
-      slack_team_id: slackTeamId,
-      month_folder_found: monthFolderFound,
-      scan_warning: scanWarning,
-      records,
-      unmatched_folders: unmatchedFolders,
-      summary: {
-        total_records: records.length,
-        paid_count: paidCount,
-        total_amount: totalAmount,
-        unpaid_amount: unpaidAmount,
-        new_pdf_count: newPdfCount,
-      },
-    });
+    const ym = payoutParseYearMonth(req.query.year, req.query.month);
+    if (!ym) return res.status(400).json({ error: 'year / month を正しく指定してください' });
+    const scanExtra = req.query.scan === '0' ? null : await scanPayoutDriveMonth(ym.year, ym.month);
+    res.json(await buildPayoutListResponse(ym.year, ym.month, scanExtra));
   } catch (e) {
     console.error('[payouts][GET /admin/payouts]', e);
     res.status(500).json({ error: e.message || '振込一覧の取得に失敗しました' });
+  }
+});
+
+// POST /api/haruka/admin/payouts/scan { year, month } — Drive スキャンを実行して最新一覧を返す
+// （画面はまず scan=0 で即描画し、このエンドポイントをバックグラウンドで叩いて差分反映する）
+router.post('/admin/payouts/scan', requireAuth, requirePermission('payout.page'), async (req, res) => {
+  try {
+    const ym = payoutParseYearMonth(req.body && req.body.year, req.body && req.body.month);
+    if (!ym) return res.status(400).json({ error: 'year / month を正しく指定してください' });
+    const scanExtra = await scanPayoutDriveMonth(ym.year, ym.month);
+    res.json(await buildPayoutListResponse(ym.year, ym.month, scanExtra));
+  } catch (e) {
+    console.error('[payouts][POST scan]', e);
+    res.status(500).json({ error: e.message || 'Driveスキャンに失敗しました' });
   }
 });
 

@@ -8766,14 +8766,14 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <strong id="po-month-label" style="font-size:14px;min-width:100px;text-align:center"></strong>
         <button class="btn-sm" onclick="poShiftMonth(1)">翌月 ▶</button>
       </div>
-      <button class="btn-sm" id="po-rescan" onclick="poFetch()">🔄 再スキャン</button>
+      <button class="btn-sm" id="po-rescan" onclick="poScan(true)">🔄 再スキャン</button>
       <button class="btn-sm" id="po-cw-sync" onclick="poChatworkSync(this)" title="ChatworkのDMルームを自動取得してメンバーに紐付けます">🔗 ChatworkDM同期</button>
       <span id="po-updated" style="margin-left:auto;font-size:11px;color:var(--text-muted)"></span>
     </div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">メンバーの月次請求書PDF（Drive）と振込状況の消し込みを管理します。読み込み時にDriveを再スキャンします（新しいPDFがある月は数十秒かかることがあります）。</div>
     <div id="po-banner"></div>
     <div id="po-summary" style="margin-bottom:12px"></div>
-    <div class="card" style="padding:0;overflow:hidden">
+    <div class="card" style="padding:0;overflow-x:auto">
       <div id="po-table" style="overflow-x:auto"></div>
     </div>
     <div id="po-unmatched" style="margin-top:12px"></div>
@@ -27127,6 +27127,7 @@ function renderTeamLoad() {
 let _poYear = null, _poMonth = null;
 let _poData = null;     // GET /admin/payouts のレスポンス
 let _poLoading = false;
+let _poScanning = false;  // バックグラウンドの Drive スキャン中フラグ
 let _poDiffModalId = null; // 差分詳細モーダルで表示中の record id
 
 function poYen(n) { return '¥' + Number(n || 0).toLocaleString(); }
@@ -27188,15 +27189,16 @@ async function poFetch() {
   const summaryEl = document.getElementById('po-summary');
   if (summaryEl) summaryEl.innerHTML = '<div class="skel-line" style="width:40%"></div>';
   tableEl.innerHTML =
-    '<div style="padding:12px 20px 4px;font-size:12px;color:var(--text-muted)">📂 Driveをスキャンしています…（新しいPDFがある月は数十秒かかることがあります）</div>' +
     '<div style="padding:8px 20px 16px">' +
     [1, 2, 3, 4, 5].map(() => '<div class="skel-row"><span class="skel-circle"></span><span class="skel-line"></span></div>').join('') + '</div>';
   try {
-    const res = await apiFetch(`${API}/admin/payouts?year=${_poYear}&month=${_poMonth}`);
+    // まず DB のみ（scan=0）で即描画し、Drive スキャンはバックグラウンドで実行して差分反映
+    const res = await apiFetch(`${API}/admin/payouts?year=${_poYear}&month=${_poMonth}&scan=0`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '振込管理データの取得に失敗しました');
     _poData = data;
     renderPayout();
+    poScan(false); // await しない（完了後に自動で再描画）
   } catch (e) {
     console.error('[payout]', e);
     _poData = null;
@@ -27206,6 +27208,39 @@ async function poFetch() {
   } finally {
     _poLoading = false;
     if (rescanBtn) rescanBtn.disabled = false;
+  }
+}
+
+// Drive スキャン（バックグラウンド実行）。fromButton=true は再スキャンボタンから
+async function poScan(fromButton) {
+  if (_poScanning || !hasPermission('payout.page')) return;
+  _poScanning = true;
+  const year = _poYear, month = _poMonth;
+  const rescanBtn = document.getElementById('po-rescan');
+  if (rescanBtn) { rescanBtn.disabled = true; rescanBtn.textContent = '📂 スキャン中…'; }
+  const updEl = document.getElementById('po-updated');
+  if (updEl) updEl.textContent = '📂 Driveをスキャン中…（新しいPDFがある月は時間がかかります）';
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ year, month }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Driveスキャンに失敗しました');
+    if (year !== _poYear || month !== _poMonth) return; // スキャン中に月を切り替えた場合は破棄
+    _poData = data;
+    renderPayout();
+    if (updEl) updEl.textContent = `最終スキャン: ${new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}`;
+    if (fromButton) showToast('Driveスキャンが完了しました', 'success');
+  } catch (e) {
+    console.error('[payout][scan]', e);
+    if (updEl) updEl.textContent = '';
+    showToast(`Driveスキャン失敗: ${e.message}`, 'error');
+  } finally {
+    _poScanning = false;
+    const btn = document.getElementById('po-rescan');
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 再スキャン'; }
   }
 }
 
@@ -27228,7 +27263,7 @@ function renderPayout() {
   const bannerEl = document.getElementById('po-banner');
   if (bannerEl) {
     let banners = '';
-    if (data.month_folder_found === false) {
+    if (data.scanned && data.month_folder_found === false) {
       banners += '<div style="background:#fff8e1;border-left:4px solid #fb8c00;border-radius:8px;padding:10px 14px;font-size:13px;color:#e65100;margin-bottom:10px">⚠️ この月の請求書フォルダがDriveに見つかりませんでした</div>';
     }
     if ((summary.new_pdf_count || 0) > 0) {
