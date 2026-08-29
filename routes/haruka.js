@@ -24110,6 +24110,8 @@ router.ensureUserDrivePermissionWithRoleFallback = ensureUserDrivePermissionWith
 // 純関数（定型文組み立て / 金額抽出 / 差分判定 / フォルダ名正規化）は utils/payout.js（jest テストあり）。
 
 const PAYOUT_CHATWORK_ROOM_SETTING_KEY = 'payout_notify_chatwork_room_id';
+// Slack DM を bot 名義でなく髙橋聖本人名義で送るための User OAuth Token(xoxp)。未設定なら bot 名義。
+const PAYOUT_SLACK_USER_TOKEN_SETTING_KEY = 'payout_slack_user_token';
 const PAYOUT_DEFAULT_CHATWORK_ROOM_ID = '365971239'; // 【HF】全体チャット（invoice-announce と同じ既定）
 const PAYOUT_CREATOR_ROLES = new Set(['editor', 'designer', 'director_as_editor']);
 const PAYOUT_DFEE_ROLES = new Set(['director', 'producer']);
@@ -24271,9 +24273,18 @@ async function buildPayoutListResponse(year, month, scanExtra = null) {
     if (st && st.value) slackTeamId = st.value;
   } catch (_) { /* noop */ }
 
+  // 本人名義トークンの有無（プレビューモーダルの送信先表示用。トークン値自体は返さない）
+  let slackAsUser = false;
+  try {
+    const { data: ut } = await supabase
+      .from('system_settings').select('value').eq('key', PAYOUT_SLACK_USER_TOKEN_SETTING_KEY).maybeSingle();
+    slackAsUser = !!(ut && ut.value);
+  } catch (_) { /* noop */ }
+
   return {
     year, month,
     slack_team_id: slackTeamId,
+    slack_as_user: slackAsUser,
     scanned: !!scanExtra,
     month_folder_found: scanExtra ? scanExtra.month_folder_found : null,
     scan_warning: scanExtra ? scanExtra.scan_warning : null,
@@ -24554,7 +24565,7 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
     if (!user) {
       sentReason = 'メンバーが見つからないため送信していません';
     } else {
-      const { sendChatworkRoom, sendSlackDm } = require('../notifications');
+      const { sendChatworkRoom, sendSlackDm, sendSlackDmAsUser } = require('../notifications');
       // 送信先の優先順: Chatwork 個別チャット → Chatwork 全体チャット+[To:] → Slack DM（Bot名義）
       // memory: 非数字の Chatwork ID は To が silent 失敗するため To 送信は数値IDのときだけ行う。
       if (hasDirectRoom) {
@@ -24574,9 +24585,20 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
       }
       if (!sent && hasSlack) {
         messageBody = text;
-        const r = await sendSlackDm(slackId, messageBody);
-        if (r.ok) { sent = true; sentVia = 'slack'; sentReason = null; }
-        else sentReason = `${sentReason ? sentReason + ' / ' : ''}Slack DM 送信に失敗（${r.reason || r.status}）`;
+        // 本人名義トークン(xoxp)があれば髙橋聖名義で送信し、無い/失敗時は bot 名義へフォールバック
+        const { data: ut } = await supabase
+          .from('system_settings').select('value').eq('key', PAYOUT_SLACK_USER_TOKEN_SETTING_KEY).maybeSingle();
+        const userToken = (ut && ut.value) || null;
+        if (userToken) {
+          const r = await sendSlackDmAsUser(userToken, slackId, messageBody);
+          if (r.ok) { sent = true; sentVia = 'slack_user'; sentReason = null; }
+          else console.warn('[payouts] 本人名義Slack送信に失敗、bot名義へフォールバック:', r.reason);
+        }
+        if (!sent) {
+          const r = await sendSlackDm(slackId, messageBody);
+          if (r.ok) { sent = true; sentVia = 'slack'; sentReason = null; }
+          else sentReason = `${sentReason ? sentReason + ' / ' : ''}Slack DM 送信に失敗（${r.reason || r.status}）`;
+        }
       }
       if (!sent && !sentReason) {
         sentReason = 'Chatwork・Slack とも未登録のため送信していません';
