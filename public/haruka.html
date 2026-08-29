@@ -27707,9 +27707,14 @@ function poPay(id) {
       `<div><span style="color:var(--text-muted)">振込先：</span>${bankLine}<span style="color:var(--text-muted)"> ${dash(r.account_holder_kana)}</span></div>` +
       `<div><span style="color:var(--text-muted)">送信先：</span><span style="color:${destColor}">${dest}</span></div>` +
     '</div>' +
-    '<div style="margin:10px 0 4px;font-size:11px;font-weight:600;color:var(--text-muted)">送信される文面</div>' +
+    '<div style="margin:10px 0 4px;display:flex;align-items:center;gap:8px">' +
+      '<span style="font-size:11px;font-weight:600;color:var(--text-muted)">送信される文面</span>' +
+      '<button type="button" class="btn-sm" id="po-pay-edit-btn" style="font-size:11px;padding:1px 8px" onclick="poPayToggleEdit()" title="文面を自由に書き換えて、その内容をそのまま送信できます">✏️ 文面を編集</button>' +
+      '<span id="po-pay-edit-hint" style="display:none;font-size:11px;color:#C05A0A">編集した文面がそのまま送信されます</span>' +
+    '</div>' +
     `<pre id="po-pay-msg" style="margin:0;padding:12px;background:var(--bg);border:0.5px solid var(--border);border-radius:8px;font-size:13px;line-height:1.7;white-space:pre-wrap;font-family:inherit"></pre>` +
-    '<div style="margin:12px 0 4px;font-size:11px;font-weight:600;color:var(--text-muted)">メモ（空なら定型文のみ・編集すると文面に即反映）</div>' +
+    `<textarea class="form-input" id="po-pay-msg-edit" style="display:none;width:100%;min-height:150px;padding:12px;font-size:13px;line-height:1.7;font-family:inherit;resize:vertical"></textarea>` +
+    '<div id="po-pay-memo-label" style="margin:12px 0 4px;font-size:11px;font-weight:600;color:var(--text-muted)">メモ（空なら定型文のみ・編集すると文面に即反映）</div>' +
     `<input class="form-input" id="po-pay-memo" style="width:100%;font-size:13px" placeholder="例）リサイズ分は来月に回します">` +
     '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">' +
       `<button class="btn-sm" onclick="closeModal('modal-po-pay')">キャンセル</button>` +
@@ -27719,14 +27724,51 @@ function poPay(id) {
   const memoEl = document.getElementById('po-pay-memo');
   const msgEl = document.getElementById('po-pay-msg');
   const renderMsg = () => {
+    if (_poPayEditing) return; // ✏️ 直接編集中は自動生成プレビューで上書きしない
     const m = (memoEl.value || '').trim();
     let text = poMessageText(r, month, m);
     msgEl.textContent = text;
   };
+  _poPayEditing = false;
+  _poPayRenderMsg = renderMsg;
   memoEl.value = memo;
   memoEl.addEventListener('input', renderMsg);
   renderMsg();
   openModal('modal-po-pay');
+}
+
+// ✏️ 文面の直接編集モード。ON でプレビュー<pre>を textarea に切替え、確定した内容をそのまま送信する。
+// 「↩ 定型文に戻す」で定型文＋メモの自動生成プレビューに復帰（編集内容は破棄）。
+// 直接編集中はメモ欄を無効化する（メモは文面に反映されないため。メモ自体は消し込み時に保存される）。
+let _poPayEditing = false;
+let _poPayRenderMsg = null;
+function poPayToggleEdit() {
+  const pre = document.getElementById('po-pay-msg');
+  const ta = document.getElementById('po-pay-msg-edit');
+  const btn = document.getElementById('po-pay-edit-btn');
+  const hint = document.getElementById('po-pay-edit-hint');
+  const memoEl = document.getElementById('po-pay-memo');
+  const memoLabel = document.getElementById('po-pay-memo-label');
+  if (!pre || !ta) return;
+  _poPayEditing = !_poPayEditing;
+  if (_poPayEditing) {
+    ta.value = pre.textContent;
+    pre.style.display = 'none';
+    ta.style.display = 'block';
+    if (btn) btn.textContent = '↩ 定型文に戻す';
+    if (hint) hint.style.display = '';
+    if (memoEl) memoEl.disabled = true;
+    if (memoLabel) memoLabel.textContent = 'メモ（文面を直接編集中は反映されません・記録としてのみ保存）';
+    ta.focus();
+  } else {
+    ta.style.display = 'none';
+    pre.style.display = '';
+    if (btn) btn.textContent = '✏️ 文面を編集';
+    if (hint) hint.style.display = 'none';
+    if (memoEl) memoEl.disabled = false;
+    if (memoLabel) memoLabel.textContent = 'メモ（空なら定型文のみ・編集すると文面に即反映）';
+    if (typeof _poPayRenderMsg === 'function') _poPayRenderMsg();
+  }
 }
 
 // プレビューで OK → 実送信＋消し込み
@@ -27735,13 +27777,16 @@ async function poPaySubmit(id) {
   if (!r) return;
   const memoEl = document.getElementById('po-pay-memo');
   const memo = memoEl ? memoEl.value.trim() : (r.memo || '');
+  // ✏️ 直接編集モードなら編集後の全文を message として送る（サーバーは定型文の代わりにそのまま送信）
+  const editTa = document.getElementById('po-pay-msg-edit');
+  const message = (_poPayEditing && editTa) ? editTa.value.trim() : '';
   const btn = document.getElementById('po-pay-submit');
   if (btn) { btn.disabled = true; btn.textContent = '送信中…'; }
   try {
     const res = await apiFetch(`${API}/admin/payouts/${encodeURIComponent(id)}/pay`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memo }),
+      body: JSON.stringify(message ? { memo, message } : { memo }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '振込完了の登録に失敗しました');

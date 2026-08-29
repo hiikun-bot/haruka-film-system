@@ -24101,7 +24101,7 @@ router.ensureUserDrivePermissionWithRoleFallback = ensureUserDrivePermissionWith
 // メンバー月次振込の消し込み管理（admin専用・permission 'payout.page'）。
 // - GET   /admin/payouts?year&month  : Drive 請求書フォルダ（請求書/YYYY年/MM月/氏名…）を
 //   スキャンして payout_records と突合。新PDFは金額を自動抽出して upsert し一覧を返す。
-// - POST  /admin/payouts/:id/pay        : 振込完了 + Chatwork 定型文送信（+任意メモ）
+// - POST  /admin/payouts/:id/pay        : 振込完了 + Chatwork 定型文送信（+任意メモ／message 指定で編集済み全文をそのまま送信）
 // - POST  /admin/payouts/:id/unpay      : 消し込み取消
 // - PATCH /admin/payouts/:id            : 請求額の手修正 / メモ保存
 // - POST  /admin/payouts/:id/diff-check : システム実データ（本人 per-unit 集計）との差分チェック
@@ -24523,9 +24523,11 @@ router.post('/admin/payouts/scan', requireAuth, requirePermission('payout.page')
 });
 
 // POST /api/haruka/admin/payouts/:id/pay — 振込完了 + Chatwork 定型文送信（+任意メモ）
+// body.message（フロントの✏️直接編集）があれば定型文の代わりにその全文をそのまま送信する。
 router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.page'), async (req, res) => {
   try {
     const memo = typeof req.body?.memo === 'string' ? req.body.memo.trim() : '';
+    const customMessage = typeof req.body?.message === 'string' ? req.body.message.trim().slice(0, 4000) : '';
     const { data: rec, error: rErr } = await supabase
       .from('payout_records').select('*').eq('id', req.params.id).maybeSingle();
     if (rErr) throw new Error(rErr.message);
@@ -24538,7 +24540,7 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
 
     const { buildPayoutMessage } = require('../utils/payout');
     const displayName = user?.nickname || user?.full_name || 'メンバー';
-    const text = buildPayoutMessage({ displayName, month: rec.month, memo });
+    const text = customMessage || buildPayoutMessage({ displayName, month: rec.month, memo });
 
     let sent = false;
     let sentVia = null; // 'dm' | 'room'
