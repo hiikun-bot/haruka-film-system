@@ -30,6 +30,14 @@ describe('extractInvoiceAmount', () => {
   test('全角数字・全角カンマも読める', () => {
     expect(extractInvoiceAmount('ご請求金額 １１０，０００円')).toEqual({ amount: 110000, source: 'seikyu' });
   });
+  test('「ご請求金額（税込・内税10%）」の税率数字に惑わされない', () => {
+    expect(extractInvoiceAmount('ご請求金額（税込・内税10%） ¥6,000\n合計（税込） ¥6,000'))
+      .toEqual({ amount: 6000, source: 'seikyu' });
+  });
+  test('ご請求金額の近くの年月日はスキップして金額本体を拾う', () => {
+    expect(extractInvoiceAmount('ご請求金額は2026年8月分として 77,000円です'))
+      .toEqual({ amount: 77000, source: 'seikyu' });
+  });
   test('ご請求金額が無ければ合計の最大値（小計・税額と混同しない）', () => {
     const text = '小計 12,727\nうち消費税額合計1,273\n合計14,000';
     expect(extractInvoiceAmount(text)).toEqual({ amount: 14000, source: 'gokei' });

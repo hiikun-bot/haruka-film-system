@@ -35,10 +35,18 @@ function extractInvoiceAmount(text) {
     return n;
   };
 
-  const seikyu = normalized.match(/ご\s*請\s*求\s*金\s*額[^0-9]{0,60}([0-9][0-9,]*)/);
+  // 「ご請求金額」後方 80 文字以内の最初のもっともらしい金額を採る。
+  // 「ご請求金額（税込・内税10%）¥6,000」のような税率・日付の数字はスキップする。
+  const seikyu = normalized.match(/ご\s*請\s*求\s*金\s*額([\s\S]{0,80})/);
   if (seikyu) {
-    const n = parseNum(seikyu[1]);
-    if (n != null) return { amount: n, source: 'seikyu' };
+    const numRe = /([0-9][0-9,]*)/g;
+    let m2;
+    while ((m2 = numRe.exec(seikyu[1])) !== null) {
+      const after = seikyu[1].slice(m2.index + m2[1].length);
+      if (/^\s*[%％年月日/]/.test(after)) continue; // 税率・年月日はスキップ
+      const n = parseNum(m2[1]);
+      if (n != null) return { amount: n, source: 'seikyu' };
+    }
   }
 
   const totals = [];
