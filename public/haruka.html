@@ -8751,7 +8751,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
      ナビ表示は applyRoleBasedUI、ページ内は loadPayoutPage 冒頭の二重ガードで制御（ADR 015）。 -->
 <div id="page-payout" class="page">
   <style>
-    #page-payout .po-tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:980px}
+    #page-payout .po-tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:1060px}
     #page-payout .po-tbl th{font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;padding:10px;border-bottom:0.5px solid var(--border);white-space:nowrap}
     #page-payout .po-tbl td{padding:10px;border-bottom:0.5px solid var(--border-light);vertical-align:top}
     #page-payout .po-tbl tr.po-paid td{background:#e8f5e9}
@@ -27272,7 +27272,7 @@ function renderPayout() {
   }
 
   let html = '<table class="po-tbl"><thead><tr>' +
-    '<th style="width:36px">状態</th><th>氏名</th><th style="text-align:right">請求額</th><th>振込先</th><th>PDF</th><th>差分</th><th>メモ</th><th>操作</th>' +
+    '<th style="width:36px">状態</th><th>氏名</th><th style="text-align:right">請求額</th><th>振込先</th><th>PDF</th><th>チャット</th><th>差分</th><th>メモ</th><th>操作</th>' +
     '</tr></thead><tbody>';
 
   rows.forEach(r => {
@@ -27327,6 +27327,18 @@ function renderPayout() {
       ? `<span style="font-size:12px;color:var(--text-muted)">${esc(r.memo || '')}</span>`
       : `<input class="form-input" id="po-memo-${rid}" value="${esc(r.memo || '')}" placeholder="メモ" style="width:140px;padding:4px 8px;font-size:12px">`;
 
+    // チャット（個別チャットを開く: Chatwork DM / Slack DM ＋ 文面コピー）
+    const chatLinks = [];
+    if (r.chatwork_direct_room_id) {
+      chatLinks.push(`<a href="https://www.chatwork.com/#!rid${esc(r.chatwork_direct_room_id)}" target="_blank" rel="noopener" class="btn-sm" style="font-size:11px;padding:3px 8px;text-decoration:none" title="Chatworkの個別チャットを開く">💬 CW</a>`);
+    }
+    if (r.slack_user_id) {
+      const team = encodeURIComponent(_poData.slack_team_id || 'T094ST9L5MH');
+      chatLinks.push(`<a href="https://slack.com/app_redirect?team=${team}&channel=${encodeURIComponent(r.slack_user_id)}" target="_blank" rel="noopener" class="btn-sm" style="font-size:11px;padding:3px 8px;text-decoration:none" title="SlackのDMを開く（自分と本人のDMに飛びます）">Slack</a>`);
+    }
+    chatLinks.push(`<a href="javascript:void(0)" onclick="poCopyMessage('${rid}')" class="btn-sm" style="font-size:11px;padding:3px 8px;text-decoration:none" title="振込完了の定型文（メモ込み）をコピー — SlackのDMに貼り付ける用">📋</a>`);
+    const chatCell = `<div style="display:flex;gap:4px;flex-wrap:wrap">${chatLinks.join('')}</div>`;
+
     // 操作
     let opCell;
     if (paid) {
@@ -27350,6 +27362,7 @@ function renderPayout() {
       `<td style="text-align:right;white-space:nowrap">${amountCell}</td>` +
       `<td>${bankCell}</td>` +
       `<td style="white-space:nowrap">${pdfCell}</td>` +
+      `<td>${chatCell}</td>` +
       `<td>${diffCell}</td>` +
       `<td>${memoCell}</td>` +
       `<td>${opCell}</td>` +
@@ -27501,6 +27514,20 @@ async function poChatworkSync(btn) {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔗 ChatworkDM同期'; }
   }
+}
+
+// 振込完了の定型文（メモ欄の内容込み）をクリップボードへ — Slack DM 等へ手貼り用
+function poCopyMessage(id) {
+  const r = poRecord(id);
+  if (!r) return;
+  const memoInput = document.getElementById(`po-memo-${id}`);
+  const memo = (memoInput ? memoInput.value : (r.memo || '')).trim();
+  const month = _poData ? _poData.month : '';
+  let text = `${poName(r)}さん\n今月もお疲れ様でした。${month}月分を振り込みましたので、ご確認をお願いします。`;
+  if (memo) text += `\n\n${memo}`;
+  navigator.clipboard.writeText(text)
+    .then(() => showToast('振込完了メッセージをコピーしました（DMに貼り付けてください）', 'success'))
+    .catch(() => showToast('コピーに失敗しました', 'error'));
 }
 
 async function poPay(id, btn) {

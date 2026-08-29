@@ -24199,6 +24199,8 @@ function payoutRecordToJson(rec, user, extra = {}) {
     account_holder_kana: user?.account_holder_kana || null,
     has_chatwork: /^\d+$/.test(dm),
     has_chatwork_dm: /^\d+$/.test(String(user?.chatwork_direct_room_id || '').trim()),
+    chatwork_direct_room_id: /^\d+$/.test(String(user?.chatwork_direct_room_id || '').trim()) ? String(user.chatwork_direct_room_id).trim() : null,
+    slack_user_id: /^[UW][A-Z0-9]+$/i.test(String(user?.slack_dm_id || '').trim()) ? String(user.slack_dm_id).trim() : null,
     invoice_amount: rec.invoice_amount ?? null,
     amount_source: rec.amount_source || null,
     pdf_files: Array.isArray(rec.pdf_files) ? rec.pdf_files : [],
@@ -24225,7 +24227,7 @@ router.get('/admin/payouts', requireAuth, requirePermission('payout.page'), asyn
 
     const { data: users, error: uErr } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana');
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, slack_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana');
     if (uErr) throw new Error(`users 取得失敗: ${uErr.message}`);
     const userById = new Map((users || []).map(u => [u.id, u]));
     const userIdByNorm = new Map();
@@ -24352,8 +24354,18 @@ router.get('/admin/payouts', requireAuth, requirePermission('payout.page'), asyn
     const totalAmount = records.reduce((s, r) => s + (Number(r.invoice_amount) || 0), 0);
     const unpaidAmount = records.filter(r => r.status !== 'paid').reduce((s, r) => s + (Number(r.invoice_amount) || 0), 0);
 
+    // Slack DM リンク用の team id（https://slack.com/app_redirect?team=...&channel=<U...> は
+    // 閲覧者自身と相手のDMへ飛ぶため、SlackはDMチャンネルID(D...)のマスター管理が不要）
+    let slackTeamId = 'T094ST9L5MH';
+    try {
+      const { data: st } = await supabase
+        .from('system_settings').select('value').eq('key', 'slack_team_id').maybeSingle();
+      if (st && st.value) slackTeamId = st.value;
+    } catch (_) { /* noop */ }
+
     res.json({
       year, month,
+      slack_team_id: slackTeamId,
       month_folder_found: monthFolderFound,
       scan_warning: scanWarning,
       records,
@@ -24383,7 +24395,7 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
 
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, slack_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
       .eq('id', rec.user_id).maybeSingle();
 
     const { buildPayoutMessage } = require('../utils/payout');
@@ -24456,7 +24468,7 @@ router.post('/admin/payouts/:id/unpay', requireAuth, requirePermission('payout.p
     if (upErr) throw new Error(upErr.message);
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, slack_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
       .eq('id', rec.user_id).maybeSingle();
     res.json({ ok: true, record: payoutRecordToJson(updated, user) });
   } catch (e) {
@@ -24490,7 +24502,7 @@ router.patch('/admin/payouts/:id', requireAuth, requirePermission('payout.page')
     if (!updated) return res.status(404).json({ error: '対象の振込レコードが見つかりません' });
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, slack_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
       .eq('id', updated.user_id).maybeSingle();
     res.json({ ok: true, record: payoutRecordToJson(updated, user) });
   } catch (e) {
@@ -24606,7 +24618,7 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
 
     const { data: user } = await supabase
       .from('users')
-      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, chatwork_direct_room_id, slack_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
       .eq('id', rec.user_id).maybeSingle();
     res.json({ ok: true, record: payoutRecordToJson(updated, user) });
   } catch (e) {
