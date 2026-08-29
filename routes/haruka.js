@@ -5693,6 +5693,350 @@ router.post('/analytics/monthly-revenue/export-sheet', requireAuth, requirePermi
   }
 });
 
+// ==================== 分析: 月次推移 / クライアント別採算ランキング / 納期・品質 ====================
+
+// JST の「今日」が属する {year, month} を返す（Railway は UTC 動作のため必ず JST 明示）
+function jstCurrentYearMonth() {
+  const [y, m] = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).split('-').map(Number);
+  return { year: y, month: m };
+}
+
+// 複数月を aggregateMonthlyRevenue で順に集計する共通ヘルパー。
+// Supabase 負荷対策のため同時実行を concurrency（既定3）並列に制限する（Promise.all 全量同時は禁止）。
+// aggregateMonthlyRevenue の内部ロジックには一切手を入れず、呼び出し流用のみとする。
+async function aggregateMonthlyRevenueSeries(monthsList, concurrency = 3) {
+  const results = new Array(monthsList.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), monthsList.length) }, async () => {
+    while (cursor < monthsList.length) {
+      const i = cursor++;
+      const { year, month } = monthsList[i];
+      results[i] = await aggregateMonthlyRevenue({ year, month });
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+// 直近 months ヶ月（当月含む・JST）の {year, month} リストを古い月→新しい月の順で返す
+function buildRecentMonthsList(months) {
+  const { year: cy, month: cm } = jstCurrentYearMonth();
+  const list = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(cy, cm - 1 - i, 1));
+    list.push({ year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 });
+  }
+  return list;
+}
+
+// ---------- 1) 月次推移 ----------
+// 直近Nヶ月の 売上（確定+見込み）/原価/粗利/粗利率 を月別に返す
+async function aggregateMonthlyTrend({ months }) {
+  let n = parseInt(months, 10);
+  if (!Number.isFinite(n)) n = 12;
+  n = Math.max(1, Math.min(24, n));
+  const list = buildRecentMonthsList(n);
+  const results = await aggregateMonthlyRevenueSeries(list, 3);
+  const rows = results.map(r => ({
+    year: r.year,
+    month: r.month,
+    ym: `${r.year}-${String(r.month).padStart(2, '0')}`,
+    revenue: r.total.revenue,
+    cost: r.total.cost,
+    gross_profit: r.total.gross_profit,
+    gross_margin: r.total.gross_margin,
+    confirmed_revenue: r.confirmed.revenue,
+    forecast_revenue: r.forecast.revenue,
+    confirmed_cost: r.confirmed.cost,
+    forecast_cost: r.forecast.cost,
+  }));
+  return { months: n, rows };
+}
+
+router.get('/analytics/monthly-trend', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  try {
+    res.json(await aggregateMonthlyTrend({ months: req.query.months }));
+  } catch (e) {
+    console.error('[analytics/monthly-trend]', e);
+    res.status(500).json({ error: e.message || '集計に失敗しました' });
+  }
+});
+
+router.post('/analytics/monthly-trend/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  try {
+    const data = await aggregateMonthlyTrend({ months: req.body?.months ?? req.query.months });
+    const headers = ['月', '売上（確定+見込み）', '確定売上', '見込み売上', '原価（確定+見込み）', '粗利', '粗利率(%)'];
+    const dataRows = data.rows.map(r => [
+      `${r.year}年${r.month}月`,
+      r.revenue, r.confirmed_revenue, r.forecast_revenue,
+      r.cost, r.gross_profit,
+      Math.round(r.gross_margin * 1000) / 10,
+    ]);
+    const first = data.rows[0];
+    const last = data.rows[data.rows.length - 1];
+    const sheetRows = [
+      [`HARUKA FILM 月次推移 (直近${data.months}ヶ月: ${first ? `${first.year}年${first.month}月` : ''}〜${last ? `${last.year}年${last.month}月` : ''})`],
+      [],
+      headers, ...dataRows,
+    ];
+    const title = `分析_月次推移_直近${data.months}ヶ月`;
+    const { url } = await createSheetWithData(title, sheetRows);
+    res.json({ url, title, rows_count: dataRows.length });
+  } catch (e) {
+    console.error('[analytics/monthly-trend/export-sheet]', e);
+    res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
+  }
+});
+
+// ---------- 2) クライアント別採算ランキング ----------
+// 期間内（from〜to の各月）を aggregateMonthlyRevenue で集計し、クライアント別に累計して粗利額降順で返す
+function parseYmParam(s) {
+  const m = /^(\d{4})-(\d{1,2})$/.exec(String(s || '').trim());
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  if (month < 1 || month > 12) return null;
+  return { year, month };
+}
+
+async function aggregateClientProfitRanking({ from, to }) {
+  const { year: cy, month: cm } = jstCurrentYearMonth();
+  const fromYm = parseYmParam(from) || { year: cy, month: 1 };  // 既定: 当年1月
+  const toYm   = parseYmParam(to)   || { year: cy, month: cm }; // 既定: 当月
+  const span = (toYm.year - fromYm.year) * 12 + (toYm.month - fromYm.month) + 1;
+  if (span < 1) throw new Error('期間の指定が不正です（from は to 以前の月にしてください）');
+  if (span > 24) throw new Error('期間は最大24ヶ月までです');
+
+  const list = [];
+  for (let i = 0; i < span; i++) {
+    const d = new Date(Date.UTC(fromYm.year, fromYm.month - 1 + i, 1));
+    list.push({ year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 });
+  }
+  const results = await aggregateMonthlyRevenueSeries(list, 3);
+
+  const byClient = new Map();
+  let totalRevenue = 0, totalCost = 0;
+  for (const r of results) {
+    totalRevenue += r.total.revenue;
+    totalCost    += r.total.cost;
+    for (const c of (r.by_client || [])) {
+      if (!byClient.has(c.id)) byClient.set(c.id, { id: c.id, name: c.name, revenue: 0, cost: 0 });
+      const b = byClient.get(c.id);
+      b.revenue += c.total_revenue;
+      b.cost    += c.total_cost;
+    }
+  }
+  const ranking = Array.from(byClient.values())
+    .map(c => {
+      const profit = c.revenue - c.cost;
+      return { ...c, gross_profit: profit, gross_margin: c.revenue > 0 ? profit / c.revenue : 0 };
+    })
+    .sort((a, b) => b.gross_profit - a.gross_profit)
+    .map((c, i) => ({ rank: i + 1, ...c }));
+
+  const totalProfit = totalRevenue - totalCost;
+  return {
+    from: `${fromYm.year}-${String(fromYm.month).padStart(2, '0')}`,
+    to:   `${toYm.year}-${String(toYm.month).padStart(2, '0')}`,
+    months: span,
+    ranking,
+    total: {
+      revenue: totalRevenue,
+      cost: totalCost,
+      gross_profit: totalProfit,
+      gross_margin: totalRevenue > 0 ? totalProfit / totalRevenue : 0,
+    },
+  };
+}
+
+router.get('/analytics/client-profit-ranking', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  try {
+    res.json(await aggregateClientProfitRanking({ from: req.query.from, to: req.query.to }));
+  } catch (e) {
+    console.error('[analytics/client-profit-ranking]', e);
+    res.status(500).json({ error: e.message || '集計に失敗しました' });
+  }
+});
+
+router.post('/analytics/client-profit-ranking/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  try {
+    const data = await aggregateClientProfitRanking({
+      from: req.body?.from ?? req.query.from,
+      to:   req.body?.to   ?? req.query.to,
+    });
+    const headers = ['順位', 'クライアント', '売上累計', '原価累計', '粗利', '粗利率(%)'];
+    const dataRows = data.ranking.map(c => [
+      c.rank, c.name, c.revenue, c.cost, c.gross_profit,
+      Math.round(c.gross_margin * 1000) / 10,
+    ]);
+    const totalRow = ['', '全体合計', data.total.revenue, data.total.cost, data.total.gross_profit,
+      Math.round(data.total.gross_margin * 1000) / 10];
+    const sheetRows = [
+      [`HARUKA FILM クライアント別採算ランキング (${data.from}〜${data.to})`],
+      [`売上 ¥${data.total.revenue.toLocaleString()} / 原価 ¥${data.total.cost.toLocaleString()} / 粗利 ¥${data.total.gross_profit.toLocaleString()} (粗利率 ${(data.total.gross_margin * 100).toFixed(1)}%)`],
+      [],
+      headers, ...dataRows, totalRow,
+    ];
+    const title = `分析_クライアント別採算_${data.from.replace('-', '')}-${data.to.replace('-', '')}`;
+    const { url } = await createSheetWithData(title, sheetRows);
+    res.json({ url, title, rows_count: dataRows.length });
+  } catch (e) {
+    console.error('[analytics/client-profit-ranking/export-sheet]', e);
+    res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
+  }
+});
+
+// ---------- 3) 納期・品質（納期遵守率・修正回数） ----------
+// 当月に納品（delivered_at が JST 月内）された creatives を対象に:
+//   - 納期遵守: delivered_at の JST 日付 <= final_deadline（DATE 列）。納期未設定は分母から除外し別掲
+//   - 修正回数: creative_status_transitions の to_status='クライアントチェック中' 遷移回数 - 1（最小0）
+//     ※ 初回提出で必ず1回「クライアントチェック中」を通るため、2回目以降を「修正」と数える
+async function aggregateDeliveryQuality({ year, month }) {
+  const { startIso, endIso } = jstMonthRangeIso(year, month);
+
+  // PostgREST の既定 max rows（1000行）による silent 打ち切りを避けるため range でページングする
+  const fetchAllRows = async (buildQuery) => {
+    const PAGE = 1000;
+    const all = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await buildQuery().range(offset, offset + PAGE - 1);
+      if (error) throw new Error(error.message);
+      all.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    return all;
+  };
+
+  // 当月納品 creatives（base64 列は含めない・必要列のみ select）
+  const creatives = await fetchAllRows(() => supabase
+    .from('creatives')
+    .select('id, delivered_at, final_deadline, project_id, projects(id, client_id, clients(id, name))')
+    .gte('delivered_at', startIso)
+    .lt('delivered_at', endIso)
+    .order('id', { ascending: true }));
+
+  // 修正回数: to_status='クライアントチェック中' への遷移回数。
+  // ⚠ creative_id の大量 .in() は URL 長超過で fetch failed になるため（memory: PR #919）、
+  //    creatives!inner の embed フィルタで「当月納品分」に絞って取得する。
+  const revisionCountByCreative = new Map();
+  if (creatives.length) {
+    const transitions = await fetchAllRows(() => supabase
+      .from('creative_status_transitions')
+      .select('id, creative_id, creatives!inner(id)')
+      .eq('to_status', 'クライアントチェック中')
+      .gte('creatives.delivered_at', startIso)
+      .lt('creatives.delivered_at', endIso)
+      .order('id', { ascending: true }));
+    for (const t of transitions) {
+      revisionCountByCreative.set(t.creative_id, (revisionCountByCreative.get(t.creative_id) || 0) + 1);
+    }
+  }
+
+  // JST 日付での納期遵守判定（final_deadline は DATE 列 = 'YYYY-MM-DD' 文字列）
+  const jstDateOf = (iso) => new Date(iso).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+
+  const clientMap = new Map();
+  const ensureClientBucket = (id, name) => {
+    const key = id || '__unknown__';
+    if (!clientMap.has(key)) {
+      clientMap.set(key, {
+        client_id: id || null, client_name: name || '(不明)',
+        delivered_count: 0, with_deadline_count: 0, on_time_count: 0,
+        no_deadline_count: 0, revision_sum: 0,
+      });
+    }
+    return clientMap.get(key);
+  };
+
+  let deliveredCount = 0, withDeadlineCount = 0, onTimeCount = 0, noDeadlineCount = 0, revisionSum = 0;
+  for (const c of creatives) {
+    const bucket = ensureClientBucket(c.projects?.client_id, c.projects?.clients?.name);
+    const transitionsN = revisionCountByCreative.get(c.id) || 0;
+    const revisions = Math.max(0, transitionsN - 1);
+    deliveredCount += 1;
+    bucket.delivered_count += 1;
+    revisionSum += revisions;
+    bucket.revision_sum += revisions;
+    const deadline = c.final_deadline ? String(c.final_deadline).slice(0, 10) : null;
+    if (!deadline) {
+      noDeadlineCount += 1;
+      bucket.no_deadline_count += 1;
+      continue;
+    }
+    withDeadlineCount += 1;
+    bucket.with_deadline_count += 1;
+    if (jstDateOf(c.delivered_at) <= deadline) {
+      onTimeCount += 1;
+      bucket.on_time_count += 1;
+    }
+  }
+
+  const byClient = Array.from(clientMap.values())
+    .map(b => ({
+      ...b,
+      on_time_rate: b.with_deadline_count > 0 ? b.on_time_count / b.with_deadline_count : null,
+      avg_revisions: b.delivered_count > 0 ? b.revision_sum / b.delivered_count : 0,
+    }))
+    .sort((a, b) => b.delivered_count - a.delivered_count);
+
+  return {
+    year, month,
+    total: {
+      delivered_count: deliveredCount,
+      with_deadline_count: withDeadlineCount,
+      on_time_count: onTimeCount,
+      on_time_rate: withDeadlineCount > 0 ? onTimeCount / withDeadlineCount : null,
+      no_deadline_count: noDeadlineCount,
+      avg_revisions: deliveredCount > 0 ? revisionSum / deliveredCount : 0,
+    },
+    by_client: byClient,
+  };
+}
+
+router.get('/analytics/delivery-quality', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
+  try {
+    res.json(await aggregateDeliveryQuality({ year, month }));
+  } catch (e) {
+    console.error('[analytics/delivery-quality]', e);
+    res.status(500).json({ error: e.message || '集計に失敗しました' });
+  }
+});
+
+router.post('/analytics/delivery-quality/export-sheet', requireAuth, requirePermission('analytics.view'), async (req, res) => {
+  const year = parseInt(req.body?.year ?? req.query.year, 10);
+  const month = parseInt(req.body?.month ?? req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
+  try {
+    const data = await aggregateDeliveryQuality({ year, month });
+    const pct = (v) => v == null ? '-' : (Math.round(v * 1000) / 10);
+    const headers = ['クライアント', '納品件数', '納期あり件数', '納期内納品', '遵守率(%)', '平均修正回数', '納期未設定件数'];
+    const dataRows = data.by_client.map(b => [
+      b.client_name, b.delivered_count, b.with_deadline_count, b.on_time_count,
+      pct(b.on_time_rate),
+      Math.round(b.avg_revisions * 100) / 100,
+      b.no_deadline_count,
+    ]);
+    const t = data.total;
+    const totalRow = ['全体合計', t.delivered_count, t.with_deadline_count, t.on_time_count,
+      pct(t.on_time_rate), Math.round(t.avg_revisions * 100) / 100, t.no_deadline_count];
+    const sheetRows = [
+      [`HARUKA FILM 納期・品質 (${year}年${month}月)`],
+      [`納品 ${t.delivered_count}件 / 遵守率 ${t.on_time_rate == null ? '-' : (t.on_time_rate * 100).toFixed(1) + '%'}（納期あり ${t.with_deadline_count}件中 ${t.on_time_count}件） / 平均修正回数 ${(Math.round(t.avg_revisions * 100) / 100)}回 / 納期未設定 ${t.no_deadline_count}件`],
+      [],
+      headers, ...dataRows, totalRow,
+    ];
+    const title = `分析_納期品質_${year}年${String(month).padStart(2, '0')}月`;
+    const { url } = await createSheetWithData(title, sheetRows);
+    res.json({ url, title, rows_count: dataRows.length });
+  } catch (e) {
+    console.error('[analytics/delivery-quality/export-sheet]', e);
+    res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // ADR 030: 作成本数集計・請求プレビューの単価を「締め月末時点で有効な成果物
 // グループ（line）」から解決する。creative.line_id 固定だと ADR 025 の適用期間
