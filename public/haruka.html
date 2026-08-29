@@ -27395,11 +27395,11 @@ function renderPayout() {
     } else {
       opCell = `<button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="poPay('${rid}')">振込完了→送信</button>`;
       if (r.has_chatwork_dm) {
-        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💬 ChatworkDMへ送信</div>';
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💬 Chatworkへ送信</div>';
       } else if (r.has_chatwork) {
-        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📢 Chatwork全体+To送信</div>';
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💬 Chatworkへ送信（全体+To）</div>';
       } else if (r.slack_user_id) {
-        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💜 SlackDMへ送信</div>';
+        opCell += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">💜 Slackへ送信</div>';
       } else {
         opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ 送信なし（チャット未設定）</div>';
       }
