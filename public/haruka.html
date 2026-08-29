@@ -6363,6 +6363,17 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
               </select>
             </div>
           </div>
+          <!-- 請求タイミング（ADR 034・案件単位）: 納品時（既定）/ 初稿提出時。支払い・売上の計上月が切り替わる -->
+          <div class="form-row" style="margin-bottom:10px">
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label class="form-label">請求タイミング</label>
+              <select class="form-select" id="p-billing-timing">
+                <option value="on_delivery">納品時（既定）</option>
+                <option value="on_first_draft">初稿提出時（クライアントチェック中への到達月で計上）</option>
+              </select>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">一式（分割請求あり）の成果物グループは分割請求の計上月が優先されます</div>
+            </div>
+          </div>
           <!-- Wチェック要否（静止画案件のみ表示・この案件のクリエイティブ初期値・初期値あり・ADR 024） -->
           <div class="form-row" id="p-wcheck-row" style="margin-bottom:10px;display:none">
             <div class="form-group" style="flex:1;margin-bottom:0">
@@ -11476,13 +11487,17 @@ function renderProjectsView() {
           const cwIcon = p.chatwork_room_id ? `<span title="Chatwork: ${p.chatwork_room_id}" style="font-size:11px;background:#E8F5E9;color:#2E7D32;padding:2px 7px;border-radius:5px;font-weight:500">CW</span>` : '';
           const slIcon = p.slack_channel_url ? `<span title="Slack: ${p.slack_channel_url}" style="font-size:11px;background:#EDE7F6;color:#4527A0;padding:2px 7px;border-radius:5px;font-weight:500">SL</span>` : '';
           const typeBadge = getProjectTypeBadge(p);
+          // ADR 034: 初稿提出時 計上の案件バッジ（既定の納品時は無表示）
+          const fdBadge = p.billing_timing === 'on_first_draft'
+            ? `<span title="この案件は初稿提出（クライアントチェック中への到達）月で支払い・請求を計上します" style="font-size:11px;background:#FEF3C7;color:#B45309;border:1px solid #FCD34D;padding:2px 7px;border-radius:5px;font-weight:600">初稿請求</span>`
+            : '';
           const tagChips = renderProjectTagsInline(p.tags);
           return `
           <div class="project-row">
             <div style="flex:1;min-width:0">
               <div style="font-size:14px;font-weight:500;color:var(--text);display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                 ${p.name}
-                ${typeBadge}${cwIcon}${slIcon}${tagChips}
+                ${typeBadge}${fdBadge}${cwIcon}${slIcon}${tagChips}
               </div>
               <div style="font-size:12px;color:var(--text-muted);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap">
                 ${pd ? `<span>${pd}</span>` : ''}
@@ -19222,6 +19237,8 @@ function openProjectModal(preClientId) {
 
   document.getElementById('p-name').value = '';
   document.getElementById('p-status').value = '提案中';
+  // ADR 034: 請求タイミングは既定「納品時」
+  { const _btSelNew = document.getElementById('p-billing-timing'); if (_btSelNew) _btSelNew.value = 'on_delivery'; }
   // カテゴリ select 初期化（マスタを fetch して populate。デフォルトは 'video' カテゴリ）
   loadCategories().then(() => {
     const sel = document.getElementById('p-primary-category');
@@ -19388,6 +19405,8 @@ function openEditProject(p) {
 
   document.getElementById('p-name').value = p.name || '';
   document.getElementById('p-status').value = p.status || '進行中';
+  // ADR 034: 請求タイミング（未設定・列未適用の旧データは既定の「納品時」）
+  { const _btSel = document.getElementById('p-billing-timing'); if (_btSel) _btSel.value = p.billing_timing === 'on_first_draft' ? 'on_first_draft' : 'on_delivery'; }
   // カテゴリ select 初期化（マスタを fetch して populate。p.primary_category_id 優先 / 未設定時は video にフォールバック）
   loadCategories().then(() => {
     const sel = document.getElementById('p-primary-category');
@@ -23677,6 +23696,10 @@ async function submitProject() {
     }
   }
 
+  // ADR 034: 請求タイミング（納品時=既定 / 初稿提出時）。select の現在値をそのまま送る。
+  const billing_timing = document.getElementById('p-billing-timing')?.value === 'on_first_draft'
+    ? 'on_first_draft' : 'on_delivery';
+
   const btn = document.getElementById('p-submit-btn');
   const origText = btn.textContent;
   btn.textContent = '処理中...'; btn.disabled = true;
@@ -23685,7 +23708,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, wcheck_required })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, wcheck_required, billing_timing })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -39340,6 +39363,18 @@ async function openCreativeDetail(id) {
     }
     bar.style.display = 'flex';
     let _dlHtml = deadlineItem('初稿締切', c.draft_deadline) + deadlineItem('最終納品', c.final_deadline, true);
+    // ADR 034: 初稿提出日時（「クライアントチェック中」へ初到達した時刻・不可逆）。
+    // 記録済みのとき表示（delivered_at 表示に倣った JST 表示）。
+    // billing_timing='on_first_draft' の案件では、この JST 月が支払い・請求の計上月になる旨を注記。
+    if (c.first_draft_submitted_at) {
+      const _fdTxt = new Date(c.first_draft_submitted_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const _fdBilling = c.projects?.billing_timing === 'on_first_draft';
+      _dlHtml +=
+        `<span id="cd-first-draft-item" style="display:inline-flex;flex-direction:column;gap:3px;border-left:1px solid var(--border-light);padding-left:16px">` +
+        `<span style="font-size:10.5px;font-weight:700;color:var(--text-muted);letter-spacing:0.08em;white-space:nowrap">📝 初稿提出${_fdBilling ? ' <span style="font-weight:600;letter-spacing:0">※この月で計上（初稿請求案件）</span>' : ''}</span>` +
+        `<span style="font-size:17px;font-weight:800;line-height:1.2;font-variant-numeric:tabular-nums;color:#B45309">${_fdTxt}</span>` +
+        `</span>`;
+    }
     // ADR 026: 納品完了日時（この JST 月で支払い本数がカウントされる）。
     // 納品済みのとき表示。補正は admin / secretary / producer / producer_director のみ
     // （effectiveRole() 判定 = VIEW AS 対応。ADR 015）。

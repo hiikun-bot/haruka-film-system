@@ -1101,9 +1101,15 @@ router.post('/projects', requireAuth, requireAnyPermission('project.create_edit'
     liaison_user_id,
     tags,
     filename_template_id, filename_token_overrides,
-    wcheck_required // ADR 024: 案件単位のWチェック要否（静止画のみ・初期あり）
+    wcheck_required, // ADR 024: 案件単位のWチェック要否（静止画のみ・初期あり）
+    billing_timing   // ADR 034: 計上タイミング（on_delivery=既定 / on_first_draft）
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
+  // ADR 034: 不正値は 400（DB CHECK 制約より手前で弾く）
+  if (billing_timing !== undefined && billing_timing !== null && billing_timing !== ''
+      && !['on_delivery', 'on_first_draft'].includes(billing_timing)) {
+    return res.status(400).json({ error: 'billing_timing は on_delivery / on_first_draft のいずれかにしてください' });
+  }
   const normalizedTags = normalizeTags(tags);
   // サブディレクター: 形式チェック + ユーザー存在/有効チェック（チーム制約は撤廃）
   const { ids: subIds } = await normalizeSubDirectorIds(sub_director_ids, {
@@ -1136,6 +1142,10 @@ router.post('/projects', requireAuth, requireAnyPermission('project.create_edit'
   };
   // ADR 024: Wチェック要否（案件単位）。boolean のときのみ反映、未指定は NULL=カテゴリ既定継承。
   if (typeof wcheck_required === 'boolean') insertPayload.wcheck_required = wcheck_required;
+  // ADR 034: 計上タイミング。明示時のみ反映（未指定は DB default 'on_delivery'）。
+  if (billing_timing === 'on_delivery' || billing_timing === 'on_first_draft') {
+    insertPayload.billing_timing = billing_timing;
+  }
   // ADR 007: ファイル名テンプレ（明示時のみ反映。未指定なら DB default が使われる）
   if (filename_template_id !== undefined && filename_template_id !== null && filename_template_id !== '') {
     insertPayload.filename_template_id = filename_template_id;
@@ -1186,6 +1196,12 @@ router.post('/projects', requireAuth, requireAnyPermission('project.create_edit'
     const retry5 = await supabase.from('projects').insert(fallback5).select().single();
     data = retry5.data; error = retry5.error;
   }
+  // ADR 034 migration 未適用環境のフォールバック（projects.billing_timing 列が無い）
+  if (error && /billing_timing/i.test(error.message || '')) {
+    const { billing_timing: _o7, ...fallback7 } = insertPayload;
+    const retry7 = await supabase.from('projects').insert(fallback7).select().single();
+    data = retry7.data; error = retry7.error;
+  }
   if (error) return res.status(500).json({ error: error.message });
   // タグ保存（delete-all → insert）。本番テーブル未適用時は silent skip。
   if (data?.id) {
@@ -1216,7 +1232,9 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     // ADR 008 Phase 4: ファイル名連番カスタマイズ
     next_filename_serial, serial_digits,
     // ADR 024: 案件単位のWチェック要否
-    wcheck_required
+    wcheck_required,
+    // ADR 034: 計上タイミング（on_delivery=既定 / on_first_draft）
+    billing_timing
   } = req.body;
   // ADR 010 Phase 1b: 工程表セクションだけが値を送る部分更新（schedule 列のみ）
   // のときは name/status を強制 NULL 化してしまわないよう、最小 UPDATE で済ませる
@@ -1301,6 +1319,13 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
   // ADR 024: Wチェック要否（案件単位）。明示時のみ反映。null=カテゴリ既定継承、true/false=明示。
   if (wcheck_required !== undefined) {
     updateData.wcheck_required = (wcheck_required === null || wcheck_required === '') ? null : !!wcheck_required;
+  }
+  // ADR 034: 計上タイミング。明示時のみ反映（部分更新の巻き込み消失防止）。不正値は 400。
+  if (billing_timing !== undefined && billing_timing !== null && billing_timing !== '') {
+    if (!['on_delivery', 'on_first_draft'].includes(billing_timing)) {
+      return res.status(400).json({ error: 'billing_timing は on_delivery / on_first_draft のいずれかにしてください' });
+    }
+    updateData.billing_timing = billing_timing;
   }
   // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（明示時のみ反映）
   if (creatives_export_sheet_url !== undefined) {
@@ -1398,6 +1423,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { wcheck_required: _o6, ...fallback6 } = updateData;
     const retry6 = await supabase.from('projects').update(fallback6).eq('id', req.params.id).select().single();
     data = retry6.data; error = retry6.error;
+  }
+  // ADR 034 migration 未適用ガード（projects.billing_timing 列が無い）
+  if (error && /billing_timing/i.test(error.message || '') && updateData.billing_timing !== undefined) {
+    const { billing_timing: _o7, ...fallback7 } = updateData;
+    const retry7 = await supabase.from('projects').update(fallback7).eq('id', req.params.id).select().single();
+    data = retry7.data; error = retry7.error;
   }
   if (error) return res.status(500).json({ error: error.message });
 
@@ -5056,6 +5087,61 @@ function jstMonthRangeIso(year, month) {
   };
 }
 
+// ==================== ADR 034: 計上月の解決（billing_timing） ====================
+// 案件の billing_timing（on_delivery=既定 / on_first_draft）で、creative 1 本の計上月の
+// 基準を切り替える。支払い集計・売上集計の両方がこのヘルパー群を通す
+// （直接 delivered_at を月判定に使う分岐を新設しない）。
+//   on_delivery    : delivered_at（納品完了・ADR 026）／未確定時フォールバック final_deadline → draft_deadline
+//   on_first_draft : first_draft_submitted_at（「クライアントチェック中」初到達）／未確定時フォールバック draft_deadline
+// 一式（line_payment_installments を持つ line）の金額計上は ADR 029 の target_month のままで、
+// このヘルパーの対象外（installment 系の集計ブロックは一切変更しない）。
+function billingTimingOf(project) {
+  return (project && project.billing_timing === 'on_first_draft') ? 'on_first_draft' : 'on_delivery';
+}
+
+// 計上確定イベントの時刻（TIMESTAMPTZ ISO）。未確定なら null（フォールバックは見ない）。
+// 「納品済のみ」系の集計はこのイベントの JST 月で厳密判定する（従来の delivered_at 判定と同型）。
+function resolveBillingEventIso(creative, project) {
+  if (!creative) return null;
+  return billingTimingOf(project) === 'on_first_draft'
+    ? (creative.first_draft_submitted_at || null)
+    : (creative.delivered_at || null);
+}
+
+// 計上確定イベントが JST 月範囲 [startMs, endMs) に入るか（ms は jstMonthRangeIso の ISO を getTime したもの）。
+// UTC epoch ms 同士の比較なのでサーバー TZ に依存しない。
+function billingEventInRange(creative, project, jstStartMs, jstEndMs) {
+  const ev = resolveBillingEventIso(creative, project);
+  if (!ev) return false;
+  const t = new Date(ev).getTime();
+  return Number.isFinite(t) && t >= jstStartMs && t < jstEndMs;
+}
+
+// TIMESTAMPTZ ISO → JST の 'YYYY-MM'。
+function jstYearMonthOfIso(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  // 'sv-SE' は YYYY-MM-DD 固定フォーマット（PR #637 の JST 明示パターン）
+  return d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7);
+}
+
+// creative 1 本の計上月 'YYYY-MM' を返す（イベント優先＋締切フォールバック）。
+// 見込み・プレビュー系（/invoices/preview-items 等）の月判定用。
+//   on_delivery    : delivered_at の JST 月 → 無ければ final_deadline → draft_deadline の月（ADR 026 の従来挙動）
+//   on_first_draft : first_draft_submitted_at の JST 月 → 無ければ draft_deadline（初稿締切）の月
+// DATE 列（YYYY-MM-DD 文字列）は TZ 変換を伴わない素の月 prefix で判定する。
+function resolveBillingMonth(creative, project) {
+  if (!creative) return null;
+  if (billingTimingOf(project) === 'on_first_draft') {
+    return jstYearMonthOfIso(creative.first_draft_submitted_at)
+      || (creative.draft_deadline ? String(creative.draft_deadline).slice(0, 7) : null);
+  }
+  return jstYearMonthOfIso(creative.delivered_at)
+    || (creative.final_deadline ? String(creative.final_deadline).slice(0, 7) : null)
+    || (creative.draft_deadline ? String(creative.draft_deadline).slice(0, 7) : null);
+}
+
 async function aggregateCreativeByAssignee({ year, month, client_id, statusFilter }) {
 
   // 期間: 当月の 00:00:00 から 翌月 00:00:00 未満
@@ -5066,22 +5152,28 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
 
   // 集計対象月の判定列：
   //   - 「納品済」モード: delivered_at（納品完了日時・JST月。ADR 026）
+  //     ADR 034: billing_timing='on_first_draft' の案件は first_draft_submitted_at（初稿提出）の JST 月
   //   - 「全件」モード:   final_deadline 優先、未設定なら created_at にフォールバック
   //     （後から登録した過去納品分が created_at の月に寄って集計されるバグの対策）
   let query = supabase
     .from('creatives')
     .select(`
       id, file_name, status, creative_type, project_id, line_id,
-      final_deadline, created_at, delivered_at, delivered_director_ids, delivered_producer_ids,
-      projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
+      final_deadline, created_at, delivered_at, first_draft_submitted_at,
+      delivered_director_ids, delivered_producer_ids,
+      projects!inner(id, name, client_id, director_id, producer_id, billing_timing, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
     `);
+  const jstDelivered = statusFilter === 'delivered' ? jstMonthRangeIso(year, month) : null;
   if (statusFilter === 'delivered') {
-    const jst = jstMonthRangeIso(year, month);
-    query = query
-      .gte('delivered_at', jst.startIso)
-      .lt('delivered_at', jst.endIso)
-      .eq('status', '納品');
+    const jst = jstDelivered;
+    // ADR 034: DB 側は「納品イベントが当月（従来条件そのまま）」OR「初稿提出イベントが当月」の
+    // 候補集合を取り、直後の JS フィルタで案件の billing_timing に応じた片方だけを採用する。
+    // on_delivery 案件（既定・既存全件）は従来の delivered_at∈当月 ∧ status='納品' と完全に同一。
+    query = query.or(
+      `and(delivered_at.gte.${jst.startIso},delivered_at.lt.${jst.endIso},status.eq.納品),` +
+      `and(first_draft_submitted_at.gte.${jst.startIso},first_draft_submitted_at.lt.${jst.endIso})`
+    );
   } else {
     query = query.or(
       `and(final_deadline.gte.${startIso},final_deadline.lt.${endIso}),` +
@@ -5090,8 +5182,20 @@ async function aggregateCreativeByAssignee({ year, month, client_id, statusFilte
   }
   if (client_id) query = query.eq('projects.client_id', client_id);
 
-  const { data, error } = await query;
+  let { data, error } = await query;
   if (error) throw new Error(error.message);
+
+  // ADR 034: 案件の billing_timing に応じた計上月判定（JS 側で確定）。
+  //   on_delivery（既定）  : status='納品' ∧ delivered_at が当月 JST（従来と同一の判定）
+  //   on_first_draft       : first_draft_submitted_at が当月 JST（不可逆イベント。納品を待たない）
+  if (statusFilter === 'delivered') {
+    const _bStart = new Date(jstDelivered.startIso).getTime();
+    const _bEnd   = new Date(jstDelivered.endIso).getTime();
+    data = (data || []).filter(c => {
+      if (billingTimingOf(c.projects) === 'on_delivery' && c.status !== '納品') return false;
+      return billingEventInRange(c, c.projects, _bStart, _bEnd);
+    });
+  }
 
   // 単価（＝この担当者が 1 本あたり受け取る原価）を creator-summary と同じロジックで解決する。
   // computeCreatorCreativeBreakdown / resolvePayee を共有することで、本モーダルの「単価合計」と
@@ -5417,15 +5521,37 @@ async function aggregateMonthlyRevenue({ year, month }) {
   }
 
   // 見込み: 当月納期で未納品 creatives（line_id を含めて取得）
-  const { data: forecastCreatives } = await supabase
+  // ADR 034: billing_timing='on_first_draft' の案件は「初稿提出（クライアントチェック中初到達）月」＝
+  // first_draft_submitted_at の JST 月（未提出なら draft_deadline の月）で見込み計上する。
+  // DB 側は従来条件（final_deadline 当月）OR 初稿基準の候補集合を取り、直後の JS フィルタで
+  // billing_timing に応じた片方だけを採用する（on_delivery 案件は従来の final_deadline 判定と完全同一）。
+  const _fcMonthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+  const _fcNextMonthStart = month === 12
+    ? `${year + 1}-01-01`
+    : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  const _fcJst = jstMonthRangeIso(year, month);
+  const { data: forecastCreativesRaw } = await supabase
     .from('creatives')
     .select(`
-      id, status, creative_type, project_id, final_deadline, line_id,
-      projects!inner(id, client_id, clients(id, name))
+      id, status, creative_type, project_id, final_deadline, draft_deadline, first_draft_submitted_at, line_id,
+      projects!inner(id, client_id, billing_timing, clients(id, name))
     `)
-    .gte('final_deadline', startDate.toISOString())
-    .lt('final_deadline', endDate.toISOString())
+    .or(
+      `and(final_deadline.gte.${startDate.toISOString()},final_deadline.lt.${endDate.toISOString()}),` +
+      `and(first_draft_submitted_at.gte.${_fcJst.startIso},first_draft_submitted_at.lt.${_fcJst.endIso}),` +
+      `and(first_draft_submitted_at.is.null,draft_deadline.gte.${_fcMonthStart},draft_deadline.lt.${_fcNextMonthStart})`
+    )
     .neq('status', '納品');
+  const _fcTargetYm = `${year}-${String(month).padStart(2, '0')}`;
+  const forecastCreatives = (forecastCreativesRaw || []).filter(c => {
+    if (billingTimingOf(c.projects) === 'on_first_draft') {
+      // resolveBillingMonth: first_draft_submitted_at の JST 月 → 無ければ draft_deadline の月
+      return resolveBillingMonth(c, c.projects) === _fcTargetYm;
+    }
+    // on_delivery（既定）: 従来どおり final_deadline が当月（status<>'納品' なので delivered_at は関与しない）
+    const fd = c.final_deadline ? String(c.final_deadline).slice(0, 10) : '';
+    return fd >= _fcMonthStart && fd < _fcNextMonthStart;
+  });
 
   // line_id でユニーク化（同じ line に紐付く複数 creatives は 1 回しか集計しない）
   const lineIds = Array.from(new Set((forecastCreatives || [])
@@ -6459,25 +6585,40 @@ async function aggregateCreatorSummary({ year, month, statusFilter }) {
   const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
   // ADR 026: 「納品のみ」は delivered_at（納品完了日時・JST月）で判定。
   // 月末23:59(JST)までに納品完了になったものだけがその月の支払い本数になる。
+  // ADR 034: billing_timing='on_first_draft' の案件は first_draft_submitted_at（初稿提出）の JST 月で判定。
   const jstRange = jstMonthRangeIso(year, month);
-  const dateColForFilter = statusFilter === 'delivered' ? 'delivered_at' : 'created_at';
-  const rangeStartIso = statusFilter === 'delivered' ? jstRange.startIso : startDate.toISOString();
-  const rangeEndIso   = statusFilter === 'delivered' ? jstRange.endIso   : endDate.toISOString();
 
   let q = supabase
     .from('creatives')
     .select(`
       id, file_name, status, creative_type, project_id, line_id,
-      final_deadline, created_at, delivered_at, delivered_director_ids, delivered_producer_ids,
-      projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
+      final_deadline, created_at, delivered_at, first_draft_submitted_at,
+      delivered_director_ids, delivered_producer_ids,
+      projects!inner(id, name, client_id, director_id, producer_id, billing_timing, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
-    `)
-    .gte(dateColForFilter, rangeStartIso)
-    .lt(dateColForFilter, rangeEndIso);
-  if (statusFilter === 'delivered') q = q.eq('status', '納品');
+    `);
+  if (statusFilter === 'delivered') {
+    // ADR 034: DB 側は「納品イベント当月（従来条件）」OR「初稿提出イベント当月」の候補集合、
+    // 直後の JS フィルタで billing_timing に応じた片方だけを採用（on_delivery は従来と完全同一）。
+    q = q.or(
+      `and(delivered_at.gte.${jstRange.startIso},delivered_at.lt.${jstRange.endIso},status.eq.納品),` +
+      `and(first_draft_submitted_at.gte.${jstRange.startIso},first_draft_submitted_at.lt.${jstRange.endIso})`
+    );
+  } else {
+    q = q.gte('created_at', startDate.toISOString()).lt('created_at', endDate.toISOString());
+  }
 
-  const { data: creatives, error } = await q;
+  let { data: creatives, error } = await q;
   if (error) throw new Error(error.message);
+
+  if (statusFilter === 'delivered') {
+    const _bStart = new Date(jstRange.startIso).getTime();
+    const _bEnd   = new Date(jstRange.endIso).getTime();
+    creatives = (creatives || []).filter(c => {
+      if (billingTimingOf(c.projects) === 'on_delivery' && c.status !== '納品') return false;
+      return billingEventInRange(c, c.projects, _bStart, _bEnd);
+    });
+  }
 
   // line ⇒ line_costs を一括取得（単価解決コンテキスト）
   // ADR 030: 単価は締め月末時点で有効な成果物グループ(line)から解決する。
@@ -6750,25 +6891,39 @@ async function aggregateCreatorDetail({ year, month, statusFilter, userId }) {
   const endDate   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
   // ADR 026: 「納品のみ」は delivered_at（納品完了日時・JST月）で判定。
   // 月末23:59(JST)までに納品完了になったものだけがその月の支払い本数になる。
+  // ADR 034: billing_timing='on_first_draft' の案件は first_draft_submitted_at（初稿提出）の JST 月で判定。
   const jstRange = jstMonthRangeIso(year, month);
-  const dateColForFilter = statusFilter === 'delivered' ? 'delivered_at' : 'created_at';
-  const rangeStartIso = statusFilter === 'delivered' ? jstRange.startIso : startDate.toISOString();
-  const rangeEndIso   = statusFilter === 'delivered' ? jstRange.endIso   : endDate.toISOString();
 
   let q = supabase
     .from('creatives')
     .select(`
       id, file_name, status, creative_type, project_id, line_id,
-      final_deadline, created_at, delivered_at, delivered_director_ids, delivered_producer_ids,
-      projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
+      final_deadline, created_at, delivered_at, first_draft_submitted_at,
+      delivered_director_ids, delivered_producer_ids,
+      projects!inner(id, name, client_id, director_id, producer_id, billing_timing, clients(id, name)),
       creative_assignments(role, rank_applied, users(id, full_name, nickname, role, rank))
-    `)
-    .gte(dateColForFilter, rangeStartIso)
-    .lt(dateColForFilter, rangeEndIso);
-  if (statusFilter === 'delivered') q = q.eq('status', '納品');
+    `);
+  if (statusFilter === 'delivered') {
+    // ADR 034: aggregateCreatorSummary と同一の候補集合 + JS フィルタ（集計値=明細合計を維持）
+    q = q.or(
+      `and(delivered_at.gte.${jstRange.startIso},delivered_at.lt.${jstRange.endIso},status.eq.納品),` +
+      `and(first_draft_submitted_at.gte.${jstRange.startIso},first_draft_submitted_at.lt.${jstRange.endIso})`
+    );
+  } else {
+    q = q.gte('created_at', startDate.toISOString()).lt('created_at', endDate.toISOString());
+  }
 
-  const { data: creatives, error } = await q;
+  let { data: creatives, error } = await q;
   if (error) throw new Error(error.message);
+
+  if (statusFilter === 'delivered') {
+    const _bStart = new Date(jstRange.startIso).getTime();
+    const _bEnd   = new Date(jstRange.endIso).getTime();
+    creatives = (creatives || []).filter(c => {
+      if (billingTimingOf(c.projects) === 'on_delivery' && c.status !== '納品') return false;
+      return billingEventInRange(c, c.projects, _bStart, _bEnd);
+    });
+  }
 
   // ADR 030: 単価は締め月末時点で有効な成果物グループ(line)から解決する。
   // ADR 031: line 未紐付け（creatives.line_id IS NULL）でも案件側の単価から解決する。
@@ -8718,10 +8873,12 @@ router.get('/creatives/:id', async (req, res) => {
   // wcheck 判定（旧: resolveWcheckEligibility の直列 2 クエリ = +2 RTT）を追加 DB アクセスなしで
   // 済ませるため、projects embed に wcheck_required を含める。schema-sync 未適用環境（列欠損）では
   // resolveWcheckEligibility の旧フォールバックと同様、列抜きで再試行する（値は undefined 扱い＝従来と同じ）。
+  // ADR 034: billing_timing は詳細モーダルの「初稿提出日（※この月で計上）」注記表示に使う。
+  // 列未適用環境では wcheck_required と同じフォールバック（列抜き select）で落ちないようにする。
   const buildDetailSelect = (withProjWcheck) => `
       *,
       projects(
-        id, name, producer_id, director_id, regulation_url, primary_category_id${withProjWcheck ? ', wcheck_required' : ''},
+        id, name, producer_id, director_id, regulation_url, primary_category_id${withProjWcheck ? ', wcheck_required, billing_timing' : ''},
         director:director_id(id, full_name, nickname, role, rank, team_id, is_active),
         producer:producer_id(id, full_name, nickname, role, rank, team_id, is_active),
         clients(id, name, client_code, status)
@@ -9627,7 +9784,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   if (updateData.status !== undefined) {
     let beforeQuery = await supabase
       .from('creatives')
-      .select('status, director_comment, editor_comment, client_comment, updated_at, director_comment_updated_at, client_comment_updated_at, editor_comment_updated_at')
+      .select('status, first_draft_submitted_at, director_comment, editor_comment, client_comment, updated_at, director_comment_updated_at, client_comment_updated_at, editor_comment_updated_at')
       .eq('id', req.params.id)
       .maybeSingle();
     if (beforeQuery.error) {
@@ -9661,6 +9818,21 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     } else if (beforeStatus === '納品') {
       updateData.delivered_at = null;
     }
+  }
+
+  // ADR 034: 初稿提出日時（first_draft_submitted_at）の自動記録。
+  //   「クライアントチェック中」へ初到達した瞬間に now() を刻む（先方チェックにボールが渡った時点）。
+  //   一度記録したら以後は保持する不可逆イベント（クライアントチェック後修正などで手前の
+  //   ステータスへ戻っても NULL に戻さない）。billing_timing='on_first_draft' の案件では
+  //   この JST 月が支払い・売上の計上月になる。
+  //   ※ 相互参照: 管理者強制変更（POST /creatives/:id/admin-status）も同じ規則で記録する。
+  //     一括納品（applyBulkDeliveredTransition）は to_status='納品' 固定のため対象外。
+  if (
+    updateData.status === 'クライアントチェック中' &&
+    beforeStatus !== 'クライアントチェック中' &&
+    beforeRow && !beforeRow.first_draft_submitted_at
+  ) {
+    updateData.first_draft_submitted_at = new Date().toISOString();
   }
 
   // ADR 009: 納品遷移時に「その時点の案件ディレクター/プロデューサー」をスナップショット。
@@ -9763,14 +9935,16 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     // 新列 (director/client/editor _comment_updated_at) が schema-sync 未適用の環境用フォールバック。
     // 列欠損が原因なら _updated_at 系を抜いて再 UPDATE → 本体更新は成功させる。
     const msg = error.message || '';
-    const isMissingNewCol = /comment_updated_at|wcheck_|delivered_/.test(msg);
+    const isMissingNewCol = /comment_updated_at|wcheck_|delivered_|first_draft_submitted_at/.test(msg);
     if (isMissingNewCol) {
-      // schema-sync 未適用環境フォールバック: 新列（comment_updated_at 系 / wcheck 系 / delivered_at）を抜いて再 UPDATE。
+      // schema-sync 未適用環境フォールバック: 新列（comment_updated_at 系 / wcheck 系 / delivered_at /
+      // first_draft_submitted_at）を抜いて再 UPDATE。
       const {
         director_comment_updated_at: _d, client_comment_updated_at: _c, editor_comment_updated_at: _e,
         wcheck_required: _wr, wcheck_requested_by: _wb, wcheck_requested_at: _wa, wcheck_comment: _wc,
         delivered_at: _dat,
         delivered_director_ids: _ddi, delivered_producer_ids: _dpi, delivered_snapshot_at: _dsa,
+        first_draft_submitted_at: _fds,
         ...legacyUpdate
       } = updateData;
       ({ data, error } = await supabase
@@ -11467,11 +11641,19 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
   if (!r)         return res.status(400).json({ error: '理由は必須です' });
 
   // ADR 011 補足: 遷移 audit log のためコメント3種も同時取得しておく。
-  const { data: creative, error: cErr } = await supabase
+  // ADR 034: 初稿提出日時の未設定判定のため first_draft_submitted_at も取得（列未適用環境は fallback）。
+  let { data: creative, error: cErr } = await supabase
     .from('creatives')
-    .select('id, status, project_id, director_comment, client_comment, editor_comment')
+    .select('id, status, project_id, first_draft_submitted_at, director_comment, client_comment, editor_comment')
     .eq('id', req.params.id)
     .maybeSingle();
+  if (cErr && /first_draft_submitted_at|column .+ does not exist/i.test(cErr.message || '')) {
+    ({ data: creative, error: cErr } = await supabase
+      .from('creatives')
+      .select('id, status, project_id, director_comment, client_comment, editor_comment')
+      .eq('id', req.params.id)
+      .maybeSingle());
+  }
   if (cErr) return res.status(500).json({ error: cErr.message });
   if (!creative) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
 
@@ -11546,8 +11728,19 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
       console.warn('[ADR009 snapshot admin]', e?.message || e);
     }
   }
-  const { data: updated, error: uErr } = await supabase
+  // ADR 034: 「クライアントチェック中」へ初到達なら初稿提出日時を記録（不可逆・PUT と同一規則）。
+  // 逆方向（クライアントチェック中から手前へ戻す）でも first_draft_submitted_at はクリアしない。
+  if (newStatus === 'クライアントチェック中' && !creative.first_draft_submitted_at) {
+    updatePayload.first_draft_submitted_at = new Date().toISOString();
+  }
+  let { data: updated, error: uErr } = await supabase
     .from('creatives').update(updatePayload).eq('id', req.params.id).select().single();
+  if (uErr && /first_draft_submitted_at/i.test(uErr.message || '') && updatePayload.first_draft_submitted_at !== undefined) {
+    // 列未適用環境フォールバック（schema-sync 失敗時の安全網）
+    const { first_draft_submitted_at: _fds, ...legacyPayload } = updatePayload;
+    ({ data: updated, error: uErr } = await supabase
+      .from('creatives').update(legacyPayload).eq('id', req.params.id).select().single());
+  }
   if (uErr) return res.status(500).json({ error: uErr.message });
 
   // 監査ログ
@@ -14581,9 +14774,10 @@ router.get('/invoices/preview-items', async (req, res) => {
   // creative_assignments に居ないケースを救うため、自分が担当する案件をUNIONで取得する。
   const CREATIVE_SELECT = `
     id, file_name, status, creative_type, final_deadline, draft_deadline, delivered_at,
+    first_draft_submitted_at,
     delivered_director_ids, delivered_producer_ids,
     project_id, line_id, category_id, is_payable, special_payable, special_payable_reason,
-    projects(id, name, director_id, producer_id, clients(name, client_code)),
+    projects(id, name, director_id, producer_id, billing_timing, clients(name, client_code)),
     creative_assignments(user_id, role, rank_applied, users(id, full_name, role))
   `;
 
@@ -14592,20 +14786,24 @@ router.get('/invoices/preview-items', async (req, res) => {
   const endDate   = new Date(year, month, 0).toISOString().slice(0, 10);
   // ADR 026: 納品完了済みのクリエイティブは delivered_at（納品完了日時・JST月）で当月判定する。
   // 月末23:59(JST)までに納品完了になったものだけがその月の請求プレビューに載る。
+  // ADR 034: billing_timing='on_first_draft' の案件は first_draft_submitted_at（初稿提出）の JST 月
+  // （未提出なら draft_deadline＝初稿締切の月）で当月判定する。
   const jstPrev = jstMonthRangeIso(year, month);
-  const jstStartMs = new Date(jstPrev.startIso).getTime();
-  const jstEndMs   = new Date(jstPrev.endIso).getTime();
 
   // パフォーマンス: 旧実装は creatives をほぼ全件取得して JS でフィルタしていた。
-  // JS フィルタと同一の条件を DB 側に押し込む:
+  // JS フィルタと同一以上の候補集合を DB 側に押し込む（最終判定は下の resolveBillingMonth）:
   //   - delivered_at あり（＝納品完了済み）→ delivered_at が当月（JST）範囲内（ADR 026）
   //   - delivered_at なし → final_deadline が当月範囲内
   //   - final_deadline も無し(NULL) → draft_deadline が当月範囲内（draft しか無い行の救済）
-  // ※ JS 側フィルタも従来通り残すため、結果は完全に同一。
+  //   - ADR 034: 初稿提出が当月（JST）／未提出で draft_deadline が当月（on_first_draft 案件の候補）
+  // ※ JS 側フィルタ（resolveBillingMonth）が案件の billing_timing に応じて最終判定するため、
+  //   on_delivery 案件（既定・既存全件）の結果は従来と完全に同一。
   const MONTH_RANGE_OR = [
     `and(delivered_at.gte.${jstPrev.startIso},delivered_at.lt.${jstPrev.endIso})`,
     `and(delivered_at.is.null,final_deadline.gte.${startDate},final_deadline.lte.${endDate})`,
     `and(delivered_at.is.null,final_deadline.is.null,draft_deadline.gte.${startDate},draft_deadline.lte.${endDate})`,
+    `and(first_draft_submitted_at.gte.${jstPrev.startIso},first_draft_submitted_at.lt.${jstPrev.endIso})`,
+    `and(first_draft_submitted_at.is.null,draft_deadline.gte.${startDate},draft_deadline.lte.${endDate})`,
   ].join(',');
 
   // 自分のアサイン絞り込みは aliased inner join（assignee_filter）で行う。
@@ -14658,19 +14856,16 @@ router.get('/invoices/preview-items', async (req, res) => {
   const allCreatives = Array.from(creativesById.values());
 
   // 当月フィルタ + （自分がアサイン or ディレクター or プロデューサー）
-  // ※ DB側で同条件を絞り込み済みだが、同一結果保証のため従来のJSフィルタも残す
+  // ※ DB側は候補集合の絞り込み。最終判定はここ（resolveBillingMonth・ADR 026/034）。
+  //   on_delivery（既定）  : delivered_at の JST 月 → 無ければ final_deadline → draft_deadline の月（従来と同一）
+  //   on_first_draft       : first_draft_submitted_at の JST 月 → 無ければ draft_deadline の月
+  const targetYm = `${year}-${String(month).padStart(2, '0')}`;
   const myCreatives = allCreatives.filter(c => {
     const mine = c.creative_assignments?.some(a => a.user_id === uid);
     const isDirector = snapshotDirectorId(c) === uid;
     const isProducer = snapshotProducerId(c) === uid;
     if (!mine && !isDirector && !isProducer) return false;
-    // ADR 026: 納品完了済みは delivered_at の JST 月で判定（DB側 MONTH_RANGE_OR と同一条件）
-    if (c.delivered_at) {
-      const t = new Date(c.delivered_at).getTime();
-      return t >= jstStartMs && t < jstEndMs;
-    }
-    const dl = c.final_deadline || c.draft_deadline || '';
-    return dl >= startDate && dl <= endDate;
+    return resolveBillingMonth(c, c.projects) === targetYm;
   });
 
   // 対象案件の単価を新スキーマ (lines + line_costs) からまとめて取得
