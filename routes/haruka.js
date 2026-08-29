@@ -21092,6 +21092,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'analytics.bug_reports.view',
   'analytics.billing_recon.view',
   'team_load.page',
+  'payout.page',
   'invoice_folder.view_own','invoice_folder.view_any','invoice_folder.generate_own','invoice_folder.generate_any',
 ]);
 
@@ -24095,4 +24096,511 @@ router.buildInvoiceMemberFolderName = buildInvoiceMemberFolderName;
 router.getInvoiceFolderExtraAdminEmails = getInvoiceFolderExtraAdminEmails;
 router.ensureUserDrivePermission = ensureUserDrivePermission;
 router.ensureUserDrivePermissionWithRoleFallback = ensureUserDrivePermissionWithRoleFallback;
+
+// ==================== 💸 振込管理（payout） ====================
+// メンバー月次振込の消し込み管理（admin専用・permission 'payout.page'）。
+// - GET   /admin/payouts?year&month  : Drive 請求書フォルダ（請求書/YYYY年/MM月/氏名…）を
+//   スキャンして payout_records と突合。新PDFは金額を自動抽出して upsert し一覧を返す。
+// - POST  /admin/payouts/:id/pay        : 振込完了 + Chatwork 定型文送信（+任意メモ）
+// - POST  /admin/payouts/:id/unpay      : 消し込み取消
+// - PATCH /admin/payouts/:id            : 請求額の手修正 / メモ保存
+// - POST  /admin/payouts/:id/diff-check : システム実データ（本人 per-unit 集計）との差分チェック
+// PDF の金額抽出は Drive の PDF→Google ドキュメント変換（OCR 込み）→ text export で行い、
+// 新規依存パッケージを増やさない。抽出できない PDF（画像のみ等）は金額不明のまま手入力に委ねる。
+// 純関数（定型文組み立て / 金額抽出 / 差分判定 / フォルダ名正規化）は utils/payout.js（jest テストあり）。
+
+const PAYOUT_CHATWORK_ROOM_SETTING_KEY = 'payout_notify_chatwork_room_id';
+const PAYOUT_DEFAULT_CHATWORK_ROOM_ID = '365971239'; // 【HF】全体チャット（invoice-announce と同じ既定）
+const PAYOUT_CREATOR_ROLES = new Set(['editor', 'designer', 'director_as_editor']);
+const PAYOUT_DFEE_ROLES = new Set(['director', 'producer']);
+
+async function payoutFindChildFolder(drive, parentId, name) {
+  const safe = String(name).replace(/'/g, "\\'");
+  const r = await drive.files.list({
+    q: `name='${safe}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id, name)',
+    pageSize: 2,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  return (r.data.files || [])[0] || null;
+}
+
+async function payoutListChildren(drive, parentId) {
+  const out = [];
+  let pageToken;
+  do {
+    const r = await drive.files.list({
+      q: `'${parentId}' in parents and trashed=false`,
+      fields: 'nextPageToken, files(id, name, mimeType, size, modifiedTime)',
+      pageSize: 1000,
+      pageToken,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+    out.push(...(r.data.files || []));
+    pageToken = r.data.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
+// PDF→Google ドキュメント変換→text export で請求額を抽出（失敗時 null）。
+// 一時ドキュメントは SA のマイドライブに作られるため必ず削除する。
+async function payoutExtractPdfAmount(drive, file) {
+  const { extractInvoiceAmount } = require('../utils/payout');
+  if (Number(file.size) > 15 * 1024 * 1024) return null;
+  let tempId = null;
+  try {
+    const copy = await drive.files.copy({
+      fileId: file.id,
+      requestBody: { mimeType: 'application/vnd.google-apps.document', name: `_payout_tmp_${file.id}` },
+      supportsAllDrives: true,
+    });
+    tempId = copy.data.id;
+    const exp = await drive.files.export({ fileId: tempId, mimeType: 'text/plain' });
+    const text = typeof exp.data === 'string' ? exp.data : String(exp.data || '');
+    return extractInvoiceAmount(text); // { amount, source } | null
+  } catch (e) {
+    console.warn(`[payouts] PDF金額抽出失敗 ${file.name}: ${e.message}`);
+    return null;
+  } finally {
+    if (tempId) {
+      try { await drive.files.delete({ fileId: tempId, supportsAllDrives: true }); } catch (_) { /* noop */ }
+    }
+  }
+}
+
+// pdf_files 配列から請求額合計を組み立てる。
+// 「ご請求金額」由来（seikyu）の金額を優先合算。seikyu が 1 件も無い場合は、
+// 金額が取れたファイルがちょうど 1 件のときだけその値を採用（作業時間報告書など
+// 請求書以外の PDF の「合計」を誤って足し込まないため）。
+function payoutSumInvoiceAmount(pdfFiles) {
+  const priced = (pdfFiles || []).filter(f => Number.isFinite(Number(f.amount)) && Number(f.amount) > 0);
+  const seikyu = priced.filter(f => f.amount_source === 'seikyu');
+  if (seikyu.length) return seikyu.reduce((s, f) => s + Number(f.amount), 0);
+  if (priced.length === 1) return Number(priced[0].amount);
+  return null;
+}
+
+function payoutRecordToJson(rec, user, extra = {}) {
+  const dm = String(user?.chatwork_dm_id || '').trim();
+  return {
+    id: rec.id,
+    user_id: rec.user_id,
+    full_name: user?.full_name || '(不明なメンバー)',
+    nickname: user?.nickname || null,
+    is_active: user ? user.is_active !== false : false,
+    bank_name: user?.bank_name || null,
+    bank_code: user?.bank_code || null,
+    branch_name: user?.branch_name || null,
+    branch_code: user?.branch_code || null,
+    account_type: user?.account_type || null,
+    account_number: user?.account_number || null,
+    account_holder_kana: user?.account_holder_kana || null,
+    has_chatwork: /^\d+$/.test(dm),
+    invoice_amount: rec.invoice_amount ?? null,
+    amount_source: rec.amount_source || null,
+    pdf_files: Array.isArray(rec.pdf_files) ? rec.pdf_files : [],
+    status: rec.status,
+    paid_at: rec.paid_at || null,
+    memo: rec.memo || '',
+    message_sent_at: rec.message_sent_at || null,
+    diff_status: rec.diff_status || null,
+    diff_detail: rec.diff_detail || null,
+    diff_checked_at: rec.diff_checked_at || null,
+    is_new: !!extra.is_new,
+  };
+}
+
+// GET /api/haruka/admin/payouts?year=2026&month=8
+router.get('/admin/payouts', requireAuth, requirePermission('payout.page'), async (req, res) => {
+  try {
+    const year = parseInt(req.query.year, 10);
+    const month = parseInt(req.query.month, 10);
+    if (!Number.isFinite(year) || year < 2000 || year > 2100 || !Number.isFinite(month) || month < 1 || month > 12) {
+      return res.status(400).json({ error: 'year / month を正しく指定してください' });
+    }
+    const { normalizeFolderPersonName, normalizePersonName } = require('../utils/payout');
+
+    const { data: users, error: uErr } = await supabase
+      .from('users')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana');
+    if (uErr) throw new Error(`users 取得失敗: ${uErr.message}`);
+    const userById = new Map((users || []).map(u => [u.id, u]));
+    const userIdByNorm = new Map();
+    for (const u of (users || [])) {
+      const keys = [normalizePersonName(u.full_name), normalizePersonName(u.nickname)].filter(Boolean);
+      for (const k of keys) if (!userIdByNorm.has(k)) userIdByNorm.set(k, u.id);
+    }
+
+    // member_invoice_folders の folder_id → user_id マッピング（手作業フォルダは名前一致でフォールバック）
+    const { data: mif } = await supabase
+      .from('member_invoice_folders')
+      .select('user_id, folder_id')
+      .eq('year', year).eq('month', month);
+    const userIdByFolderId = new Map((mif || []).filter(m => m.folder_id).map(m => [m.folder_id, m.user_id]));
+
+    // ---------- Drive スキャン ----------
+    let monthFolderFound = false;
+    let scanWarning = null;
+    const scans = [];            // { user_id, files: [driveFile] }
+    const unmatchedFolders = []; // メンバーに紐付かないフォルダ
+    let drive = null;
+    try {
+      drive = await getDriveService();
+      const rootId = await getInvoiceRootFolderId(drive);
+      const yearFolder = await payoutFindChildFolder(drive, rootId, `${year}年`);
+      const monthFolder = yearFolder
+        ? await payoutFindChildFolder(drive, yearFolder.id, `${String(month).padStart(2, '0')}月`)
+        : null;
+      if (monthFolder) {
+        monthFolderFound = true;
+        const children = await payoutListChildren(drive, monthFolder.id);
+        const subfolders = children.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
+        await mapLimit(subfolders, 8, async (sf) => {
+          const files = (await payoutListChildren(drive, sf.id))
+            .filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+          const uid = userIdByFolderId.get(sf.id)
+            || userIdByNorm.get(normalizeFolderPersonName(sf.name))
+            || null;
+          if (!uid) {
+            if (files.length) unmatchedFolders.push({ name: sf.name, url: `https://drive.google.com/drive/folders/${sf.id}` });
+            return;
+          }
+          if (files.length) scans.push({ user_id: uid, files });
+        });
+      }
+    } catch (e) {
+      scanWarning = `Driveスキャンに失敗しました: ${e.message}`;
+      console.warn('[payouts] drive scan failed:', e.message);
+    }
+
+    // ---------- payout_records と突合して upsert ----------
+    const { data: recs, error: rErr } = await supabase
+      .from('payout_records').select('*').eq('year', year).eq('month', month);
+    if (rErr) throw new Error(`payout_records 取得失敗: ${rErr.message}（migration 2026-08-29d_payout_records.sql が未適用の可能性）`);
+    const recByUser = new Map((recs || []).map(r => [r.user_id, r]));
+
+    const pendingExtract = []; // { fileEntry, driveFile }
+    const upserts = new Map(); // user_id -> { pdf_files, changed }
+    for (const scan of scans) {
+      const existing = recByUser.get(scan.user_id);
+      const prevFiles = Array.isArray(existing?.pdf_files) ? existing.pdf_files : [];
+      const prevById = new Map(prevFiles.map(f => [f.id, f]));
+      const nextFiles = [];
+      let changed = false;
+      for (const f of scan.files) {
+        const prev = prevById.get(f.id);
+        if (prev && prev.modified_at === f.modifiedTime) { nextFiles.push(prev); continue; }
+        changed = true;
+        const entry = {
+          id: f.id,
+          name: f.name,
+          url: `https://drive.google.com/file/d/${f.id}/view`,
+          modified_at: f.modifiedTime,
+          amount: null,
+          amount_source: null,
+        };
+        nextFiles.push(entry);
+        if (drive) pendingExtract.push({ entry, driveFile: f });
+      }
+      if (nextFiles.length !== prevFiles.length) changed = true;
+      if (changed || !existing) upserts.set(scan.user_id, { pdf_files: nextFiles, is_new: changed });
+    }
+
+    // 新規/更新ファイルだけ金額抽出（並列3。既存ファイルは再抽出しない）
+    await mapLimit(pendingExtract, 3, async (p) => {
+      const hit = await payoutExtractPdfAmount(drive, p.driveFile);
+      if (hit) { p.entry.amount = hit.amount; p.entry.amount_source = hit.source; }
+    });
+
+    const newUserIds = new Set();
+    let newPdfCount = 0;
+    for (const [userId, u] of upserts) {
+      const existing = recByUser.get(userId);
+      const payload = {
+        user_id: userId,
+        year,
+        month,
+        pdf_files: u.pdf_files,
+        updated_at: new Date().toISOString(),
+      };
+      // 手入力金額は尊重。auto のときだけ再計算
+      if (existing?.amount_source !== 'manual') {
+        const sum = payoutSumInvoiceAmount(u.pdf_files);
+        payload.invoice_amount = sum;
+        payload.amount_source = sum != null ? 'auto' : null;
+      }
+      const { error: upErr } = await supabase
+        .from('payout_records')
+        .upsert(payload, { onConflict: 'user_id,year,month' });
+      if (upErr) { console.warn(`[payouts] upsert 失敗 user=${userId}: ${upErr.message}`); continue; }
+      if (u.is_new) {
+        newUserIds.add(userId);
+        newPdfCount += u.pdf_files.length;
+      }
+    }
+
+    // upsert 後の最新状態を読み直す
+    const { data: finalRecs, error: fErr } = await supabase
+      .from('payout_records').select('*').eq('year', year).eq('month', month);
+    if (fErr) throw new Error(fErr.message);
+
+    const records = (finalRecs || []).map(r => payoutRecordToJson(r, userById.get(r.user_id), { is_new: newUserIds.has(r.user_id) }));
+    const paidCount = records.filter(r => r.status === 'paid').length;
+    const totalAmount = records.reduce((s, r) => s + (Number(r.invoice_amount) || 0), 0);
+    const unpaidAmount = records.filter(r => r.status !== 'paid').reduce((s, r) => s + (Number(r.invoice_amount) || 0), 0);
+
+    res.json({
+      year, month,
+      month_folder_found: monthFolderFound,
+      scan_warning: scanWarning,
+      records,
+      unmatched_folders: unmatchedFolders,
+      summary: {
+        total_records: records.length,
+        paid_count: paidCount,
+        total_amount: totalAmount,
+        unpaid_amount: unpaidAmount,
+        new_pdf_count: newPdfCount,
+      },
+    });
+  } catch (e) {
+    console.error('[payouts][GET /admin/payouts]', e);
+    res.status(500).json({ error: e.message || '振込一覧の取得に失敗しました' });
+  }
+});
+
+// POST /api/haruka/admin/payouts/:id/pay — 振込完了 + Chatwork 定型文送信（+任意メモ）
+router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.page'), async (req, res) => {
+  try {
+    const memo = typeof req.body?.memo === 'string' ? req.body.memo.trim() : '';
+    const { data: rec, error: rErr } = await supabase
+      .from('payout_records').select('*').eq('id', req.params.id).maybeSingle();
+    if (rErr) throw new Error(rErr.message);
+    if (!rec) return res.status(404).json({ error: '対象の振込レコードが見つかりません' });
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .eq('id', rec.user_id).maybeSingle();
+
+    const { buildPayoutMessage } = require('../utils/payout');
+    const displayName = user?.nickname || user?.full_name || 'メンバー';
+    const text = buildPayoutMessage({ displayName, month: rec.month, memo });
+
+    let sent = false;
+    let sentReason = null;
+    let messageBody = null;
+    const dm = String(user?.chatwork_dm_id || '').trim();
+    if (!user) {
+      sentReason = 'メンバーが見つからないため送信していません';
+    } else if (!/^\d+$/.test(dm)) {
+      // memory: 非数字の Chatwork ID は To が silent 失敗するため送信自体を行わない
+      sentReason = 'Chatwork アカウントID（数字）が未設定のため送信していません';
+    } else {
+      const { data: setting } = await supabase
+        .from('system_settings').select('value').eq('key', PAYOUT_CHATWORK_ROOM_SETTING_KEY).maybeSingle();
+      const roomId = (setting && setting.value) || PAYOUT_DEFAULT_CHATWORK_ROOM_ID;
+      const { sendChatworkRoom } = require('../notifications');
+      messageBody = `[To:${dm}]${text}`;
+      const r = await sendChatworkRoom(roomId, messageBody);
+      if (r.ok) sent = true;
+      else sentReason = `Chatwork 送信に失敗しました（${r.reason || r.status}）。振込済みにはしています`;
+    }
+
+    const patch = {
+      status: 'paid',
+      paid_at: new Date().toISOString(),
+      memo: memo || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (sent) {
+      patch.message_sent_at = new Date().toISOString();
+      patch.message_body = messageBody;
+    }
+    const { data: updated, error: upErr } = await supabase
+      .from('payout_records').update(patch).eq('id', rec.id).select('*').maybeSingle();
+    if (upErr) throw new Error(upErr.message);
+
+    res.json({ ok: true, sent, sent_reason: sentReason, record: payoutRecordToJson(updated, user) });
+  } catch (e) {
+    console.error('[payouts][POST pay]', e);
+    res.status(500).json({ error: e.message || '振込完了処理に失敗しました' });
+  }
+});
+
+// POST /api/haruka/admin/payouts/:id/unpay — 消し込み取消（送信履歴は残す）
+router.post('/admin/payouts/:id/unpay', requireAuth, requirePermission('payout.page'), async (req, res) => {
+  try {
+    const { data: rec, error: rErr } = await supabase
+      .from('payout_records').select('*').eq('id', req.params.id).maybeSingle();
+    if (rErr) throw new Error(rErr.message);
+    if (!rec) return res.status(404).json({ error: '対象の振込レコードが見つかりません' });
+    const { data: updated, error: upErr } = await supabase
+      .from('payout_records')
+      .update({ status: 'unpaid', paid_at: null, updated_at: new Date().toISOString() })
+      .eq('id', rec.id).select('*').maybeSingle();
+    if (upErr) throw new Error(upErr.message);
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .eq('id', rec.user_id).maybeSingle();
+    res.json({ ok: true, record: payoutRecordToJson(updated, user) });
+  } catch (e) {
+    console.error('[payouts][POST unpay]', e);
+    res.status(500).json({ error: e.message || '取消に失敗しました' });
+  }
+});
+
+// PATCH /api/haruka/admin/payouts/:id — 請求額の手修正 / メモ保存
+router.patch('/admin/payouts/:id', requireAuth, requirePermission('payout.page'), async (req, res) => {
+  try {
+    const patch = { updated_at: new Date().toISOString() };
+    if (req.body?.invoice_amount !== undefined) {
+      const v = req.body.invoice_amount;
+      if (v === null || v === '') {
+        patch.invoice_amount = null;
+        patch.amount_source = null;
+      } else {
+        const n = parseInt(v, 10);
+        if (!Number.isFinite(n) || n < 0 || n >= 1e9) return res.status(400).json({ error: '請求額は 0 以上の数値で指定してください' });
+        patch.invoice_amount = n;
+        patch.amount_source = 'manual';
+      }
+    }
+    if (req.body?.memo !== undefined) {
+      patch.memo = typeof req.body.memo === 'string' && req.body.memo.trim() ? req.body.memo.trim() : null;
+    }
+    const { data: updated, error: upErr } = await supabase
+      .from('payout_records').update(patch).eq('id', req.params.id).select('*').maybeSingle();
+    if (upErr) throw new Error(upErr.message);
+    if (!updated) return res.status(404).json({ error: '対象の振込レコードが見つかりません' });
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .eq('id', updated.user_id).maybeSingle();
+    res.json({ ok: true, record: payoutRecordToJson(updated, user) });
+  } catch (e) {
+    console.error('[payouts][PATCH]', e);
+    res.status(500).json({ error: e.message || '更新に失敗しました' });
+  }
+});
+
+// POST /api/haruka/admin/payouts/:id/diff-check
+// 本人が担当した対象月納品クリエイティブの per-unit 支払単価（utils/pricing.js の
+// resolveCreativeRoleCost）をクライアント別に集計し、請求額（PDF額面）と突合する。
+router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('payout.page'), async (req, res) => {
+  try {
+    const { data: rec, error: rErr } = await supabase
+      .from('payout_records').select('*').eq('id', req.params.id).maybeSingle();
+    if (rErr) throw new Error(rErr.message);
+    if (!rec) return res.status(404).json({ error: '対象の振込レコードが見つかりません' });
+
+    const { resolveCreativeRoleCost } = require('../utils/pricing');
+    const { evaluatePayoutDiff } = require('../utils/payout');
+    const jst = jstMonthRangeIso(rec.year, rec.month);
+
+    const { data: asgs, error: aErr } = await supabase
+      .from('creative_assignments')
+      .select(`
+        role, rank_applied,
+        creative:creatives!inner(
+          id, file_name, creative_type, status, delivered_at, project_id, line_id, category_id,
+          projects(name, clients(name, billing_org))
+        )
+      `)
+      .eq('user_id', rec.user_id)
+      .eq('creative.status', '納品')
+      .gte('creative.delivered_at', jst.startIso)
+      .lt('creative.delivered_at', jst.endIso);
+    if (aErr) throw new Error(aErr.message);
+
+    const rows = (asgs || []).filter(a => a.creative);
+    const projIds = Array.from(new Set(rows.map(a => a.creative.project_id).filter(Boolean)));
+    const linesByProject = new Map();
+    const lineCostsByLine = {};
+    for (let i = 0; i < projIds.length; i += 100) {
+      const { data: lines, error: lErr } = await supabase
+        .from('project_estimate_lines')
+        .select('id, project_id, name, status, category_id, planned_count, client_unit_price, rank, category:creative_categories(code, name), costs:project_estimate_line_costs(id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours, roles(code, label))')
+        .in('project_id', projIds.slice(i, i + 100));
+      if (lErr) throw new Error(lErr.message);
+      for (const l of (lines || [])) {
+        if (!linesByProject.has(l.project_id)) linesByProject.set(l.project_id, []);
+        linesByProject.get(l.project_id).push(l);
+        lineCostsByLine[l.id] = (l.costs || []).map(c => ({ ...c, roles: c.roles }));
+      }
+    }
+
+    const clientMap = new Map();
+    let actualTotal = 0;
+    let zeroPriceCount = 0;
+    for (const a of rows) {
+      const role = a.role;
+      const isCreator = PAYOUT_CREATOR_ROLES.has(role);
+      const isDfee = PAYOUT_DFEE_ROLES.has(role);
+      if (!isCreator && !isDfee) continue; // wcheck 等は支払対象外
+      const c = a.creative;
+      const resolved = resolveCreativeRoleCost({
+        creative: c, roleCode: role, rankApplied: a.rank_applied, linesByProject, lineCostsByLine,
+      }) || {};
+      const price = Number(resolved.unit_price) || 0;
+      const clientName = c.projects?.clients?.name || '(クライアント不明)';
+      const billingOrg = c.projects?.clients?.billing_org || null;
+      if (!clientMap.has(clientName)) {
+        clientMap.set(clientName, { name: clientName, billing_org: billingOrg, creator_count: 0, creator_amount: 0, dfee_amount: 0 });
+      }
+      const bucket = clientMap.get(clientName);
+      if (isCreator) {
+        bucket.creator_count += 1;
+        bucket.creator_amount += price;
+        if (price === 0) zeroPriceCount += 1;
+      } else {
+        bucket.dfee_amount += price;
+      }
+      actualTotal += price;
+    }
+
+    const clients = Array.from(clientMap.values())
+      .sort((x, y) => (y.creator_amount + y.dfee_amount) - (x.creator_amount + x.dfee_amount));
+    const notes = [
+      '実データはHFS登録の per-unit 支払単価の集計（税抜ベースのことが多い）。請求書は税込額面のため約10%の差は消費税の可能性があります。',
+      'LP/HP一式・時給（秘書業務/時給ディレクション）・立替経費・納品前の先行請求・HFS未登録案件は実データ集計に含まれません。',
+      '前月納品分の後追い請求／請求書側の先行請求により、単月比較では構造的にズレることがあります（差分＝誤りとは限りません）。',
+    ];
+    if (zeroPriceCount > 0) notes.push(`単価が解決できない（¥0）クリエイティブが ${zeroPriceCount} 件あります（line 未紐付けの可能性）。`);
+
+    const verdict = evaluatePayoutDiff({ invoiceAmount: rec.invoice_amount, actualTotal });
+    const detail = {
+      invoice_amount: rec.invoice_amount ?? null,
+      actual_total: actualTotal,
+      delta: verdict.delta,
+      delta_with_tax: verdict.delta_with_tax,
+      clients,
+      notes,
+    };
+
+    const { data: updated, error: upErr } = await supabase
+      .from('payout_records')
+      .update({
+        diff_status: verdict.status,
+        diff_detail: detail,
+        diff_checked_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', rec.id).select('*').maybeSingle();
+    if (upErr) throw new Error(upErr.message);
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, full_name, nickname, is_active, chatwork_dm_id, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .eq('id', rec.user_id).maybeSingle();
+    res.json({ ok: true, record: payoutRecordToJson(updated, user) });
+  } catch (e) {
+    console.error('[payouts][POST diff-check]', e);
+    res.status(500).json({ error: e.message || '差分チェックに失敗しました' });
+  }
+});
+
 module.exports = router;
