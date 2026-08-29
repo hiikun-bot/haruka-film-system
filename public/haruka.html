@@ -7054,6 +7054,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <button class="an-menu-btn" data-view="cost-coverage" data-an-perm="analytics.view" onclick="switchAnalyticsView('cost-coverage')">
         <span style="font-size:14px">⚠️</span><span>単価未設定チェッカー</span>
       </button>
+      <div class="an-menu-section" data-an-perm="analytics.billing_recon.view" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">経理</div>
+      <button class="an-menu-btn" data-view="billing-recon" data-an-perm="analytics.billing_recon.view" onclick="switchAnalyticsView('billing-recon')">
+        <span style="font-size:14px">🧾</span><span>請求突合チェッカー</span>
+      </button>
       <div class="an-menu-section" style="font-size:10px;color:var(--text-muted);margin:10px 6px 4px;letter-spacing:0.05em">運用</div>
       <button class="an-menu-btn" data-view="bug-reports" onclick="switchAnalyticsView('bug-reports')">
         <span style="font-size:14px">🦋</span><span>バグ報告件数</span>
@@ -18207,6 +18211,8 @@ const _ROLE_PERMS_FALLBACK = {
   'director|analytics.bug_reports.view': true,
   'editor|analytics.bug_reports.view': true,
   'designer|analytics.bug_reports.view': true,
+  // 請求突合チェッカー（経理向け）は admin / secretary のみ（admin は 'admin|*' で全許可）
+  'secretary|analytics.billing_recon.view': true,
   // 請求書フォルダ（migration 2026-05-17_member_invoice_folders.sql）
   'secretary|invoice_folder.view_own': true, 'producer|invoice_folder.view_own': true, 'producer_director|invoice_folder.view_own': true,
   'director|invoice_folder.view_own': true, 'editor|invoice_folder.view_own': true, 'designer|invoice_folder.view_own': true,
@@ -18329,7 +18335,8 @@ function setPreviewRole(role) {
   if (document.getElementById('page-my-goals')?.classList.contains('active') && typeof loadMyGoalsPage === 'function') loadMyGoalsPage();
   // 分析ページ表示中に VIEW AS でロールが変わると、サイドバーから消えた項目が main にだけ残る不整合があるため再初期化
   if (document.getElementById('page-analytics')?.classList.contains('active') && typeof initAnalyticsPage === 'function') {
-    if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) _analyticsView = 'bug-reports';
+    // analytics.view を持たないロールは開放ビュー（billing-recon / bug-reports）に寄せる
+    if (typeof anCoerceAnalyticsView === 'function') anCoerceAnalyticsView();
     initAnalyticsPage();
   }
   // 📊 チーム状況: team_load.page 限定ページ。VIEW AS 切替で前ロールの負荷データが残らないよう再描画（ADR 015）
@@ -18400,10 +18407,12 @@ function applyRoleBasedUI() {
   // 分析・集計ナビ
   // - analytics.view (経営系・全集計): admin / secretary のみ
   // - analytics.bug_reports.view (バグ報告件数): 全ロール開放
-  // どちらか片方でも持っていればナビは表示し、サイドバーで該当項目だけ出し分ける。
+  // - analytics.billing_recon.view (請求突合チェッカー・経理向け): admin / secretary のみ
+  // いずれか片方でも持っていればナビは表示し、サイドバーで該当項目だけ出し分ける。
   const canAnalyticsFull = hasPermission('analytics.view');
   const canAnalyticsBugReports = hasPermission('analytics.bug_reports.view');
-  const canAnalytics = canAnalyticsFull || canAnalyticsBugReports;
+  const canAnalyticsBillingRecon = hasPermission('analytics.billing_recon.view');
+  const canAnalytics = canAnalyticsFull || canAnalyticsBugReports || canAnalyticsBillingRecon;
   const analyticsNav = document.getElementById('nav-analytics');
   if (analyticsNav) analyticsNav.style.display = canAnalytics ? '' : 'none';
   const drawerAnalytics = document.getElementById('nav-drawer-analytics');
@@ -18420,6 +18429,10 @@ function applyRoleBasedUI() {
   // フル権限がないロールでは隠す。data-an-perm="analytics.view" を目印にする。
   document.querySelectorAll('#an-sidebar [data-an-perm="analytics.view"]').forEach(el => {
     el.style.display = canAnalyticsFull ? '' : 'none';
+  });
+  // 経理（請求突合チェッカー）は analytics.billing_recon.view 保持者のみ表示（ADR 015: VIEW AS 追従）
+  document.querySelectorAll('#an-sidebar [data-an-perm="analytics.billing_recon.view"]').forEach(el => {
+    el.style.display = canAnalyticsBillingRecon ? '' : 'none';
   });
   // VIEW AS 中は最高管理者専用メニューを隠す（実ユーザーが super admin でも previewRole 設定中は非表示）
   const showSuperAdminOnly = isSuperAdmin() && !previewRole;
@@ -32938,6 +32951,7 @@ const ROLE_PERM_LIST = [
   { section:'システム',       key:'system.view_as',              label:'VIEW AS（ロールプレビュー）' },
   { section:'分析',           key:'analytics.view',              label:'分析・集計ページ閲覧（経営系・全集計）' },
   { section:'分析',           key:'analytics.bug_reports.view',  label:'分析メニュー：バグ報告件数' },
+  { section:'分析',           key:'analytics.billing_recon.view', label:'請求突合チェッカー（経理向け）' },
   { section:'チーム状況',     key:'team_load.page',              label:'チーム状況（負荷ダッシュボード）閲覧' },
 ];
 
@@ -43858,7 +43872,19 @@ function renderKnowledgeCards(list, compact) {
 
 // ==================== 分析・集計ページ ====================
 let _analyticsLastResult = null;
-let _analyticsView = 'monthly-revenue'; // 'monthly-revenue' | 'creator-summary' | 'project-assignee'
+let _analyticsView = 'monthly-revenue'; // 'monthly-revenue' | 'creator-summary' | 'project-assignee' | 'filename-export' | 'cost-coverage' | 'billing-recon' | 'bug-reports'
+
+// analytics.view を持たないロールが開けるビューへ _analyticsView を寄せる（ADR 015: VIEW AS 追従）。
+//   - analytics.view あり: そのまま（全ビュー開放）
+//   - analytics.view なし × billing_recon あり: billing-recon（今のビューが bug-reports で権限もあるなら維持）
+//   - 両方なし: bug-reports（バグ報告件数は全ロール開放）
+function anCoerceAnalyticsView() {
+  if (hasPermission('analytics.view')) return;
+  const canRecon = hasPermission('analytics.billing_recon.view');
+  const canBug   = hasPermission('analytics.bug_reports.view');
+  const keepable = (_analyticsView === 'billing-recon' && canRecon) || (_analyticsView === 'bug-reports' && canBug);
+  if (!keepable) _analyticsView = canRecon ? 'billing-recon' : 'bug-reports';
+}
 
 function shiftAnalyticsMonth(delta) {
   const monthEl = document.getElementById('an-month');
@@ -43885,11 +43911,11 @@ function shiftAnalyticsMonth(delta) {
 }
 
 // 分析メニュー別の対象月デフォルト
-//   monthly-revenue: 月締め後に確認することが多いので「先月」
+//   monthly-revenue / billing-recon: 月締め後に確認することが多いので「先月」
 //   それ以外: 進行中の状況を見るため「当月」
 function getDefaultYmForView(view) {
   const now = new Date();
-  const base = (view === 'monthly-revenue')
+  const base = (view === 'monthly-revenue' || view === 'billing-recon')
     ? new Date(now.getFullYear(), now.getMonth() - 1, 1)
     : now;
   return `${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,'0')}`;
@@ -43915,10 +43941,8 @@ function initAnalyticsPage() {
         .catch(() => {});
     }
   }
-  // analytics.view を持たないロールはバグ報告件数しか開放されていないので強制的に bug-reports に寄せる
-  if (!hasPermission('analytics.view') && hasPermission('analytics.bug_reports.view')) {
-    _analyticsView = 'bug-reports';
-  }
+  // analytics.view を持たないロールは開放されているビュー（billing-recon / bug-reports）に寄せる
+  anCoerceAnalyticsView();
   switchAnalyticsView(_analyticsView, true);
 }
 
@@ -44009,6 +44033,15 @@ function switchAnalyticsView(view, skipReset) {
     if (sheetBtn)  sheetBtn.style.display  = 'none';
     if (loadBtn)   loadBtn.style.display   = 'none';
     if (reloadBtn) reloadBtn.style.display = '';
+  } else if (view === 'billing-recon') {
+    if (titleEl) titleEl.textContent = '🧾 請求突合チェッカー';
+    if (descEl)  descEl.textContent  = '請求書管理（INV）とその月にJSTで納品完了した実制作データ（creatives×成果物グループ単価）をクライアント別に突合します。金額はどちらも税抜（システム登録額）で比較します。';
+    if (clientWrap) clientWrap.style.display = 'none';
+    if (statusFilterWrap) statusFilterWrap.style.display = 'none';
+    if (monthWrap) monthWrap.style.display = '';
+    if (sheetBtn)  sheetBtn.style.display  = '';
+    if (loadBtn)   loadBtn.style.display   = '';
+    if (reloadBtn) reloadBtn.style.display = 'none';
   } else if (view === 'bug-reports') {
     if (titleEl) titleEl.textContent = '🦋 バグ報告件数';
     if (descEl)  descEl.textContent  = '対象月に作成されたバグ報告を、報告者ごとに集計します。匿名報告は集約してカウントします。';
@@ -44082,6 +44115,8 @@ async function loadAnalytics() {
     url = `${API}/analytics/monthly-revenue?year=${year}&month=${parseInt(month,10)}`;
   } else if (_analyticsView === 'creator-summary') {
     url = `${API}/analytics/creator-summary?year=${year}&month=${parseInt(month,10)}&status=${status}`;
+  } else if (_analyticsView === 'billing-recon') {
+    url = `${API}/analytics/billing-recon?year=${year}&month=${parseInt(month,10)}`;
   } else if (_analyticsView === 'bug-reports') {
     url = `${API}/analytics/bug-reports?year=${year}&month=${parseInt(month,10)}`;
   } else if (_analyticsView === 'delivery-quality') {
@@ -44102,6 +44137,7 @@ async function loadAnalytics() {
   _analyticsLastResult = data;
   if (_analyticsView === 'monthly-revenue') renderMonthlyRevenueTable(data);
   else if (_analyticsView === 'creator-summary') renderCreatorSummaryTable(data);
+  else if (_analyticsView === 'billing-recon') renderBillingReconView(data);
   else if (_analyticsView === 'bug-reports') renderBugReportsAnalytics(data);
   else if (_analyticsView === 'delivery-quality') renderDeliveryQuality(data);
   else renderAnalyticsTable(data);
@@ -44529,6 +44565,129 @@ function renderMonthlyRevenueTable(data) {
       </tr>
     </tbody>
   </table>`;
+}
+
+// =============== 請求突合チェッカー（billing-recon） ===============
+// INV請求書（invoices/invoice_items, invoice_type='client'）と、当月JSTに納品完了した
+// 実制作データ（creatives × 成果物グループの client_unit_price）のクライアント別突合。
+// 乖離種別の推定はせず、金額差と明細リスト（未請求候補・対応不明明細）の提示に徹する。
+function renderBillingReconView(data) {
+  const yen = (n) => '¥' + Number(n || 0).toLocaleString();
+  const s = data.summary || {};
+  const diffColor = (s.diff || 0) === 0 ? '#15803D' : '#B91C1C';
+  const fmtJst = (iso) => iso ? new Date(iso).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '—';
+  const sumEl = document.getElementById('an-summary');
+  sumEl.innerHTML = `
+    <div style="background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">対象月</span> <strong>${data.year}年${data.month}月</strong><div style="font-size:10px;color:var(--text-muted);margin-top:2px">税抜（登録額）で比較</div></div>
+    <div style="background:#E0F2FE;border:1px solid #7DD3FC;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">実データ合計</span> <strong style="font-size:14px">${yen(s.actual_total)}</strong><div style="font-size:10px;color:var(--text-muted);margin-top:2px">納品 ${s.delivered_count || 0}件</div></div>
+    <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">請求合計（INV）</span> <strong style="font-size:14px">${yen(s.invoiced_total)}</strong><div style="font-size:10px;color:var(--text-muted);margin-top:2px">請求書 ${s.invoice_count || 0}件</div></div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px"><span style="color:var(--text-muted)">差額（請求−実データ）</span> <strong style="font-size:14px;color:${diffColor}">${(s.diff || 0) > 0 ? '+' : ''}${yen(s.diff)}</strong></div>
+    ${(s.unbilled_count || 0) > 0 ? `<div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;padding:10px 14px;font-size:13px;color:#991B1B"><span>未請求候補</span> <strong>${s.unbilled_count}件</strong></div>` : ''}
+    ${(s.unmatched_count || 0) > 0 ? `<div style="background:#FFF7ED;border:1px solid #FDBA74;border-radius:8px;padding:10px 14px;font-size:13px;color:#9A3412"><span>対応不明明細</span> <strong>${s.unmatched_count}件</strong></div>` : ''}
+    ${(s.price_unknown_count || 0) > 0 ? `<div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;padding:10px 14px;font-size:11px;color:#991B1B" title="line（成果物グループ）の単価もクリエイティブ請求額も引けず ¥0 で計上した納品済み creative の数。案件編集モーダルで成果物グループの単価を設定してください"><strong>単価不明</strong> ${s.price_unknown_count}件</div>` : ''}
+  `;
+  const wrap = document.getElementById('an-table-content');
+  const noteHtml = `
+    <div style="margin:0 0 14px;padding:10px 14px;background:var(--em-pale);border:1px solid var(--em-light);border-radius:8px;font-size:11px;color:var(--text-muted);line-height:1.6">
+      ⚠️ <strong>この突合の限界</strong>：LP一式・分割支払（着手金など）、納品前の先行請求、包括契約は構造的に金額が乖離します。
+      乖離種別の自動判定はしていないので、差額行は下の明細リストと合わせて目で確認してください。
+      ${(s.billed_other_month_count || 0) > 0 ? `<br>ℹ️ 当月納品のうち <strong>${s.billed_other_month_count}件</strong> は別の月の請求書に紐付いています（未請求候補には含めていません）。` : ''}
+      ${data.monthly_revenue_ref ? `<br>参考: 月次売上・粗利集計の同月値 — 確定売上 ${yen(data.monthly_revenue_ref.confirmed?.revenue)} / 見込み売上 ${yen(data.monthly_revenue_ref.forecast?.revenue)}（確定側はINV請求由来のため突合の比較軸には使っていません）` : ''}
+    </div>`;
+
+  // ---- クライアント別差分テーブル ----
+  const clientRows = (data.by_client || []).map(c => {
+    const zero = (c.diff || 0) === 0;
+    const dColor = zero ? 'var(--text-muted)' : (c.diff > 0 ? '#B45309' : '#B91C1C');
+    return `<tr style="border-bottom:1px solid var(--border-light);${zero ? 'opacity:0.55' : ''}">
+      <td style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);white-space:nowrap">${esc(c.name)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text)">${yen(c.actual_amount)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text-muted)">${c.actual_count || 0}件</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text)">${yen(c.invoiced_amount)}</td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;color:var(--text-muted)">${c.invoice_count || 0}枚</td>
+      <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:${zero ? '400' : '700'};color:${dColor};background:${zero ? 'transparent' : '#FEF2F2'}">${c.diff > 0 ? '+' : ''}${yen(c.diff)}</td>
+    </tr>`;
+  }).join('');
+  const clientTable = (data.by_client || []).length ? `
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:720px">
+      <thead>
+        <tr style="background:var(--em-pale);border-bottom:1.5px solid var(--em)">
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:var(--em-dark);white-space:nowrap">クライアント</th>
+          <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">実データ額</th>
+          <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">納品本数</th>
+          <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">請求額（INV）</th>
+          <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">請求書数</th>
+          <th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--em-dark);white-space:nowrap">差額（請求−実データ）</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${clientRows}
+        <tr style="border-top:2px solid var(--em);background:var(--em);color:#fff;font-weight:700">
+          <td style="padding:11px 12px;font-size:12px">全体合計</td>
+          <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(s.actual_total)}</td>
+          <td style="padding:11px 10px;text-align:right;font-size:12px">${s.delivered_count || 0}件</td>
+          <td style="padding:11px 10px;text-align:right;font-size:13px">${yen(s.invoiced_total)}</td>
+          <td style="padding:11px 10px;text-align:right;font-size:12px">${s.invoice_count || 0}枚</td>
+          <td style="padding:11px 10px;text-align:right;font-size:13px">${(s.diff || 0) > 0 ? '+' : ''}${yen(s.diff)}</td>
+        </tr>
+      </tbody>
+    </table></div>`
+    : '<div style="padding:20px;text-align:center;color:var(--text-muted)">対象月の納品実績・クライアント請求書がありません</div>';
+
+  // ---- 未請求候補リスト ----
+  const srcLabel = { line: 'グループ単価', client_fee: 'CL請求額', unknown: '単価不明' };
+  const unbilledRows = (data.unbilled_creatives || []).map(r => `
+    <tr style="border-bottom:1px solid var(--border-light)">
+      <td style="padding:7px 12px;font-size:12px;white-space:nowrap">${esc(r.client_name)}</td>
+      <td style="padding:7px 10px;font-size:12px;white-space:nowrap">${esc(r.project_name)}</td>
+      <td style="padding:7px 10px;font-size:12px">${esc(r.file_name)}</td>
+      <td style="padding:7px 10px;font-size:12px;white-space:nowrap;color:var(--text-muted)">${fmtJst(r.delivered_at)}</td>
+      <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600">${yen(r.amount)}</td>
+      <td style="padding:7px 10px;font-size:11px;color:${r.price_source === 'unknown' ? '#B91C1C' : 'var(--text-muted)'};white-space:nowrap">${srcLabel[r.price_source] || esc(r.price_source || '')}</td>
+    </tr>`).join('');
+  const unbilledBlock = `
+    <div style="margin-top:22px">
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:8px">📭 未請求候補 <span style="font-size:11px;color:var(--text-muted);font-weight:400">— 当月JSTに納品完了したのに、どの月のクライアント請求書にも載っていない creative（${(data.unbilled_creatives || []).length}件）</span></div>
+      ${unbilledRows ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:760px">
+        <thead><tr style="background:#FEF2F2;border-bottom:1.5px solid #FCA5A5">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#991B1B;white-space:nowrap">クライアント</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#991B1B;white-space:nowrap">案件</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#991B1B">ファイル名</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#991B1B;white-space:nowrap">納品完了(JST)</th>
+          <th style="padding:8px 10px;text-align:right;font-size:11px;color:#991B1B;white-space:nowrap">実データ額</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#991B1B;white-space:nowrap">単価の出所</th>
+        </tr></thead>
+        <tbody>${unbilledRows}</tbody>
+      </table></div>` : '<div style="padding:14px;text-align:center;color:var(--text-muted);background:var(--em-pale);border-radius:8px;font-size:12px">未請求候補はありません 🎉</div>'}
+    </div>`;
+
+  // ---- 対応不明明細リスト ----
+  const unmatchedRows = (data.unmatched_items || []).map(r => `
+    <tr style="border-bottom:1px solid var(--border-light)">
+      <td style="padding:7px 12px;font-size:12px;white-space:nowrap">${esc(r.client_name)}</td>
+      <td style="padding:7px 10px;font-size:12px;white-space:nowrap">${esc(r.invoice_number || '—')}</td>
+      <td style="padding:7px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(r.invoice_status || '—')}</td>
+      <td style="padding:7px 10px;font-size:12px">${esc(r.label)}</td>
+      <td style="padding:7px 10px;text-align:right;font-size:12px;font-weight:600">${yen(r.amount)}</td>
+      <td style="padding:7px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(r.reason)}</td>
+    </tr>`).join('');
+  const unmatchedBlock = `
+    <div style="margin-top:22px">
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:8px">❓ 対応不明明細 <span style="font-size:11px;color:var(--text-muted);font-weight:400">— 当月のクライアント請求書にあるが、当月納品の実データに対応が見つからない明細（${(data.unmatched_items || []).length}件）。先行請求・一式請求・紐付け漏れなどが混ざります</span></div>
+      ${unmatchedRows ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:760px">
+        <thead><tr style="background:#FFF7ED;border-bottom:1.5px solid #FDBA74">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#9A3412;white-space:nowrap">クライアント</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#9A3412;white-space:nowrap">請求書番号</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#9A3412;white-space:nowrap">状態</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#9A3412">品目</th>
+          <th style="padding:8px 10px;text-align:right;font-size:11px;color:#9A3412;white-space:nowrap">金額</th>
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#9A3412;white-space:nowrap">理由</th>
+        </tr></thead>
+        <tbody>${unmatchedRows}</tbody>
+      </table></div>` : '<div style="padding:14px;text-align:center;color:var(--text-muted);background:var(--em-pale);border-radius:8px;font-size:12px">対応不明の明細はありません 🎉</div>'}
+    </div>`;
+
+  wrap.innerHTML = noteHtml + clientTable + unbilledBlock + unmatchedBlock;
 }
 
 function renderCreatorSummaryTable(data) {
@@ -45114,6 +45273,9 @@ async function exportAnalyticsToSheet() {
       body = { year: parseInt(year, 10), month: parseInt(month, 10) };
     } else if (_analyticsView === 'delivery-quality') {
       endpoint = `${API}/analytics/delivery-quality/export-sheet`;
+      body = { year: parseInt(year, 10), month: parseInt(month, 10) };
+    } else if (_analyticsView === 'billing-recon') {
+      endpoint = `${API}/analytics/billing-recon/export-sheet`;
       body = { year: parseInt(year, 10), month: parseInt(month, 10) };
     } else {
       endpoint = `${API}/analytics/creative-by-assignee/export-sheet`;
