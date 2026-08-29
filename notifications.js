@@ -148,6 +148,14 @@ async function sendSlackDm(slackUserId, text) {
   return slackPost(token, slackUserId, text);
 }
 
+// 指定トークン名義での Slack DM 送信。xoxp（User OAuth Token）を渡すとそのユーザー本人名義で届く。
+// 振込管理: system_settings 'payout_slack_user_token' に髙橋聖の User Token を保存して使う（未設定なら bot 名義）。
+async function sendSlackDmAsUser(userToken, slackUserId, text) {
+  if (!userToken) return { ok: false, reason: 'no_user_token' };
+  if (!slackUserId) return { ok: false, reason: 'no_user_id' };
+  return slackPost(userToken, slackUserId, text);
+}
+
 async function sendSlackChannel(channelUrl, text) {
   const parsed = parseSlackChannelUrl(channelUrl);
   if (!parsed) return { ok: false, reason: 'invalid_url' };
@@ -1515,6 +1523,7 @@ module.exports = {
   sendSlackChannelWithFile,
   sendSlackWebhook,
   sendSlackDm,
+  sendSlackDmAsUser,
   sendChatworkRoom,
   // テスト・他モジュールから再利用可能にするためエクスポート
   buildCreativeNotifBody,
