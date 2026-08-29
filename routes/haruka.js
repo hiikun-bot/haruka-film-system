@@ -24215,6 +24215,7 @@ function payoutRecordToJson(rec, user, extra = {}) {
     diff_detail: rec.diff_detail || null,
     diff_checked_at: rec.diff_checked_at || null,
     is_new: !!extra.is_new,
+    folder_url: extra.folder_url || null,
   };
 }
 
@@ -24231,8 +24232,24 @@ async function buildPayoutListResponse(year, month, scanExtra = null) {
     .from('payout_records').select('*').eq('year', year).eq('month', month);
   if (rErr) throw new Error(`payout_records 取得失敗: ${rErr.message}（migration 2026-08-29d_payout_records.sql が未適用の可能性）`);
 
+  // 各メンバーの請求書フォルダURL（member_invoice_folders 由来。scan が名前一致分も補完する）
+  const folderUrlByUser = new Map();
+  try {
+    const { data: mif } = await supabase
+      .from('member_invoice_folders')
+      .select('user_id, folder_id, folder_url')
+      .eq('year', year).eq('month', month);
+    for (const m of (mif || [])) {
+      const url = m.folder_url || (m.folder_id ? `https://drive.google.com/drive/folders/${m.folder_id}` : null);
+      if (url) folderUrlByUser.set(m.user_id, url);
+    }
+  } catch (_) { /* noop */ }
+
   const newUserIds = (scanExtra && scanExtra.new_user_ids) || new Set();
-  const records = (recs || []).map(r => payoutRecordToJson(r, userById.get(r.user_id), { is_new: newUserIds.has(r.user_id) }));
+  const records = (recs || []).map(r => payoutRecordToJson(r, userById.get(r.user_id), {
+    is_new: newUserIds.has(r.user_id),
+    folder_url: folderUrlByUser.get(r.user_id) || null,
+  }));
   const paidCount = records.filter(r => r.status === 'paid').length;
   const totalAmount = records.reduce((sum, r) => sum + (Number(r.invoice_amount) || 0), 0);
   const unpaidAmount = records.filter(r => r.status !== 'paid').reduce((sum, r) => sum + (Number(r.invoice_amount) || 0), 0);
@@ -24326,6 +24343,7 @@ async function scanPayoutDriveMonth(year, month) {
   const userIdByFolderId = new Map((mif || []).filter(m => m.folder_id).map(m => [m.folder_id, m.user_id]));
 
   const scans = []; // { user_id, files: [driveFile] }
+  const matchedFolders = []; // { user_id, folder_id } — member_invoice_folders への補完用
   let drive = null;
   try {
     drive = await getDriveService();
@@ -24360,6 +24378,7 @@ async function scanPayoutDriveMonth(year, month) {
           if (files.length) result.unmatched_folders.push({ name: sf.name, url: `https://drive.google.com/drive/folders/${sf.id}` });
           return;
         }
+        matchedFolders.push({ user_id: uid, folder_id: sf.id });
         if (files.length) scans.push({ user_id: uid, files });
       });
     }
@@ -24367,6 +24386,22 @@ async function scanPayoutDriveMonth(year, month) {
     result.scan_warning = `Driveスキャンに失敗しました: ${e.message}`;
     console.warn('[payouts] drive scan failed:', e.message);
     return result;
+  }
+
+  // 名前一致で見つけた手作業フォルダを member_invoice_folders に補完しておく
+  // （既存マッピングは上書きしない。次回以降のフォルダ⇔メンバー対応と📁リンクに使う）
+  for (const mf of matchedFolders) {
+    if (userIdByFolderId.get(mf.folder_id)) continue; // 既にマッピング済み
+    const { error: mifErr } = await supabase
+      .from('member_invoice_folders')
+      .upsert({
+        user_id: mf.user_id,
+        year,
+        month,
+        folder_id: mf.folder_id,
+        folder_url: `https://drive.google.com/drive/folders/${mf.folder_id}`,
+      }, { onConflict: 'user_id,year,month', ignoreDuplicates: true });
+    if (mifErr) console.warn(`[payouts] member_invoice_folders 補完失敗 user=${mf.user_id}: ${mifErr.message}`);
   }
 
   const { data: recs, error: rErr } = await supabase
