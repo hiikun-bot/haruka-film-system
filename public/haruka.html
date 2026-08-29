@@ -27327,17 +27327,19 @@ function renderPayout() {
       ? `<span style="font-size:12px;color:var(--text-muted)">${esc(r.memo || '')}</span>`
       : `<input class="form-input" id="po-memo-${rid}" value="${esc(r.memo || '')}" placeholder="メモ" style="width:140px;padding:4px 8px;font-size:12px">`;
 
-    // チャット（個別チャットを開く: Chatwork DM / Slack DM ＋ 文面コピー）
+    // チャット（個別チャットを開く）— Chatwork がある人は Chatwork、無い人は Slack を表示
+    // （Slack の人は送信ボタンの自動送信対象外なので 📋 文面コピーを添える）
     const chatLinks = [];
     if (r.chatwork_direct_room_id) {
-      chatLinks.push(`<a href="https://www.chatwork.com/#!rid${esc(r.chatwork_direct_room_id)}" target="_blank" rel="noopener" class="btn-sm" style="font-size:11px;padding:3px 8px;text-decoration:none" title="Chatworkの個別チャットを開く">💬 CW</a>`);
-    }
-    if (r.slack_user_id) {
+      chatLinks.push(`<a href="https://www.chatwork.com/#!rid${esc(r.chatwork_direct_room_id)}" target="_blank" rel="noopener" class="btn-sm" style="font-size:11px;padding:3px 8px;text-decoration:none" title="Chatworkの個別チャットを開く">💬 Chatwork</a>`);
+    } else if (r.slack_user_id) {
       const team = encodeURIComponent(_poData.slack_team_id || 'T094ST9L5MH');
       chatLinks.push(`<a href="https://slack.com/app_redirect?team=${team}&channel=${encodeURIComponent(r.slack_user_id)}" target="_blank" rel="noopener" class="btn-sm" style="font-size:11px;padding:3px 8px;text-decoration:none" title="SlackのDMを開く（自分と本人のDMに飛びます）">Slack</a>`);
+      chatLinks.push(`<a href="javascript:void(0)" onclick="poCopyMessage('${rid}')" class="btn-sm" style="font-size:11px;padding:3px 8px;text-decoration:none" title="振込完了の定型文（メモ込み）をコピー — Slack DMに貼り付ける用">📋</a>`);
     }
-    chatLinks.push(`<a href="javascript:void(0)" onclick="poCopyMessage('${rid}')" class="btn-sm" style="font-size:11px;padding:3px 8px;text-decoration:none" title="振込完了の定型文（メモ込み）をコピー — SlackのDMに貼り付ける用">📋</a>`);
-    const chatCell = `<div style="display:flex;gap:4px;flex-wrap:wrap">${chatLinks.join('')}</div>`;
+    const chatCell = chatLinks.length
+      ? `<div style="display:flex;gap:4px;flex-wrap:wrap">${chatLinks.join('')}</div>`
+      : '<span style="color:var(--text-muted);font-size:12px">−</span>';
 
     // 操作
     let opCell;
