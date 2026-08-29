@@ -1120,8 +1120,9 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','master.sys_config',true),
   -- システム
   ('admin','system.view_as',true),
-  -- 分析・集計（管理者・秘書のみ閲覧）
+  -- 分析・集計（管理者・秘書＋プロデューサー層。migration 2026-08-29_analytics_view_producer.sql）
   ('admin','analytics.view',true),('secretary','analytics.view',true),
+  ('producer','analytics.view',true),('producer_director','analytics.view',true),
   -- 分析メニュー: バグ報告件数のみ全ロール開放
   ('admin','analytics.bug_reports.view',true),('secretary','analytics.bug_reports.view',true),
   ('producer','analytics.bug_reports.view',true),('producer_director','analytics.bug_reports.view',true),
