@@ -4005,6 +4005,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" id="nav-my-goals" data-page="my-goals" onclick="showPage('my-goals',this)">🎯 マイゴール</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
+    <button class="nav-btn" id="nav-payout" data-page="payout" onclick="showPage('payout',this)" style="display:none">💸 振込管理</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
     <button class="nav-btn" id="nav-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">素材広場</button>
   </div>
@@ -4133,6 +4134,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" id="nav-drawer-my-goals" data-page="my-goals" onclick="showPage('my-goals',this)">🎯 マイゴール</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
+    <button class="nav-drawer-btn" id="nav-drawer-payout" data-page="payout" onclick="showPage('payout',this)" style="display:none">💸 振込管理</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
     <button class="nav-drawer-btn" id="nav-drawer-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">🗂️ 素材広場</button>
     <div class="nav-drawer-account">
@@ -8741,6 +8743,49 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <div id="tl-table" style="overflow-x:auto"></div>
     </div>
     <div id="tl-defs" style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.7"></div>
+  </div>
+</div>
+
+<!-- 💸 振込管理（メンバー月次請求書×振込消し込み）
+     閲覧は permission 'payout.page'（既定 admin のみ）。金額・口座情報を含むため開放は最小限。
+     ナビ表示は applyRoleBasedUI、ページ内は loadPayoutPage 冒頭の二重ガードで制御（ADR 015）。 -->
+<div id="page-payout" class="page">
+  <style>
+    #page-payout .po-tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:980px}
+    #page-payout .po-tbl th{font-size:11px;font-weight:600;color:var(--text-muted);text-align:left;padding:10px;border-bottom:0.5px solid var(--border);white-space:nowrap}
+    #page-payout .po-tbl td{padding:10px;border-bottom:0.5px solid var(--border-light);vertical-align:top}
+    #page-payout .po-tbl tr.po-paid td{background:#e8f5e9}
+    .po-badge{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;border:none;cursor:default}
+    button.po-badge{cursor:pointer}
+  </style>
+  <div style="max-width:1200px;margin:0 auto;padding:0 4px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px">
+      <h2 style="margin:0;font-size:18px">💸 振込管理</h2>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button class="btn-sm" onclick="poShiftMonth(-1)">◀ 前月</button>
+        <strong id="po-month-label" style="font-size:14px;min-width:100px;text-align:center"></strong>
+        <button class="btn-sm" onclick="poShiftMonth(1)">翌月 ▶</button>
+      </div>
+      <button class="btn-sm" id="po-rescan" onclick="poFetch()">🔄 再スキャン</button>
+      <span id="po-updated" style="margin-left:auto;font-size:11px;color:var(--text-muted)"></span>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">メンバーの月次請求書PDF（Drive）と振込状況の消し込みを管理します。読み込み時にDriveを再スキャンします（新しいPDFがある月は数十秒かかることがあります）。</div>
+    <div id="po-banner"></div>
+    <div id="po-summary" style="margin-bottom:12px"></div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div id="po-table" style="overflow-x:auto"></div>
+    </div>
+    <div id="po-unmatched" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<!-- 💸 振込管理 差分チェック詳細モーダル（請求書 vs 実データの突合結果） -->
+<div class="modal-overlay" id="modal-po-diff" style="z-index:300">
+  <div class="modal-card" style="width:min(680px,95vw);max-height:88vh;overflow-y:auto">
+    <div class="modal-title"><span id="po-diff-title">🔍 差分チェック詳細</span><button class="modal-close" onclick="closeModal('modal-po-diff')">×</button></div>
+    <div id="po-diff-body">
+      <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
+    </div>
   </div>
 </div>
 
@@ -18357,6 +18402,8 @@ function setPreviewRole(role) {
   }
   // 📊 チーム状況: team_load.page 限定ページ。VIEW AS 切替で前ロールの負荷データが残らないよう再描画（ADR 015）
   if (document.getElementById('page-team-load')?.classList.contains('active') && typeof loadTeamLoadPage === 'function') loadTeamLoadPage();
+  // 💸 振込管理: payout.page 限定ページ。VIEW AS 切替で前ロールの振込データ（金額・口座）が残らないよう再描画（ADR 015）
+  if (document.getElementById('page-payout')?.classList.contains('active') && typeof loadPayoutPage === 'function') loadPayoutPage();
   // VIEW AS 切替時は master ページも再描画（最高管理者専用タブが previewRole 切替で見えなくなるべきため）
   if (document.getElementById('page-master')?.classList.contains('active')) {
     // 現在開いているマスターサブページを再ロード。サブページごとに renderXxxPage が定義されているのでそれを再呼び出し
@@ -18441,6 +18488,13 @@ function applyRoleBasedUI() {
   if (teamLoadNav) teamLoadNav.style.display = canTeamLoad ? '' : 'none';
   const drawerTeamLoad = document.getElementById('nav-drawer-team-load');
   if (drawerTeamLoad) drawerTeamLoad.style.display = canTeamLoad ? '' : 'none';
+
+  // 💸 振込管理ナビ — permission 'payout.page'（既定 admin のみ。ページ内は loadPayoutPage 冒頭で二重ガード・ADR 015）
+  const canPayout = hasPermission('payout.page');
+  const payoutNav = document.getElementById('nav-payout');
+  if (payoutNav) payoutNav.style.display = canPayout ? '' : 'none';
+  const drawerPayout = document.getElementById('nav-drawer-payout');
+  if (drawerPayout) drawerPayout.style.display = canPayout ? '' : 'none';
   // サイドバーのうち analytics.view が必要な項目（経営系メニューと将来追加されるサブメニュー）は
   // フル権限がないロールでは隠す。data-an-perm="analytics.view" を目印にする。
   document.querySelectorAll('#an-sidebar [data-an-perm="analytics.view"]').forEach(el => {
@@ -23832,6 +23886,7 @@ function showPage(name, btn) {
   if(name==='knowledge') initKnowledgePage();
   if(name==='analytics') initAnalyticsPage();
   if(name==='team-load') loadTeamLoadPage();
+  if(name==='payout') loadPayoutPage();
   if(name==='tweets')   loadTweetsPage();
   if(name==='portfolio') loadPortfolioPage();
   if(name==='work-hours') loadWorkHoursPage();
@@ -27056,6 +27111,410 @@ function renderTeamLoad() {
       `<div>・持ちボール: ${esc(d.balls || '')}</div>` +
       `<div>・今週期限: ${esc(d.due_this_week || '')}／超過: ${esc(d.overdue || '')}</div>`;
   }
+}
+
+// ==================== 💸 振込管理（メンバー月次請求書×振込消し込み） ====================
+//
+// メンバーが提出する月次請求書PDF（Drive）と振込状況をひも付けて消し込む admin 専用ページ。
+// - 権限: permission 'payout.page'（既定 admin のみ）。金額・口座情報を含むため開放は最小限。
+//   ナビは applyRoleBasedUI、ページ内は loadPayoutPage 冒頭の二重ガード（ADR 015）。
+// - GET は呼ぶたびにサーバー側で Drive を再スキャンする（新PDFがある月は数十秒かかりうる）ため、
+//   ロード中スケルトンを必ず表示する。
+// - 月の既定値は JST の現在月（sv-SE + Asia/Tokyo。サーバーローカル時刻に依存しない・CLAUDE.md 共通ルール）。
+// - 名前表示は NameDisplay.full（「ニックネーム（名前）」標準・PR #502）＋ esc()。
+
+let _poYear = null, _poMonth = null;
+let _poData = null;     // GET /admin/payouts のレスポンス
+let _poLoading = false;
+let _poDiffModalId = null; // 差分詳細モーダルで表示中の record id
+
+function poYen(n) { return '¥' + Number(n || 0).toLocaleString(); }
+// JST 'M/D HH:mm'（UTCのまま出さない・CLAUDE.md 共通ルール）
+function poJstDT(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function poRecord(id) {
+  return ((_poData && _poData.records) || []).find(r => String(r.id) === String(id)) || null;
+}
+function poName(r) {
+  if (window.NameDisplay) return NameDisplay.full(r);
+  return r.nickname ? `${r.nickname}（${r.full_name}）` : (r.full_name || '');
+}
+
+function loadPayoutPage() {
+  const tableEl = document.getElementById('po-table');
+  if (!tableEl) return;
+  // VIEW AS 追従: 権限のないロールでは中身を出さない（ナビも applyRoleBasedUI で非表示・ADR 015）
+  if (!hasPermission('payout.page')) {
+    _poData = null;
+    ['po-banner', 'po-summary', 'po-unmatched'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+    const upd = document.getElementById('po-updated'); if (upd) upd.textContent = '';
+    tableEl.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">このページを閲覧する権限がありません</div>';
+    return;
+  }
+  if (_poYear == null) {
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD（JST）
+    _poYear = parseInt(today.slice(0, 4), 10);
+    _poMonth = parseInt(today.slice(5, 7), 10);
+  }
+  poFetch();
+}
+
+function poShiftMonth(delta) {
+  if (_poLoading || _poYear == null) return;
+  let y = _poYear, m = _poMonth + delta;
+  if (m < 1) { m = 12; y--; }
+  if (m > 12) { m = 1; y++; }
+  _poYear = y; _poMonth = m;
+  poFetch();
+}
+
+async function poFetch() {
+  const tableEl = document.getElementById('po-table');
+  if (!tableEl || _poLoading) return;
+  if (!hasPermission('payout.page')) { loadPayoutPage(); return; }
+  _poLoading = true;
+  const rescanBtn = document.getElementById('po-rescan');
+  if (rescanBtn) rescanBtn.disabled = true;
+  const label = document.getElementById('po-month-label');
+  if (label) label.textContent = `${_poYear}年${_poMonth}月`;
+  // Drive 再スキャンで数十秒かかりうるため、必ずロード中表示を出す
+  const bannerEl = document.getElementById('po-banner');
+  if (bannerEl) bannerEl.innerHTML = '';
+  const summaryEl = document.getElementById('po-summary');
+  if (summaryEl) summaryEl.innerHTML = '<div class="skel-line" style="width:40%"></div>';
+  tableEl.innerHTML =
+    '<div style="padding:12px 20px 4px;font-size:12px;color:var(--text-muted)">📂 Driveをスキャンしています…（新しいPDFがある月は数十秒かかることがあります）</div>' +
+    '<div style="padding:8px 20px 16px">' +
+    [1, 2, 3, 4, 5].map(() => '<div class="skel-row"><span class="skel-circle"></span><span class="skel-line"></span></div>').join('') + '</div>';
+  try {
+    const res = await apiFetch(`${API}/admin/payouts?year=${_poYear}&month=${_poMonth}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '振込管理データの取得に失敗しました');
+    _poData = data;
+    renderPayout();
+  } catch (e) {
+    console.error('[payout]', e);
+    _poData = null;
+    if (summaryEl) summaryEl.innerHTML = '';
+    tableEl.innerHTML = `<div style="padding:32px;text-align:center;color:#C0392B;font-size:13px">${esc(e.message)}</div>`;
+    showToast(e.message, 'error');
+  } finally {
+    _poLoading = false;
+    if (rescanBtn) rescanBtn.disabled = false;
+  }
+}
+
+function renderPayout() {
+  const data = _poData;
+  const tableEl = document.getElementById('po-table');
+  if (!data || !tableEl) return;
+  const summary = data.summary || {};
+  const records = data.records || [];
+
+  const label = document.getElementById('po-month-label');
+  if (label) label.textContent = `${data.year || _poYear}年${data.month || _poMonth}月`;
+  const updEl = document.getElementById('po-updated');
+  if (updEl) {
+    const t = new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+    updEl.textContent = `更新: ${t}`;
+  }
+
+  // 通知バナー（🆕新PDF / ⚠️月フォルダなし）
+  const bannerEl = document.getElementById('po-banner');
+  if (bannerEl) {
+    let banners = '';
+    if (data.month_folder_found === false) {
+      banners += '<div style="background:#fff8e1;border-left:4px solid #fb8c00;border-radius:8px;padding:10px 14px;font-size:13px;color:#e65100;margin-bottom:10px">⚠️ この月の請求書フォルダがDriveに見つかりませんでした</div>';
+    }
+    if ((summary.new_pdf_count || 0) > 0) {
+      banners += `<div style="background:#e3f2fd;border-left:4px solid #42a5f5;border-radius:8px;padding:10px 14px;font-size:13px;color:#1565c0;margin-bottom:10px">🆕 新しいPDFが${Number(summary.new_pdf_count)}件追加されました</div>`;
+    }
+    if ((data.unmatched_folders || []).length > 0) {
+      banners += `<div style="background:#fff8e1;border-left:4px solid #fb8c00;border-radius:8px;padding:10px 14px;font-size:13px;color:#e65100;margin-bottom:10px">⚠️ メンバーと紐付けできなかったフォルダが${data.unmatched_folders.length}件あります（表の下を確認）</div>`;
+    }
+    bannerEl.innerHTML = banners;
+  }
+
+  // 進捗サマリー（振込済 X / N 件＋進捗バー＋金額）
+  const summaryEl = document.getElementById('po-summary');
+  if (summaryEl) {
+    const total = Number(summary.total_records) || records.length;
+    const paid = Number(summary.paid_count) || 0;
+    const pct = total > 0 ? Math.round(paid / total * 100) : 0;
+    let html =
+      `<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">` +
+        `<span style="font-size:14px;font-weight:700">振込済 ${paid} / ${total} 件</span>` +
+        `<div class="dash-proj-bar" style="flex:1;min-width:160px;max-width:320px"><div class="dash-proj-fill" style="width:${pct}%;background:linear-gradient(90deg,var(--em-dark),var(--em))"></div></div>` +
+        `<span style="font-size:13px;color:var(--text)">合計 ${poYen(summary.total_amount)}</span>` +
+        `<span style="font-size:13px;color:${(Number(summary.unpaid_amount) || 0) > 0 ? '#C05A0A' : 'var(--text-muted)'}">未振込 ${poYen(summary.unpaid_amount)}</span>` +
+      `</div>`;
+    if (total > 0 && paid >= total) {
+      html += '<div style="margin-top:8px;font-size:13px;font-weight:600;color:var(--em-dark)">🎉 今月の振込はすべて完了しています</div>';
+    }
+    summaryEl.innerHTML = html;
+  }
+
+  // 並び: 未振込を上（請求額降順・金額不明は末尾）、振込済を下（paid_at昇順）
+  const unpaidRows = records.filter(r => r.status !== 'paid')
+    .sort((a, b) => (Number(b.invoice_amount) || -1) - (Number(a.invoice_amount) || -1));
+  const paidRows = records.filter(r => r.status === 'paid')
+    .sort((a, b) => String(a.paid_at || '').localeCompare(String(b.paid_at || '')));
+  const rows = [...unpaidRows, ...paidRows];
+
+  if (rows.length === 0) {
+    tableEl.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">この月の振込対象がありません</div>';
+    return;
+  }
+
+  let html = '<table class="po-tbl"><thead><tr>' +
+    '<th style="width:36px">状態</th><th>氏名</th><th style="text-align:right">請求額</th><th>振込先</th><th>PDF</th><th>差分</th><th>メモ</th><th>操作</th>' +
+    '</tr></thead><tbody>';
+
+  rows.forEach(r => {
+    const paid = r.status === 'paid';
+    const rid = esc(String(r.id));
+    const name = esc(poName(r));
+
+    // 請求額（null=金額不明・✏で手入力・manual バッジ）
+    let amountCell;
+    if (r.invoice_amount == null) {
+      amountCell = '<span style="color:var(--text-muted)">金額不明</span>';
+    } else {
+      amountCell = `<span style="font-weight:600">${poYen(r.invoice_amount)}</span>`;
+    }
+    if (!paid) {
+      amountCell += ` <button class="btn-sm" style="padding:1px 6px" title="請求額を手入力" onclick="poEditAmount('${rid}')">✏</button>`;
+    }
+    if (r.amount_source === 'manual') {
+      amountCell += '<div><span class="po-badge" style="background:#fff8e1;color:#7A5F00">手入力</span></div>';
+    }
+
+    // 振込先（未登録項目は−）
+    const dash = v => (v == null || v === '') ? '−' : esc(v);
+    const bankCell =
+      `<div style="font-size:12px;line-height:1.6;color:var(--text)">` +
+        `<div>${dash(r.bank_name)}(${dash(r.bank_code)}) ${dash(r.branch_name)}(${dash(r.branch_code)})</div>` +
+        `<div>${dash(r.account_type)} ${dash(r.account_number)}</div>` +
+        `<div style="color:var(--text-muted)">${dash(r.account_holder_kana)}</div>` +
+      `</div>`;
+
+    // PDF（複数対応・無ければ未提出）
+    const pdfs = r.pdf_files || [];
+    let pdfCell = pdfs.length === 0
+      ? '<span style="color:var(--text-muted);font-size:12px">未提出</span>'
+      : pdfs.map(f => `<a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.name)}" style="font-size:16px;text-decoration:none">📄</a>`).join(' ');
+    if (r.is_new) pdfCell += ' <span class="po-badge" style="background:#e3f2fd;color:#1565c0">🆕</span>';
+
+    // 差分チェック
+    let diffCell;
+    if (r.diff_status === 'match') {
+      diffCell = `<button class="po-badge" style="background:var(--em-pale);color:var(--em-dark)" onclick="poOpenDiffModal('${rid}')">✅ 一致</button>`;
+    } else if (r.diff_status === 'diff') {
+      diffCell = `<button class="po-badge" style="background:#FDECEA;color:#C0392B" onclick="poOpenDiffModal('${rid}')">⚠️ 差分あり</button>`;
+    } else if (r.diff_status === 'unknown') {
+      diffCell = `<button class="po-badge" style="background:var(--border-light);color:var(--text-muted)" onclick="poOpenDiffModal('${rid}')">❓ 判定不可</button>`;
+    } else {
+      diffCell = `<button class="btn-sm" onclick="poDiffCheck('${rid}',this)">差分チェック</button>`;
+    }
+
+    // メモ（未振込=入力・送信時にPOST／振込済=テキスト表示のみ）
+    const memoCell = paid
+      ? `<span style="font-size:12px;color:var(--text-muted)">${esc(r.memo || '')}</span>`
+      : `<input class="form-input" id="po-memo-${rid}" value="${esc(r.memo || '')}" placeholder="メモ" style="width:140px;padding:4px 8px;font-size:12px">`;
+
+    // 操作
+    let opCell;
+    if (paid) {
+      opCell = `<div style="font-size:12px;line-height:1.6"><span style="font-weight:600;color:var(--em-dark)">済 ${esc(poJstDT(r.paid_at))}</span>`;
+      if (!r.message_sent_at) opCell += '<div style="color:var(--text-muted)">送信なし</div>';
+      opCell += `<div><a href="javascript:void(0)" onclick="poUnpay('${rid}')" style="color:#C0392B;font-size:11px">取消</a></div></div>`;
+    } else {
+      opCell = `<button class="btn-primary" style="white-space:nowrap;font-size:12px;padding:6px 10px" onclick="poPay('${rid}',this)">振込完了→送信</button>`;
+      if (r.has_chatwork === false) {
+        opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ Chatwork未設定（送信されません）</div>';
+      }
+    }
+
+    html += `<tr class="${paid ? 'po-paid' : ''}">` +
+      `<td style="font-size:15px">${paid ? '✅' : '⬜'}</td>` +
+      `<td style="font-weight:600;white-space:nowrap">${name}</td>` +
+      `<td style="text-align:right;white-space:nowrap">${amountCell}</td>` +
+      `<td>${bankCell}</td>` +
+      `<td style="white-space:nowrap">${pdfCell}</td>` +
+      `<td>${diffCell}</td>` +
+      `<td>${memoCell}</td>` +
+      `<td>${opCell}</td>` +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  tableEl.innerHTML = html;
+
+  // 未マッチフォルダ（メンバーと紐付けできなかった Drive フォルダ）
+  const unEl = document.getElementById('po-unmatched');
+  if (unEl) {
+    const folders = data.unmatched_folders || [];
+    unEl.innerHTML = folders.length === 0 ? '' :
+      '<div style="font-size:13px;font-weight:600;color:#C05A0A;margin-bottom:6px">⚠️ メンバーと紐付けできなかったフォルダ</div>' +
+      folders.map(f =>
+        `<div style="font-size:12px;margin-bottom:3px">・<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)}</a></div>`
+      ).join('');
+  }
+}
+
+// 請求額のインライン手入力（prompt → PATCH）
+async function poEditAmount(id) {
+  const r = poRecord(id);
+  if (!r) return;
+  const input = prompt(`${poName(r)}さんの請求額（円・数字のみ）を入力してください`, r.invoice_amount != null ? String(r.invoice_amount) : '');
+  if (input == null) return; // キャンセル
+  const amount = Number(String(input).replace(/[,¥\s]/g, ''));
+  if (!Number.isFinite(amount) || amount < 0) { showToast('金額は0以上の数字で入力してください', 'warn'); return; }
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoice_amount: amount }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '請求額の更新に失敗しました');
+    poApplyRecord(data.record);
+    showToast('請求額を更新しました', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// レスポンスの record を _poData に反映して再描画（GET の Drive 再スキャンを避ける）
+function poApplyRecord(record) {
+  if (!record || !_poData || !_poData.records) { poFetch(); return; }
+  const i = _poData.records.findIndex(x => String(x.id) === String(record.id));
+  if (i >= 0) _poData.records[i] = record; else _poData.records.push(record);
+  // サマリーの件数・金額をローカル再計算（paid_count / unpaid_amount の整合）
+  const s = _poData.summary || (_poData.summary = {});
+  s.total_records = _poData.records.length;
+  s.paid_count = _poData.records.filter(r => r.status === 'paid').length;
+  s.total_amount = _poData.records.reduce((sum, r) => sum + (Number(r.invoice_amount) || 0), 0);
+  s.unpaid_amount = _poData.records.filter(r => r.status !== 'paid').reduce((sum, r) => sum + (Number(r.invoice_amount) || 0), 0);
+  renderPayout();
+}
+
+// 差分チェック実行（一覧のボタン／モーダルの再チェック共通）
+async function poDiffCheck(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '判定中…'; }
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/${encodeURIComponent(id)}/diff-check`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '差分チェックに失敗しました');
+    poApplyRecord(data.record);
+    // モーダルを開いたまま再チェックした場合は中身も更新
+    if (_poDiffModalId != null && String(_poDiffModalId) === String(id)) poRenderDiffModal(id);
+  } catch (e) {
+    showToast(e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '差分チェック'; }
+  }
+}
+
+function poOpenDiffModal(id) {
+  _poDiffModalId = id;
+  poRenderDiffModal(id);
+  openModal('modal-po-diff');
+}
+
+function poRenderDiffModal(id) {
+  const body = document.getElementById('po-diff-body');
+  const r = poRecord(id);
+  if (!body || !r) return;
+  const titleEl = document.getElementById('po-diff-title');
+  if (titleEl) titleEl.textContent = `🔍 差分チェック詳細 — ${poName(r)}`;
+  const d = r.diff_detail || {};
+  const statusBadge =
+    r.diff_status === 'match' ? '<span class="po-badge" style="background:var(--em-pale);color:var(--em-dark)">✅ 一致</span>' :
+    r.diff_status === 'diff' ? '<span class="po-badge" style="background:#FDECEA;color:#C0392B">⚠️ 差分あり</span>' :
+    '<span class="po-badge" style="background:var(--border-light);color:var(--text-muted)">❓ 判定不可</span>';
+  const delta = Number(d.delta) || 0;
+  let html =
+    `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">${statusBadge}` +
+    (r.diff_checked_at ? `<span style="font-size:11px;color:var(--text-muted)">チェック: ${esc(poJstDT(r.diff_checked_at))}</span>` : '') +
+    `</div>` +
+    `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">` +
+      `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">請求額</div><div style="font-size:18px;font-weight:700">${d.invoice_amount != null ? poYen(d.invoice_amount) : '−'}</div></div>` +
+      `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">実データ計</div><div style="font-size:18px;font-weight:700">${d.actual_total != null ? poYen(d.actual_total) : '−'}</div></div>` +
+      `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">差額${d.delta_with_tax != null ? '（税込差 ' + esc(poYen(d.delta_with_tax)) + '）' : ''}</div><div style="font-size:18px;font-weight:700;color:${delta === 0 ? 'var(--em-dark)' : '#C0392B'}">${d.delta != null ? poYen(d.delta) : '−'}</div></div>` +
+    `</div>`;
+  const clients = d.clients || [];
+  if (clients.length > 0) {
+    html += '<div style="font-size:12px;font-weight:600;margin-bottom:6px">クライアント別内訳（実データ）</div>' +
+      '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
+      '<thead><tr>' +
+        '<th style="text-align:left;padding:6px 8px;border-bottom:0.5px solid var(--border);color:var(--text-muted);font-size:11px">クライアント</th>' +
+        '<th style="text-align:right;padding:6px 8px;border-bottom:0.5px solid var(--border);color:var(--text-muted);font-size:11px">本数</th>' +
+        '<th style="text-align:right;padding:6px 8px;border-bottom:0.5px solid var(--border);color:var(--text-muted);font-size:11px">作り手金額</th>' +
+        '<th style="text-align:right;padding:6px 8px;border-bottom:0.5px solid var(--border);color:var(--text-muted);font-size:11px">D費</th>' +
+      '</tr></thead><tbody>' +
+      clients.map(c =>
+        `<tr>` +
+        `<td style="padding:6px 8px;border-bottom:0.5px solid var(--border-light)">${esc(c.name)}${c.billing_org ? `<span style="color:var(--text-muted);font-size:11px">（${esc(c.billing_org)}）</span>` : ''}</td>` +
+        `<td style="padding:6px 8px;border-bottom:0.5px solid var(--border-light);text-align:right">${Number(c.creator_count) || 0}</td>` +
+        `<td style="padding:6px 8px;border-bottom:0.5px solid var(--border-light);text-align:right">${poYen(c.creator_amount)}</td>` +
+        `<td style="padding:6px 8px;border-bottom:0.5px solid var(--border-light);text-align:right">${poYen(c.dfee_amount)}</td>` +
+        `</tr>`
+      ).join('') +
+      '</tbody></table></div>';
+  }
+  const notes = d.notes || [];
+  if (notes.length > 0) {
+    html += '<div style="margin-top:12px;font-size:12px;color:var(--text-muted);line-height:1.7">' +
+      notes.map(n => `<div>・${esc(n)}</div>`).join('') + '</div>';
+  }
+  html += `<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">` +
+    `<button class="btn-sm" onclick="closeModal('modal-po-diff')">閉じる</button>` +
+    `<button class="btn-primary" onclick="poDiffCheck('${esc(String(r.id))}')">🔄 再チェック</button>` +
+  `</div>`;
+  body.innerHTML = html;
+}
+
+// 振込完了（confirm → POST pay → 行を緑に）。sent=false でも record は paid（sent_reason をトースト表示）
+async function poPay(id, btn) {
+  const r = poRecord(id);
+  if (!r) return;
+  if (!confirm(`${poName(r)}さんに振込完了メッセージを送信して消し込みます。よろしいですか？`)) return;
+  const memoInput = document.getElementById(`po-memo-${id}`);
+  const memo = memoInput ? memoInput.value.trim() : (r.memo || '');
+  if (btn) { btn.disabled = true; btn.textContent = '送信中…'; }
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/${encodeURIComponent(id)}/pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '振込完了の登録に失敗しました');
+    poApplyRecord(data.record);
+    if (data.sent) {
+      showToast(`${poName(r)}さんへ振込完了メッセージを送信し、消し込みました`, 'success');
+    } else {
+      showToast(`消し込みました（メッセージ未送信: ${data.sent_reason || '理由不明'}）`, 'warn');
+    }
+  } catch (e) {
+    showToast(e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '振込完了→送信'; }
+  }
+}
+
+// 消し込みの取消（paid → unpaid）
+async function poUnpay(id) {
+  const r = poRecord(id);
+  if (!r) return;
+  if (!confirm(`${poName(r)}さんの振込消し込みを取り消して未振込に戻します。よろしいですか？`)) return;
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/${encodeURIComponent(id)}/unpay`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '取消に失敗しました');
+    poApplyRecord(data.record);
+    showToast('消し込みを取り消しました', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // ==================== ⏱ 作業時間報告（タイムシート）— ADR 028 Stage 2 ====================
@@ -32977,6 +33436,7 @@ const ROLE_PERM_LIST = [
   { section:'分析',           key:'analytics.bug_reports.view',  label:'分析メニュー：バグ報告件数' },
   { section:'分析',           key:'analytics.billing_recon.view', label:'請求突合チェッカー（経理向け）' },
   { section:'チーム状況',     key:'team_load.page',              label:'チーム状況（負荷ダッシュボード）閲覧' },
+  { section:'振込管理',       key:'payout.page',                 label:'振込管理（月次振込の消し込み）閲覧' },
 ];
 
 let _rolesEditMode = false;
