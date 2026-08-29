@@ -1127,6 +1127,10 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('producer','analytics.bug_reports.view',true),('producer_director','analytics.bug_reports.view',true),
   ('director','analytics.bug_reports.view',true),('editor','analytics.bug_reports.view',true),
   ('designer','analytics.bug_reports.view',true),
+  -- 分析メニュー: 請求突合チェッカー（経理向け・INV請求と実制作データの乖離検出）。
+  -- 請求金額・クライアント別売上を扱うため admin / secretary のみ
+  -- （migration 2026-08-29b_analytics_billing_recon_permission.sql）
+  ('admin','analytics.billing_recon.view',true),('secretary','analytics.billing_recon.view',true),
   -- 📊 チーム状況（チーム負荷ダッシュボード）。負荷把握は仕事を配る責任者の業務のため
   -- admin + プロデューサー層のみ（メンバー間比較を避ける・migration 2026-08-21_team_load_permission.sql / ADR 033）。
   -- producer_director 行は #1052 以降「兼任者のみ」に適用される合成値 TEXT 行。

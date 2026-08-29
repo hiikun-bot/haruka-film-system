@@ -8014,6 +8014,308 @@ router.post('/analytics/bug-reports/export-sheet', requireAuth, requirePermissio
   }
 });
 
+// ==================== 請求突合チェッカー（billing-recon） ====================
+// INVタブの請求書管理（invoices/invoice_items, invoice_type='client'）と、
+// 実制作データ（当月 JST に納品完了した creatives × line の client_unit_price）を
+// クライアント別に突合し、差額・未請求候補・対応不明明細を返す。
+//
+// 金額の性質: 両系統ともシステム登録額そのまま（税抜ベース）で比較する。
+//   - 請求側: invoice_items.total_amount（クライアント請求書生成時の client_fee 相当）
+//   - 実データ側: line.client_unit_price（per-unit）→ 無ければ creatives.client_fee
+// 判定の限界（構造的に乖離するもの）は乖離種別の推定をせず、金額差と明細リストの提示に徹する:
+//   - LP一式・分割支払（ADR 029 installments）は creative 単位の per-unit にならない
+//   - 納品前請求（先行請求）は納品月と請求月がズレる
+//   - 包括契約は creative 単位の請求書明細を持たない
+async function aggregateBillingRecon({ year, month }) {
+  const jst = jstMonthRangeIso(year, month);
+  const monthEndStr = jstMonthEndStr(year, month);
+
+  // ---------- 1) 実データ側: 当月 JST に納品完了した creatives ----------
+  // 単価解決は作成本数集計と同じ経路（ADR 030/031: buildLinePricingContext +
+  // resolveCreativeLineForPricing）。base64 列は select しない。
+  const { data: deliveredCreatives, error: crErr } = await supabase
+    .from('creatives')
+    .select(`
+      id, file_name, status, creative_type, category_id, project_id, line_id,
+      delivered_at, client_fee,
+      creative_assignments(role, rank_applied),
+      projects!inner(id, name, client_id, clients(id, name))
+    `)
+    .eq('status', '納品')
+    .gte('delivered_at', jst.startIso)
+    .lt('delivered_at', jst.endIso);
+  if (crErr) throw new Error(crErr.message);
+
+  const pricingCtx = await buildLinePricingContext(deliveredCreatives || [], 'aggregateBillingRecon');
+
+  const clientNameById = new Map();
+  const actualByClient = new Map(); // client_id -> { amount, count }
+  const actualRows = [];            // creative 単位（未請求候補の抽出元）
+  let actualTotal = 0, priceUnknownCount = 0;
+  for (const c of (deliveredCreatives || [])) {
+    const clientId = c.projects?.client_id || null;
+    const clientName = c.projects?.clients?.name || '(クライアント不明)';
+    if (clientId && !clientNameById.has(clientId)) clientNameById.set(clientId, clientName);
+
+    const lineId = resolveCreativeLineForPricing(c, pricingCtx, monthEndStr);
+    const line = lineId ? (pricingCtx.lineById.get(lineId) || pricingCtx.baseLineById.get(lineId)) : null;
+    let amount = 0, priceSource = 'unknown';
+    if (line && Number(line.client_unit_price) > 0) {
+      amount = Number(line.client_unit_price) || 0;
+      priceSource = 'line';
+    } else if (Number(c.client_fee) > 0) {
+      amount = Number(c.client_fee) || 0;
+      priceSource = 'client_fee';
+    } else {
+      priceUnknownCount++;
+    }
+    actualTotal += amount;
+    const key = clientId || '__unknown__';
+    if (!actualByClient.has(key)) actualByClient.set(key, { client_id: clientId, name: clientName, amount: 0, count: 0 });
+    const bucket = actualByClient.get(key);
+    bucket.amount += amount;
+    bucket.count += 1;
+    actualRows.push({
+      creative_id: c.id,
+      file_name: c.file_name || '(無題)',
+      project_id: c.project_id || null,
+      project_name: c.projects?.name || '(不明)',
+      client_id: clientId,
+      client_name: clientName,
+      delivered_at: c.delivered_at || null,
+      amount,
+      price_source: priceSource, // 'line' | 'client_fee' | 'unknown'
+    });
+  }
+
+  // ---------- 2) 請求側: 当月のクライアント請求書（invoice_type='client'） ----------
+  // invoice_items は embed で取得（.in() の大量ID渡しを避ける）
+  const { data: invoices, error: invErr } = await supabase
+    .from('invoices')
+    .select(`
+      id, invoice_number, status, total_amount, recipient_client_id, project_id,
+      invoice_items(id, creative_id, total_amount, label, creative_label, cost_type)
+    `)
+    .eq('invoice_type', 'client').eq('year', year).eq('month', month);
+  if (invErr) throw new Error(invErr.message);
+
+  // recipient_client_id が無い請求書は project 経由でクライアントを解決（対象月の請求書のみ＝少数）
+  const invProjIds = Array.from(new Set((invoices || []).map(i => i.project_id).filter(Boolean)));
+  const projectClientMap = new Map();
+  if (invProjIds.length) {
+    const { data: ps } = await supabase.from('projects').select('id, client_id').in('id', invProjIds);
+    (ps || []).forEach(p => projectClientMap.set(p.id, p.client_id));
+  }
+  const invClientIds = Array.from(new Set([
+    ...(invoices || []).map(i => i.recipient_client_id),
+    ...Array.from(projectClientMap.values()),
+  ].filter(Boolean))).filter(id => !clientNameById.has(id));
+  if (invClientIds.length) {
+    const { data: cs } = await supabase.from('clients').select('id, name').in('id', invClientIds);
+    (cs || []).forEach(c => clientNameById.set(c.id, c.name));
+  }
+
+  const invoicedByClient = new Map(); // client_id -> { amount, item_count, invoice_count }
+  let invoicedTotal = 0, invoiceCount = 0;
+  const deliveredIdSet = new Set((deliveredCreatives || []).map(c => c.id));
+  const unmatchedItems = []; // 請求書にあるが実データ（当月納品）に対応が見つからない明細
+  for (const inv of (invoices || [])) {
+    invoiceCount++;
+    const clientId = inv.recipient_client_id || (inv.project_id ? projectClientMap.get(inv.project_id) : null) || null;
+    const clientName = clientId ? (clientNameById.get(clientId) || '(不明)') : '(クライアント不明)';
+    const items = inv.invoice_items || [];
+    // 明細合計を請求額とする（明細ゼロの請求書のみ invoices.total_amount にフォールバック）
+    const invAmount = items.length
+      ? items.reduce((s, it) => s + (Number(it.total_amount) || 0), 0)
+      : (Number(inv.total_amount) || 0);
+    invoicedTotal += invAmount;
+    const key = clientId || '__unknown__';
+    if (!invoicedByClient.has(key)) invoicedByClient.set(key, { client_id: clientId, name: clientName, amount: 0, item_count: 0, invoice_count: 0 });
+    const bucket = invoicedByClient.get(key);
+    bucket.amount += invAmount;
+    bucket.item_count += items.length;
+    bucket.invoice_count += 1;
+
+    for (const it of items) {
+      if (!it.creative_id) {
+        unmatchedItems.push({
+          invoice_id: inv.id,
+          invoice_number: inv.invoice_number,
+          invoice_status: inv.status,
+          client_id: clientId,
+          client_name: clientName,
+          label: it.label || it.creative_label || '(品目なし)',
+          amount: Number(it.total_amount) || 0,
+          creative_id: null,
+          reason: 'クリエイティブ紐付けなし',
+        });
+      } else if (!deliveredIdSet.has(it.creative_id)) {
+        unmatchedItems.push({
+          invoice_id: inv.id,
+          invoice_number: inv.invoice_number,
+          invoice_status: inv.status,
+          client_id: clientId,
+          client_name: clientName,
+          label: it.label || it.creative_label || '(品目なし)',
+          amount: Number(it.total_amount) || 0,
+          creative_id: it.creative_id,
+          reason: '対象月に納品完了した実データなし',
+        });
+      }
+    }
+  }
+
+  // ---------- 3) 未請求候補: 納品済みなのにクライアント請求書に載っていない creative ----------
+  // 別月の請求書に載っているものは「未請求」ではないので、請求月を問わず embed inner フィルタで
+  // 「当月納品 creative に紐付く client 請求明細」を横断取得して除外する（.in() の大量ID回避）。
+  const billedByCreative = new Map(); // creative_id -> { invoice_number, year, month }
+  const { data: billedLinks, error: blErr } = await supabase
+    .from('invoice_items')
+    .select(`
+      creative_id,
+      invoice:invoices!inner(id, invoice_number, year, month, invoice_type),
+      creative:creatives!inner(id, status, delivered_at)
+    `)
+    .eq('invoice.invoice_type', 'client')
+    .eq('creative.status', '納品')
+    .gte('creative.delivered_at', jst.startIso)
+    .lt('creative.delivered_at', jst.endIso);
+  if (blErr) {
+    console.warn('[aggregateBillingRecon] billed links load failed:', blErr.message);
+  } else {
+    for (const row of (billedLinks || [])) {
+      if (row.creative_id && !billedByCreative.has(row.creative_id)) {
+        billedByCreative.set(row.creative_id, {
+          invoice_number: row.invoice?.invoice_number || null,
+          year: row.invoice?.year ?? null,
+          month: row.invoice?.month ?? null,
+        });
+      }
+    }
+  }
+  const unbilledCreatives = [];
+  let billedOtherMonthCount = 0;
+  for (const row of actualRows) {
+    const billed = billedByCreative.get(row.creative_id);
+    if (!billed) {
+      unbilledCreatives.push(row);
+    } else if (billed.year !== year || billed.month !== month) {
+      billedOtherMonthCount++;
+    }
+  }
+  unbilledCreatives.sort((a, b) =>
+    (a.client_name || '').localeCompare(b.client_name || '', 'ja')
+    || (a.project_name || '').localeCompare(b.project_name || '', 'ja')
+    || (a.file_name || '').localeCompare(b.file_name || '', 'ja'));
+  unmatchedItems.sort((a, b) =>
+    (a.client_name || '').localeCompare(b.client_name || '', 'ja')
+    || (a.invoice_number || '').localeCompare(b.invoice_number || ''));
+
+  // ---------- 4) クライアント別差分 ----------
+  const clientKeys = new Set([...actualByClient.keys(), ...invoicedByClient.keys()]);
+  const byClient = Array.from(clientKeys).map(key => {
+    const a = actualByClient.get(key);
+    const b = invoicedByClient.get(key);
+    const actualAmount = a?.amount || 0;
+    const invoicedAmount = b?.amount || 0;
+    return {
+      client_id: (a?.client_id ?? b?.client_id) || null,
+      name: a?.name || b?.name || '(クライアント不明)',
+      actual_amount: actualAmount,
+      actual_count: a?.count || 0,
+      invoiced_amount: invoicedAmount,
+      invoice_count: b?.invoice_count || 0,
+      diff: invoicedAmount - actualAmount, // 請求 − 実データ（＋=請求超過 / −=請求不足）
+    };
+  }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || (a.name || '').localeCompare(b.name || '', 'ja'));
+
+  // ---------- 5) 参考値: 月次売上・粗利集計（aggregateMonthlyRevenue の呼び出し流用） ----------
+  // 確定側は invoices（invoice_type='client'）由来なので突合の比較軸には使わず、参考表示に留める。
+  let monthlyRevenueRef = null;
+  try {
+    const mr = await aggregateMonthlyRevenue({ year, month });
+    monthlyRevenueRef = { confirmed: mr.confirmed, forecast: mr.forecast, total: mr.total };
+  } catch (e) {
+    console.warn('[aggregateBillingRecon] monthly-revenue ref failed:', e.message);
+  }
+
+  return {
+    year, month,
+    basis: '税抜（システム登録額どうしの比較。税計算は行いません）',
+    summary: {
+      actual_total: actualTotal,
+      invoiced_total: invoicedTotal,
+      diff: invoicedTotal - actualTotal,
+      delivered_count: (deliveredCreatives || []).length,
+      invoice_count: invoiceCount,
+      unbilled_count: unbilledCreatives.length,
+      unmatched_count: unmatchedItems.length,
+      price_unknown_count: priceUnknownCount,
+      billed_other_month_count: billedOtherMonthCount,
+    },
+    by_client: byClient,
+    unbilled_creatives: unbilledCreatives,
+    unmatched_items: unmatchedItems,
+    monthly_revenue_ref: monthlyRevenueRef,
+  };
+}
+
+router.get('/analytics/billing-recon', requireAuth, requirePermission('analytics.billing_recon.view'), async (req, res) => {
+  const year = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
+  try {
+    res.json(await aggregateBillingRecon({ year, month }));
+  } catch (e) {
+    console.error('[analytics/billing-recon]', e);
+    res.status(500).json({ error: e.message || '突合に失敗しました' });
+  }
+});
+
+router.post('/analytics/billing-recon/export-sheet', requireAuth, requirePermission('analytics.billing_recon.view'), async (req, res) => {
+  const year = parseInt(req.body?.year ?? req.query.year, 10);
+  const month = parseInt(req.body?.month ?? req.query.month, 10);
+  if (!year || !month || month < 1 || month > 12) return res.status(400).json({ error: 'year, month は必須です' });
+  try {
+    const data = await aggregateBillingRecon({ year, month });
+    const fmtJst = (iso) => iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
+    const clientHeaders = ['クライアント', '実データ額(税抜)', '納品本数', '請求額(税抜)', '請求書数', '差額(請求−実データ)'];
+    const clientRows = data.by_client.map(c => [
+      c.name, c.actual_amount, c.actual_count, c.invoiced_amount, c.invoice_count, c.diff,
+    ]);
+    const unbilledHeaders = ['クライアント', '案件', 'ファイル名', '納品完了(JST)', '実データ額(税抜)', '単価の出所'];
+    const srcLabel = { line: '成果物グループ単価', client_fee: 'クリエイティブ請求額', unknown: '単価不明' };
+    const unbilledRows = data.unbilled_creatives.map(r => [
+      r.client_name, r.project_name, r.file_name, fmtJst(r.delivered_at), r.amount, srcLabel[r.price_source] || r.price_source,
+    ]);
+    const unmatchedHeaders = ['クライアント', '請求書番号', 'ステータス', '品目', '金額(税抜)', '理由'];
+    const unmatchedRows = data.unmatched_items.map(r => [
+      r.client_name, r.invoice_number || '', r.invoice_status || '', r.label, r.amount, r.reason,
+    ]);
+    const sheetRows = [
+      [`HARUKA FILM 請求突合チェッカー (${year}年${month}月)`],
+      [`実データ ¥${data.summary.actual_total.toLocaleString()} / 請求 ¥${data.summary.invoiced_total.toLocaleString()} / 差額 ¥${data.summary.diff.toLocaleString()}（${data.basis}）`],
+      [`納品 ${data.summary.delivered_count}件 / 請求書 ${data.summary.invoice_count}件 / 未請求候補 ${data.summary.unbilled_count}件 / 対応不明明細 ${data.summary.unmatched_count}件 / 単価不明 ${data.summary.price_unknown_count}件 / 別月請求 ${data.summary.billed_other_month_count}件`],
+      ['※ LP一式・分割支払 / 納品前請求 / 包括契約は構造的に乖離します（乖離種別の自動判定はしていません）'],
+      [],
+      ['【クライアント別差分】'],
+      clientHeaders, ...clientRows,
+      [],
+      ['【未請求候補（納品済みだがクライアント請求書に未紐付け）】'],
+      unbilledHeaders, ...(unbilledRows.length ? unbilledRows : [['（なし）']]),
+      [],
+      ['【対応不明明細（請求書にあるが当月納品の実データに対応なし）】'],
+      unmatchedHeaders, ...(unmatchedRows.length ? unmatchedRows : [['（なし）']]),
+    ];
+    const title = `分析_請求突合_${year}年${String(month).padStart(2,'0')}月`;
+    const { url } = await createSheetWithData(title, sheetRows);
+    res.json({ url, title, rows_count: clientRows.length + unbilledRows.length + unmatchedRows.length });
+  } catch (e) {
+    console.error('[analytics/billing-recon/export-sheet]', e);
+    res.status(500).json({ error: e.message || 'スプレッドシート作成に失敗しました' });
+  }
+});
+
 // ==================== クリエイティブ ====================
 
 // クリエイティブ一覧取得
@@ -20593,6 +20895,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'system.view_as',
   'analytics.view',
   'analytics.bug_reports.view',
+  'analytics.billing_recon.view',
   'team_load.page',
   'invoice_folder.view_own','invoice_folder.view_any','invoice_folder.generate_own','invoice_folder.generate_any',
 ]);
