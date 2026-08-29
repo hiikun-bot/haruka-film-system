@@ -7520,9 +7520,11 @@ router.get('/work-hours/project-summary', requireAuth, async (req, res) => {
       supabase.from('projects')
         .select('id, name, producer_id, director_id, clients(name)')
         .eq('id', projectId).maybeSingle(),
-      // avatar_url 等の base64 列はペイロード肥大のため含めない（PR #940 と同方針）
+      // avatar_url 等の base64 列はペイロード肥大のため含めない（PR #940 と同方針）。
+      // users への FK は user_id と confirmed_by の2本あるため、embed は FK 名を明示しないと
+      // PostgREST が「more than one relationship」で曖昧エラーになる（#1118 のバグ修正）。
       supabase.from('work_hour_entries')
-        .select('id, user_id, work_date, start_time, end_time, minutes, description, status, user:users(id, full_name, nickname)')
+        .select('id, user_id, work_date, start_time, end_time, minutes, description, status, user:users!work_hour_entries_user_id_fkey(id, full_name, nickname)')
         .eq('project_id', projectId)
         .order('work_date', { ascending: false })
         .order('start_time', { ascending: false, nullsFirst: false })
