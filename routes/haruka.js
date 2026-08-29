@@ -24153,7 +24153,10 @@ async function payoutExtractPdfAmount(drive, file) {
   try {
     const copy = await drive.files.copy({
       fileId: file.id,
-      requestBody: { mimeType: 'application/vnd.google-apps.document', name: `_payout_tmp_${file.id}` },
+      // parents を明示しないと元PDFと同じメンバーフォルダにコピーが作られ、
+      // 同時実行中のスキャンに「2個目のPDF」として混入する（2026-08-29 のバグ）。
+      // SA のマイドライブ直下に作り、メンバーフォルダを汚さない。
+      requestBody: { mimeType: 'application/vnd.google-apps.document', name: `_payout_tmp_${file.id}`, parents: ['root'] },
       supportsAllDrives: true,
     });
     tempId = copy.data.id;
@@ -24261,8 +24264,15 @@ router.get('/admin/payouts', requireAuth, requirePermission('payout.page'), asyn
         const children = await payoutListChildren(drive, monthFolder.id);
         const subfolders = children.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
         await mapLimit(subfolders, 8, async (sf) => {
-          const files = (await payoutListChildren(drive, sf.id))
-            .filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+          const children = await payoutListChildren(drive, sf.id);
+          // 過去バグの残骸（_payout_tmp_）を見つけたら自動削除して自己修復する
+          for (const stray of children.filter(f => (f.name || '').startsWith('_payout_tmp_'))) {
+            try { await drive.files.delete({ fileId: stray.id, supportsAllDrives: true }); } catch (_) { /* noop */ }
+          }
+          // 請求書PDF等の実ファイルのみ（Googleドキュメント等のネイティブ形式・一時ファイルは除外）
+          const files = children.filter(f =>
+            !(f.mimeType || '').startsWith('application/vnd.google-apps')
+            && !(f.name || '').startsWith('_payout_tmp_'));
           const uid = userIdByFolderId.get(sf.id)
             || userIdByNorm.get(normalizeFolderPersonName(sf.name))
             || null;
