@@ -27621,6 +27621,21 @@ async function poChatworkSync(btn) {
   }
 }
 
+// 振込完了メッセージ本文（サーバー utils/payout.js buildPayoutMessage と同一ロジック・宛名も送信実物と同じ）
+function poMessageText(r, month, memo) {
+  const name = r.nickname || r.full_name || 'メンバー';
+  let text = [
+    `${name}さん`,
+    '今月もお疲れ様でした！',
+    `${month}月分を振り込みましたので、ご確認をお願いします。`,
+    'いつも助かっております！',
+    '来月もどうぞよろしくお願いいたします！',
+  ].join('\n');
+  const m = (memo || '').trim();
+  if (m) text += `\n\n${m}`;
+  return text;
+}
+
 // 振込完了の定型文（メモ欄の内容込み）をクリップボードへ — Slack DM 等へ手貼り用
 function poCopyMessage(id) {
   const r = poRecord(id);
@@ -27628,8 +27643,7 @@ function poCopyMessage(id) {
   const memoInput = document.getElementById(`po-memo-${id}`);
   const memo = (memoInput ? memoInput.value : (r.memo || '')).trim();
   const month = _poData ? _poData.month : '';
-  let text = `${poName(r)}さん\n今月もお疲れ様でした。${month}月分を振り込みましたので、ご確認をお願いします。`;
-  if (memo) text += `\n\n${memo}`;
+  const text = poMessageText(r, month, memo);
   navigator.clipboard.writeText(text)
     .then(() => showToast('振込完了メッセージをコピーしました（DMに貼り付けてください）', 'success'))
     .catch(() => showToast('コピーに失敗しました', 'error'));
@@ -27680,8 +27694,7 @@ function poPay(id) {
   const msgEl = document.getElementById('po-pay-msg');
   const renderMsg = () => {
     const m = (memoEl.value || '').trim();
-    let text = `${poName(r)}さん\n今月もお疲れ様でした。${month}月分を振り込みましたので、ご確認をお願いします。`;
-    if (m) text += `\n\n${m}`;
+    let text = poMessageText(r, month, m);
     msgEl.textContent = text;
   };
   memoEl.value = memo;
