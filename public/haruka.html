@@ -50609,6 +50609,9 @@ async function deleteSelectedCreatives() {
 //   - 「納品」への変更は工程上 direct 遷移が存在しない（承認コメント必須）ため、
 //     一括納品完了（月次消込）と同じ POST /creatives/bulk-deliver-preview → bulk-deliver を使う
 //     （admin/secretary/producer/PD が対象・理由必須・請求書整合性ガード＋楽観ロックはサーバー側）
+//   - 「クライアントチェック中」への変更も同じ権限（bdIsAllowed）で許可し、PUT /creatives/:id
+//     { status } を1件ずつ叩く（Drive自動共有・初稿提出日時の記録・通知はサーバー側で従来どおり。
+//     納品済みからの巻き戻しは delivered_at クリアで支払いカウントが変わるため対象外）
 //   - それ以外は admin のみ POST /creatives/:id/admin-status（理由必須・請求書整合性ガードはサーバー側）
 //   - LP/HP/LINE（工程テンプレ案件）・工程制約で進められないものはスキップして結果で報告
 let _bulkStatusCtx = null;
@@ -50623,7 +50626,7 @@ function _bulkIsTemplateCategory(c) {
   const catCode = proj ? (getProjectCategory(proj)?.code || null) : null;
   return !!(catCode && ['lp', 'hp', 'line'].includes(catCode));
 }
-// 対象1件の実行計画: { mode: 'direct' | 'jump' | 'deliver' | 'skip', reason? }
+// 対象1件の実行計画: { mode: 'direct' | 'clientcheck' | 'jump' | 'deliver' | 'skip', reason? }
 function _bulkPlanFor(c, target, isAdmin) {
   if (_bulkIsTemplateCategory(c)) return { mode: 'skip', reason: '工程テンプレ案件（LP/HP/LINE）のため対象外' };
   if ((c.status || '') === target) return { mode: 'skip', reason: 'すでにこのステータスです' };
@@ -50633,6 +50636,18 @@ function _bulkPlanFor(c, target, isAdmin) {
   if (target === '納品') {
     if (bdIsAllowed()) return { mode: 'deliver' };
     return { mode: 'skip', reason: '納品への一括変更は管理者・秘書・プロデューサーのみ実行できます（詳細画面から個別に進めてください）' };
+  }
+  // 「クライアントチェック中」も工程上は承認コメント等が必要で direct 遷移が無いが、
+  // 月末にまとめてクライアント確認へ回すニーズが高い（2026-08-30 たごんさん報告）ため、
+  // 納品と同じ権限（bdIsAllowed）で一括変更を許可する。実行は通常の PUT /creatives/:id
+  // { status } で、Drive 自動共有・初稿提出日時の記録（ADR 034）・通知はサーバー側で従来どおり走る。
+  if (target === 'クライアントチェック中' && bdIsAllowed()) {
+    // 納品済みからの巻き戻しは delivered_at がクリアされ支払いカウント月が変わるため、
+    // ここでは対象にしない（従来どおり管理者ジャンプのみ）。
+    if (['納品', '完納', '納品済'].includes(c.status || '')) {
+      return isAdmin ? { mode: 'jump' } : { mode: 'skip', reason: '納品済みのため対象外（納品の取り消しは管理者のみ）' };
+    }
+    return { mode: 'clientcheck' };
   }
   if (target.startsWith('Pチェック') && !c.projects?.producer_id) return { mode: 'skip', reason: 'プロデューサー無し案件のため Pチェックへ進められません' };
   const tr = _quickStatusTransitions(c).find(t => t.status === target);
@@ -50670,11 +50685,13 @@ function onBulkStatusSelectChange() {
   const isAdmin = !!_bulkStatusCtx?.isAdmin;
   const plans = _bulkSelectedCreatives().map(c => _bulkPlanFor(c, target, isAdmin));
   const nDirect  = plans.filter(p => p.mode === 'direct').length;
+  const nCc      = plans.filter(p => p.mode === 'clientcheck').length;
   const nJump    = plans.filter(p => p.mode === 'jump').length;
   const nDeliver = plans.filter(p => p.mode === 'deliver').length;
   const nSkip    = plans.filter(p => p.mode === 'skip').length;
   const parts = [];
   if (nDirect)  parts.push(`✅ ${nDirect}件を通常遷移で変更`);
+  if (nCc)      parts.push(`📤 ${nCc}件をクライアントチェック中に変更（クライアント確認用のDrive共有が自動実行・ボールはクライアントへ）`);
   if (nDeliver) parts.push(`📦 ${nDeliver}件を一括納品（理由必須・納品完了日時は現在時刻・請求書整合性チェックあり）`);
   if (nJump)    parts.push(`⚠️ ${nJump}件は工程を跨ぐ管理者ジャンプ（理由必須・監査ログに記録・請求書整合性チェックあり）`);
   if (nSkip)    parts.push(`− ${nSkip}件はスキップ（工程テンプレ案件・工程制約など。実行後に内訳を表示）`);
@@ -50705,6 +50722,14 @@ async function applyBulkStatusChange() {
     `納品完了日時が現在時刻でセットされ、この月の支払い本数としてカウントされます。\n` +
     `よろしいですか？`
   )) return;
+  // クライアントチェック中は Drive 自動共有・初稿提出日時の記録という副作用があるため最終確認を挟む
+  const nCcRun = runnable.filter(p => p.plan.mode === 'clientcheck').length;
+  if (nCcRun && !confirm(
+    `${nCcRun} 件を「クライアントチェック中」にします。\n\n` +
+    `クライアント確認用の Drive 共有が自動で実行され、ボールはクライアントに移ります。\n` +
+    `初稿提出日時が未記録のものは、この時点の日時で記録されます。\n` +
+    `よろしいですか？`
+  )) return;
 
   const btn = document.getElementById('bulk-status-apply-btn');
   btn.disabled = true;
@@ -50712,7 +50737,7 @@ async function applyBulkStatusChange() {
   const okIds = [], failed = [];
   const runOne = async ({ c, plan }) => {
     try {
-      const res = (plan.mode === 'direct')
+      const res = (plan.mode === 'direct' || plan.mode === 'clientcheck')
         ? await apiFetch(`${API}/creatives/${c.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: target }) })
         : await apiFetch(`${API}/creatives/${c.id}/admin-status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: target, reason }) });
       if (res.ok) {
