@@ -702,6 +702,13 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] onboarding-stall-reminder 起動失敗:', e.message);
     }
+    // 制作本数ヒアリング: 毎月末日 10時 JST に対象 Chatwork ルームへ自動送信（よたさん請求用の定型質問）
+    try {
+      const { startBillingInquiryScheduler } = require('./workers/billing-count-inquiry-scheduler');
+      startBillingInquiryScheduler();
+    } catch (e) {
+      console.error('[startup] billing-count-inquiry-scheduler 起動失敗:', e.message);
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
@@ -750,6 +757,12 @@ const runSchemaSync = require('./db/migrate');
       stopOnboardingStallReminder();
     } catch (e) {
       console.error('[shutdown] onboarding-stall-reminder 停止失敗:', e.message);
+    }
+    try {
+      const { stopBillingInquiryScheduler } = require('./workers/billing-count-inquiry-scheduler');
+      stopBillingInquiryScheduler();
+    } catch (e) {
+      console.error('[shutdown] billing-count-inquiry-scheduler 停止失敗:', e.message);
     }
     // 新規接続の受付を止め、処理中のリクエスト完了を待って終了
     server.close((err) => {
