@@ -18720,6 +18720,51 @@ router.post('/admin/invoice-announce/send', requireAuth, requireRole('admin'), a
   }
 });
 
+// ==================== 制作本数ヒアリング（毎月末の自動送信） ====================
+// よたさん案件の請求書発行前に、担当ディレクターへ制作本数を質問する定型
+// メッセージの自動化。自動送信は workers/billing-count-inquiry-scheduler.js。
+// ここは admin 向けのプレビューと手動送信（初月や臨時送信用）のみ。
+
+// プレビュー: 送信対象と本文・現在の消化状況を返す
+router.get('/admin/billing-inquiry/preview', requireAuth, requireRole('admin'), async (_req, res) => {
+  try {
+    const { SETTING_KEYS } = require('../workers/billing-count-inquiry-scheduler');
+    const { DEFAULT_TARGETS, parseTargets, buildBillingInquiryMessage } = require('../utils/billing-count-inquiry');
+
+    const keys = Object.values(SETTING_KEYS);
+    const { data } = await supabase.from('system_settings').select('key, value').in('key', keys);
+    const settings = {};
+    (data || []).forEach(r => { settings[r.key] = r.value; });
+
+    const targets = parseTargets(settings[SETTING_KEYS.targets]) || DEFAULT_TARGETS;
+    res.json({
+      last_sent_month: settings[SETTING_KEYS.lastSent] || null,
+      targets: targets.map(t => ({
+        label: t.label,
+        room_id: t.roomId,
+        message: buildBillingInquiryMessage(t),
+      })),
+    });
+  } catch (err) {
+    console.error('[billing-inquiry/preview]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 手動送信: 対象月（省略時は当月）のヒアリングを対象ルームへ即時送信
+router.post('/admin/billing-inquiry/send', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { sendBillingInquiry, jstNowParts } = require('../workers/billing-count-inquiry-scheduler');
+    const month = /^\d{4}-\d{2}$/.test(req.body?.month || '') ? req.body.month : jstNowParts().date.slice(0, 7);
+    const result = await sendBillingInquiry({ month, trigger: 'manual' });
+    const ok = result.results.every(r => r.ok);
+    res.status(ok ? 200 : 502).json({ ok, month: result.month, results: result.results });
+  } catch (err) {
+    console.error('[billing-inquiry/send]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ==================== システム設定 ====================
 
 // システム設定取得（認証済みなら誰でも読める）
