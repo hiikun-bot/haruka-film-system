@@ -47,6 +47,7 @@ describe('buildBillingInquiryMessage', () => {
     expect(t.roomId).toBe('405007443');
     const msg = buildBillingInquiryMessage(t);
     expect(msg.startsWith('[To:7839661]安齋智光（みっつー）さん\n\n')).toBe(true);
+    expect(msg).toContain('【毎月末の自動送信メッセージです🤖】');
     expect(msg).toContain('みっつー、お疲れさまです😊');
     expect(msg).toContain('よたさんへの今月分の請求にあたり');
     expect(msg).toContain('ロング動画');
