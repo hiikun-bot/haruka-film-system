@@ -10220,6 +10220,11 @@ function __gBusyEnd() {
 //   稀に返る。リクエストはアプリに届いていないので副作用ゼロ → 全メソッドで1回リトライする。
 //   500 は「アプリ内で例外」なので副作用が出ているおそれがあり、GET/HEAD のみ安全にリトライ。
 //   ストリーム body (ReadableStream) は再送不能なのでリトライ対象外。
+//   リトライ間隔は 700ms → 2000ms の2段だが、2段目は副作用ゼロの GET/HEAD に限定する
+//   （更新系を何度も投げ直すと、アプリには届いていたのにエッジが 502 を返したケースで二重実行になる）。
+//   2段目を足した理由: コンテナ入れ替えの瞬断は1秒を超えることがあり、700ms 1回では拾いきれない。
+//   実例 2026/08/22 08:35:15 の /creatives/:id + /rounds 502 は #1069 マージ(08:34:40)の35秒後で、
+//   初回と 700ms 後のリトライがどちらも 502 になり、詳細モーダルがエラーになった。
 async function apiFetch(input, init = {}) {
   const headers = new Headers(init.headers || {});
   if (previewRole) headers.set('X-View-As', previewRole);
@@ -10248,15 +10253,19 @@ async function apiFetch(input, init = {}) {
     }
   }
 
-  // 5xx リトライ: 502/503/504 は全メソッド、500 は安全メソッドのみ
-  const isProxy5xx = res.status === 502 || res.status === 503 || res.status === 504;
-  const shouldRetry = canRetry && (isProxy5xx || (res.status === 500 && isSafeMethod));
-  if (shouldRetry) {
-    await new Promise(r => setTimeout(r, 700));
+  // 5xx リトライ: 502/503/504 は全メソッド、500 は安全メソッドのみ。
+  // 遅延は 700ms → 2000ms の2段。2段目は GET/HEAD だけ（更新系は1回まで＝従来どおり）。
+  const retryDelays = isSafeMethod ? [700, 2000] : [700];
+  for (const delayMs of retryDelays) {
+    const isProxy5xx = res.status === 502 || res.status === 503 || res.status === 504;
+    const shouldRetry = canRetry && (isProxy5xx || (res.status === 500 && isSafeMethod));
+    if (!shouldRetry) break;
+    await new Promise(r => setTimeout(r, delayMs));
     try {
       res = await fetch(input, opts);
     } catch (_) {
-      // リトライ自体が失敗したら元の res を返す
+      // リトライ自体が失敗したら直前の res をそのまま返す（body 未読なので後段の clone() は生きている）
+      break;
     }
   }
 
