@@ -2194,6 +2194,16 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   .ann-cta-pending{font-size:15px;padding:14px 18px}
   .ann-cta-pending .ann-cta-icon{font-size:20px}
 }
+/* Slack 等の通知リンク（?ann=<id>）から飛んできたお知らせを一時的に光らせる */
+.ann-card-highlight{
+  animation:annCardFlash 1.2s ease-in-out 3;
+  border-radius:10px;
+  scroll-margin-top:80px;
+}
+@keyframes annCardFlash{
+  0%,100%{background:transparent;box-shadow:none}
+  50%{background:var(--em-pale);box-shadow:0 0 0 6px var(--em-pale)}
+}
 
 /* ===== トースト通知 ===== */
 #toast-container {
@@ -10615,12 +10625,28 @@ async function applyDeepLinkOnLoad() {
       } catch (e) { /* noop */ }
     };
     const params = new URLSearchParams(window.location.search);
+    // ?ann=<id> : Slack 全体連絡のリンクからホームの「📢 お知らせ」へ直行（全ロール共通）
+    const annHomeId = params.get('ann');
+    if (annHomeId) {
+      stripQueryParam('ann');
+      try { await focusAnnouncementOnDashboard(annHomeId); }
+      catch (e) { console.warn('[deepLink ann]', e); }
+      return;
+    }
     const announcementId = params.get('announcement');
-    if (announcementId && typeof openAnnouncementStatus === 'function') {
+    if (announcementId) {
       stripQueryParam('announcement');
-      // openAnnouncementStatus は自前 fetch（/announcements/:id/status）で完結する → 即時
-      try { await openAnnouncementStatus(announcementId); }
-      catch (e) { console.warn('[deepLink announcement]', e); }
+      // 対応状況モーダルは投稿権限者のみ（/announcements/:id/status が member.list 必須）。
+      // 権限のないメンバーが督促リンクを踏んだ場合はホームのお知らせカードへ誘導する。
+      const canSeeStatus = typeof _canPostAnnouncement === 'function' && _canPostAnnouncement();
+      try {
+        if (canSeeStatus && typeof openAnnouncementStatus === 'function') {
+          // openAnnouncementStatus は自前 fetch（/announcements/:id/status）で完結する → 即時
+          await openAnnouncementStatus(announcementId);
+        } else {
+          await focusAnnouncementOnDashboard(announcementId);
+        }
+      } catch (e) { console.warn('[deepLink announcement]', e); }
       return;
     }
     const videoId = params.get('video');
@@ -28922,7 +28948,7 @@ async function loadAnnouncements() {
     const bodyHtml = a.body
       ? `<div style="font-size:13px;color:var(--text);margin-top:8px;white-space:pre-wrap;line-height:1.6">${esc(a.body)}</div>`
       : '';
-    return `<div style="padding:12px 0;border-bottom:0.5px solid var(--border-light)">
+    return `<div id="ann-card-${a.id}" style="padding:12px 0;border-bottom:0.5px solid var(--border-light)">
       <div style="display:flex;align-items:flex-start;gap:10px">
         <div style="flex:1;min-width:0">
           <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(a.title)}${posterAvatar}</div>
@@ -28941,6 +28967,28 @@ async function loadAnnouncements() {
     </div>
     ${rows}
   </div>`;
+}
+
+// Slack / in-app 通知の「▶ ホーム画面の📢お知らせを開く」リンク（?ann=<id>）の着地処理。
+// ホームタブへ切り替え → お知らせを読み直し → 該当カードまでスクロールして光らせる。
+// 終了済み・存在しない ID のときはホームを開いたまま案内トーストを出す。
+async function focusAnnouncementOnDashboard(annId) {
+  if (!annId) return;
+  try {
+    const navBtn = document.querySelector('.nav-btn[data-page="dashboard"]')
+                || document.querySelector('.nav-drawer-btn[data-page="dashboard"]');
+    if (typeof showPage === 'function') showPage('dashboard', navBtn || null);
+  } catch (e) { console.warn('[ann deepLink] showPage', e); }
+  // showPage → loadDashboard は待てないので、お知らせだけ明示的に読み直して DOM を確定させる
+  try { await loadAnnouncements(); } catch (e) { console.warn('[ann deepLink] loadAnnouncements', e); }
+  const card = document.getElementById(`ann-card-${annId}`);
+  if (!card) {
+    showToast('この連絡はすでに終了しています', 'info');
+    return;
+  }
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.add('ann-card-highlight');
+  setTimeout(() => card.classList.remove('ann-card-highlight'), 4000);
 }
 
 async function doAnnouncementAck(id) {
