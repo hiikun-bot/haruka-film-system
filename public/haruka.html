@@ -11773,6 +11773,12 @@ function openEditClient(id) {
     const role = (typeof effectiveRole === 'function') ? effectiveRole() : (currentUser?.role || '');
     delBtn.style.display = (role === 'admin' || role === 'secretary') ? '' : 'none';
   }
+  // 編集モーダルは canEditProject() のロールしか開けないが、
+  // VIEW AS で新規モーダル（タブ非表示）を経由した後に開くこともあるため必ず戻す
+  ['products', 'appeal-axes'].forEach(t => {
+    const btn = document.getElementById(`cl-tab-btn-${t}`);
+    if (btn) btn.style.display = '';
+  });
   switchClientTab('basic');
   openModal('modal-client');
 }
@@ -11794,6 +11800,14 @@ function openNewClientModal() {
   // 新規作成時は削除ボタンを必ず非表示
   const delBtn = document.getElementById('cl-delete-btn');
   if (delBtn) delBtn.style.display = 'none';
+  // 商材・訴求軸の登録 API は project.create_edit ガード。
+  // project.create だけのロール（director）はタブを開いても何も登録できず、
+  // 押すたびに 403 になるだけなのでタブ自体を隠す（バグ報告 #9519debd）。
+  const canEditCl = canEditProject();
+  ['products', 'appeal-axes'].forEach(t => {
+    const btn = document.getElementById(`cl-tab-btn-${t}`);
+    if (btn) btn.style.display = canEditCl ? '' : 'none';
+  });
   switchClientTab('basic');
   openModal('modal-client');
 }
@@ -11878,6 +11892,16 @@ async function submitClient() {
     const saved = await res.json();
     await loadProjects();
     if (!isEdit) {
+      // project.create だけを持つロール（director）は、作成後の
+      // PUT /clients/:id ・商材/訴求軸 API（いずれも project.create_edit ガード）を叩けない。
+      // モーダルを開いたままにすると「保存する」を押した瞬間に 403
+      // 「この操作の権限がありません」になり、作成できていないように見える（バグ報告 #9519debd）。
+      // → 編集権限がないロールは作成完了としてモーダルを閉じる。
+      if (!canEditProject()) {
+        closeModal('modal-client');
+        showToast('クライアントを追加しました', 'success');
+        return;
+      }
       // 新規作成後：IDをセットして右パネル（商材・訴求軸）を開放
       document.getElementById('cl-id').value = saved.id;
       document.getElementById('cl-submit-btn').textContent = '保存する';
