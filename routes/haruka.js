@@ -25,6 +25,7 @@ const {
 } = require('../utils/roles');
 const { ttlCache, invalidateByKey, invalidateByPrefix } = require('../utils/ttl-cache');
 const { avatarVer, avatarRefUrl, replaceAvatarDataUrls, getAvatarRefMap, updateAvatarRefCacheEntry, applyAvatarRef } = require('../utils/avatar-ref');
+const { validateGoogleAccountEmail } = require('../utils/google-email');
 
 // マスタ系 GET エンドポイント共通の TTL。
 // utils/roles.js（ROLES_TTL_MS = 60s）と同じ「短期キャッシュ + 書き込み時 invalidate」
@@ -13325,6 +13326,13 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
     camera_model, tripod_info, lighting_info, holiday_weekdays,
   } = req.body;
   if (!email || !full_name || !role) return res.status(400).json({ error: 'メール・名前・ロールは必須です' });
+  // Googleアカウント以外のメールアドレスを弾く（utils/google-email.js）。
+  // 非Googleアドレスだと請求書フォルダの Drive 共有が通らず、しかも付与失敗は
+  // console.warn で握り潰されて UI 上は正常に見えてしまうため、入口で止める。
+  {
+    const emailCheck = await validateGoogleAccountEmail(email);
+    if (!emailCheck.ok) return res.status(400).json({ error: emailCheck.error });
+  }
   // default_creative_tab のバリデーション ('all' / 'video' / 'design' / null)
   const ALLOWED_DCT = new Set(['all', 'video', 'design']);
   let dctValue = null;

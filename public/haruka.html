@@ -5196,7 +5196,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div class="modal-title">招待リンク発行<button class="modal-close" onclick="closeModal('modal-invite')">×</button></div>
     <div class="modal-body">
       <label class="form-label">招待先メールアドレス <span style="color:#E24B4A">*</span></label>
-      <input class="form-input" type="email" id="inv-email" placeholder="例：member@example.com" style="margin-bottom:12px">
+      <input class="form-input" type="email" id="inv-email" placeholder="例：member@gmail.com">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.6">Googleアカウントで使えるアドレス（Gmail / Google Workspace）のみ登録できます。Yahoo!メール等はGoogleドライブの請求書フォルダを共有できないため登録できません。</div>
+      <div style="height:12px"></div>
       <label class="form-label">権限</label>
       <select class="form-select" id="inv-role" style="margin-bottom:16px">
         <option value="secretary">秘書</option>
@@ -5268,7 +5270,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         </div>
         <div class="form-group">
           <label class="form-label">メールアドレス <span style="color:#E24B4A">*</span></label>
-          <input class="form-input" id="m-email" type="email" placeholder="例：harukafilm@co.jp" style="font-size:15px;padding:12px 14px">
+          <input class="form-input" id="m-email" type="email" placeholder="例：member@gmail.com" style="font-size:15px;padding:12px 14px">
+          <div id="m-email-hint"><div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.6">Googleアカウントで使えるアドレス（Gmail / Google Workspace）のみ登録できます。Yahoo!メール等はGoogleドライブの請求書フォルダを共有できないため登録できません。</div></div>
         </div>
         <div id="m-role-row" class="form-row" style="margin-bottom:0">
           <div class="form-group">
@@ -17105,6 +17108,8 @@ function openAddMember() {
   document.getElementById('m-nickname').value = '';
   document.getElementById('m-email').value = '';
   document.getElementById('m-email').disabled = false;
+  // 新規追加時のみメール注記を出す（既存メンバー編集時は email 欄自体が disabled）
+  { const h = document.getElementById('m-email-hint'); if (h) h.style.display = ''; }
   document.getElementById('m-role').value = 'editor';
   document.getElementById('m-job-type').value = 'video';
   document.getElementById('m-rank').value = '';
@@ -17167,6 +17172,7 @@ function openEditMember(m) {
     setVal('m-nickname', m.nickname || '');
     setVal('m-email', m.email || '');
     const emailEl = document.getElementById('m-email'); if (emailEl) emailEl.disabled = true;
+    { const h = document.getElementById('m-email-hint'); if (h) h.style.display = 'none'; }
     setVal('m-role', m.role || 'editor');
     setVal('m-job-type', m.job_type || 'video');
     setVal('m-rank', m.rank || '');
