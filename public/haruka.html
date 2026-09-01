@@ -51121,6 +51121,15 @@ async function logout() {
 }
 
 // ===== パスワード変更 =====
+// パスワードポリシー（サーバー utils/password.js と同一ルール）。
+// 画面表記「半角英字 / 数字 / 記号（8文字以上 / 全角・スペース不可）」どおりに送信前で弾く。
+function validateNewPasswordClient(pw) {
+  if (!pw) return 'パスワードを入力してください';
+  if (pw.length < 8) return 'パスワードは8文字以上必要です';
+  if (!/^[\x21-\x7E]+$/.test(pw)) return 'パスワードは半角の英字・数字・記号のみ使用できます（全角・スペースは使えません）';
+  return null;
+}
+
 function openChangePasswordModal() {
   document.getElementById('cp-current').value = '';
   document.getElementById('cp-new').value = '';
@@ -51148,7 +51157,8 @@ async function submitChangePassword() {
   const cur  = document.getElementById('cp-current').value;
   const nw   = document.getElementById('cp-new').value;
   const conf = document.getElementById('cp-confirm').value;
-  if (nw.length < 8)   { showToast('新しいパスワードは8文字以上必要です', 'warn'); return; }
+  const pwError = validateNewPasswordClient(nw);
+  if (pwError)         { showToast(pwError, 'warn'); return; }
   if (nw !== conf)     { showToast('パスワードが一致しません', 'warn'); return; }
   if (btn) { btn.disabled = true; btn.textContent = '変更中...'; }
   try {
@@ -51171,7 +51181,8 @@ async function submitChangePassword() {
 async function resetMemberPassword(userId, userName) {
   const newPass = prompt(`${userName} さんの新しいパスワードを入力してください\n（8文字以上 / 半角英字・数字・記号 / 全角・スペース不可）:`);
   if (!newPass) return;
-  if (newPass.length < 8) { showToast('8文字以上必要です', 'warn'); return; }
+  const pwError = validateNewPasswordClient(newPass);
+  if (pwError) { showToast(pwError, 'warn'); return; }
   let res;
   try {
     res = await apiFetch(`${API}/users/${userId}/reset-password`, {

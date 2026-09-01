@@ -28,6 +28,7 @@ const harukaHtmlDelivery = require('./utils/haruka-html-delivery');
 harukaHtmlDelivery.init();
 const session    = require('express-session');
 const bcrypt     = require('bcryptjs');
+const { validateNewPassword } = require('./utils/password');
 const { v4: uuidv4 } = require('uuid');
 const SQLiteStore = require('connect-sqlite3')(session);
 const fs = require('fs');
@@ -481,6 +482,8 @@ app.get('/api/invitations/verify/:token', async (req, res) => {
 app.post('/api/invitations/register', async (req, res) => {
   const { token, name, password } = req.body;
   if (!token || !name || !password) return res.status(400).json({ error: '名前・パスワード・トークンは必須です' });
+  const invalidPassword = validateNewPassword(password);
+  if (invalidPassword) return res.status(400).json({ error: invalidPassword });
   try {
     const { data: inv } = await supabase.from('invitations')
       .select('*').eq('token', token).maybeSingle();
@@ -525,10 +528,13 @@ app.post('/api/invitations/register', async (req, res) => {
 
 app.post('/api/users/change-password', requireAuth, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
-  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: 'パスワードは8文字以上必要です' });
+  const invalid = validateNewPassword(newPassword);
+  if (invalid) return res.status(400).json({ error: invalid });
   const { data: u } = await supabase.from('users').select('password_hash').eq('id', req.user.id).single();
   if (u?.password_hash) {
-    const ok = await bcrypt.compare(currentPassword, u.password_hash);
+    // currentPassword 未指定（API直叩き等）でも bcrypt.compare が例外を投げないよう文字列に正規化。
+    // Express 4 は async ハンドラの reject を捕捉しないため、投げるとレスポンスが返らずクライアントがハングする。
+    const ok = await bcrypt.compare(String(currentPassword ?? ''), u.password_hash);
     if (!ok) return res.status(400).json({ error: '現在のパスワードが正しくありません' });
   }
   const hash = await bcrypt.hash(newPassword, 12);

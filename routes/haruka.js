@@ -5,6 +5,7 @@ const supabase = require('../supabase');
 const googleServiceAccount = require('../lib/google-service-account');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
+const { validateNewPassword } = require('../utils/password');
 const { requireAuth, requireRole, requireLevel, requirePermission, requireAnyPermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache, invalidateUserCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
@@ -21283,7 +21284,8 @@ router.post('/users/:id/reset-password', requireAuth, async (req, res) => {
   const canEditOthers = await userHasPermission(getEffectiveRole(req), 'member.edit_password');
   if (!isSelf && !canEditOthers) return res.status(403).json({ error: '他のユーザーのパスワードを変更する権限がありません' });
   const { newPassword } = req.body;
-  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: 'パスワードは8文字以上必要です' });
+  const invalid = validateNewPassword(newPassword);
+  if (invalid) return res.status(400).json({ error: invalid });
   const hash = await bcrypt.hash(newPassword, 12);
   const { error } = await supabase.from('users').update({ password_hash: hash }).eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });

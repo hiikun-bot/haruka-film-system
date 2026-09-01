@@ -227,6 +227,7 @@ function showRegisterForm(data) {
     <div class="form-group">
       <label>パスワード *</label>
       <input type="password" class="form-control" id="reg-pass" placeholder="8文字以上" autocomplete="new-password">
+      <div style="font-size:11.5px;color:#6b7280;margin-top:6px;line-height:1.7">使用可能な文字: <strong>半角英字 / 数字 / 記号</strong>（8文字以上 / 全角・スペース不可）</div>
       <div class="form-hint">8文字以上 / 半角英字・数字・記号が使えます（全角・スペース不可）</div>
     </div>
     <div class="form-group">
@@ -246,6 +247,7 @@ async function register() {
 
   if (!name)           { showErr('表示名を入力してください'); return; }
   if (pass.length < 8) { showErr('パスワードは8文字以上必要です'); return; }
+  if (!/^[\x21-\x7E]+$/.test(pass)) { showErr('パスワードは半角の英字・数字・記号のみ使用できます（全角・スペースは使えません）'); return; }
   if (pass !== pass2)  { showErr('パスワードが一致しません'); return; }
 
   btn.innerHTML = '<span class="spinner"></span>登録中...';
