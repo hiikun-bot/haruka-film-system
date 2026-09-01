@@ -2439,7 +2439,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 </style>
 <!-- defer: window.Chart の参照はダッシュボードのグラフ描画（renderAdminDash 内・fetch 完了後）のみのためレンダーブロック不要。
      confirm-dialog.js / name-display.js はインラインJSが先に参照するため defer を付けないこと。 -->
-<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- crossorigin="anonymous": 付けないと CDN スクリプト内の例外が window.onerror に
+     「Script error.」（filename/lineno なし）としか届かず原因を追えない。
+     jsDelivr は Access-Control-Allow-Origin: * を返すので CORS 取得で問題なく読める。 -->
+<script defer crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- カスタム確認モーダル: window.showConfirmDialog を提供（ネイティブ confirm() の代替） -->
 <script src="/js/confirm-dialog.js"></script>
 <!-- 共通: ユーザー名表示ヘルパー（システム標準）— 全画面でこのヘルパー経由で名前を表示。インラインJSより先に読み込む -->
@@ -2624,6 +2627,34 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
             type: s.type || null,
           };
         }
+      } catch (_) {}
+      // 「Script error.」（filename/lineno なし）は、別オリジンのスクリプトで起きた例外を
+      // ブラウザが伏せた状態。犯人を絞るために「今このページに載っている別オリジンの
+      // <script>」を crossorigin 属性つきで並べておく。属性が無いものが伏せられる側で、
+      // 見覚えのないホストが並んでいれば拡張機能／アドウェアの注入だと判別できる。
+      try {
+        if (extra && extra.kind === 'window.onerror' && !trace.filename
+            && /^script error\.?$/i.test(String((extra && extra.message) || '').trim())) {
+          trace.opaqueCrossOriginError = true;
+        }
+      } catch (_) {}
+      try {
+        var _xoList = [];
+        var _scripts = document.scripts || [];
+        for (var _i = 0; _i < _scripts.length && _xoList.length < 10; _i++) {
+          var _xoSrc = _scripts[_i].src || '';
+          if (!_xoSrc) continue;
+          var _xoHost = '';
+          try { _xoHost = new URL(_xoSrc, location.href).host; } catch (_) { _xoHost = ''; }
+          if (!_xoHost || _xoHost === location.host) continue;
+          _xoList.push({
+            src: String(_xoSrc).slice(0, 200),
+            // null = crossorigin 属性なし＝例外が「Script error.」に伏せられる読み込み方
+            crossOrigin: _scripts[_i].crossOrigin || null,
+            type: _scripts[_i].type || null,
+          });
+        }
+        if (_xoList.length) trace.crossOriginScripts = _xoList;
       } catch (_) {}
       // bfcache 復帰関連
       try {
@@ -10301,6 +10332,8 @@ function _ensureHtml2canvas() {
   _html2canvasLoading = new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    // CDN 内の例外を「Script error.」で潰さないため CORS 読み込みにする（cdnjs は ACAO: *）
+    s.crossOrigin = 'anonymous';
     s.onload = () => resolve(window.html2canvas);
     s.onerror = () => reject(new Error('html2canvas load failed'));
     document.head.appendChild(s);

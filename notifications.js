@@ -1425,6 +1425,21 @@ function _formatAutoErrorText(payload) {
     lines.push('*原因特定トレース*:');
     lines.push('```' + _truncate(traceLines.join('\n'), 1800) + '```');
 
+    // 「Script error.」= 別オリジンのスクリプト内例外をブラウザが伏せたケース。
+    // filename も stack も来ないので、代わりに読み込まれていた別オリジン <script> を並べる。
+    // crossOrigin=- が付いているものが「伏せられる読み込み方」の犯人候補。
+    if (trace.opaqueCrossOriginError || (Array.isArray(trace.crossOriginScripts) && trace.crossOriginScripts.length)) {
+      const xoLines = [];
+      if (trace.opaqueCrossOriginError) {
+        xoLines.push('※ 別オリジンscript内の例外のため、ブラウザが詳細を伏せています（crossorigin属性なし or 第三者注入）');
+      }
+      for (const x of (trace.crossOriginScripts || [])) {
+        xoLines.push(`crossOrigin=${x.crossOrigin || '-'} type=${x.type || '-'} ${x.src || '-'}`);
+      }
+      lines.push('*別オリジンscript*:');
+      lines.push('```' + _truncate(xoLines.join('\n'), 1500) + '```');
+    }
+
     // ソーススナップショット: window.onerror が報告した lineno/colno の実際の中身。
     // 「2433:84 が </div> に見える」系の謎エラーを実体で特定するための切り札。
     if (trace.sourceSnippet && typeof trace.sourceSnippet === 'object') {
