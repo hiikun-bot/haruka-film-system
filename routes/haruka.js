@@ -15185,6 +15185,28 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
 
 const notif = require('../notifications');
 
+// ダッシュボード（ホーム画面）の「📢 お知らせ」へ直行する URL を組み立てる。
+// Slack 通知から1クリックで「完了 ✅」まで辿り着けるようにするのが目的
+// （チャットだけ読んでシステム側の完了操作が漏れる、という運用課題への対策）。
+// APP_URL 未設定でも Railway の RAILWAY_PUBLIC_DOMAIN でフォールバックする
+// （notifications.js の buildCreativeUrl と同じ方針）。
+function buildAnnouncementHomeUrl(annId) {
+  const explicit = (process.env.APP_URL || '').replace(/\/$/, '');
+  const railwayDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || '')
+    .replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const base = explicit || (railwayDomain ? `https://${railwayDomain}` : '');
+  if (!base) return null;
+  return annId ? `${base}/haruka.html?ann=${annId}` : `${base}/haruka.html`;
+}
+
+// Slack mrkdwn のリンク行 `<URL|表示テキスト>`。
+// URL を組み立てられない環境（APP_URL / RAILWAY_PUBLIC_DOMAIN いずれも未設定）では
+// 文言だけを返して、メッセージ自体は壊さない。
+function announcementHomeLinkLine(annId, label) {
+  const url = buildAnnouncementHomeUrl(annId);
+  return url ? `<${url}|${label}>` : label;
+}
+
 // Slack 全体連絡用のメッセージ本文を組み立てる。
 // タイトル・期限・対応ステップは Slack の code (`...`) / code block (```...```)
 // で囲むことで視認性を上げる。本文（body）は素のまま。
@@ -15206,11 +15228,15 @@ function buildBroadcastSlackText(annData, { reissue = false } = {}) {
     lines.push('');
     lines.push(`\`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Tokyo' })}\``);
   }
-  // 対応内容: code block でステップ列挙
+  // 対応内容: ホーム直行リンク + code block でステップ列挙
+  // （リンクは code block の外に置く。Slack は code block 内をリンク化しないため）
   lines.push('');
   lines.push('👉 対応をお願いします');
+  lines.push(announcementHomeLinkLine(annData.id, '▶ ホーム画面の「📢 お知らせ」を開く'));
   lines.push('```');
-  lines.push('1. HARUKA FILM SYSTEM のダッシュボードを開く');
+  lines.push(buildAnnouncementHomeUrl(annData.id)
+    ? '1. 上のリンクから HARUKA FILM SYSTEM のホームを開く'
+    : '1. HARUKA FILM SYSTEM のホーム画面を開く');
   lines.push('2. 上部「📢 お知らせ」セクションの本連絡を確認');
   lines.push('3. 対応が完了したら「完了 ✅」ボタンを押す');
   lines.push('```');
@@ -15553,8 +15579,11 @@ router.post('/announcements/:id/remind', requireAuth, requirePermission('member.
       lines.push(`\`${ann.title}\``);
       if (ann.deadline_at) {
         const d = new Date(ann.deadline_at);
-        lines.push(`\`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })}\``);
+        lines.push(`\`期限: ${d.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Tokyo' })}\``);
       }
+      // ホーム直行リンク: 督促を受けた本人がその場で完了操作まで進めるようにする
+      lines.push('');
+      lines.push(announcementHomeLinkLine(ann.id, '▶ ホーム画面を開いて「完了 ✅」を押す'));
       const text = lines.join('\n');
       const r = await notif.sendSlackChannel(url, text);
       slackPosted = !!r.ok;
@@ -15574,7 +15603,9 @@ router.post('/announcements/:id/remind', requireAuth, requirePermission('member.
       notification_type: 'announcement_remind',
       title: '未対応の通知があります',
       body: ann.title,
-      link_url: `/haruka.html?announcement=${annId}`,
+      // 受信者は一般メンバー（対応状況モーダルの権限を持たない）ので、
+      // ホームのお知らせカードへ直接飛ばす
+      link_url: `/haruka.html?ann=${annId}`,
       meta: { announcement_id: annId },
       sender_id: req.user.id,
     }));
@@ -15789,7 +15820,7 @@ router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('
       })()
     : '';
   const deadlineText = ann.deadline_at
-    ? new Date(ann.deadline_at).toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })
+    ? new Date(ann.deadline_at).toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Tokyo' })
     : '';
 
   // メンバー行を組み立て: slack_dm_id があれば <@id>、無ければ名前
@@ -15810,6 +15841,7 @@ router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('
     ms.forEach(m => lines.push(`・${memberMention(m)}`));
     lines.push('');
     lines.push('お声がけお願いします 🙇‍♂️');
+    lines.push(announcementHomeLinkLine(ann.id, '▶ ホーム画面の「📢 お知らせ」を開く（そのまま共有OK）'));
     return lines.join('\n');
   };
   const buildEscalationText = (recipients, escalationGroups) => {
@@ -15828,6 +15860,7 @@ router.post('/announcements/:id/leader-remind', requireAuth, requirePermission('
     });
     lines.push('');
     lines.push('リーダー不在のため、秘書チームから直接お声がけお願いします 🙇‍♂️');
+    lines.push(announcementHomeLinkLine(ann.id, '▶ ホーム画面の「📢 お知らせ」を開く（そのまま共有OK）'));
     return lines.join('\n');
   };
 
