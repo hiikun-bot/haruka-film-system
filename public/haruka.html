@@ -5732,6 +5732,20 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           </div>
         </div>
 
+        <!-- 作品集の系統（ADR 035）。ここを決めると、このクライアントの作品が
+             作品ページの「◯◯系」チップでまとめて絞り込めるようになる -->
+        <div style="margin-top:20px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">
+              系統（業種）
+              <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">🏆 作品ページで「◯◯系だけ見せる」ときの絞り込みに使います</span>
+            </label>
+            <select class="form-select" id="cl-portfolio-genre" style="width:100%;box-sizing:border-box">
+              <option value="">未設定</option>
+            </select>
+          </div>
+        </div>
+
         <!-- 請求情報（インボイス制度対応） -->
         <div style="margin-top:20px;padding:14px;border:1px solid var(--border);border-radius:8px;background:#FAFAFA">
           <div style="font-size:13px;font-weight:600;color:var(--em-dark);margin-bottom:10px">🧾 請求情報</div>
@@ -8233,6 +8247,30 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   #page-portfolio .pf-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); cursor: pointer; }
   #page-portfolio .pf-summary { font-size: 13px; color: var(--text-muted); margin: 6px 0 14px; }
 
+  /* 系統フィルタ（ADR 035）。「◯◯系ありますか？」に 1 タップで応えるための行。
+     スマホで横に出したまま指でなぞれるよう、行ごと横スクロールにする。 */
+  #page-portfolio .pf-chiprow {
+    display: flex; align-items: center; gap: 6px;
+    margin: 2px 0 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin; padding-bottom: 2px;
+  }
+  #page-portfolio .pf-chiprow::-webkit-scrollbar { height: 4px; }
+  #page-portfolio .pf-chiprow::-webkit-scrollbar-thumb { background: rgba(0,0,0,.18); border-radius: 4px; }
+  #page-portfolio .pf-chiprow-label {
+    flex: 0 0 auto; font-size: 11.5px; color: var(--text-muted); font-weight: 700;
+    width: 34px; letter-spacing: .04em;
+  }
+  #page-portfolio .pf-chip {
+    flex: 0 0 auto; border: 0.5px solid var(--border); background: #fff; border-radius: 999px;
+    padding: 5px 11px; font-size: 12px; line-height: 1.2; color: var(--text); cursor: pointer;
+    white-space: nowrap; transition: background .12s, border-color .12s, color .12s;
+  }
+  #page-portfolio .pf-chip:hover { border-color: var(--em-dark); }
+  #page-portfolio .pf-chip.on { background: var(--em-dark); border-color: var(--em-dark); color: #fff; }
+  #page-portfolio .pf-chip .pf-chip-n { opacity: .6; margin-left: 4px; font-size: 11px; }
+  #page-portfolio .pf-chip.on .pf-chip-n { opacity: .85; }
+  #page-portfolio .pf-chips-empty { font-size: 11.5px; color: var(--text-muted); padding: 4px 0; }
+
   /* 案件グループ（見出しはスクロール追従） */
   #page-portfolio .pf-group { margin-bottom: 26px; }
   #page-portfolio .pf-group-head {
@@ -8473,6 +8511,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         </span>
       </span>
     </div>
+    <!-- 系統フィルタ（業種軸 / 表現軸）。件数はサーバーのファセット集計から出す -->
+    <div id="pf-genre-row" class="pf-chiprow" aria-label="系統（業種）で絞り込み"></div>
+    <div id="pf-style-row" class="pf-chiprow" aria-label="系統（表現）で絞り込み"></div>
     <div id="pf-summary" class="pf-summary">読み込み中…</div>
     <div id="pf-selbar" class="pf-selbar">
       <strong id="pf-sel-count">0件選択中</strong>
@@ -11829,6 +11870,18 @@ function populateBillingOrgSelect(selectedKey) {
   sel.value = (selectedKey && CLIENT_BILLING_ORG_LABELS[selectedKey]) ? selectedKey : '';
 }
 
+// 作品集の系統（業種）プルダウン。選択肢は区分マスター（portfolio_genres）から。
+// マスター未作成（migration 未適用）なら「未設定」だけになり、保存もサーバー側で無視される。
+async function populatePortfolioGenreSelect(selectedCode) {
+  const sel = document.getElementById('cl-portfolio-genre');
+  if (!sel) return;
+  const opts = await pfLoadGenreOptions();
+  sel.innerHTML = ['<option value="">未設定</option>']
+    .concat((opts.genres || []).map(g => `<option value="${esc(g.code)}">${esc(g.name)}</option>`))
+    .join('');
+  sel.value = selectedCode || '';
+}
+
 function openEditClient(id) {
   const c = allClients.find(cl => cl.id === id);
   if (!c) return;
@@ -11852,6 +11905,7 @@ function openEditClient(id) {
   document.getElementById('cl-chatwork-room-id').value  = c.chatwork_room_id  || '';
   const invRegEl = document.getElementById('cl-invoice-registration-number');
   if (invRegEl) invRegEl.value = c.invoice_registration_number || '';
+  populatePortfolioGenreSelect(c.portfolio_genre_code || '');
   populateBillingOrgSelect(c.billing_org || '');
   renderClientTeamsPicker(Array.isArray(c.team_ids) ? c.team_ids : []);
   document.getElementById('cl-submit-btn').textContent = '保存する';
@@ -11884,6 +11938,7 @@ function openNewClientModal() {
   ['cl-website','cl-twitter','cl-instagram','cl-facebook','cl-youtube','cl-tiktok','cl-line','cl-other','cl-slack-channel-url','cl-chatwork-room-id','cl-invoice-registration-number']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   populateBillingOrgSelect('');
+  populatePortfolioGenreSelect('');
   renderClientTeamsPicker([]);
   document.getElementById('cl-submit-btn').textContent = '追加する';
   // 新規作成時は削除ボタンを必ず非表示
@@ -11971,6 +12026,7 @@ async function submitClient() {
       chatwork_room_id:  linkVal('cl-chatwork-room-id'),
       invoice_registration_number,
       billing_org,
+      portfolio_genre_code: document.getElementById('cl-portfolio-genre')?.value || null,
       team_ids:      Array.isArray(_editingClientTeamIds) ? _editingClientTeamIds : [],
     })
   });
@@ -24092,6 +24148,11 @@ let pfLoadSeq = 0;                // 古いレスポンス破棄用
 let pfBestMode = 'auto';          // auto: ⭐があればベストのみ / best: ベストのみ / all: 全体
 let pfLightboxIdx = -1;           // ライトボックスで表示中の pfItems index
 let pfHoverTimer = null;          // ホバー再生の遅延タイマー
+// 系統フィルタ（ADR 035）。その場の会話で切り替えるものなので localStorage には保存せず、
+// ページを開き直したら「すべて」に戻す（前回の絞り込みが残って件数が減って見える事故を防ぐ）
+let pfGenreSel = new Set();       // 業種軸（'none' = 未設定）
+let pfStyleSel = new Set();       // 表現軸
+let pfGenreOptions = null;        // { genres: [...], styles: [...] } — 上書き UI 用にキャッシュ
 
 function pfSavePrefs() {
   try {
@@ -24130,6 +24191,7 @@ function pfAspectStyle(item) {
 
 let pfInitialized = false;
 async function loadPortfolioPage() {
+  pfLoadGenreOptions();   // 系統の選択肢は先に温めておく（await しない＝一覧表示を待たせない）
   // 初回だけ「自分の作品」を既定に（ロール判定ではなく本人判定なので currentUser.id 直参照でよい）
   if (!pfInitialized) {
     pfInitialized = true;
@@ -24279,6 +24341,69 @@ function pfSyncBestSeg(json) {
   if (bestBtn) bestBtn.textContent = `⭐ マイベスト ${json.best_total}`;
 }
 
+// ==================== 系統チップ（業種 / 表現） ====================
+//
+// 「◯◯系のポートフォリオある？」に 1 タップで応えるための行。
+// 件数はサーバーのクロスファセット集計（もう一方の軸だけ適用した集合で数えた数）なので、
+// 業種を選んでも表現チップの件数が 0 だらけにならず、そのまま続けて絞り込める。
+
+function pfRenderChips(json) {
+  pfRenderChipRow('pf-genre-row', '系統', json.genre_facets || [], pfGenreSel, 'pfToggleGenre');
+  pfRenderChipRow('pf-style-row', '表現', json.style_facets || [], pfStyleSel, 'pfToggleStyle');
+}
+
+function pfRenderChipRow(rowId, label, facets, selected, toggleFn) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  // 選択中なのに facet に出てこない系統（絞り込みの結果 0 件になった）も必ず出す。
+  // 出さないとチップが消えて解除できなくなる。
+  const shown = facets.slice();
+  const codes = new Set(shown.map(f => f.code));
+  [...selected].forEach(code => {
+    if (!codes.has(code)) shown.push({ code, name: pfGenreLabelOf(rowId, code), count: 0 });
+  });
+  // 系統が1つも付いていない環境（migration 未適用など）は行ごと隠す
+  if (!shown.length) { row.style.display = 'none'; row.innerHTML = ''; return; }
+  row.style.display = 'flex';
+  const all = `<button type="button" class="pf-chip${selected.size ? '' : ' on'}" onclick="${toggleFn}('')">すべて</button>`;
+  const chips = shown.map(f => `
+    <button type="button" class="pf-chip${selected.has(f.code) ? ' on' : ''}" onclick="${toggleFn}('${esc(f.code)}')">
+      ${esc(f.name)}<span class="pf-chip-n">${f.count}</span>
+    </button>`).join('');
+  row.innerHTML = `<span class="pf-chiprow-label">${esc(label)}</span>${all}${chips}`;
+}
+
+// facet から消えた選択中チップのラベルを引く（無ければ code をそのまま出す）
+function pfGenreLabelOf(rowId, code) {
+  if (code === 'none') return '未設定';
+  const list = rowId === 'pf-genre-row' ? pfGenreOptions?.genres : pfGenreOptions?.styles;
+  return (list || []).find(x => x.code === code)?.name || code;
+}
+
+// 空文字 = すべて解除。複数選べる（「金融も教育も見せたい」ケース）
+function pfToggleGenre(code) { pfToggleChip(pfGenreSel, code); }
+function pfToggleStyle(code) { pfToggleChip(pfStyleSel, code); }
+function pfToggleChip(set, code) {
+  if (!code) set.clear();
+  else if (set.has(code)) set.delete(code);
+  else set.add(code);
+  pfReload();
+}
+
+// 系統の選択肢（業種マスター＋表現軸の定義）。上書き UI とクライアント編集で使う
+async function pfLoadGenreOptions() {
+  if (pfGenreOptions) return pfGenreOptions;
+  try {
+    const res = await apiFetch('/api/haruka/portfolio/genre-options');
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || '');
+    pfGenreOptions = { genres: json.genres || [], styles: json.styles || [] };
+  } catch (_) {
+    pfGenreOptions = { genres: [], styles: [] };
+  }
+  return pfGenreOptions;
+}
+
 async function pfReload() {
   const seq = ++pfLoadSeq;
   const summary = document.getElementById('pf-summary');
@@ -24298,6 +24423,8 @@ async function pfReload() {
   params.set('latest_only', document.getElementById('pf-latest-only')?.checked === false ? '0' : '1');
   if (document.getElementById('pf-include-nofile')?.checked) params.set('include_no_file', '1');
   if (document.getElementById('pf-include-wip')?.checked) params.set('include_wip', '1');
+  if (pfGenreSel.size) params.set('genre', [...pfGenreSel].join(','));
+  if (pfStyleSel.size) params.set('style', [...pfStyleSel].join(','));
   // マイベストの持ち主は「担当者を1名に絞っているとき」のその人。
   // best_mode=auto はサーバー側で「⭐が1件でもあればベストのみ / 無ければ全体」を判定する。
   const bestOwner = pfAssigneeIds.size === 1 ? [...pfAssigneeIds][0] : null;
@@ -24314,6 +24441,7 @@ async function pfReload() {
     pfItems = json.items || [];
     pfGroups = json.groups || [];
     pfSyncBestSeg(json);
+    pfRenderChips(json);
     pfRenderSummary(json);
     pfRenderGallery();
     pfMeasureMissingAspects();
@@ -24335,7 +24463,13 @@ function pfRenderSummary(json) {
     : '';
   const best = json.best_applied ? '⭐ マイベストのみ表示中　' : '';
   const scope = document.getElementById('pf-include-wip')?.checked ? '制作途中を含む' : '納品済のみ';
-  el.textContent = `${best}${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（${scope}）${truncated}${hidden}`;
+  // 系統で絞っているときは何系を見ているのかを文章にも出す（口頭で説明しながら見せるため）
+  const picked = [
+    ...[...pfGenreSel].map(c => pfGenreLabelOf('pf-genre-row', c)),
+    ...[...pfStyleSel].map(c => pfGenreLabelOf('pf-style-row', c)),
+  ];
+  const genre = picked.length ? `【${picked.join(' ・ ')}】 ` : '';
+  el.textContent = `${best}${genre}${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（${scope}）${truncated}${hidden}`;
 }
 
 function pfRenderGallery() {
@@ -24921,14 +25055,18 @@ function pfRenderLightboxCard() {
       <div class="pf-lb-sec-title">情報</div>
       <dl class="pf-lb-meta">
         <dt>納品日</dt><dd>${esc(pfFormatDate(item.delivered_at))}</dd>
+        <dt>系統</dt><dd>${esc(item.genre_name || '未設定')}${item.genre_overridden ? '（この作品だけ変更）' : ''}</dd>
+        <dt>表現</dt><dd>${esc(item.style_name || '—')}${item.style_overridden ? '（手動）' : ''}</dd>
         <dt>種別</dt><dd>${esc(kind)}</dd>
         <dt>サイズ</dt><dd>${esc(ratio)}</dd>
         ${item.version ? `<dt>バージョン</dt><dd>v${esc(item.version)}</dd>` : ''}
       </dl>
     </div>
+    <div id="pf-lb-genre-area"></div>
     <div class="pf-lb-actions">
       ${starBtn}
       ${item.can_edit_note ? `<button type="button" class="pf-lb-action" onclick="pfStartNoteEdit()">✏️ 説明を編集</button>` : ''}
+      ${item.can_edit_genre ? `<button type="button" class="pf-lb-action" onclick="pfStartGenreEdit()">🏷 系統を変更</button>` : ''}
       ${item.file_id ? `<button type="button" class="pf-lb-action primary" onclick="pfDownloadOne(${pfLightboxIdx})">⬇ ダウンロード</button>` : ''}
     </div>`;
   pfRenderNoteView();
@@ -24999,6 +25137,83 @@ async function pfSaveNote() {
     pfRenderNoteView();
     pfRenderGallery();   // 背後のカードのホバー文言も更新
     showToast('説明を保存しました', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// ==================== 作品ごとの系統の上書き（ADR 035） ====================
+//
+// 業種は原則クライアント単位で決まる（1社決めれば全作品に効く）。ここで変えるのは
+// 「この作品だけ別業種」という例外と、自動判定できない作風（実写・インタビュー等）。
+
+async function pfStartGenreEdit() {
+  const area = document.getElementById('pf-lb-genre-area');
+  const item = pfItems[pfLightboxIdx];
+  if (!area || !item || !item.can_edit_genre) return;
+  area.innerHTML = `<div class="pf-lb-note-edit"><div style="font-size:12px;opacity:.7">読み込み中…</div></div>`;
+  const opts = await pfLoadGenreOptions();
+
+  // 継承中（上書きなし）は空値。プルダウンの先頭で「継承に戻す」を選べる
+  const genreVal = item.genre_overridden ? (item.genre_code || '') : '';
+  const styleVal = item.style_overridden ? (item.style_code || '') : '';
+  const inheritLabel = item.genre_overridden
+    ? 'クライアントの系統を使う'
+    : `クライアントの系統を使う（現在：${item.genre_name || '未設定'}）`;
+  const autoLabel = item.style_overridden
+    ? '作品の形から自動で決める'
+    : `作品の形から自動で決める（現在：${item.style_name || '—'}）`;
+  const genreOpts = (opts.genres || [])
+    .map(g => `<option value="${esc(g.code)}"${g.code === genreVal ? ' selected' : ''}>${esc(g.name)}</option>`).join('');
+  const autoStyles = (opts.styles || []).filter(s => s.auto);
+  const manualStyles = (opts.styles || []).filter(s => !s.auto);
+  const styleOpt = (s) => `<option value="${esc(s.code)}"${s.code === styleVal ? ' selected' : ''}>${esc(s.name)}</option>`;
+
+  area.innerHTML = `
+    <div class="pf-lb-note-edit">
+      <div style="display:grid;gap:8px">
+        <label style="display:grid;gap:3px;font-size:11.5px;opacity:.75">系統（業種）
+          <select id="pf-genre-input" class="form-select" style="height:30px;font-size:12px">
+            <option value=""${genreVal ? '' : ' selected'}>${esc(inheritLabel)}</option>
+            ${genreOpts}
+          </select>
+        </label>
+        <label style="display:grid;gap:3px;font-size:11.5px;opacity:.75">系統（表現）
+          <select id="pf-style-input" class="form-select" style="height:30px;font-size:12px">
+            <option value=""${styleVal ? '' : ' selected'}>${esc(autoLabel)}</option>
+            <optgroup label="形式">${autoStyles.map(styleOpt).join('')}</optgroup>
+            <optgroup label="作風（手で付ける）">${manualStyles.map(styleOpt).join('')}</optgroup>
+          </select>
+        </label>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button type="button" class="pf-lb-btn" onclick="pfSaveGenre()">保存</button>
+        <button type="button" class="pf-lb-btn" onclick="document.getElementById('pf-lb-genre-area').innerHTML=''">キャンセル</button>
+        <span style="font-size:11px;color:rgba(255,255,255,.5)">業種はクライアント編集から変えると全作品に効きます</span>
+      </div>
+    </div>`;
+}
+
+async function pfSaveGenre() {
+  const item = pfItems[pfLightboxIdx];
+  const gSel = document.getElementById('pf-genre-input');
+  const sSel = document.getElementById('pf-style-input');
+  if (!item || !gSel || !sSel) return;
+  const creativeId = item.creative_id;
+  try {
+    const res = await apiFetch(`/api/haruka/creatives/${creativeId}/portfolio-genre`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ genre_code: gSel.value || null, style_code: sSel.value || null }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || '保存に失敗しました');
+    // 継承に戻した場合は「継承先が何か」をサーバーに聞き直すのが確実なので引き直す
+    await pfReload();
+    const back = pfItems.findIndex(it => it.creative_id === creativeId);
+    if (back >= 0) { pfLightboxIdx = back; pfRenderLightboxCard(); }
+    else pfCloseLightbox();   // 絞り込みの結果、その作品が一覧から外れた
+    showToast('系統を保存しました', 'success');
   } catch (e) {
     showToast(e.message, 'error');
   }
