@@ -4191,22 +4191,22 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
         <!-- 売上予実 積み上げ棒グラフ -->
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px">
-          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">💰 売上予実</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">💰 売上予実<span id="dash-hint-revenue" style="font-weight:400;font-size:10px;margin-left:4px">（クリックで内訳）</span></div>
           <canvas id="chart-revenue" height="160"></canvas>
         </div>
         <!-- クリエイティブ ステータス 円グラフ -->
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px">
-          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">🎬 クリエイティブ ステータス</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">🎬 クリエイティブ ステータス<span style="font-weight:400;font-size:10px;margin-left:4px">（クリックで内訳）</span></div>
           <canvas id="chart-creative-status" height="160"></canvas>
         </div>
         <!-- 案件ステータス 円グラフ -->
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px">
-          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">📁 案件ステータス</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">📁 案件ステータス<span style="font-weight:400;font-size:10px;margin-left:4px">（クリックで内訳）</span></div>
           <canvas id="chart-project-status" height="160"></canvas>
         </div>
         <!-- 月別本数 棒グラフ -->
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px">
-          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">📈 月別納品本数</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:10px">📈 月別納品本数<span style="font-weight:400;font-size:10px;margin-left:4px">（クリックで内訳）</span></div>
           <canvas id="chart-monthly" height="160"></canvas>
         </div>
       </div>
@@ -6063,6 +6063,27 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div id="pl-creatives-list" style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
     <div style="display:flex;justify-content:flex-end;margin-top:12px">
       <button class="btn" onclick="closeModal('modal-project-line-creatives')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ダッシュボードのグラフ ドリルダウン一覧モーダル -->
+<!-- 円グラフ/棒グラフのセグメントをクリックすると、その内訳（クリエイティブ / 案件）を一覧表示する。 -->
+<!-- ダッシュボードはモーダルを重ねない画面なので z-index は既定（他モーダルより手前に出す必要がない）。 -->
+<div class="modal-overlay" id="modal-dash-drill">
+  <div class="modal" style="max-width:620px;width:92vw;padding:22px;border-radius:14px;max-height:82vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">
+      <div style="flex:1;min-width:0">
+        <div id="dash-drill-title" style="font-size:14px;font-weight:700">内訳</div>
+        <div id="dash-drill-subtitle" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-dash-drill')">×</button>
+    </div>
+    <input type="text" class="form-input" id="dash-drill-search" placeholder="🔍 名前・ステータスで検索"
+      oninput="renderDashDrill()" style="margin-bottom:10px">
+    <div id="dash-drill-list" style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeModal('modal-dash-drill')">閉じる</button>
     </div>
   </div>
 </div>
@@ -30514,6 +30535,126 @@ function _dashBadge(diff) {
   return `<span class="dash-due-badge dbadge-ok">あと${diff}日</span>`;
 }
 
+// ===== ダッシュボードのグラフ ドリルダウン =====
+// 円グラフ／棒グラフのセグメントをクリックすると、その内訳を一覧モーダルで表示する。
+// kind='creative' なら creatives 行、'project' なら projects 行として描画する。
+let _dashDrillState = { kind: 'creative', items: [] };
+
+// Chart.js v4 の options.onClick は (event, elements, chart) を受け取る。
+// 凡例クリックや余白クリックでは elements が空になるので、その場合は何もしない。
+function _dashChartIndex(elements) {
+  return (elements && elements.length) ? elements[0].index : null;
+}
+
+// グラフ上でセグメントに乗ったときだけカーソルをポインタにする（クリックできることを示す）
+function _dashChartHover(evt, elements) {
+  const target = evt?.native?.target;
+  if (target && target.style) target.style.cursor = elements && elements.length ? 'pointer' : 'default';
+}
+
+function openDashDrill(kind, title, subtitle, items) {
+  const list = Array.isArray(items) ? items.slice() : [];
+  if (kind === 'project') {
+    list.sort((a, b) =>
+      (_dashClientName(a) || '').localeCompare(_dashClientName(b) || '', 'ja')
+      || (a.name || '').localeCompare(b.name || '', 'ja'));
+  } else {
+    // 納期昇順（納期なしは末尾）
+    list.sort((a, b) => (a.final_deadline || '9999-12-31').localeCompare(b.final_deadline || '9999-12-31'));
+  }
+  _dashDrillState = { kind, items: list };
+  const titleEl = document.getElementById('dash-drill-title');
+  if (titleEl) titleEl.textContent = `${title}（${_dashDrillState.items.length}件）`;
+  const subEl = document.getElementById('dash-drill-subtitle');
+  if (subEl) subEl.textContent = subtitle || '';
+  const searchEl = document.getElementById('dash-drill-search');
+  if (searchEl) searchEl.value = '';
+  renderDashDrill();
+  openModal('modal-dash-drill');
+}
+
+function renderDashDrill() {
+  const listEl = document.getElementById('dash-drill-list');
+  if (!listEl) return;
+  const q = (document.getElementById('dash-drill-search')?.value || '').trim().toLowerCase();
+  const isProject = _dashDrillState.kind === 'project';
+
+  const matches = (it) => {
+    if (!q) return true;
+    const hay = isProject
+      ? [it.name, it.status, it.clients?.name, _dashClientName(it)]
+      : [it.file_name, it.status, it.projects?.name, it.projects?.clients?.name];
+    return hay.some(v => (v || '').toLowerCase().includes(q));
+  };
+  const items = _dashDrillState.items.filter(matches);
+
+  if (!items.length) {
+    listEl.innerHTML = `<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">${q ? '検索に一致するものがありません' : '該当するものがありません'}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = items.map(it => isProject ? _dashDrillProjectRow(it) : _dashDrillCreativeRow(it)).join('');
+}
+
+// projects 行は clients 埋め込みが無い場合があるので allClients から引く
+function _dashClientName(p) {
+  if (p?.clients?.name) return p.clients.name;
+  const c = (typeof allClients !== 'undefined' ? allClients : []).find(x => x.id === p?.client_id);
+  return c?.name || '';
+}
+
+function _dashDrillCreativeRow(c) {
+  const editor = c.creative_assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));
+  const editorName = editor?.users ? NameDisplay.full(editor.users) : '';
+  const projectName = c.projects?.name || '';
+  const clientName = c.projects?.clients?.name || '';
+  const deadline = c.final_deadline || c.draft_deadline || '';
+  return `
+  <div onclick="openDashDrillCreative('${c.id}')"
+    style="display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:var(--bg-card,#fff)"
+    onmouseover="this.style.background='var(--bg-hover,#F4F7F6)'" onmouseout="this.style.background='var(--bg-card,#fff)'">
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="status-chip ${statusClass(c.status)}" style="font-size:10px;flex-shrink:0">${esc(c.status || '—')}</span>
+        ${editorName ? `<span style="font-size:12px;color:var(--text-muted)">👤 ${esc(editorName)}</span>` : ''}
+      </div>
+      ${projectName ? `<div style="font-size:13px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📁 ${esc(projectName)}</div>` : ''}
+      <div style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace" title="${esc(c.file_name || '')}">
+        ${clientName ? `${esc(clientName)} · ` : ''}${esc(c.file_name || '（名称未設定）')}
+      </div>
+    </div>
+    ${deadline ? `<div style="font-size:10px;color:var(--text-muted);white-space:nowrap;padding-top:2px">納期 ${esc(String(deadline).slice(0,10))}</div>` : ''}
+  </div>`;
+}
+
+function _dashDrillProjectRow(p) {
+  // 案件編集モーダルは編集 UI なので、権限が無いロールでは開かない（ADR 015）
+  const clickable = (typeof canEditProject === 'function') && canEditProject();
+  const clientName = _dashClientName(p);
+  const attrs = clickable
+    ? `onclick="openDashDrillProject('${p.id}')" style="cursor:pointer;`
+    : `style="`;
+  return `
+  <div ${attrs}display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card,#fff)"
+    ${clickable ? `onmouseover="this.style.background='var(--bg-hover,#F4F7F6)'" onmouseout="this.style.background='var(--bg-card,#fff)'"` : ''}>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.name || '')}">📁 ${esc(p.name || '（名称未設定）')}</div>
+      ${clientName ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(clientName)}</div>` : ''}
+    </div>
+    <span class="status-chip ${statusClass(p.status)}" style="font-size:10px;flex-shrink:0">${esc(p.status || '—')}</span>
+  </div>`;
+}
+
+// 一覧の行クリック → ドリルダウンを閉じてから詳細を開く（モーダルの重なりを避ける）
+function openDashDrillCreative(creativeId) {
+  closeModal('modal-dash-drill');
+  openCreativeDetail(creativeId);
+}
+function openDashDrillProject(projectId) {
+  closeModal('modal-dash-drill');
+  openEditProjectById(projectId);
+}
+
 // 年月フィルター初期化
 function initDashFilter() {
   const yearSel = document.getElementById('dash-filter-year');
@@ -30612,6 +30753,9 @@ async function renderAdminDash(today) {
     return true;
   });
 
+  // グラフのドリルダウン一覧に出す期間ラベル（「2026年5月 納期の…」のように使う）
+  const periodLabel = filterMonth ? `${filterYear}年${filterMonth}月` : `${filterYear}年`;
+
   const filteredProjects = allProjects.filter(p => {
     if (p.is_hidden) return false;
     if (!filterMonth) return true; // 全月なら全案件
@@ -30644,6 +30788,9 @@ async function renderAdminDash(today) {
 
   // ===== Chart 1: 売上予実（isTopAdmin のみ） =====
   _destroyChart('revenue');
+  // 売上予実（admin）は金額ベースの積み上げ棒でクリック対象の一覧が無いため、ヒントを隠す
+  const revenueHintEl = document.getElementById('dash-hint-revenue');
+  if (revenueHintEl) revenueHintEl.style.display = isTopAdmin() ? 'none' : '';
   if (isTopAdmin()) {
     // 売上サマリは到着し次第に独立して描画（他のグラフをブロックしない）
     (async () => {
@@ -30684,7 +30831,19 @@ async function renderAdminDash(today) {
         labels: ['納品済', '未完了'],
         datasets: [{ data: [done, notDone], backgroundColor: ['#5C9E8F', '#E8F0EE'], borderWidth: 0 }]
       },
-      options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } } }
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } },
+        onHover: _dashChartHover,
+        // セグメントをクリック → 納品済 / 未完了 の内訳一覧を開く
+        onClick: (evt, elements) => {
+          const i = _dashChartIndex(elements);
+          if (i === null) return;
+          const isDone = i === 0;
+          const items = filteredCreatives.filter(c => (c.status === '納品') === isDone);
+          openDashDrill('creative', isDone ? '納品済' : '未完了', `${periodLabel} 納期のクリエイティブ`, items);
+        }
+      }
     });
   }
 
@@ -30705,7 +30864,19 @@ async function renderAdminDash(today) {
         labels: Object.keys(cStMap),
         datasets: [{ data: Object.values(cStMap), backgroundColor: Object.keys(cStMap).map(s=>statusColors[s]||'#CFD8DC'), borderWidth: 0 }]
       },
-      options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } } } }
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } } },
+        onHover: _dashChartHover,
+        // セグメントをクリック → そのステータスのクリエイティブ一覧を開く
+        onClick: (evt, elements) => {
+          const i = _dashChartIndex(elements);
+          if (i === null) return;
+          const st = Object.keys(cStMap)[i];
+          if (!st) return;
+          openDashDrill('creative', st, `${periodLabel} 納期のクリエイティブ`, filteredCreatives.filter(c => c.status === st));
+        }
+      }
     });
   }
 
@@ -30722,7 +30893,19 @@ async function renderAdminDash(today) {
         labels: Object.keys(pStMap),
         datasets: [{ data: Object.values(pStMap), backgroundColor: Object.keys(pStMap).map((_,i)=>pColors[i%pColors.length]), borderWidth: 0 }]
       },
-      options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } } } }
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } } },
+        onHover: _dashChartHover,
+        // セグメントをクリック → そのステータスの案件一覧を開く
+        onClick: (evt, elements) => {
+          const i = _dashChartIndex(elements);
+          if (i === null) return;
+          const st = Object.keys(pStMap)[i];
+          if (!st) return;
+          openDashDrill('project', st, '案件（非表示を除く全件）', allProjects.filter(p => !p.is_hidden && p.status === st));
+        }
+      }
     });
   }
 
@@ -30753,7 +30936,22 @@ async function renderAdminDash(today) {
     options: {
       responsive: true,
       plugins: { legend: { display: false } },
-      scales: { x: { grid: { display: false } }, y: { ticks: { stepSize: 1 } } }
+      scales: { x: { grid: { display: false } }, y: { ticks: { stepSize: 1 } } },
+      // 列のどこをクリックしてもその月を拾う（納品0本で棒に高さが無い月も開けるように）
+      interaction: { mode: 'index', intersect: false },
+      onHover: _dashChartHover,
+      // 棒をクリック → その月に納品したクリエイティブ一覧を開く
+      onClick: (evt, elements) => {
+        const i = _dashChartIndex(elements);
+        if (i === null) return;
+        const m = i + 1;
+        const items = dashCreatives.filter(c => {
+          if (c.status !== '納品' || !c.final_deadline) return false;
+          const d = _cvAtMidnight(c.final_deadline);
+          return d.getFullYear() === filterYear && d.getMonth() + 1 === m;
+        });
+        openDashDrill('creative', `${filterYear}年${m}月 納品`, '納期がこの月のクリエイティブ（納品済）', items);
+      }
     }
   });
 
