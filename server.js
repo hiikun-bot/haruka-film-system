@@ -112,6 +112,7 @@ app.get('/api/build-info', (req, res) => {
 // Supabase サーキットブレーカー連動の工事中モード。
 // require した瞬間に listener が登録され、open/closed 遷移時に Slack 通知される。
 const supabaseFetch = require('./utils/supabase-fetch');
+const { validateGoogleAccountEmail } = require('./utils/google-email');
 require('./utils/maintenance-notifier');
 
 // ヘルスチェック: Supabase 接続が open でなければ 200、open のときは 503。
@@ -445,6 +446,12 @@ app.post('/api/invitations', requireAuth, requirePermission('member.edit_passwor
   const { email, role } = req.body;
   if (!email) return res.status(400).json({ error: 'メールアドレスは必須です' });
 
+  // Googleアカウント以外のメールアドレスを弾く（utils/google-email.js）。
+  // 招待の時点で止めておかないと、登録完了後に請求書フォルダの Drive 共有だけが
+  // silent に失敗する状態が出来上がってしまう。
+  const emailCheck = await validateGoogleAccountEmail(email);
+  if (!emailCheck.ok) return res.status(400).json({ error: emailCheck.error });
+
   const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
   if (existing) return res.status(409).json({ error: 'このメールアドレスはすでに登録済みです' });
 
@@ -491,6 +498,11 @@ app.post('/api/invitations/register', async (req, res) => {
     // Supabase に既存ユーザーがいないか確認
     const { data: existing } = await supabase.from('users').select('id').eq('email', inv.email).maybeSingle();
     if (existing) throw new Error('このメールアドレスはすでに登録済みです');
+
+    // 二重防御: バリデーション導入前に発行済みの招待リンクが残っている場合に備え、
+    // 登録実行時にも Google アカウントかどうかを確認する。
+    const emailCheck = await validateGoogleAccountEmail(inv.email);
+    if (!emailCheck.ok) throw new Error(emailCheck.error);
 
     // パスワードハッシュ化してSupabaseに登録（SQLite不要）
     const passwordHash = await bcrypt.hash(password, 12);
