@@ -50944,26 +50944,38 @@ function _bulkIsTemplateCategory(c) {
   const catCode = proj ? (getProjectCategory(proj)?.code || null) : null;
   return !!(catCode && ['lp', 'hp', 'line'].includes(catCode));
 }
+// 一括での「納品」「クライアントチェック中」実行が許可されるロール。
+// 月次消込ページの bdIsAllowed（admin/secretary/producer/PD）に director 単独を加えたもの。
+// ディレクターは詳細画面の個別承認（承認→クラチェック中／承認→納品）を元々実行できるため、
+// 一括も同等に許可する（2026-09-01 たごんさん要望）。editor / designer は従来どおり対象外。
+// ※ 月次消込ページ自体のナビ表示は bdIsAllowed のまま（director には開放しない）。
+function _bulkStatusPrivileged() {
+  return bdIsAllowed() || effectiveRole() === 'director';
+}
 // 対象1件の実行計画: { mode: 'direct' | 'clientcheck' | 'jump' | 'deliver' | 'skip', reason? }
 function _bulkPlanFor(c, target, isAdmin) {
   if (_bulkIsTemplateCategory(c)) return { mode: 'skip', reason: '工程テンプレ案件（LP/HP/LINE）のため対象外' };
   if ((c.status || '') === target) return { mode: 'skip', reason: 'すでにこのステータスです' };
   // 「納品」は工程上の direct 遷移が存在しない（クラチェック承認はコメント必須）ため、
   // 一括納品完了（月次消込）と同じ bulk-deliver API 経路で実行する。
-  // 権限も同ページと同一（bdIsAllowed: admin / secretary / producer / producer_director）。
   if (target === '納品') {
-    if (bdIsAllowed()) return { mode: 'deliver' };
-    return { mode: 'skip', reason: '納品への一括変更は管理者・秘書・プロデューサーのみ実行できます（詳細画面から個別に進めてください）' };
+    if (_bulkStatusPrivileged()) return { mode: 'deliver' };
+    return { mode: 'skip', reason: '納品への一括変更は管理者・秘書・プロデューサー・ディレクターのみ実行できます（詳細画面から個別に進めてください）' };
   }
   // 「クライアントチェック中」も工程上は承認コメント等が必要で direct 遷移が無いが、
   // 月末にまとめてクライアント確認へ回すニーズが高い（2026-08-30 たごんさん報告）ため、
-  // 納品と同じ権限（bdIsAllowed）で一括変更を許可する。実行は通常の PUT /creatives/:id
-  // { status } で、Drive 自動共有・初稿提出日時の記録（ADR 034）・通知はサーバー側で従来どおり走る。
-  if (target === 'クライアントチェック中' && bdIsAllowed()) {
+  // 納品と同じ権限で一括変更を許可する。実行は通常の PUT /creatives/:id { status } で、
+  // Drive 自動共有・初稿提出日時の記録（ADR 034）・通知はサーバー側で従来どおり走る。
+  if (target === 'クライアントチェック中' && _bulkStatusPrivileged()) {
     // 納品済みからの巻き戻しは delivered_at がクリアされ支払いカウント月が変わるため、
     // ここでは対象にしない（従来どおり管理者ジャンプのみ）。
     if (['納品', '完納', '納品済'].includes(c.status || '')) {
       return isAdmin ? { mode: 'jump' } : { mode: 'skip', reason: '納品済みのため対象外（納品の取り消しは管理者のみ）' };
+    }
+    // Wチェック中の承認は担当者本人 or admin のみ（詳細画面 section 15 と同じ規則）。
+    // 一括でWチェックを飛ばしてクライアントへ出せてしまわないようガードする。
+    if (c.status === 'Wチェック' && !isAdmin) {
+      return { mode: 'skip', reason: 'Wチェック中のため対象外（Wチェック担当者の承認が必要です）' };
     }
     return { mode: 'clientcheck' };
   }

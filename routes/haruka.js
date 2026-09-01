@@ -10579,14 +10579,17 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
 // 納品済み扱いのステータス（evaluateCreativeEditEligibility 内の DELIVERED_STATUSES と同一定義）
 const BULK_DELIVERED_STATUSES = ['納品', '完納', '納品済'];
 
-// 一括納品の実効ロール認可: admin / secretary / producer（producer_director 含む）。
+// 一括納品の実効ロール認可: admin / secretary / producer / director（producer_director 含む）。
 // producer_director は getEffectiveRoleCodes で ['producer','director'] に展開されるため
-// 'producer' の包含チェックで PD もカバーされる（director 単独は不可）。
+// 'producer' の包含チェックで PD もカバーされる。
+// director 単独は 2026-09-01 に追加: 詳細画面の個別承認（承認→納品）を元々実行できる
+// ロールのため、一括（ステータス一括変更モーダルの「納品」）も同等に許可する。
+// editor / designer は不可のまま。
 // ADR 015: getEffectiveRoleCodes(req) は X-View-As を「最高管理者のリクエストのみ」尊重するため、
 // 一般ユーザーがヘッダ偽装しても昇格できない（最高管理者が下位ロールをプレビュー中は正しく拒否される）。
 async function bulkDeliverAuthorized(req) {
   const codes = await getEffectiveRoleCodes(req);
-  return ['admin', 'secretary', 'producer'].some(c => (codes || []).includes(c));
+  return ['admin', 'secretary', 'producer', 'director'].some(c => (codes || []).includes(c));
 }
 
 // 提出済/承認済（draft 以外）の請求書明細に紐付く creative_id 集合を返す。
@@ -10727,7 +10730,7 @@ async function applyBulkDeliveredTransition({ creativeId, beforeRow, actorUserId
 // 一括納品の対象候補について DB の現在状態と「納品遷移できるか」を返す（更新なし）。
 router.post('/creatives/bulk-deliver-preview', requireAuth, async (req, res) => {
   if (!(await bulkDeliverAuthorized(req))) {
-    return res.status(403).json({ error: '一括納品完了は管理者・秘書・プロデューサーのみ実行できます' });
+    return res.status(403).json({ error: '一括納品は管理者・秘書・プロデューサー・ディレクターのみ実行できます' });
   }
   const rawIds = req.body?.creative_ids;
   if (!Array.isArray(rawIds) || rawIds.length < 1) {
@@ -10788,7 +10791,7 @@ router.post('/creatives/bulk-deliver-preview', requireAuth, async (req, res) => 
 // 個別の notifyCreativeStatusChange は発火せず、全件処理後にダイジェスト1通のみ送る。
 router.post('/creatives/bulk-deliver', requireAuth, async (req, res) => {
   if (!(await bulkDeliverAuthorized(req))) {
-    return res.status(403).json({ error: '一括納品完了は管理者・秘書・プロデューサーのみ実行できます' });
+    return res.status(403).json({ error: '一括納品は管理者・秘書・プロデューサー・ディレクターのみ実行できます' });
   }
 
   const reason = String(req.body?.reason || '').trim();
