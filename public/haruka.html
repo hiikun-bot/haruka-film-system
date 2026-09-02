@@ -8860,7 +8860,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <span style="font-size:12px;color:var(--text-muted)">実務データ自動集計</span>
       <span id="tl-updated" style="margin-left:auto;font-size:11px;color:var(--text-muted)"></span>
     </div>
-    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">メンバーごとの進行中クリエイティブ・持ちボール・納期状況を実データから自動集計します。列ヘッダクリックで並び替えできます。</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">メンバーごとの進行中クリエイティブ・持ちボール・納期状況を実データから自動集計します。既定は負荷が高い順。列ヘッダクリックで並び替えできます。</div>
     <div id="tl-kpi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px"></div>
     <div class="card" style="padding:0;overflow:hidden">
       <div id="tl-table" style="overflow-x:auto"></div>
@@ -18494,6 +18494,9 @@ const _ROLE_PERMS_FALLBACK = {
   'secretary|invoice_folder.generate_any': true,
   // オンボーディング参照のみ（migration 2026-08-22_onboarding_view_permission.sql。管理側 onboarding.page はDB seedのみ）
   'producer|onboarding.view': true, 'producer_director|onboarding.view': true,
+  // チーム状況（負荷ダッシュボード）はプロデューサー層にも開放（migration 2026-08-21_team_load_permission.sql）。
+  // DB seed と同じ既定を持たせ、/role-permissions の読込に失敗した回でもP層のナビが消えないようにする
+  'producer|team_load.page': true, 'producer_director|team_load.page': true,
 };
 async function loadRolePermissions() {
   try {
@@ -27340,7 +27343,9 @@ async function mgDeleteTask() {
 // - 名前表示は NameDisplay.full（「ニックネーム（名前）」標準・PR #502）＋ esc()。
 
 let _tlData = null;
-let _tlSort = { key: 'balls', dir: 'desc' }; // デフォルト: 持ちボール数降順
+// デフォルト: 負荷（合成スコア）降順 — 高負荷の人が最上段に来る。
+// 旧既定「持ちボール数降順」は、超過が多い人（例: ボール1件・超過13件）が下に沈んで見落とす問題があった
+let _tlSort = { key: 'load', dir: 'desc' };
 
 const TL_LOAD_BADGE = {
   high: { icon: '🔴', label: '高負荷', bg: '#FDECEA', color: '#C0392B' },
@@ -27414,21 +27419,26 @@ function renderTeamLoad() {
     kpi('今週期限（〜' + esc((data.week_end || '').slice(5).replace('-', '/')) + '）', totals.due_this_week, '#C05A0A') +
     kpi('期限超過', totals.overdue, (totals.overdue > 0 ? '#C0392B' : 'var(--em-dark)'));
 
-  // ソート（メンバー名はふりがな無しなので localeCompare、数値列は数値比較）
-  const rows = [...(data.members || [])];
-  const { key, dir } = _tlSort;
-  const numKey = { active: 'active', client_wait: 'client_wait', balls: 'balls', due: 'due_this_week', overdue: 'overdue' }[key];
-  rows.sort((a, b) => {
-    let cmp;
-    if (numKey) cmp = (a[numKey] || 0) - (b[numKey] || 0);
-    else cmp = String(a.full_name).localeCompare(String(b.full_name), 'ja');
-    return dir === 'desc' ? -cmp : cmp;
-  });
-
-  // 負荷バーの長さ: 合成スコア（ボール×2 + 今週期限 + 超過×3）を最大値で正規化。
+  // 負荷スコア: 合成スコア（ボール×2 + 今週期限 + 超過×3）。負荷バーの長さ・「負荷」列ソートの共通値。
   // スコアはサーバー算出（utils/team-load.js computeLoadScore・負荷バッジ判定と同一式）を正とし、
   // 旧レスポンス（score 無し）へのフォールバックのみ同式をローカル計算する
   const score = r => (r.score ?? ((r.balls || 0) * 2 + (r.due_this_week || 0) + (r.overdue || 0) * 3));
+
+  // ソート（メンバー名はふりがな無しなので localeCompare、数値列は数値比較）。
+  // 同値のときは負荷スコア降順 → 持ちボール降順 → 名前昇順で安定させる（0件が多い列で順序が揺れないように）
+  const rows = [...(data.members || [])];
+  const { key, dir } = _tlSort;
+  const numKey = { active: 'active', client_wait: 'client_wait', balls: 'balls', due: 'due_this_week', overdue: 'overdue' }[key];
+  const byName = (a, b) => String(a.full_name).localeCompare(String(b.full_name), 'ja');
+  rows.sort((a, b) => {
+    let cmp;
+    if (key === 'load') cmp = score(a) - score(b);
+    else if (numKey) cmp = (a[numKey] || 0) - (b[numKey] || 0);
+    else cmp = byName(a, b);
+    if (cmp !== 0) return dir === 'desc' ? -cmp : cmp;
+    return (score(b) - score(a)) || ((b.balls || 0) - (a.balls || 0)) || byName(a, b);
+  });
+
   const maxScore = Math.max(1, ...rows.map(score));
   const barColor = {
     high: 'linear-gradient(90deg,#C0392B,#E74C3C)',
@@ -27445,7 +27455,7 @@ function renderTeamLoad() {
   html += `<div style="display:grid;${gridCols};gap:8px;align-items:center;padding:10px 16px;border-bottom:0.5px solid var(--border)">` +
     th('name', 'メンバー') +
     th('active', '進行中CR', 1) + th('client_wait', 'クラ確認待ち', 1) + th('balls', '持ちボール', 1) + th('due', '今週期限', 1) + th('overdue', '超過', 1) +
-    `<span style="font-size:11px;font-weight:600;color:var(--text-muted);justify-self:end">負荷</span></div>`;
+    th('load', '負荷', 1) + `</div>`;
 
   if (rows.length === 0) {
     html += '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">対象メンバーがいません</div>';
