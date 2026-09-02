@@ -533,7 +533,7 @@ async function insertOrUpdateClientWithFallback(op, attempt, idForUpdate) {
   // 「column "xxx" does not exist」系は、その列を落として再試行（最大3列まで）
   for (let i = 0; error && i < 3; i++) {
     const m = (error.message || '').match(/column "?([a-z_]+)"? .*does not exist|'([a-z_]+)' column/i)
-      || (error.message || '').match(/(billing_org|invoice_registration_number)/);
+      || (error.message || '').match(/(billing_org|invoice_registration_number|portfolio_genre_code)/);
     const col = m && (m[1] || m[2]);
     if (!col || !(col in payload)) break;
     console.warn(`[clients:${op}] 列 ${col} 未反映のためフォールバック保存:`, error.message);
@@ -578,6 +578,8 @@ router.post('/clients', requireAuth, requireAnyPermission('project.create_edit',
     const b = normalizeBillingOrg(req.body.billing_org);
     if (b !== undefined) insertData.billing_org = b;
   }
+  // 作品集の業種系統（ADR 035）。列未反映環境では下のフォールバックが落として保存する
+  if ('portfolio_genre_code' in req.body) insertData.portfolio_genre_code = req.body.portfolio_genre_code || null;
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) insertData[f] = req.body[f] || null; });
   // 列未反映環境（migration 未適用）でも 500 にせずグレースフルにフォールバック
   let { data, error } = await insertOrUpdateClientWithFallback('insert', insertData);
@@ -606,6 +608,8 @@ router.put('/clients/:id', requireAuth, requirePermission('project.create_edit')
     const b = normalizeBillingOrg(req.body.billing_org);
     if (b !== undefined) updateData.billing_org = b;
   }
+  // 作品集の業種系統（ADR 035）
+  if ('portfolio_genre_code' in req.body) updateData.portfolio_genre_code = req.body.portfolio_genre_code || null;
   LINK_FIELDS.forEach(f => { if (req.body[f] !== undefined) updateData[f] = req.body[f] || null; });
   // 列未反映環境（migration 未適用）でも 500 にせずグレースフルにフォールバック
   let { data, error } = await insertOrUpdateClientWithFallback('update', updateData, req.params.id);
@@ -19051,7 +19055,7 @@ router.post('/master/categories', requireAuth, requirePermission('master.page'),
 });
 
 // システム保護コード（削除・コード変更禁止）
-const PROTECTED_CATEGORY_CODES = ['COMMENT_CAT', 'media', 'creative_formats', 'sizes', 'products', 'appeal_axes'];
+const PROTECTED_CATEGORY_CODES = ['COMMENT_CAT', 'media', 'creative_formats', 'sizes', 'products', 'appeal_axes', 'portfolio_genres'];
 
 // 区分マスター更新
 router.put('/master/categories/:id', requireAuth, requirePermission('master.page'), async (req, res) => {
@@ -22467,6 +22471,27 @@ const PORTFOLIO_ID_CHUNK  = 100;   // .in() の URL 長超過を避ける分割�
 
 // 比率のパース / レーン判定は純関数として utils/portfolio-aspect.js に切り出している
 const { parsePortfolioAspect, portfolioOrientation } = require('../utils/portfolio-aspect');
+// 系統（業種軸 / 表現軸）の解決も純関数（ADR 035）
+const {
+  PORTFOLIO_STYLES, PORTFOLIO_STYLE_MAP, resolvePortfolioStyle, resolvePortfolioGenre,
+} = require('../utils/portfolio-genre');
+
+// 業種系統マスター（master_categories.code='portfolio_genres'）の code → name。
+// 設定画面から名称追加できるので TTL キャッシュ越しに読む（サイズ区分と同じ方式）。
+async function getPortfolioGenreMap() {
+  const arr = await ttlCache('portfolio:genres', MASTER_CACHE_TTL_MS, async () => {
+    const { data: cat } = await supabase
+      .from('master_categories').select('id').eq('code', 'portfolio_genres').maybeSingle();
+    if (!cat?.id) return [];   // migration 未適用でも 500 にしない（系統なしとして動く）
+    const { data: items } = await supabase
+      .from('master_items')
+      .select('code, name, sort_order, is_active')
+      .eq('category_id', cat.id)
+      .order('sort_order');
+    return (items || []).filter(i => i.is_active !== false).map(i => ({ code: i.code, name: i.name }));
+  });
+  return { list: arr, map: new Map(arr.map(g => [g.code, g.name])) };
+}
 
 // サイズ区分マスター（master_categories.code='sizes'）の id → 比率 Map。
 // creatives.creative_size には master_items.code が入る運用だが、過去データには
@@ -22523,38 +22548,51 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const bestMode = ['auto', 'best', 'all'].includes(bestModeRaw) ? bestModeRaw : 'auto';
     const from        = req.query.from || null;   // 納品日 (YYYY-MM-DD) 以降
     const to          = req.query.to   || null;   // 納品日 (YYYY-MM-DD) 以前
+    // 系統フィルタ（ADR 035）。genre=none は「業種が未設定の作品」を指す。
+    const genreCodes  = csv(req.query.genre);
+    const styleCodes  = csv(req.query.style);
 
     const assigneeRel = assigneeIds.length ? ',\n      ca_filter:creative_assignments!inner(user_id)' : '';
-    let q = supabase
-      .from('creatives')
-      .select(`
-        id, file_name, creative_type, creative_size, status, delivered_at, final_deadline,
-        portfolio_note, project_id,
-        projects!inner(id, name, client_id, director_id, producer_id, clients(id, name)),
-        creative_assignments(role, users(id, full_name, nickname))${assigneeRel}
-      `);
-    // 既定は納品済みのみ。include_wip=1 のときだけ制作途中（status≠納品）も含める。
-    if (!includeWip) q = q.eq('status', '納品');
+    // 系統の列（migration 2026-09-01）は未適用環境では存在しないため、select が 400 になる。
+    // 作品ページ自体が真っ白になるのを避けたいので「列あり → 落ちたら列なし」で引き直す。
+    const buildQuery = (withGenre) => {
+      const genreCols = withGenre ? 'portfolio_genre_code, portfolio_style_code,' : '';
+      const clientCols = withGenre ? 'id, name, portfolio_genre_code' : 'id, name';
+      let q = supabase
+        .from('creatives')
+        .select(`
+          id, file_name, creative_type, creative_size, status, delivered_at, final_deadline,
+          portfolio_note, project_id, ${genreCols}
+          projects!inner(id, name, client_id, director_id, producer_id, clients(${clientCols})),
+          creative_assignments(role, users(id, full_name, nickname))${assigneeRel}
+        `);
+      // 既定は納品済みのみ。include_wip=1 のときだけ制作途中（status≠納品）も含める。
+      if (!includeWip) q = q.eq('status', '納品');
 
-    if (clientIds.length > 1)       q = q.in('projects.client_id', clientIds);
-    else if (clientIds.length === 1) q = q.eq('projects.client_id', clientIds[0]);
-    if (tab === 'video') {
-      q = q.like('creative_type', 'video_%');
-    } else if (tab === 'design') {
-      // 一覧 API と同じ扱い: design_% に加えて lp / hp / line（プレフィックス無し）も静止画側に含める
-      q = q.or('creative_type.like.design_%,creative_type.eq.lp,creative_type.eq.hp,creative_type.eq.line');
-    }
-    if (from) q = q.gte('delivered_at', `${from}T00:00:00+09:00`);
-    if (to)   q = q.lte('delivered_at', `${to}T23:59:59+09:00`);
-    if (assigneeIds.length) {
-      q = assigneeIds.length > 1
-        ? q.in('ca_filter.user_id', assigneeIds)
-        : q.eq('ca_filter.user_id', assigneeIds[0]);
-    }
-    // 納品日が NULL の旧データも拾えるよう nullsFirst:false（末尾に回す）
-    q = q.order('delivered_at', { ascending: false, nullsFirst: false }).limit(PORTFOLIO_MAX_ITEMS);
+      if (clientIds.length > 1)       q = q.in('projects.client_id', clientIds);
+      else if (clientIds.length === 1) q = q.eq('projects.client_id', clientIds[0]);
+      if (tab === 'video') {
+        q = q.like('creative_type', 'video_%');
+      } else if (tab === 'design') {
+        // 一覧 API と同じ扱い: design_% に加えて lp / hp / line（プレフィックス無し）も静止画側に含める
+        q = q.or('creative_type.like.design_%,creative_type.eq.lp,creative_type.eq.hp,creative_type.eq.line');
+      }
+      if (from) q = q.gte('delivered_at', `${from}T00:00:00+09:00`);
+      if (to)   q = q.lte('delivered_at', `${to}T23:59:59+09:00`);
+      if (assigneeIds.length) {
+        q = assigneeIds.length > 1
+          ? q.in('ca_filter.user_id', assigneeIds)
+          : q.eq('ca_filter.user_id', assigneeIds[0]);
+      }
+      // 納品日が NULL の旧データも拾えるよう nullsFirst:false（末尾に回す）
+      return q.order('delivered_at', { ascending: false, nullsFirst: false }).limit(PORTFOLIO_MAX_ITEMS);
+    };
 
-    const { data: creatives, error } = await q;
+    let { data: creatives, error } = await buildQuery(true);
+    if (error && /portfolio_(genre|style)_code/.test(error.message || '')) {
+      console.warn('[portfolio] 系統の列が未反映のため、系統なしで表示します:', error.message);
+      ({ data: creatives, error } = await buildQuery(false));
+    }
     if (error) return res.status(500).json({ error: error.message });
     (creatives || []).forEach(c => { delete c.ca_filter; });
 
@@ -22576,6 +22614,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     }
 
     const sizeAspectMap = await getPortfolioSizeAspectMap();
+    const genreInfo = await getPortfolioGenreMap();
     const roleCodes = await getEffectiveRoleCodes(req);
     const userId = req.user?.id;
 
@@ -22597,6 +22636,15 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     // auto は「持ち主に⭐があればベストのみ、無ければ全体」。見る側が best/all を選んだらそれに従う
     const bestOnly = bestOf ? (bestMode === 'best' || (bestMode === 'auto' && bestSet.size > 0)) : false;
 
+    // 系統フィルタの判定と、チップに出す件数（ファセット）の集計。
+    // ファセットは「もう一方の軸だけを適用した集合」で数える（クロスファセット）。
+    // 業種チップを1つ選んでも表現チップの件数が全部 0 にならず、続けて絞り込めるようにするため。
+    const genreMatch = (code) => !genreCodes.length || genreCodes.includes(code || 'none');
+    const styleMatch = (code) => !styleCodes.length || styleCodes.includes(code);
+    const genreFacet = new Map();
+    const styleFacet = new Map();
+    const bumpFacet = (m, key) => m.set(key, (m.get(key) || 0) + 1);
+
     const items = [];
     let noFileCount = 0;   // ファイル未登録だった納品物の件数（非表示にしても件数は返す）
     for (const c of (creatives || [])) {
@@ -22612,10 +22660,6 @@ router.get('/portfolio', requireAuth, async (req, res) => {
       // マイベスト表示のときは、持ち主が⭐を付けた作品だけに絞る
       const isBest = bestSet.has(c.id);
       if (bestOnly && !isBest) continue;
-      if (all.length === 0) {
-        noFileCount += 1;
-        if (!includeNoFile) continue;
-      }
       const targets = all.length === 0 ? [null] : (latestOnly ? [all[0]] : all);
 
       const masterAspect = c.creative_size
@@ -22625,6 +22669,12 @@ router.get('/portfolio', requireAuth, async (req, res) => {
       // ⭐ を操作できるのは本人（この作品の担当者）だけ。ロールに依らない本人判定なので
       // VIEW AS の影響を受けない（他人のベストを勝手に編集させない）
       const canStar = (c.creative_assignments || []).some(a => a.users?.id === userId);
+      // 業種軸は作品の上書き → クライアント継承の順（作品単位で確定する）
+      const genre = resolvePortfolioGenre({
+        creative_genre: c.portfolio_genre_code,
+        client_genre:   c.projects?.clients?.portfolio_genre_code,
+        genreNameMap:   genreInfo.map,
+      });
 
       for (const f of targets) {
         const cacheAspect = (f?.media_width && f?.media_height)
@@ -22636,6 +22686,23 @@ router.get('/portfolio', requireAuth, async (req, res) => {
         // ズレた比率の枠に流し込むとカードが見切れる（文字が両端で切れる）ため、
         // 実寸 → マスター → 未解決（フロントが Drive 実寸を取りに行く）の順で解決する。
         const aspect = cacheAspect || masterAspect;
+        // 表現軸はカード（＝ファイル）単位。向きが効くので比率が決まってから解決する。
+        const orientation = portfolioOrientation(aspect?.w, aspect?.h);
+        const style = resolvePortfolioStyle({
+          style_override: c.portfolio_style_code,
+          creative_type:  c.creative_type,
+          orientation,
+        });
+        const passGenre = genreMatch(genre.code);
+        const passStyle = styleMatch(style.code);
+        if (passStyle) bumpFacet(genreFacet, genre.code || 'none');
+        if (passGenre) bumpFacet(styleFacet, style.code);
+        if (!passGenre || !passStyle) continue;
+        // ファイル未登録（外部リンクだけで納品されたもの）は 1 件として数え、既定では並べない
+        if (!f) {
+          noFileCount += 1;
+          if (!includeNoFile) continue;
+        }
         items.push({
           creative_id:   c.id,
           file_id:       f?.id || null,
@@ -22667,7 +22734,16 @@ router.get('/portfolio', requireAuth, async (req, res) => {
           // measured = 一度 Drive に問い合わせ済み（取れなかった場合も含む）→ 再取得しない
           aspect_source: cacheAspect ? 'drive' : (masterAspect ? 'master' : null),
           measured:      !!(f?.media_meta_checked_at),
-          orientation:   portfolioOrientation(aspect?.w, aspect?.h),
+          orientation,
+          // 系統（ADR 035）。genre は業種軸（クライアント継承＋作品上書き）、
+          // style は表現軸（creative_type と向きから自動導出＋作品上書き）
+          genre_code:       genre.code,
+          genre_name:       genre.name,
+          genre_overridden: genre.overridden,
+          style_code:       style.code,
+          style_name:       style.name,
+          style_overridden: style.overridden,
+          can_edit_genre:   editable,   // 説明文の編集権限と同じ（担当者・案件のP/D・admin/秘書）
         });
       }
     }
@@ -22691,9 +22767,28 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const groups = [...groupMap.values()].sort((a, b) =>
       String(b.latest_delivered_at || '').localeCompare(String(a.latest_delivered_at || '')));
 
+    // チップ用のファセット。マスターの並び順で返し、0 件の系統は出さない。
+    // マスターから消えた code がデータに残っていても拾えるよう、余りを末尾に足す。
+    const genreFacets = genreInfo.list
+      .filter(g => genreFacet.get(g.code))
+      .map(g => ({ code: g.code, name: g.name, count: genreFacet.get(g.code) }));
+    const known = new Set(genreInfo.list.map(g => g.code));
+    for (const [code, count] of genreFacet) {
+      if (code === 'none' || known.has(code)) continue;
+      genreFacets.push({ code, name: code, count });
+    }
+    if (genreFacet.get('none')) {
+      genreFacets.push({ code: 'none', name: '未設定', count: genreFacet.get('none') });
+    }
+    const styleFacets = PORTFOLIO_STYLES
+      .filter(s => styleFacet.get(s.code))
+      .map(s => ({ code: s.code, name: s.name, count: styleFacet.get(s.code) }));
+
     res.json({
       items,
       groups,
+      genre_facets: genreFacets,
+      style_facets: styleFacets,
       total: items.length,
       no_file_count: noFileCount,
       no_file_hidden: includeNoFile ? 0 : noFileCount,
@@ -23110,6 +23205,69 @@ router.patch('/creatives/:id/portfolio-note', requireAuth, async (req, res) => {
     res.json({ ok: true, note });
   } catch (e) {
     console.error('[portfolio-note] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/haruka/portfolio/genre-options — 系統の選択肢（業種軸のマスター＋表現軸の定義）
+// クライアント編集モーダルの業種プルダウンと、作品ごとの上書き UI が使う。
+router.get('/portfolio/genre-options', requireAuth, async (_req, res) => {
+  try {
+    const genreInfo = await getPortfolioGenreMap();
+    res.json({
+      genres: genreInfo.list,
+      // auto:true は creative_type から自動で付く値、false は人が上書きで付ける作風
+      styles: PORTFOLIO_STYLES.map(s => ({ code: s.code, name: s.name, auto: s.auto })),
+    });
+  } catch (e) {
+    console.error('[portfolio/genre-options] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/haruka/creatives/:id/portfolio-genre — 作品ごとの系統の上書き
+// 業種軸 genre_code: null にするとクライアントの系統を継承（＝上書き解除）
+// 表現軸 style_code: null にすると creative_type からの自動導出に戻る
+// 権限は説明文の編集と同じ（canEditPortfolioNote）
+router.patch('/creatives/:id/portfolio-genre', requireAuth, async (req, res) => {
+  try {
+    const patch = {};
+    if ('genre_code' in req.body) {
+      const code = String(req.body.genre_code ?? '').trim();
+      if (code) {
+        const genreInfo = await getPortfolioGenreMap();
+        if (!genreInfo.map.has(code)) return res.status(400).json({ error: '不明な系統コードです' });
+      }
+      patch.portfolio_genre_code = code || null;
+    }
+    if ('style_code' in req.body) {
+      const code = String(req.body.style_code ?? '').trim();
+      if (code && !PORTFOLIO_STYLE_MAP.has(code)) {
+        return res.status(400).json({ error: '不明な表現系統コードです' });
+      }
+      patch.portfolio_style_code = code || null;
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: '変更する系統が指定されていません' });
+
+    const { data: creative, error } = await supabase
+      .from('creatives')
+      .select('id, status, projects(id, director_id, producer_id), creative_assignments(role, users(id))')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!creative) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+    const roleCodes = await getEffectiveRoleCodes(req);
+    if (!canEditPortfolioNote({ roleCodes, userId: req.user?.id, creative })) {
+      return res.status(403).json({ error: 'この作品の系統を編集する権限がありません' });
+    }
+
+    const { error: uErr } = await supabase
+      .from('creatives').update(patch).eq('id', req.params.id);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    res.json({ ok: true, ...patch });
+  } catch (e) {
+    console.error('[portfolio-genre] failed:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
