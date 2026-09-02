@@ -81,7 +81,7 @@ function _isDateStr(s) {
  * @param {string} args.todayStr  今日（JST）の 'YYYY-MM-DD'
  * @param {string} args.sundayStr 今週日曜（JST・週=月〜日）の 'YYYY-MM-DD'
  * @returns {{ totals: {active:number, client_wait:number, due_this_week:number, overdue:number},
- *             members: Array }}  members は持ちボール数降順 → 進行中CR数降順
+ *             members: Array }}  members は負荷スコア降順 → 持ちボール数降順 → 進行中CR数降順
  */
 function computeTeamLoad({ members = [], creatives = [], todayStr, sundayStr } = {}) {
   const stats = new Map(); // userId -> { active, clientWait, balls, dueThisWeek, overdue }
@@ -144,9 +144,10 @@ function computeTeamLoad({ members = [], creatives = [], todayStr, sundayStr } =
     };
   });
 
-  // デフォルト: 持ちボール数降順 → 進行中CR数降順 → 名前昇順（表示側でソート切替可能）
+  // デフォルト: 負荷スコア降順 → 持ちボール数降順 → 進行中CR数降順 → 名前昇順（表示側でソート切替可能）。
+  // 高負荷の人を最上段に出す。旧「持ちボール数降順」は超過が多い人（ボール1件・超過13件など）が沈んで見落とす
   rows.sort((a, b) =>
-    (b.balls - a.balls) || (b.active - a.active) || String(a.full_name).localeCompare(String(b.full_name), 'ja'));
+    (b.score - a.score) || (b.balls - a.balls) || (b.active - a.active) || String(a.full_name).localeCompare(String(b.full_name), 'ja'));
 
   return { totals, members: rows };
 }

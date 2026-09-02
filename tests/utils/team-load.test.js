@@ -176,7 +176,7 @@ describe('computeTeamLoad（メンバー別集計）', () => {
     expect(totals.active).toBe(1);
   });
 
-  test('デフォルトソート: 持ちボール数降順 → 進行中CR数降順', () => {
+  test('デフォルトソート: 負荷スコア降順 → 持ちボール数降順 → 進行中CR数降順', () => {
     const creatives = [
       { id: 'c1', status: '編集', final_deadline: null, assignee_user_ids: ['u2'], ball_user_ids: ['u2'] },
       { id: 'c2', status: '編集', final_deadline: null, assignee_user_ids: ['u2'], ball_user_ids: ['u2'] },
@@ -184,6 +184,20 @@ describe('computeTeamLoad（メンバー別集計）', () => {
     ];
     const { members: rows } = computeTeamLoad({ members, creatives, todayStr: TODAY, sundayStr: SUNDAY });
     expect(rows.map(r => r.id)).toEqual(['u2', 'u1']);
+  });
+
+  test('デフォルトソート: 持ちボールが少なくても超過が多い（スコアが高い）人が上に来る', () => {
+    // u1: ボール1件・超過3件 → score 2+9=11 / u2: ボール2件・超過0 → score 4
+    const creatives = [
+      { id: 'c1', status: '編集', final_deadline: '2026-08-01', assignee_user_ids: ['u1'], ball_user_ids: ['u1'] },
+      { id: 'c2', status: '編集', final_deadline: '2026-08-01', assignee_user_ids: ['u1'], ball_user_ids: [] },
+      { id: 'c3', status: '編集', final_deadline: '2026-08-01', assignee_user_ids: ['u1'], ball_user_ids: [] },
+      { id: 'c4', status: '編集', final_deadline: null, assignee_user_ids: ['u2'], ball_user_ids: ['u2'] },
+      { id: 'c5', status: '編集', final_deadline: null, assignee_user_ids: ['u2'], ball_user_ids: ['u2'] },
+    ];
+    const { members: rows } = computeTeamLoad({ members, creatives, todayStr: TODAY, sundayStr: SUNDAY });
+    expect(rows.map(r => r.id)).toEqual(['u1', 'u2']);
+    expect(rows[0].score).toBeGreaterThan(rows[1].score);
   });
 
   test('creatives が空でも全メンバーがゼロ行で返る（0件で行が消えない）', () => {
