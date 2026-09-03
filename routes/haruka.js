@@ -5071,16 +5071,9 @@ router.get('/dashboard/birthdays', requireAuth, async (req, res) => {
 
 // ADR 009: 納品時スナップショット優先のディレクター/プロデューサー解決。
 // 納品済み（スナップショット有り）はその時点の担当に、未納品は現在の projects 側にフォールバック。
-function snapshotDirectorId(creative) {
-  const ids = creative?.delivered_director_ids;
-  if (Array.isArray(ids) && ids.length) return ids[0];
-  return creative?.projects?.director_id || null;
-}
-function snapshotProducerId(creative) {
-  const ids = creative?.delivered_producer_ids;
-  if (Array.isArray(ids) && ids.length) return ids[0];
-  return creative?.projects?.producer_id || null;
-}
+// 実体は utils/my-stats.js（🏅 マイ実績と /invoices/preview-items の「自分のクリエイティブ」判定
+// isCreativeOfUser も同じ基準を共有する。ADR 036。二重定義禁止）。
+const { snapshotDirectorId, snapshotProducerId, isCreativeOfUser } = require('../utils/my-stats');
 
 // ADR 026: JST の当月範囲 [start, 翌月start) を timestamptz 比較用 ISO で返す。
 // 例: 2026年6月 → start=2026-05-31T15:00:00.000Z（JST 6/1 00:00）, end=2026-06-30T15:00:00.000Z（JST 7/1 00:00）
@@ -14975,11 +14968,10 @@ router.get('/invoices/preview-items', async (req, res) => {
   //   on_delivery（既定）  : delivered_at の JST 月 → 無ければ final_deadline → draft_deadline の月（従来と同一）
   //   on_first_draft       : first_draft_submitted_at の JST 月 → 無ければ draft_deadline の月
   const targetYm = `${year}-${String(month).padStart(2, '0')}`;
+  // 「自分の分」判定は utils/my-stats.js の isCreativeOfUser（担当 or スナップショットD/P）に共通化。
+  // 🏅 マイ実績（/my-stats）も同じ関数を使うため、請求プレビューの本数とマイ実績の本数が食い違わない。
   const myCreatives = allCreatives.filter(c => {
-    const mine = c.creative_assignments?.some(a => a.user_id === uid);
-    const isDirector = snapshotDirectorId(c) === uid;
-    const isProducer = snapshotProducerId(c) === uid;
-    if (!mine && !isDirector && !isProducer) return false;
+    if (!isCreativeOfUser(c, uid)) return false;
     return resolveBillingMonth(c, c.projects) === targetYm;
   });
 
@@ -24291,6 +24283,132 @@ router.delete('/personal-kpis/:id', requireAuth, async (req, res) => {
   }
   if (!data) return res.status(404).json({ error: 'KPIが見つかりません' });
   res.json({ ok: true });
+});
+
+// ============================================================
+// 🏅 マイ実績（ホーム画面に「自分の頑張り」を本人だけに返す）— ADR 036
+// ------------------------------------------------------------
+// 背景: ホームは締切とタスクしか出ず、自分の納品数・納期遵守などをメンバー本人が見られなかった
+//       （分析タブは analytics.view＝管理層のみ）。ADR 033 は「メンバー間比較を避ける」ため他人の
+//       負荷を隠したが、自分の実績を自分にだけ見せることはその原則と矛盾しない。
+// 権限: requireAuth のみ（permission key 無し・全ロール利用可）。ADR 032 と同じ「本人専用データ」パターン。
+// ⚠️ 本人専用（ADR 036）: 全クエリを req.user.id に固定する。user_id パラメータは受け付けない。
+//    admin バイパス / isSuperAdminUser バイパス / VIEW AS（X-View-As）による他人参照は将来も追加しないこと。
+//    VIEW AS でロールを切り替えても本人のデータが出続けるのは仕様（ADR 015 上の権限漏れではない）。
+//    順位・メンバー間比較・他人の数値は今後もこの API から返さない（ADR 033 と整合）。
+// 「自分のクリエイティブ」の定義: utils/my-stats.js の isCreativeOfUser
+//    （creative_assignments に自分の行 OR 納品時スナップショット delivered_director_ids / delivered_producer_ids
+//     （無ければ projects.director_id / producer_id）が自分・ADR 009）。/invoices/preview-items と同一基準。
+// 集計: utils/my-stats.js computeMyStats（JST 固定・jest で TZ=UTC / Asia/Tokyo 両方検証）。
+//    - delivered_this_month / delivered_last_month / delivered_total: creatives.delivered_at の JST 月（ADR 026）
+//    - first_draft_this_month: first_draft_submitted_at の JST 月（ADR 034）
+//    - on_time_rate_3m: 直近3ヶ月に納品したもののうち final_deadline ありを分母、
+//      delivered_at の JST 日付 <= final_deadline を分子（/analytics/delivery-quality と同じ判定式）
+//    - likes_this_month: creative_file_likes → creative_files → creatives で自分の creative のファイルに
+//      他人が付けた当月分（自分の like は除外）
+// パフォーマンス: N+1 禁止。creatives は「担当 / 案件D・P / スナップショットD」の3経路を range ページングで
+//    一括取得（PostgREST の 1000 行打ち切り対策）。likes は当月分を creative_files!inner の embed で 1 経路取得し
+//    JS 側で自分の creative に絞る（大量 ID の .in() は URL 長超過で fetch failed になるため使わない・PR #919）。
+//    base64 列（screenshot_data_url / avatar_url 等）は select しない。
+// ============================================================
+router.get('/my-stats', requireAuth, async (req, res) => {
+  const { computeMyStats } = require('../utils/my-stats');
+  const uid = req.user?.id; // ← 本人固定。req.query / X-View-As からユーザーを差し替える経路は作らない
+  if (!uid) return res.status(401).json({ error: '認証が必要です' });
+
+  // 集計に必要な最小列のみ（base64 列・名前系は不要）
+  const CREATIVE_SELECT = `
+    id, status, delivered_at, final_deadline, first_draft_submitted_at,
+    delivered_director_ids, delivered_producer_ids, project_id,
+    projects(id, director_id, producer_id),
+    creative_assignments(user_id)
+  `;
+
+  // PostgREST の既定 max rows（1000行）による silent 打ち切りを避けるため range でページングする
+  const fetchAllRows = async (buildQuery) => {
+    const PAGE = 1000;
+    const all = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await buildQuery().range(offset, offset + PAGE - 1);
+      if (error) throw new Error(error.message);
+      all.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    return all;
+  };
+
+  try {
+    // ---- 1. 自分のクリエイティブ候補を3経路で一括取得（/invoices/preview-items と同じ取り方）----
+    //   a) creative_assignments に自分の行がある（aliased inner join で絞り、本体の assignments 埋め込みは全行のまま）
+    //   b) 自分が D / P の案件にぶら下がる creatives（assignment 無しの D / P を救う）
+    //   c) 納品時スナップショット delivered_director_ids に自分がいる（交代後も納品実績は自分の分・ADR 009）
+    const [directedRes, producedRes] = await Promise.all([
+      supabase.from('projects').select('id').eq('director_id', uid),
+      supabase.from('projects').select('id').eq('producer_id', uid),
+    ]);
+    if (directedRes.error) throw new Error(directedRes.error.message);
+    if (producedRes.error) throw new Error(producedRes.error.message);
+    const leaderProjectIds = Array.from(new Set([
+      ...((directedRes.data || []).map(p => p.id)),
+      ...((producedRes.data || []).map(p => p.id)),
+    ]));
+
+    const [assigned, leader, snapshotDir, snapshotProd] = await Promise.all([
+      fetchAllRows(() => supabase.from('creatives')
+        .select(`${CREATIVE_SELECT}, assignee_filter:creative_assignments!inner(user_id)`)
+        .eq('assignee_filter.user_id', uid)
+        .order('id', { ascending: true })),
+      leaderProjectIds.length
+        ? fetchAllRows(() => supabase.from('creatives')
+            .select(CREATIVE_SELECT)
+            .in('project_id', leaderProjectIds)
+            .order('id', { ascending: true }))
+        : Promise.resolve([]),
+      fetchAllRows(() => supabase.from('creatives')
+        .select(CREATIVE_SELECT)
+        .contains('delivered_director_ids', [uid])
+        .order('id', { ascending: true })),
+      fetchAllRows(() => supabase.from('creatives')
+        .select(CREATIVE_SELECT)
+        .contains('delivered_producer_ids', [uid])
+        .order('id', { ascending: true })),
+    ]);
+
+    // 重複排除して結合（最終的な「自分の分」判定は computeMyStats 内の isCreativeOfUser が行う）
+    const byId = new Map();
+    for (const c of assigned) byId.set(c.id, c);
+    for (const c of leader) if (!byId.has(c.id)) byId.set(c.id, c);
+    for (const c of snapshotDir) if (!byId.has(c.id)) byId.set(c.id, c);
+    for (const c of snapshotProd) if (!byId.has(c.id)) byId.set(c.id, c);
+    const creatives = Array.from(byId.values());
+
+    // ---- 2. 今月の👍候補（当月 JST・他人の like）を 1 クエリで取得。creative_id は creative_files 経由 ----
+    const now = new Date();
+    const nowJst = now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // 'YYYY-MM-DD'（JST）
+    const [jy, jm] = nowJst.split('-').map(Number);
+    const { startIso, endIso } = jstMonthRangeIso(jy, jm);
+    let likes = [];
+    if (creatives.length) {
+      const rows = await fetchAllRows(() => supabase
+        .from('creative_file_likes')
+        .select('id, user_id, created_at, creative_files!inner(creative_id)')
+        .neq('user_id', uid)
+        .gte('created_at', startIso)
+        .lt('created_at', endIso)
+        .order('id', { ascending: true }));
+      likes = rows.map(r => ({
+        user_id: r.user_id,
+        created_at: r.created_at,
+        creative_id: r.creative_files?.creative_id || null,
+      }));
+    }
+
+    // ---- 3. 純関数で集計（JST 固定）----
+    res.json(computeMyStats({ creatives, likes, uid, now }));
+  } catch (e) {
+    console.error('[my-stats]', e);
+    res.status(500).json({ error: e.message || 'マイ実績の集計に失敗しました' });
+  }
 });
 
 // ==================== 📊 チーム状況（チーム負荷ダッシュボード）====================
