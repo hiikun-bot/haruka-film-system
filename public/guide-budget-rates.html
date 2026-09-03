@@ -183,12 +183,37 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       ② <b>💰 内訳</b>（グループごとの<b>ロール別</b>支払単価。ディレクション費など）<br>
       ③ <b>固定費・追加収入</b>（スタジオ・機材など<b>本数に依存しない</b>お金）
     </p>
-    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 編集できるのは案件編集権限（管理者・秘書・プロデューサー）を持つ人。クライアント単価の表示はさらに権限で絞られており、権限がない人には制作者単価だけが見えます。</p>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 成果物グループと💰内訳（単価）を編集できるのは <b>管理者・秘書・プロデューサー・ディレクター</b>。固定費・追加収入と支払スケジュールは案件編集権限（管理者・秘書・プロデューサー）の人だけです。クライアント単価の表示はさらに権限で絞られており、権限がない人には制作者単価だけが見えます。</p>
   </div>
 
   <div class="wanpoint">
     <div class="wanpoint-title">ここだけは絶対！</div>
     <p>このタブは <strong>案件を保存した後（編集モード）だけ</strong> 表示されます。新規作成の途中では出てきません。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🎥 ディレクターが単価を入れると「管理者の承認待ち」になる</div>
+    <p>ディレクターも成果物グループと単価を設定できます。案件一覧の「<b>💴 単価</b>」ボタン（案件を新規追加した直後は自動で開きます）から「💰 見積・費用」タブが開き、グループの追加・編集・💰内訳・ディレクター費・プリセット一括生成が使えます。</p>
+    <div class="flow-row">
+      <div class="flow-step">
+        <div class="flow-step-icon">🎥</div>
+        <div class="flow-step-label">ディレクターが<br>単価を保存</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">🕓</div>
+        <div class="flow-step-label">「承認待ち」バッジ<br>（単価はすぐ有効）</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">✅</div>
+        <div class="flow-step-label">管理者が承認<br>または差し戻し</div>
+      </div>
+    </div>
+    <p>保存すると「<b>保存しました（管理者の承認待ち）</b>」と表示され、そのグループに <b>🕓 承認待ち</b> バッジが付きます。管理者にはアプリ内通知が届き、ホームの「<b>💴 単価の承認待ち</b>」カードから承認・差し戻しができます。</p>
+    <p style="margin-top:6px"><b>承認前でも単価は有効です。</b> 集計・請求プレビュー・クリエイティブ登録時の単価表示にはそのまま反映されます。止まるのは <b>請求書の発行だけ</b>（承認待ちの単価が含まれていると発行できません）。</p>
+    <p style="margin-top:6px"><b>差し戻し</b> されると理由つきで通知が届き、グループの単価は <b>最後に承認された値</b> に戻ります。新しく作ったグループの場合は、単価が未設定に戻ります（クリエイティブがまだ無ければグループごと消えます）。</p>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 管理者（承認権限のある人）が自分で単価を入れたときは、承認を経ずにそのまま確定します。プロデューサー・秘書の変更も承認待ちになります（権限マトリクスで「単価の承認・差し戻し」をONにすると即確定に変えられます）。</p>
   </div>
 
   <div class="next-btn-wrap"><a class="next-btn" href="#step2">STEP 2 へ進む</a></div>
@@ -383,6 +408,10 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="trouble-item">
       <span class="trouble-icon">📋</span>
       <div><div class="trouble-q">プリセットの単価がおかしい</div><div class="trouble-a">一括生成はマスターのプリセット単価を使います。マスター側の単価を確認（<a href="/guide-master-settings.html" style="color:var(--em-dark);font-weight:700">マスター設定ガイド</a>）</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🕓</span>
+      <div><div class="trouble-q">「承認待ち」バッジが付いたままで請求書が発行できない</div><div class="trouble-a">管理者がまだ承認していません。管理者はホームの「💴 単価の承認待ち」カードか、案件の「💰 見積・費用」タブの「✅ 承認」で確定できます。承認前でも集計・請求プレビューには反映されています</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">⚠️</span>

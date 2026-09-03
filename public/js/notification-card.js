@@ -29,6 +29,8 @@ const ICON_BY_TYPE = {
   creative_status: '🎬',
   // クリエイティブ新規登録通知（admin / secretary 向け）
   creative_registered: '🎬',
+  // 単価の承認待ち / 承認 / 差し戻し（ADR 037）
+  pricing_approval: '💴',
 };
 
 // HTMLエスケープ — ユーザー入力を安全に埋め込むための関数

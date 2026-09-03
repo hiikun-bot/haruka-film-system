@@ -200,7 +200,7 @@ describe('roleCodeToInvoiceCostType', () => {
 });
 
 describe('resolveCreativeRoleCost', () => {
-  const EMPTY = { unit_price: 0, line_id: null, line_cost_id: null };
+  const EMPTY = { unit_price: 0, line_id: null, line_cost_id: null, pricing_approval: null };
 
   function makeLine(over = {}) {
     return {
@@ -235,7 +235,7 @@ describe('resolveCreativeRoleCost', () => {
         l2: [{ id: 'lc2', role: { code: 'editor' }, pricing_type: 'fixed_per_unit', unit_price: 2000 }],
       },
     });
-    expect(result).toEqual({ unit_price: 2000, line_id: 'l2', line_cost_id: 'lc2' });
+    expect(result).toEqual({ unit_price: 2000, line_id: 'l2', line_cost_id: 'lc2', pricing_approval: 'approved' });
   });
 
   test('line_id が無ければ category_id 一致で line を選ぶ', () => {
@@ -365,7 +365,7 @@ describe('resolveCreativeRoleCost', () => {
         l2: [{ id: 'lc2', role: { code: 'director' }, unit_price: 5000 }],
       },
     });
-    expect(result).toEqual({ unit_price: 5000, line_id: 'l2', line_cost_id: 'lc2' });
+    expect(result).toEqual({ unit_price: 5000, line_id: 'l2', line_cost_id: 'lc2', pricing_approval: 'approved' });
   });
 
   test('role code は role.code / roles.code / role_code のどれでも引ける', () => {
@@ -445,7 +445,7 @@ describe('resolveCreativeRoleCost', () => {
       linesByProject: { p1: lines },
       lineCostsByLine: { l1: [{ id: 'lc1', role: { code: 'editor' }, pricing_type: 'per_view', unit_price: 5000 }] },
     });
-    expect(result).toEqual({ unit_price: 0, line_id: 'l1', line_cost_id: 'lc1' });
+    expect(result).toEqual({ unit_price: 0, line_id: 'l1', line_cost_id: 'lc1', pricing_approval: 'approved' });
   });
 
   test('linesByProject は Map でも plain object でも動く', () => {
@@ -466,6 +466,48 @@ describe('resolveCreativeRoleCost', () => {
       lineCostsByLine,
     });
     expect(viaObj.unit_price).toBe(700);
+  });
+
+  // ADR 037: 承認待ちの単価は候補から外さず、そのまま採用して pricing_approval で知らせる
+  test('承認待ち（pricing_approval=pending）の line も採用し、pricing_approval:"pending" を返す（ADR 037）', () => {
+    const lines = [makeLine({ id: 'l1', pricing_approval: 'pending' })];
+    const result = resolveCreativeRoleCost({
+      creative: { id: 'c1', project_id: 'p1', line_id: 'l1' },
+      roleCode: 'editor',
+      linesByProject: { p1: lines },
+      lineCostsByLine: { l1: [{ id: 'lc1', role: { code: 'editor' }, unit_price: 4000 }] },
+    });
+    expect(result).toEqual({ unit_price: 4000, line_id: 'l1', line_cost_id: 'lc1', pricing_approval: 'pending' });
+  });
+
+  test('承認待ち line は候補順を変えない（rank 一致の pending line が approved line より優先される）', () => {
+    const lines = [
+      makeLine({ id: 'l1', rank: 'B', pricing_approval: 'approved' }),
+      makeLine({ id: 'l2', rank: 'A', pricing_approval: 'pending' }),
+    ];
+    const result = resolveCreativeRoleCost({
+      creative: { id: 'c1', project_id: 'p1', category_id: 'cat-video' },
+      roleCode: 'editor',
+      rankApplied: 'A',
+      linesByProject: { p1: lines },
+      lineCostsByLine: {
+        l1: [{ id: 'lc1', role: { code: 'editor' }, unit_price: 1000 }],
+        l2: [{ id: 'lc2', role: { code: 'editor' }, unit_price: 2000 }],
+      },
+    });
+    expect(result.line_id).toBe('l2');
+    expect(result.pricing_approval).toBe('pending');
+  });
+
+  test('pricing_approval 列が無い line（migration 未適用）は approved 扱い', () => {
+    const lines = [makeLine({ id: 'l1' })]; // pricing_approval 未定義
+    const result = resolveCreativeRoleCost({
+      creative: { id: 'c1', project_id: 'p1', line_id: 'l1' },
+      roleCode: 'editor',
+      linesByProject: { p1: lines },
+      lineCostsByLine: { l1: [{ id: 'lc1', role: { code: 'editor' }, unit_price: 100 }] },
+    });
+    expect(result.pricing_approval).toBe('approved');
   });
 });
 
