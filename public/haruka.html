@@ -1388,6 +1388,19 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .dash-grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}
 .dash-section{background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:20px}
 .dash-section-title{font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:6px}
+/* 🏅 マイ実績（本人専用カード・ADR 036） */
+.my-stats-card{margin-bottom:14px;border-left:4px solid var(--em)}
+.my-stats-card .dash-section-title{justify-content:space-between;margin-bottom:12px}
+.my-stats-lock{font-size:10px;font-weight:500;color:var(--text-muted);letter-spacing:0;text-transform:none;white-space:nowrap}
+.my-stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.my-stats-tile{background:var(--surface);border:0.5px solid var(--border-light,var(--border));border-radius:10px;padding:12px 10px;text-align:center;min-width:0}
+.my-stats-tile-label{font-size:11px;color:var(--text-muted);letter-spacing:0.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.my-stats-tile-val{font-size:26px;font-weight:800;line-height:1.1;color:var(--em-dark);margin-top:4px}
+.my-stats-tile-val small{font-size:12px;font-weight:600;margin-left:2px}
+.my-stats-tile-sub{font-size:10px;color:var(--text-muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.my-stats-milestones{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.my-stats-milestone{font-size:12px;font-weight:600;color:var(--em-dark);background:var(--em-pale);border-radius:20px;padding:4px 12px}
+.my-stats-empty{font-size:13px;color:var(--text-muted);text-align:center;padding:10px 0 4px}
 .dash-alert-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border-light);font-size:13px}
 .dash-alert-row:last-child{border-bottom:none}
 .dash-due-badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;min-width:62px;text-align:center}
@@ -1842,6 +1855,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   /* セクション */
   .dash-section{padding:14px}
   .dash-section-title{font-size:11px}
+  /* 🏅 マイ実績: 2×2 に折り返す */
+  .my-stats-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+  .my-stats-tile{padding:10px 8px}
+  .my-stats-tile-val{font-size:22px}
   /* 誕生日 */
   .bday-list{grid-template-columns:1fr;gap:8px}
   .bday-celebration{padding:18px 16px;border-radius:12px}
@@ -4209,6 +4226,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
     </div>
   </div>
+  <!-- 🏅 マイ実績（本人専用・ADR 036。editor/designer/director ダッシュで renderMyStatsCard() が描画。admin ダッシュには出さない） -->
+  <div id="dash-my-stats"></div>
   <!-- 全体連絡（全ロール共通） -->
   <div id="dash-announcements" style="margin-bottom:14px"></div>
   <!-- 今日の納期（全ロール共通） -->
@@ -29036,6 +29055,12 @@ function loadDashboard() {
   // 全ロール共通: 今日の納期セクション（allCreatives 依存 → creatives 完了後に追い描画）
   _whenInitLoaded(['creatives'], () => renderTodayDeadlines(today));
 
+  // 🏅 マイ実績: editor/designer/director ダッシュでだけ描画する（下の各 render 内で呼ぶ）。
+  // admin ダッシュ（経営数値と混ざる）には出さないため、VIEW AS 切替で前ロールのカードが残らないよう先にクリア。
+  const myStatsEl = document.getElementById('dash-my-stats');
+  if (myStatsEl) myStatsEl.innerHTML = '';
+  _myStatsSeq++; // 取得中のカードがあれば無効化（editor → admin 切替中に遅れて描画されるのを防ぐ）
+
   if (['admin','secretary','producer','producer_director'].includes(role)) {
     // 管理者ダッシュ: ヒーロー統計が allProjects 依存。
     // dashCreatives / 売上 / 予実は renderAdminDash 内で自前 fetch（並列発射）する。
@@ -29045,6 +29070,71 @@ function loadDashboard() {
   } else {
     _whenInitLoaded(['creatives'], () => renderEditorDash(today));
   }
+}
+
+// ============================================================
+// 🏅 マイ実績（ホームに「自分の頑張り」を本人だけに表示）— ADR 036
+// ------------------------------------------------------------
+// GET /api/haruka/my-stats は req.user 本人のデータしか返さない（admin バイパス無し・VIEW AS でも本人のまま）。
+// フロントにロール分岐は書かない（誰でも自分の分が出る）。取得失敗時はカードを静かに省略しホームを壊さない。
+// 呼び出し元: renderEditorDash() / renderDirectorDash()。renderAdminDash() からは呼ばない。
+// ============================================================
+let _myStatsSeq = 0;
+async function renderMyStatsCard() {
+  const el = document.getElementById('dash-my-stats');
+  if (!el) return;
+  const seq = ++_myStatsSeq;
+  let s = null;
+  try {
+    const res = await apiFetch(`${API}/my-stats`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    s = await res.json();
+  } catch (e) {
+    console.warn('[my-stats] fetch failed（カードを省略）', e);
+    return;
+  }
+  if (seq !== _myStatsSeq) return; // VIEW AS 連打等で後発の描画が優先
+  if (!document.getElementById('page-dashboard')?.classList.contains('active')) return;
+  el.innerHTML = _myStatsCardHtml(s);
+}
+
+function _myStatsCardHtml(s) {
+  const n = (v) => Number(v) || 0;
+  const thisM = n(s.delivered_this_month);
+  const lastM = n(s.delivered_last_month);
+  const total = n(s.delivered_total);
+  const firstDraft = n(s.first_draft_this_month);
+  const likes = n(s.likes_this_month);
+  const den = n(s.on_time_denominator);
+  const rate = (s.on_time_rate_3m === null || s.on_time_rate_3m === undefined) ? null : Math.round(Number(s.on_time_rate_3m) * 100);
+  const milestones = Array.isArray(s.milestones) ? s.milestones : [];
+  const isEmpty = thisM === 0 && lastM === 0 && total === 0 && firstDraft === 0 && likes === 0 && den === 0;
+
+  const tile = (label, valHtml, sub) => `
+    <div class="my-stats-tile">
+      <div class="my-stats-tile-label">${label}</div>
+      <div class="my-stats-tile-val">${valHtml}</div>
+      <div class="my-stats-tile-sub">${sub}</div>
+    </div>`;
+
+  const grid = `<div class="my-stats-grid">
+    ${tile('今月納品', `${thisM}<small>本</small>`, `先月 ${lastM}本`)}
+    ${tile('累計納品', `${total}<small>本</small>`, `初稿 ${firstDraft}本（今月）`)}
+    ${tile('納期遵守', rate === null ? '<span style="font-size:18px">—</span>' : `${rate}<small>%</small>`, den > 0 ? `直近3ヶ月・${n(s.on_time_numerator)}/${den}本` : '直近3ヶ月（納期設定なし）')}
+    ${tile('今月の👍', `${likes}<small>個</small>`, 'ファイルへのいいね')}
+  </div>`;
+
+  const body = isEmpty
+    ? `${grid}<div class="my-stats-empty">🌱 最初の納品がここに刻まれます</div>`
+    : `${grid}${milestones.length ? `<div class="my-stats-milestones">${milestones.map(m => `<span class="my-stats-milestone">${esc(m)}</span>`).join('')}</div>` : ''}`;
+
+  return `<div class="dash-section my-stats-card">
+    <div class="dash-section-title">
+      <span>🏅 マイ実績</span>
+      <span class="my-stats-lock" title="この数字は本人にしか表示されません（管理者を含め他の人には見えません）">🔒 あなただけに表示</span>
+    </div>
+    ${body}
+  </div>`;
 }
 
 function renderTodayDeadlines(today) {
@@ -31371,9 +31461,13 @@ async function renderAdminDash(today) {
 function renderDirectorDash(today) {
   // ディレクターは自チームに絞ったアラート＋全体俯瞰
   renderAdminDash(today);
+  // 🏅 マイ実績（本人専用・ADR 036）。renderAdminDash 側には置かない（admin 単独ロールには出さない）
+  renderMyStatsCard();
 }
 
 function renderEditorDash(today) {
+  // 🏅 マイ実績（本人専用・ADR 036）: 挨拶ヒーロー直下に非同期で描画（下の同期描画をブロックしない）
+  renderMyStatsCard();
   const mine = allCreatives.filter(c =>
     c.creative_assignments?.some(a =>
       a.users?.email === currentUser?.email || a.users?.id === currentUser?.id
