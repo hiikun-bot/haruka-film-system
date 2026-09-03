@@ -69,6 +69,7 @@ NNN は連番（`001`, `002`, ...）。
 | [010](decisions/010-project-schedule-tasks.md) | 案件スケジュール / フェーズ・タスク管理（LP・HP 等カテゴリ横断） | projects, schedule, tasks, gantt, lp, hp |
 | [016](decisions/016-project-work-type-and-ball-state.md) | 案件業務管理：業務種別（制作/保守）とボール状態モデル | projects, schedule, work-type, ball-state, lp, hp, maintenance |
 | [022](decisions/022-estimate-line-rank.md) | 成果物グループ（見積明細）にランクを第一級の列として持たせる | pricing, rank, estimate, payout, editor |
+| [037](decisions/037-director-pricing-with-admin-approval.md) | ディレクターも単価を設定可・承認権限なしの単価変更は有効なまま admin 承認待ち | pricing, estimate, permissions, approval, director |
 
 ### 共通参照
 - [philosophy.md](philosophy.md) — 共通設計原則

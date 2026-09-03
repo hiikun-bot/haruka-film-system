@@ -351,7 +351,10 @@ function pickCreativeLineId({ creative, linesByProject, costsByLine, categoryIdB
  * @param {object} args.linesByProject    - Map<project_id, line[]>（line には category 情報含む）
  * @param {object} args.lineCostsByLine   - { [line_id]: line_cost[] }（role embed: { roles: { code } }）
  * @param {string[]} [args.activeStatuses] - 集計対象 status（既定 ACTIVE_LINE_STATUSES）
- * @returns {{ unit_price: number, line_id: string|null, line_cost_id: string|null }} 見つからなければ unit_price=0
+ * @returns {{ unit_price: number, line_id: string|null, line_cost_id: string|null, pricing_approval: 'approved'|'pending'|null }}
+ *   見つからなければ unit_price=0 / pricing_approval=null。
+ *   pricing_approval は採用した line の承認状態（ADR 037）。line に列が無い（migration 未適用・
+ *   select に含めていない）場合は 'approved' 扱い。候補の絞り込みには使わない（承認待ちでも採用する）。
  */
 function resolveCreativeRoleCost({
   creative,
@@ -361,13 +364,14 @@ function resolveCreativeRoleCost({
   lineCostsByLine,
   activeStatuses,
 } = {}) {
-  if (!creative || !roleCode) return { unit_price: 0, line_id: null, line_cost_id: null };
+  const EMPTY = { unit_price: 0, line_id: null, line_cost_id: null, pricing_approval: null };
+  if (!creative || !roleCode) return EMPTY;
 
   // 1) 候補 line の解決（スコープ → status → rank 優先）
   const candidates = buildCreativeLineCandidates({
     creative, rankApplied, linesByProject, activeStatuses,
   });
-  if (!candidates.length) return { unit_price: 0, line_id: null, line_cost_id: null };
+  if (!candidates.length) return EMPTY;
 
   // 2) 候補 line を順番に見て、roleCode の line_cost を持つ最初の line を採用
   //    (director/producer の line_cost が rank A の line にしかない、というケースを救うため)
@@ -419,10 +423,23 @@ function resolveCreativeRoleCost({
     }
     // 請求金額は整数（円）に丸める。0.5 切り上げ。
     perUnit = Math.round(perUnit);
-    return { unit_price: perUnit, line_id: line.id, line_cost_id: lc.id || null };
+    return {
+      unit_price: perUnit,
+      line_id: line.id,
+      line_cost_id: lc.id || null,
+      pricing_approval: linePricingApproval(line),
+    };
   }
 
-  return { unit_price: 0, line_id: null, line_cost_id: null };
+  return EMPTY;
+}
+
+/**
+ * line の承認状態（ADR 037）。'pending' 以外はすべて 'approved' 扱い
+ * （列が無い / null / 未知の値 = 既存データ・migration 未適用と同じ「承認済み」）。
+ */
+function linePricingApproval(line) {
+  return line && line.pricing_approval === 'pending' ? 'pending' : 'approved';
 }
 
 module.exports = {
