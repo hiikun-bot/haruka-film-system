@@ -48,7 +48,8 @@ async function createSheetWithData(title, rows) {
 // 個人所有シートへの出力: 1枚目シートを全消し→2D配列を書き込み（ヘッダー行固定＋太字）
 // SAのマイドライブは保存容量0でシート新規作成が不可（quota exceeded）のため、
 // マイゴール等の完全個人領域は「ユーザー所有のシートにSAが書き込む」方式をとる
-// format（任意）: { fontSize, hideColumns: [列index], columnWidths: [px], zebra: true, dropdowns: [{ column, values }] }
+// format（任意）: { sheetTitle, fontSize, hideColumns: [列index], columnWidths: [px], zebra: true, dropdowns: [{ column, values }] }
+// sheetTitle を渡すと1枚目タブの名前を「シート1」から付け替える（同名タブが他にあるときは衝突するので触らない）
 // 再出力時も同じ見た目になるよう、ゼブラ（バンド）は既存を消してから貼り直す
 // 0-origin の列indexをA1表記の列文字に変換（0→A, 25→Z, 26→AA）
 function colLetter(i) {
@@ -98,6 +99,15 @@ async function overwriteFirstSheet(spreadsheetId, rows, format = {}) {
     const numRows = rows.length;
     const numCols = rows[0]?.length || 0;
     const requests = [];
+    // タブ名の付け替え（format.sheetTitle）: 「シート1」のままだと何のタブか分からないため
+    // 他タブと同名になると batchUpdate 全体が失敗し整形まで巻き添えになるので、その場合はスキップ
+    const wantTitle = String(format.sheetTitle || '').trim();
+    if (wantTitle && wantTitle !== first.title) {
+      const taken = (meta.data.sheets || []).some(s => s.properties?.sheetId !== sheetId && s.properties?.title === wantTitle);
+      if (!taken) {
+        requests.push({ updateSheetProperties: { properties: { sheetId, title: wantTitle }, fields: 'title' } });
+      }
+    }
     // 前回貼ったゼブラを削除（重複貼りはAPIエラーになる）
     for (const b of firstSheet.bandedRanges || []) {
       requests.push({ deleteBanding: { bandedRangeId: b.bandedRangeId } });
