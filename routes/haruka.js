@@ -23867,6 +23867,7 @@ router.delete('/personal-tasks/:id', requireAuth, async (req, res) => {
 // ---------- スプレッドシート エクスポート／インポート（2026-08-22 拡張） ----------
 // ADR 032: 完全個人領域。シートは共有ドライブに置かず、SAのマイドライブに作成して本人メールにのみ共有する。
 // インポートは「ID列あり=更新 / ID列空=新規作成」。シートに無いタスクの削除は行わない（安全側）。
+const PG_SHEET_TAB_TITLE = '目標一覧'; // エクスポート先タブの名前（1枚目タブをこの名前に付け替える）
 const PG_SHEET_PRIORITY_LABELS = { top: '最優先', high: '高', mid: '中', low: '低' };
 const PG_SHEET_PRIORITY_CODES = { '最優先': 'top', '高': 'high', '中': 'mid', '低': 'low' };
 // ヘッダーは「基準名（補足）」形式を許容。列の並び替えはOK・列削除はその項目を取込対象外にする
@@ -23924,7 +23925,7 @@ router.get('/personal-tasks/sheet-info', requireAuth, (req, res) => {
   res.json({ sa_email: getServiceAccountEmail() });
 });
 
-// POST /personal-tasks/export-sheet — タスク一覧をユーザー所有のシート（1枚目タブ）に上書き出力
+// POST /personal-tasks/export-sheet — タスク一覧をユーザー所有のシート（1枚目タブ＝「目標一覧」に改名）に上書き出力
 // SAのマイドライブは容量0で新規作成不可（quota exceeded）のため、SA所有での作成はしない。
 // ユーザーが自分のドライブで作ったシートをSAに編集者共有してもらい、そこへ書き込む（本人所有＝完全個人のまま）
 router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
@@ -23953,6 +23954,7 @@ router.post('/personal-tasks/export-sheet', requireAuth, async (req, res) => {
     const dueDateCol = PG_SHEET_COLS.findIndex(c => c.key === 'due_date');
     const completedAtCol = PG_SHEET_COLS.findIndex(c => c.key === 'completed_at');
     await overwriteFirstSheet(spreadsheetId, rows, {
+      sheetTitle: PG_SHEET_TAB_TITLE,                  // 「シート1」のままにせずタブ名を付ける（2026-09-03 要望）
       fontSize: 12,                                    // デフォルト10だと小さいとの要望（2026-08-22）
       hideColumns: [0],                                // ID列は取込時の照合用なので隠す（削除はしない）
       columnWidths: PG_SHEET_COLS.map(c => c.width),

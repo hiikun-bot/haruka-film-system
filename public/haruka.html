@@ -8792,7 +8792,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <hr style="border:none;border-top:0.5px solid var(--border);margin:14px 0">
     <div class="form-group">
       <label class="form-label">📤 エクスポート（システム → シート）</label>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">タスク一覧をシートの<b>1枚目のタブに上書き</b>で書き出します。シート上で編集して、下の取込でシステムに反映することもできます。</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">タスク一覧をシートの<b>1枚目のタブに上書き</b>で書き出します（タブ名は「目標一覧」になります）。シート上で編集して、下の取込でシステムに反映することもできます。</div>
       <button class="btn-primary" id="mg-sheet-export-btn" style="padding:6px 16px;font-size:13px" onclick="mgExportSheet()">📤 スプシに出力</button>
       <div id="mg-sheet-export-result" style="font-size:12px;margin-top:6px"></div>
     </div>
@@ -27135,7 +27135,7 @@ async function mgExportSheet() {
     document.getElementById('mg-sheet-setup').open = true;
     return;
   }
-  if (!confirm('シートの1枚目のタブを、現在のタスク一覧で上書きします。よろしいですか？')) return;
+  if (!confirm('シートの1枚目のタブ（「目標一覧」に改名）を、現在のタスク一覧で上書きします。よろしいですか？')) return;
   const btn = document.getElementById('mg-sheet-export-btn');
   const result = document.getElementById('mg-sheet-export-result');
   btn.disabled = true;
