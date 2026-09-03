@@ -29,6 +29,9 @@ const ICON_BY_TYPE = {
   creative_status: '🎬',
   // クリエイティブ新規登録通知（admin / secretary 向け）
   creative_registered: '🎬',
+  // 🏆 作品ギャラリー: 自分の作品に 👏 拍手 / 💬 ひとことが付いた（制作担当向け・ADR 037）
+  portfolio_reaction:  '👏',
+  portfolio_comment:   '💬',
 };
 
 // HTMLエスケープ — ユーザー入力を安全に埋め込むための関数
@@ -244,6 +247,24 @@ async function activateCard(cardEl, options = {}) {
         return;
       } catch (e) {
         console.warn('[notification-card] showPage(tweets) 失敗', e);
+      }
+    }
+    window.location.href = linkUrl;
+    return;
+  }
+
+  // 作品ギャラリー通知: /haruka.html?portfolio=<creative_id> 形式。
+  // haruka.html 内なら pfOpenByCreativeId() で作品タブに切り替えて該当作品を開く（リロード不要）。
+  // 無ければ通常遷移（applyDeepLinkOnLoad が ?portfolio= を処理する）。
+  const portfolioMatch = /^\/haruka\.html\?portfolio=([^&#]+)/.exec(linkUrl);
+  if (portfolioMatch) {
+    document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
+    if (typeof window.pfOpenByCreativeId === 'function') {
+      try {
+        window.pfOpenByCreativeId(decodeURIComponent(portfolioMatch[1]));
+        return;
+      } catch (e) {
+        console.warn('[notification-card] pfOpenByCreativeId 失敗', e);
       }
     }
     window.location.href = linkUrl;

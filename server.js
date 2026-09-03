@@ -360,6 +360,9 @@ app.use('/icon-180.png',      express.static(path.join(__dirname, 'public/icon-1
 // 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js・UMD形式）を
 // フロントにも同一実装で配信する（jest テスト済みロジックの二重実装を避けるため）
 app.use('/js/personal-goals.js', express.static(path.join(__dirname, 'utils/personal-goals.js')));
+// リアクション 5 種（👍 ❤️ 👏 😊 😳）の定義（utils/reactions.js・UMD形式）。
+// つぶやきと作品ギャラリーのフロント・サーバーで同じ定義を使う（二重定義しない）
+app.use('/js/reactions.js', express.static(path.join(__dirname, 'utils/reactions.js')));
 // haruka.html は認証後のみ配信（ミニファイ + 事前圧縮 + ETag/304 の最適化配信）
 app.get('/haruka.html', requireAuth, (req, res) => {
   harukaHtmlDelivery.serve(req, res);

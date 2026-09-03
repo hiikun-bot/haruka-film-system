@@ -2476,6 +2476,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <script src="/js/name-display.js"></script>
 <!-- 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js を server.js が配信）。インラインJSが参照するため defer なし -->
 <script src="/js/personal-goals.js"></script>
+<!-- リアクション 5 種（👍 ❤️ 👏 😊 😳）の定義（utils/reactions.js を server.js が配信）。つぶやき・作品ギャラリーで共通。インラインJSが参照するため defer なし -->
+<script src="/js/reactions.js"></script>
 </head>
 <body>
 <div id="toast-container"></div>
@@ -8478,6 +8480,76 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   }
   .pf-lb-note-edit textarea:focus { outline: 2px solid #C7D2FE; border-color: #A5B4FC; }
 
+  /* 👏 拍手 / 💬 ひとこと（ADR 037）— カード下部のリアクション行 */
+  #page-portfolio .pf-react {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 5px;
+    cursor: default;   /* カード本体（ライトボックスを開く）とは別の操作面 */
+  }
+  .pf-rx {
+    display: inline-flex; align-items: center; gap: 3px; border: 1px solid transparent;
+    background: #F3F4F6; color: #374151; border-radius: 999px; padding: 2px 7px;
+    font-size: 11px; line-height: 1.4; cursor: pointer; transition: background .12s, border-color .12s;
+  }
+  .pf-rx:hover { background: #E5E7EB; }
+  .pf-rx.on { background: #E6F9F8; border-color: #3ECFCA; color: #2BA8A4; font-weight: 700; }
+  .pf-rx .pf-rx-emoji { font-size: 12.5px; line-height: 1; }
+  .pf-rx .pf-rx-n { font-weight: 700; font-size: 11px; }
+  .pf-rx-add-wrap { position: relative; display: inline-block; }
+  .pf-rx-add {
+    background: transparent; border: 1px dashed #D1D5DB; border-radius: 999px; padding: 2px 7px;
+    font-size: 11px; line-height: 1.4; color: #6B7280; cursor: pointer; transition: background .12s, color .12s;
+  }
+  .pf-rx-add:hover { background: #F9FAFB; color: #2BA8A4; border-color: #3ECFCA; }
+  .pf-rx-picker {
+    position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; display: none; gap: 2px;
+    background: #fff; border: 1px solid #E5E7EB; border-radius: 999px; padding: 3px 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.1);
+  }
+  .pf-rx-picker.open { display: inline-flex; }
+  .pf-rx-picker button {
+    background: transparent; border: 0; cursor: pointer; font-size: 17px; width: 30px; height: 30px;
+    border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    transition: background .12s, transform .12s;
+  }
+  .pf-rx-picker button:hover { background: #E6F9F8; transform: scale(1.15); }
+  .pf-rx-picker button.on { background: #E6F9F8; box-shadow: inset 0 0 0 1.5px #3ECFCA; }
+  .pf-rx-cm { margin-left: auto; }
+  .pf-rx-cm.open { background: #EEF2FF; border-color: #C7D2FE; color: #3730A3; }
+  /* ひとこと（💬 N をクリックで展開） */
+  .pf-comments {
+    margin-top: 6px; background: #fff; border: 0.5px solid var(--border); border-radius: 8px;
+    padding: 8px 9px; font-size: 11.5px; line-height: 1.5; cursor: default;
+  }
+  .pf-comments-title { font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 6px; }
+  .pf-cm { display: flex; flex-direction: column; gap: 1px; padding: 4px 0; border-top: 1px solid #F1F3F5; }
+  .pf-cm:first-of-type { border-top: 0; padding-top: 0; }
+  .pf-cm-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .pf-cm-name { font-weight: 700; color: #14171a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pf-cm-time { color: var(--text-muted); font-size: 10.5px; margin-left: auto; flex-shrink: 0; }
+  .pf-cm-del { background: none; border: 0; color: #9CA3AF; font-size: 11px; cursor: pointer; padding: 0 2px; flex-shrink: 0; }
+  .pf-cm-del:hover { color: #DC2626; }
+  .pf-cm-body { color: #374151; white-space: pre-wrap; word-break: break-word; }
+  .pf-cm-empty { color: var(--text-muted); padding: 2px 0 6px; }
+  .pf-cm-form { display: flex; gap: 5px; margin-top: 6px; }
+  .pf-cm-form input {
+    flex: 1; min-width: 0; border: 1px solid #E5E7EB; border-radius: 999px; padding: 5px 10px;
+    font-size: 12px; font-family: inherit; background: #fff; color: #1f2328;
+  }
+  .pf-cm-form input:focus { outline: 2px solid #C7D2FE; border-color: #A5B4FC; }
+  .pf-cm-form button {
+    border: 0; border-radius: 999px; background: #14171a; color: #fff; font-size: 11.5px; font-weight: 700;
+    padding: 5px 11px; cursor: pointer; flex-shrink: 0;
+  }
+  .pf-cm-form button:disabled { opacity: .5; cursor: default; }
+  /* ライトボックス右カラム側は白カード上なので少し大きめに */
+  .pf-lb-card .pf-react { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .pf-lb-card .pf-rx { font-size: 12.5px; padding: 4px 10px; }
+  .pf-lb-card .pf-rx .pf-rx-emoji { font-size: 14px; }
+  .pf-lb-card .pf-rx-add { font-size: 12.5px; padding: 4px 10px; }
+  .pf-lb-card .pf-comments { border: 0; padding: 0; margin-top: 0; font-size: 13px; }
+  .pf-lb-card .pf-cm-form input { font-size: 13px; padding: 7px 12px; }
+  .pf-lb-card .pf-cm-form button { font-size: 12.5px; padding: 7px 14px; }
+
   @media (max-width: 1024px) {
     .pf-lightbox.open { padding: 12px; align-items: stretch; }
     .pf-lb-shell { grid-template-columns: 1fr; overflow-y: auto; }
@@ -8488,6 +8560,12 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     #page-portfolio .pf-group-meta { margin-left: 0; }
     .pf-lb-card { padding: 20px 18px; }
     .pf-lb-card h3 { font-size: 18px; }
+    /* 130px 幅のカードでは行が折り返す。ピルを詰めて 2 行以内に収める */
+    #page-portfolio .pf-react { gap: 3px; }
+    .pf-rx, .pf-rx-add { padding: 2px 5px; font-size: 10.5px; }
+    .pf-rx-picker button { width: 34px; height: 34px; font-size: 19px; }   /* 指で押せる大きさ */
+    .pf-cm-form { flex-direction: column; }
+    .pf-cm-form button { align-self: flex-end; }
   }
 </style>
 <div id="page-portfolio" class="page">
@@ -10746,6 +10824,15 @@ async function applyDeepLinkOnLoad() {
           openVerupModal();
         }
       } catch (e) { console.warn('[deepLink verup]', e); }
+      return;
+    }
+
+    // 作品ギャラリー deep link（👏 拍手 / 💬 ひとこと のベル通知から）— 作品タブに切り替えて該当作品を開く
+    const pfCreativeId = params.get('portfolio');
+    if (pfCreativeId) {
+      stripQueryParam('portfolio');
+      try { if (typeof pfOpenByCreativeId === 'function') pfOpenByCreativeId(pfCreativeId); }
+      catch (e) { console.warn('[deepLink portfolio]', e); }
       return;
     }
 
@@ -24467,6 +24554,7 @@ async function pfReload() {
     pfRenderSummary(json);
     pfRenderGallery();
     pfMeasureMissingAspects();
+    pfConsumePendingOpen();   // 通知のリンク（?portfolio=<creative_id>）から来たときは該当作品を開く
   } catch (e) {
     if (seq !== pfLoadSeq) return;
     if (summary) summary.textContent = '';
@@ -24600,6 +24688,8 @@ function pfCardHtml(item, idx) {
         <span class="pf-cap-name" title="${esc(item.file_name)}">${esc(item.file_name)}</span>
         <span class="pf-cap-sub">${esc(pfFormatDate(item.delivered_at))}</span>
       </div>
+      ${pfReactRowHtml(item, idx, 'card')}
+      ${pfCommentsHtml(item, idx, 'card')}
     </div>`;
 }
 
@@ -24631,6 +24721,8 @@ function pfOnGalleryMouseDown(ev) {
   if (!gallery) return;
   // チェックボックス自身のクリックはドラッグ扱いにしない（従来どおりトグル）
   if (ev.target.closest('.pf-pick') || ev.target.closest('.pf-star')) return;
+  // 拍手・ひとこと欄の操作もドラッグ選択にしない
+  if (ev.target.closest('.pf-react') || ev.target.closest('.pf-comments')) return;
 
   const box = document.createElement('div');
   box.className = 'pf-rubber';
@@ -24782,6 +24874,302 @@ async function pfToggleBest(idx) {
   } catch (e) {
     showToast(e.message, 'error');
   }
+}
+
+// ==================== 👏 作品への拍手 と 💬 ひとこと（ADR 037） ====================
+//
+// リアクションはつぶやきと同じ 5 種（ReactionsUtils.REACTIONS = TWEET_REACTIONS）。トグル運用。
+// 一覧 API が creative ごとの reactions / my_reactions / comment_count を載せて返すので、
+// 初回描画で追加リクエストは無い。ひとこと本文だけ 💬 を開いたときに取りに行く。
+// カードは creative 単位でなくファイル単位（過去版を並べると同じ creative が複数枚）なので、
+// 反映は creative_id で同じ作品の全カードに配る。
+
+const pfOpenComments = new Set();      // 💬 を開いている creative_id
+const pfCommentsCache = new Map();     // creative_id → コメント配列（null = 取得中）
+let pfPendingOpenCreative = null;      // ?portfolio=<creative_id> で開きたい作品
+let pfPendingOpenRetried = false;      // 条件を「全員」に広げて探し直したか
+
+// リアクション行。ctx は 'card'（カード下部）| 'lb'（ライトボックス右カラム）
+function pfReactRowHtml(item, idx, ctx) {
+  const cid = item.creative_id;
+  if (!cid) return '';
+  const counts = item.reactions || {};
+  const mine = new Set(item.my_reactions || []);
+  const key = `${ctx}-${idx}`;
+  // 押された種別だけピルで出す（つぶやきと同じ）。自分が押したものは強調
+  const pills = TWEET_REACTIONS
+    .filter(r => (counts[r.type] || 0) > 0 || mine.has(r.type))
+    .map(r => `<button type="button" class="pf-rx${mine.has(r.type) ? ' on' : ''}" title="${esc(r.label)}${mine.has(r.type) ? '（もう一度押すと外れる）' : ''}"
+        onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}')">
+        <span class="pf-rx-emoji">${r.emoji}</span>${(counts[r.type] || 0) > 0 ? `<span class="pf-rx-n">${counts[r.type]}</span>` : ''}
+      </button>`).join('');
+  const pickerBtns = TWEET_REACTIONS.map(r =>
+    `<button type="button" class="${mine.has(r.type) ? 'on' : ''}" title="${esc(r.label)}"
+       onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}')">${r.emoji}</button>`).join('');
+  const cmCount = item.comment_count || 0;
+  const cmOpen = pfOpenComments.has(cid);
+  // ライトボックスではひとことを常に開いて見せるので 💬 ボタンは出さない
+  const cmBtn = ctx === 'lb' ? '' :
+    `<button type="button" class="pf-rx pf-rx-cm${cmOpen ? ' open' : ''}" title="ひとこと${cmCount ? `（${cmCount}件）` : ''}"
+       aria-expanded="${cmOpen}" onclick="event.stopPropagation();pfToggleComments(${idx})">
+       <span class="pf-rx-emoji">💬</span>${cmCount > 0 ? `<span class="pf-rx-n">${cmCount}</span>` : ''}
+     </button>`;
+  return `
+    <div class="pf-react" data-cid="${esc(cid)}" data-idx="${idx}" data-ctx="${ctx}" onclick="event.stopPropagation()">
+      ${pills}
+      <span class="pf-rx-add-wrap">
+        <button type="button" class="pf-rx-add" title="拍手・リアクションを付ける" onclick="pfTogglePicker(event, '${key}')">👏＋</button>
+        <span class="pf-rx-picker" id="pf-rxp-${key}">${pickerBtns}</span>
+      </span>
+      ${cmBtn}
+    </div>`;
+}
+
+function pfTogglePicker(ev, key) {
+  if (ev) ev.stopPropagation();
+  document.querySelectorAll('.pf-rx-picker.open').forEach(p => { if (p.id !== `pf-rxp-${key}`) p.classList.remove('open'); });
+  document.getElementById(`pf-rxp-${key}`)?.classList.toggle('open');
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.pf-rx-add-wrap')) {
+    document.querySelectorAll('.pf-rx-picker.open').forEach(p => p.classList.remove('open'));
+  }
+});
+
+// 同じ creative の全カード（過去版が並んでいる場合）に値を配る
+function pfApplySocial(creativeId, patch) {
+  pfItems.forEach(it => { if (it.creative_id === creativeId) Object.assign(it, patch); });
+}
+
+// リアクション行だけを差し替える（ギャラリー全体を再描画しない＝入力中のひとことを消さない）
+function pfRefreshReactDom(creativeId) {
+  document.querySelectorAll(`.pf-react[data-cid="${CSS.escape(creativeId)}"]`).forEach(el => {
+    const idx = Number(el.dataset.idx);
+    if (!pfItems[idx]) return;
+    el.outerHTML = pfReactRowHtml(pfItems[idx], idx, el.dataset.ctx || 'card');
+  });
+}
+function pfRefreshCommentsDom(creativeId) {
+  document.querySelectorAll(`.pf-comments[data-cid="${CSS.escape(creativeId)}"]`).forEach(el => {
+    const idx = Number(el.dataset.idx);
+    if (!pfItems[idx]) return;
+    el.outerHTML = pfCommentsHtml(pfItems[idx], idx, el.dataset.ctx || 'card');
+  });
+}
+
+async function pfToggleReaction(idx, type) {
+  const item = pfItems[idx];
+  if (!item?.creative_id) return;
+  const cid = item.creative_id;
+  // 楽観的更新: 押した瞬間に反映し、失敗したら元に戻す
+  const before = { reactions: { ...(item.reactions || {}) }, my_reactions: [...(item.my_reactions || [])], reaction_total: item.reaction_total || 0 };
+  const had = before.my_reactions.includes(type);
+  const next = {
+    reactions: { ...before.reactions, [type]: Math.max(0, (before.reactions[type] || 0) + (had ? -1 : 1)) },
+    my_reactions: had ? before.my_reactions.filter(t => t !== type) : [...before.my_reactions, type],
+    reaction_total: Math.max(0, before.reaction_total + (had ? -1 : 1)),
+  };
+  pfApplySocial(cid, next);
+  pfRefreshReactDom(cid);
+  document.querySelectorAll('.pf-rx-picker.open').forEach(p => p.classList.remove('open'));
+  try {
+    const res = await apiFetch(`/api/haruka/portfolio/${cid}/reactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reaction_type: type }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'リアクションに失敗しました');
+    // サーバーの確定値で上書き（他の人の分が増えていても合う）
+    pfApplySocial(cid, { reactions: json.counts || next.reactions, my_reactions: json.my_reactions || next.my_reactions, reaction_total: json.reaction_total ?? next.reaction_total });
+    pfRefreshReactDom(cid);
+  } catch (e) {
+    pfApplySocial(cid, before);
+    pfRefreshReactDom(cid);
+    showToast(e.message, 'error');
+  }
+}
+
+// ひとこと欄。card では 💬 を開いたときだけ描画、lb では常に描画
+function pfCommentsHtml(item, idx, ctx) {
+  const cid = item.creative_id;
+  if (!cid) return '';
+  if (ctx !== 'lb' && !pfOpenComments.has(cid)) return '';
+  const list = pfCommentsCache.get(cid);
+  let body;
+  if (list === undefined || list === null) {
+    body = `<div class="pf-cm-empty">読み込み中…</div>`;
+  } else if (list.length === 0) {
+    body = `<div class="pf-cm-empty">まだひとことはありません。最初のひとことをどうぞ</div>`;
+  } else {
+    body = list.map(c => {
+      const u = c.user || {};
+      const name = ctx === 'lb' ? NameDisplay.full(u) : NameDisplay.short(u);   // 名前表示は NameDisplay 経由（直書き禁止）
+      // 削除ボタンは API が返す can_delete（本人 or admin・サーバー側で実効ロール判定済み）で出し分ける
+      const del = c.can_delete
+        ? `<button type="button" class="pf-cm-del" title="このひとことを削除" onclick="event.stopPropagation();pfDeleteComment(${idx}, '${esc(c.id)}')">✕</button>` : '';
+      return `<div class="pf-cm">
+        <div class="pf-cm-head">
+          <span class="pf-cm-name" title="${esc(NameDisplay.tooltip(u))}">${esc(name)}</span>
+          <span class="pf-cm-time">${esc(_twTimeAgo(c.created_at))}</span>${del}
+        </div>
+        <div class="pf-cm-body">${esc(c.body)}</div>
+      </div>`;
+    }).join('');
+  }
+  const title = ctx === 'lb' ? '' : `<div class="pf-comments-title">💬 ひとこと</div>`;
+  return `
+    <div class="pf-comments" data-cid="${esc(cid)}" data-idx="${idx}" data-ctx="${ctx}" onclick="event.stopPropagation()">
+      ${title}
+      ${body}
+      <form class="pf-cm-form" onsubmit="event.preventDefault();pfSubmitComment(${idx}, this)">
+        <input type="text" maxlength="500" placeholder="ひとこと…" autocomplete="off" onkeydown="event.stopPropagation()">
+        <button type="submit">送る</button>
+      </form>
+    </div>`;
+}
+
+async function pfToggleComments(idx) {
+  const item = pfItems[idx];
+  if (!item?.creative_id) return;
+  const cid = item.creative_id;
+  if (pfOpenComments.has(cid)) {
+    pfOpenComments.delete(cid);
+  } else {
+    pfOpenComments.add(cid);
+    if (!pfCommentsCache.has(cid)) pfLoadComments(cid);
+  }
+  // 💬 ボタンの open 状態と、欄の出し入れ。欄は card ごとに無い→ある になるので行ごと描き直す
+  pfRefreshReactDom(cid);
+  pfRerenderCommentsPanels(cid);
+  if (pfOpenComments.has(cid)) {
+    const input = document.querySelector(`.pf-comments[data-cid="${CSS.escape(cid)}"][data-ctx="card"] input`);
+    if (input) input.focus();
+  }
+}
+
+// カード側のひとこと欄は開閉で要素自体が増減するので、行の直後に差し込み直す
+function pfRerenderCommentsPanels(creativeId) {
+  document.querySelectorAll(`.pf-comments[data-cid="${CSS.escape(creativeId)}"][data-ctx="card"]`).forEach(el => el.remove());
+  document.querySelectorAll(`.pf-react[data-cid="${CSS.escape(creativeId)}"][data-ctx="card"]`).forEach(row => {
+    const idx = Number(row.dataset.idx);
+    if (!pfItems[idx]) return;
+    row.insertAdjacentHTML('afterend', pfCommentsHtml(pfItems[idx], idx, 'card'));
+  });
+  // ライトボックス側は常設なので中身だけ差し替え
+  document.querySelectorAll(`.pf-comments[data-cid="${CSS.escape(creativeId)}"][data-ctx="lb"]`).forEach(el => {
+    const idx = Number(el.dataset.idx);
+    if (!pfItems[idx]) return;
+    el.outerHTML = pfCommentsHtml(pfItems[idx], idx, 'lb');
+  });
+}
+
+async function pfLoadComments(creativeId, force) {
+  if (!force && pfCommentsCache.has(creativeId) && pfCommentsCache.get(creativeId) !== null) return;
+  pfCommentsCache.set(creativeId, null);   // 取得中
+  try {
+    const res = await apiFetch(`/api/haruka/portfolio/${creativeId}/comments`);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'ひとことの取得に失敗しました');
+    const list = json.comments || [];
+    pfCommentsCache.set(creativeId, list);
+    pfApplySocial(creativeId, { comment_count: list.length });
+  } catch (e) {
+    pfCommentsCache.delete(creativeId);
+    showToast(e.message, 'error');
+  }
+  pfRerenderCommentsPanels(creativeId);
+  pfRefreshReactDom(creativeId);
+}
+
+async function pfSubmitComment(idx, formEl) {
+  const item = pfItems[idx];
+  if (!item?.creative_id) return;
+  const cid = item.creative_id;
+  const input = formEl?.querySelector('input');
+  const btn = formEl?.querySelector('button');
+  const body = String(input?.value || '').trim();
+  if (!body) { input?.focus(); return; }
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`/api/haruka/portfolio/${cid}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'ひとことの送信に失敗しました');
+    const list = (pfCommentsCache.get(cid) || []).concat([json.comment]);
+    pfCommentsCache.set(cid, list);
+    pfApplySocial(cid, { comment_count: json.comment_count ?? list.length });
+    pfRerenderCommentsPanels(cid);
+    pfRefreshReactDom(cid);
+    showToast('ひとことを送りました', 'success');
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    showToast(e.message, 'error');
+  }
+}
+
+async function pfDeleteComment(idx, commentId) {
+  const item = pfItems[idx];
+  if (!item?.creative_id) return;
+  const cid = item.creative_id;
+  if (!confirm('このひとことを削除しますか？')) return;
+  try {
+    const res = await apiFetch(`/api/haruka/portfolio/${cid}/comments/${commentId}`, { method: 'DELETE' });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || '削除に失敗しました');
+    const list = (pfCommentsCache.get(cid) || []).filter(c => c.id !== commentId);
+    pfCommentsCache.set(cid, list);
+    pfApplySocial(cid, { comment_count: json.comment_count ?? list.length });
+    pfRerenderCommentsPanels(cid);
+    pfRefreshReactDom(cid);
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// ベル通知（/haruka.html?portfolio=<creative_id>）から呼ばれる。作品タブに切り替えて該当作品を開く。
+// 既定フィルタ（自分の作品）に無ければ「全員」に広げて一度だけ探し直す。
+function pfOpenByCreativeId(creativeId) {
+  if (!creativeId) return;
+  pfPendingOpenCreative = String(creativeId);
+  pfPendingOpenRetried = false;
+  const navBtn = document.querySelector('.nav-btn[data-page="portfolio"]');
+  showPage('portfolio', navBtn || null);   // → loadPortfolioPage() → pfReload() → pfConsumePendingOpen()
+}
+window.pfOpenByCreativeId = pfOpenByCreativeId;   // notification-card.js（ES module）から参照する
+
+function pfConsumePendingOpen() {
+  if (!pfPendingOpenCreative) return;
+  const cid = pfPendingOpenCreative;
+  const idx = pfItems.findIndex(it => it.creative_id === cid);
+  if (idx >= 0) {
+    pfPendingOpenCreative = null;
+    pfOpenComments.add(cid);
+    pfRerenderCommentsPanels(cid);
+    pfRefreshReactDom(cid);
+    if (!pfCommentsCache.has(cid)) pfLoadComments(cid);
+    const card = document.querySelector(`.pf-card[data-idx="${idx}"]`);
+    if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    pfOpenLightbox(idx);
+    return;
+  }
+  if (!pfPendingOpenRetried) {
+    // 「自分の作品」フィルタ等で隠れているだけかもしれない → 全員・全件に広げて探し直す
+    pfPendingOpenRetried = true;
+    pfAssigneeIds = new Set();
+    pfBestMode = 'all';
+    pfGenreSel = new Set(); pfStyleSel = new Set();
+    const wip = document.getElementById('pf-include-wip'); if (wip) wip.checked = true;
+    const nofile = document.getElementById('pf-include-nofile'); if (nofile) nofile.checked = true;
+    pfRefreshAssigneeLabel();
+    pfReload();
+    return;
+  }
+  pfPendingOpenCreative = null;
+  showToast('その作品は今の条件では見つかりませんでした', 'error');
 }
 
 // ホバー: 動画なら 400ms 後に無音ループ再生を差し込む（連続ホバーで無駄に取得しない）
@@ -25068,7 +25456,12 @@ function pfRenderLightboxCard() {
   card.innerHTML = `
     <h3>${esc(item.file_name || '')}</h3>
     <div class="pf-lb-project">${clientPart}${esc(item.project_name || '')}</div>
+    ${pfReactRowHtml(item, pfLightboxIdx, 'lb')}
     <div id="pf-lb-note-area"></div>
+    <div class="pf-lb-sec">
+      <div class="pf-lb-sec-title">💬 ひとこと</div>
+      ${pfCommentsHtml(item, pfLightboxIdx, 'lb')}
+    </div>
     ${credits ? `<div class="pf-lb-sec">
       <div class="pf-lb-sec-title">クレジット</div>
       ${credits}
@@ -25092,6 +25485,8 @@ function pfRenderLightboxCard() {
       ${item.file_id ? `<button type="button" class="pf-lb-action primary" onclick="pfDownloadOne(${pfLightboxIdx})">⬇ ダウンロード</button>` : ''}
     </div>`;
   pfRenderNoteView();
+  // ライトボックスではひとことを常に開いた状態で見せる（未取得なら取りに行く）
+  if (item.creative_id && !pfCommentsCache.has(item.creative_id)) pfLoadComments(item.creative_id);
 }
 
 function pfRenderNoteView() {
@@ -29776,8 +30171,9 @@ function _twCanModerate() {
   return r === 'admin' || r === 'secretary';
 }
 
-// Phase 1 段階4: 5種リアクション設定
-const TWEET_REACTIONS = [
+// Phase 1 段階4: 5種リアクション設定。
+// 定義は utils/reactions.js（/js/reactions.js）が正。作品ギャラリーの 👏 拍手も同じ配列を使う（二重定義しない）
+const TWEET_REACTIONS = (window.ReactionsUtils && ReactionsUtils.REACTIONS) || [
   { type: 'good',      emoji: '👍', label: 'いいね' },
   { type: 'heart',     emoji: '❤️', label: 'ハート' },
   { type: 'clap',      emoji: '👏', label: '拍手' },
