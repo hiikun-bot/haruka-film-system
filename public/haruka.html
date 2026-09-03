@@ -4031,6 +4031,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
   <div class="header-nav">
     <button class="nav-btn active" data-page="dashboard" onclick="showPage('dashboard',this)">ホーム</button>
+    <!-- 🎯 マイゴール: 完全個人ページ（全ロール利用可）のため display:none 不要・applyRoleBasedUI での制御も不要（ADR 032）。目標意識を高めるためホームの直後に配置 -->
+    <button class="nav-btn" id="nav-my-goals" data-page="my-goals" onclick="showPage('my-goals',this)">🎯 マイゴール</button>
     <button class="nav-btn" data-page="creatives" onclick="showPage('creatives',this)">クリエイティブ</button>
     <button class="nav-btn" data-page="projects" onclick="showPage('projects',this)">案件</button>
     <button class="nav-btn" data-page="teams" onclick="showPage('teams',this)">チーム</button>
@@ -4042,8 +4044,6 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
     <button class="nav-btn" id="nav-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">オンボーディング</button>
-    <!-- 🎯 マイゴール: 完全個人ページ（全ロール利用可）のため display:none 不要・applyRoleBasedUI での制御も不要（ADR 032） -->
-    <button class="nav-btn" id="nav-my-goals" data-page="my-goals" onclick="showPage('my-goals',this)">🎯 マイゴール</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
     <button class="nav-btn" id="nav-payout" data-page="payout" onclick="showPage('payout',this)" style="display:none">💸 振込管理</button>
@@ -4160,6 +4160,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <button class="nav-drawer-x" onclick="closeNavDrawer()">✕</button>
     </div>
     <button class="nav-drawer-btn active" data-page="dashboard" onclick="showPage('dashboard',this)">🏠 ホーム</button>
+    <!-- 🎯 マイゴール: 完全個人ページ（全ロール利用可）のため display:none 不要・applyRoleBasedUI での制御も不要（ADR 032）。目標意識を高めるためホームの直後に配置 -->
+    <button class="nav-drawer-btn" id="nav-drawer-my-goals" data-page="my-goals" onclick="showPage('my-goals',this)">🎯 マイゴール</button>
     <button class="nav-drawer-btn" data-page="creatives" onclick="showPage('creatives',this)">🎬 クリエイティブ</button>
     <button class="nav-drawer-btn" data-page="projects" onclick="showPage('projects',this)">📁 案件</button>
     <button class="nav-drawer-btn" data-page="teams" onclick="showPage('teams',this)">👥 チーム</button>
@@ -4171,8 +4173,6 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
     <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
-    <!-- 🎯 マイゴール: 完全個人ページ（全ロール利用可）のため display:none 不要・applyRoleBasedUI での制御も不要（ADR 032） -->
-    <button class="nav-drawer-btn" id="nav-drawer-my-goals" data-page="my-goals" onclick="showPage('my-goals',this)">🎯 マイゴール</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
     <button class="nav-drawer-btn" id="nav-drawer-payout" data-page="payout" onclick="showPage('payout',this)" style="display:none">💸 振込管理</button>
