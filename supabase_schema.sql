@@ -434,6 +434,11 @@ CREATE TABLE IF NOT EXISTS invoice_item_details (
   amount INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+-- cost_type に CHECK 制約は付けない。正は invoice_items.cost_type 側で、
+-- 種別が増えるたびに制約が追従できず請求書生成が落ちる事故があったため
+-- （2026-09-01_invoice_item_details_drop_cost_type_check.sql で旧制約を撤去済み）。
+ALTER TABLE invoice_item_details
+  DROP CONSTRAINT IF EXISTS invoice_item_details_cost_type_check;
 
 -- ==================== 追加カラム（後から追加分） ====================
 
