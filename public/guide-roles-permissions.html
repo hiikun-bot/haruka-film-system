@@ -185,7 +185,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="role-row">
       <span class="role-chip" style="background:#1E8449">🎥 ディレクター（director）</span>
-      <span class="role-desc">制作進行の中心。既定で案件・クライアントの新規追加（編集・単価設定は除く）、ランク・単価列の表示、メンバー一覧閲覧などが可能。</span>
+      <span class="role-desc">制作進行の中心。既定で案件・クライアントの新規追加、成果物グループ・単価の設定（管理者の承認待ちになる）、ランク・単価列の表示、メンバー一覧閲覧などが可能。案件本体の編集は除く。</span>
     </div>
     <div class="role-row">
       <span class="role-chip" style="background:#7E5109">✂️ 編集者（editor）</span>
@@ -301,6 +301,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
         <tr><td class="perm-sec" colspan="6">案件管理</td></tr>
         <tr><td>案件・クライアントの新規追加</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>—</td></tr>
         <tr><td>案件作成・編集</td><td>✅</td><td>✅</td><td>✅</td><td>—</td><td>—</td></tr>
+        <tr><td>成果物グループ・単価の編集（承認権限が無ければ承認待ち）</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>—</td></tr>
+        <tr><td>単価の承認・差し戻し（保持者の変更は即確定）</td><td>✅</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
         <tr><td>通知連携先の設定（Slack/Chatwork）</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>—</td></tr>
         <tr><td>クライアント単価の閲覧・編集</td><td>✅</td><td>✅</td><td>✅</td><td>—</td><td>—</td></tr>
         <tr><td class="perm-sec" colspan="6">メンバー管理</td></tr>
@@ -314,6 +316,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">実際の画面にはダッシュボード／案件管理／クリエイティブ／メンバー管理／チーム管理／請求管理／オンボーディング／マスター管理／システム／分析／チーム状況 の各セクションが並びます。管理者の列は常に ✅ 固定です。</p>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 「チーム状況」はメンバーごとの進行中クリエイティブ・持ちボール・納期状況を自動集計する画面です。メンバー同士の比較材料にならないよう、既定では管理者とプロデューサー層（兼任含む）だけに開放されています。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 「成果物グループ・単価の編集」はディレクターにも開放されています。「単価の承認・差し戻し」を持たない人が単価を保存すると、そのグループは <b>🕓 承認待ち</b> になります（単価自体はすぐ有効で、請求書の発行だけが承認後）。管理者はホームの「💴 単価の承認待ち」カードから承認・差し戻しができます。プロデューサーの変更を即確定にしたい場合は、プロデューサー列の「単価の承認・差し戻し」を ✅ にしてください。</p>
   </div>
 
   <div class="wanpoint">

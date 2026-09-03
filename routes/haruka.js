@@ -2339,6 +2339,8 @@ router.get('/status-templates', async (req, res) => {
 //
 // 権限: 案件編集と同じ project.create_edit を使う（lines は「成果物グループの構造を
 // 編集する」性質のため、案件本体の編集権限と揃える方が直感に合う）。
+// ADR 037: 加えて project.pricing_edit（ディレクター）でも書けるようにし、
+// project.pricing_approve を持たない人の単価変更は「有効なまま admin 承認待ち（pending）」にする。
 //
 // schema-sync 失敗で本番に project_estimate_lines が無い場合のフォールバックは
 // Stage 4a 時点では行わない（PR #316 で適用済み）。
@@ -2352,11 +2354,233 @@ const isMissingPelTable = (err) =>
 
 // ADR 025: 成果物グループの select。applies_from/applies_to を含む完全版と、
 // 列未適用環境向けのレガシー版（applies 列なし）。本番DBに列が無くても 500 で落とさないため。
-const LINE_SELECT = 'id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)';
+// ADR 037: 承認状態列（pricing_*）。migration 2026-09-03_line_pricing_approval.sql 未適用環境では
+// LINE_SELECT_NO_PRICING（applies 列あり・pricing 列なし）→ LINE_SELECT_LEGACY の順で落とす。
+const LINE_PRICING_COLS = 'pricing_approval, pricing_requested_by, pricing_requested_at, pricing_prev_snapshot, pricing_approved_by, pricing_approved_at';
+const LINE_SELECT_NO_PRICING = 'id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, created_at, category:creative_categories(id, code, name, color)';
+const LINE_SELECT = `id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, applies_from, applies_to, ${LINE_PRICING_COLS}, created_at, category:creative_categories(id, code, name, color)`;
 const LINE_SELECT_LEGACY = 'id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, status_changed_at, created_at, category:creative_categories(id, code, name, color)';
 // applies_from/applies_to がまだ本番DBに無い場合のエラー判定（migration 未適用 / schema-sync 遅延）
 const isMissingAppliesColumn = (err) =>
   err && /applies_(from|to)/i.test(err.message || '') && /does not exist|could not find/i.test(err.message || '');
+// ADR 037: pricing_* 列がまだ本番DBに無い場合のエラー判定（isMissingAppliesColumn と同型）
+const isMissingPricingApprovalColumn = (err) =>
+  err && /pricing_(approval|requested_by|requested_at|prev_snapshot|approved_by|approved_at)/i.test(err.message || '')
+    && /does not exist|could not find|schema cache/i.test(err.message || '');
+
+// lines の select を「完全版 → pricing 列なし → レガシー」の順で試す共通ランナー。
+// runQuery(selectString) は supabase クエリ（thenable）を返すこと。
+async function runLineSelectWithFallback(runQuery) {
+  let { data, error } = await runQuery(LINE_SELECT);
+  if (error && isMissingPricingApprovalColumn(error)) {
+    console.warn('[lines] pricing_* 列が未適用。migrations/2026-09-03_line_pricing_approval.sql を本番Supabaseに適用してください。');
+    ({ data, error } = await runQuery(LINE_SELECT_NO_PRICING));
+  }
+  if (error && isMissingAppliesColumn(error)) {
+    console.warn('[lines] applies_from/applies_to 列が未適用。migrations/2026-06-27_estimate_line_applies_period.sql を本番Supabaseに適用してください。');
+    ({ data, error } = await runQuery(LINE_SELECT_LEGACY));
+  }
+  return { data, error };
+}
+
+// ---------- ADR 037: 単価の承認状態 ----------
+
+// 「ニックネーム（名前）」表記（フロントの NameDisplay 相当）
+function formatUserLabel(u) {
+  if (!u) return '';
+  const nick = (u.nickname || '').trim();
+  const full = (u.full_name || '').trim();
+  if (nick && full && nick !== full) return `${nick}（${full}）`;
+  return nick || full || '';
+}
+
+// 案件の見積タブへのリンク（通知の link_url）
+const projectEstimateLink = (projectId) => `/haruka.html?project=${projectId}&tab=estimate`;
+
+// 実行者が承認権限（project.pricing_approve）を持つか。ADR 015: req.user.role 直書き禁止・集合判定。
+async function actorCanApprovePricing(req) {
+  const codes = await getEffectiveRoleCodes(req);
+  return roleCodesHavePermission(codes, 'project.pricing_approve');
+}
+
+// 新規作成 line は DB 既定の 'approved' で insert し、直後に applyPricingApprovalAfterWrite(req, ids,
+// { newLineIds: ids }) で承認状態を確定する（承認権限なし → スナップショット無しの pending ＋通知）。
+
+// line の「現在の承認済み値」スナップショット（差し戻し時の復元に使う）
+async function buildLinePricingSnapshot(lineId) {
+  const [{ data: line }, { data: costs }] = await Promise.all([
+    supabase.from('project_estimate_lines').select('client_unit_price').eq('id', lineId).maybeSingle(),
+    supabase.from('project_estimate_line_costs')
+      .select('role_id, user_id, unit_price, pricing_type, percentage, actual_hours')
+      .eq('line_id', lineId),
+  ]);
+  return {
+    client_unit_price: Number(line?.client_unit_price) || 0,
+    costs: (costs || []).map(c => ({
+      role_id: c.role_id,
+      user_id: c.user_id ?? null,
+      unit_price: Number(c.unit_price) || 0,
+      pricing_type: c.pricing_type || 'fixed_per_unit',
+      percentage: c.percentage ?? null,
+      actual_hours: c.actual_hours ?? null,
+    })),
+  };
+}
+
+// 書き込み「前」に呼ぶ。承認済み line の現在値（=最後に承認された値）を控えておき、
+// 書き込み後の markLinePricingPending に渡す。pending 中の line は控えない（上書き禁止）。
+// 戻り値: Map<lineId, snapshot|null>（null = 既に pending / 取得不可）
+async function capturePricingSnapshots(lineIds) {
+  const map = new Map();
+  const ids = [...new Set((lineIds || []).filter(Boolean))];
+  if (!ids.length) return map;
+  const { data: lines, error } = await supabase
+    .from('project_estimate_lines').select('id, pricing_approval').in('id', ids);
+  if (error) {
+    if (!isMissingPricingApprovalColumn(error)) console.warn('[pricing-approval] capture failed:', error.message);
+    return map;
+  }
+  for (const l of (lines || [])) {
+    if (l.pricing_approval === 'pending') { map.set(l.id, null); continue; }
+    try { map.set(l.id, await buildLinePricingSnapshot(l.id)); }
+    catch (e) { console.warn('[pricing-approval] snapshot failed:', e?.message); }
+  }
+  return map;
+}
+
+// line を承認待ちにする。既に pending ならスナップショットを上書きしない。
+// opts.snapshot: capturePricingSnapshots で控えた書き込み前の値（無ければ現在値を読む）
+// opts.isNew   : 新規作成 line（スナップショット無し＝差し戻し時は削除/クリア）
+// 戻り値: 今回 pending に遷移したか
+async function markLinePricingPending(lineId, actorUserId, opts = {}) {
+  const { data: line, error } = await supabase
+    .from('project_estimate_lines').select('id, pricing_approval').eq('id', lineId).maybeSingle();
+  if (error) {
+    if (!isMissingPricingApprovalColumn(error)) console.warn('[pricing-approval] pending: line read failed:', error.message);
+    return false;
+  }
+  if (!line || line.pricing_approval === 'pending') return false;
+  let snapshot = null;
+  if (!opts.isNew) {
+    snapshot = (opts.snapshot !== undefined && opts.snapshot !== null)
+      ? opts.snapshot
+      : await buildLinePricingSnapshot(lineId);
+  }
+  const { error: updErr } = await supabase.from('project_estimate_lines')
+    .update({
+      pricing_approval: 'pending',
+      pricing_requested_by: actorUserId || null,
+      pricing_requested_at: new Date().toISOString(),
+      pricing_prev_snapshot: snapshot,
+    })
+    .eq('id', lineId);
+  if (updErr) { console.warn('[pricing-approval] pending update failed:', updErr.message); return false; }
+  return true;
+}
+
+// line を承認済みにする（承認 API・承認権限者の書き込み・差し戻し後の確定で共用）
+async function markLinePricingApproved(lineId, actorUserId) {
+  const { error } = await supabase.from('project_estimate_lines')
+    .update({
+      pricing_approval: 'approved',
+      pricing_approved_by: actorUserId || null,
+      pricing_approved_at: new Date().toISOString(),
+      pricing_prev_snapshot: null,
+      pricing_requested_by: null,
+      pricing_requested_at: null,
+    })
+    .eq('id', lineId);
+  if (error && !isMissingPricingApprovalColumn(error)) {
+    console.warn('[pricing-approval] approve update failed:', error.message);
+  }
+  return !error;
+}
+
+// 単価に影響する書き込みの「後」に呼ぶ共通処理。
+//   承認権限あり → 対象 line を approved（承認待ち line を admin が編集したら承認扱い）
+//   承認権限なし → 対象 line を pending にし、新たに pending になった line があれば admin へ 1 回だけ通知
+// opts.projectId  : 通知用（省略時は line から引く）
+// opts.snapshots  : capturePricingSnapshots の戻り値（書き込み前の承認済み値）
+// opts.newLineIds : 新規作成 line（スナップショット無し扱い）
+async function applyPricingApprovalAfterWrite(req, lineIds, opts = {}) {
+  const ids = [...new Set((lineIds || []).filter(Boolean))];
+  if (!ids.length) return { canApprove: false, pending: [] };
+  const actorId = req.user?.id || null;
+  const canApprove = await actorCanApprovePricing(req);
+  if (canApprove) {
+    for (const id of ids) await markLinePricingApproved(id, actorId);
+    return { canApprove: true, pending: [] };
+  }
+  const snapshots = opts.snapshots instanceof Map ? opts.snapshots : new Map();
+  const newSet = new Set(opts.newLineIds || []);
+  const newlyPending = [];
+  for (const id of ids) {
+    const became = await markLinePricingPending(id, actorId, {
+      isNew: newSet.has(id),
+      snapshot: snapshots.has(id) ? snapshots.get(id) : undefined,
+    });
+    if (became) newlyPending.push(id);
+  }
+  if (newlyPending.length) {
+    let projectId = opts.projectId || null;
+    if (!projectId) {
+      const { data: l } = await supabase.from('project_estimate_lines').select('project_id').eq('id', newlyPending[0]).maybeSingle();
+      projectId = l?.project_id || null;
+    }
+    notifyPricingPending(projectId, newlyPending, req.user)
+      .catch(e => console.warn('[pricing-approval] notify failed:', e?.message));
+  }
+  return { canApprove: false, pending: newlyPending };
+}
+
+// 承認待ち発生の通知（ADR 037 Decision 5）: is_active な admin 全員へアプリ内通知＋Slack DM（best-effort）
+async function notifyPricingPending(projectId, lineIds, actorUser) {
+  const { createBulkNotifications } = require('../utils/notification');
+  const { sendSlackDm } = require('../notifications');
+  const actorId = actorUser?.id || null;
+  let actorLabel = formatUserLabel(actorUser);
+  if (!actorLabel && actorId) {
+    const { data: au } = await supabase.from('users').select('id, full_name, nickname').eq('id', actorId).maybeSingle();
+    actorLabel = formatUserLabel(au);
+  }
+  const { data: proj } = projectId
+    ? await supabase.from('projects').select('id, name, clients(name)').eq('id', projectId).maybeSingle()
+    : { data: null };
+  const clientName = proj?.clients?.name || '';
+  const projectName = proj?.name || '';
+  const { data: admins, error: adminErr } = await supabase
+    .from('users').select('id, slack_dm_id').eq('is_active', true).in('role', ['admin']);
+  if (adminErr) { console.warn('[pricing-approval] admin 取得失敗:', adminErr.message); return; }
+  const targets = (admins || []).filter(u => u.id !== actorId);
+  if (!targets.length) return;
+
+  const title = '💴 単価の承認待ち';
+  const body = `${actorLabel || '誰か'}さんが【${clientName} / ${projectName}】の単価を設定しました（${lineIds.length}グループ）`;
+  const linkUrl = projectId ? projectEstimateLink(projectId) : '/haruka.html';
+  await createBulkNotifications(targets.map(u => ({
+    user_id: u.id,
+    notification_type: 'pricing_approval',
+    title,
+    body,
+    link_url: linkUrl,
+    meta: { project_id: projectId, line_ids: lineIds },
+    sender_id: actorId,
+  })));
+
+  // 絶対 URL は notifications.js buildCreativeUrl と同じ優先順（APP_URL → RAILWAY_PUBLIC_DOMAIN）
+  const explicitBase = (process.env.APP_URL || '').replace(/\/$/, '');
+  const railwayDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const absBase = explicitBase || (railwayDomain ? `https://${railwayDomain}` : '');
+  const slackText = `${title}\n${body}\n承認待ち一覧はホームの「単価の承認待ち」カードから確認できます。${absBase ? `\n${absBase}${linkUrl}` : ''}`;
+  for (const u of targets) {
+    const slackId = (u.slack_dm_id || '').trim();
+    if (!/^[UW][A-Z0-9]+$/i.test(slackId)) continue;
+    try {
+      const r = await sendSlackDm(slackId, slackText);
+      if (!r?.ok) console.warn('[pricing-approval] Slack DM 失敗:', slackId, r?.reason || r?.status);
+    } catch (e) { console.warn('[pricing-approval] Slack DM 例外:', e?.message); }
+  }
+}
 
 // ADR 027: 成果物グループのカテゴリは案件の主カテゴリ（projects.primary_category_id）と完全一致必須。
 // 動画案件に静止画 line 等が混在すると、単価解決の最終フォールバック
@@ -2383,13 +2607,29 @@ async function validateLineCategoryAgainstProject(projectId, categoryId) {
 
 // 1行を id で取得（applies 列が無い環境ではレガシー select で再試行）。書き込み系の返却に使う。
 async function selectLineRowById(lineId) {
-  let { data, error } = await supabase
-    .from('project_estimate_lines').select(LINE_SELECT).eq('id', lineId).single();
-  if (error && isMissingAppliesColumn(error)) {
-    ({ data, error } = await supabase
-      .from('project_estimate_lines').select(LINE_SELECT_LEGACY).eq('id', lineId).single());
-  }
+  const { data, error } = await runLineSelectWithFallback((sel) =>
+    supabase.from('project_estimate_lines').select(sel).eq('id', lineId).single());
+  if (data) await attachPricingRequesters([data]);
   return { data, error };
+}
+
+// ADR 037: 各 line に pricing_requester {id, full_name, nickname} | null を付ける
+// （pricing_requested_by の ID 集合から users を 1 クエリでまとめて引く）
+async function attachPricingRequesters(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const ids = [...new Set(list.map(r => r && r.pricing_requested_by).filter(Boolean))];
+  let byId = new Map();
+  if (ids.length) {
+    const { data: users, error } = await supabase
+      .from('users').select('id, full_name, nickname').in('id', ids);
+    if (error) console.warn('[lines] pricing_requester users fetch failed:', error.message);
+    byId = new Map((users || []).map(u => [u.id, u]));
+  }
+  for (const r of list) {
+    if (!r) continue;
+    r.pricing_requester = (r.pricing_requested_by && byId.get(r.pricing_requested_by)) || null;
+  }
+  return list;
 }
 
 // GET /api/projects/:project_id/lines  一覧取得
@@ -2402,12 +2642,8 @@ router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
-  let { data, error } = await runQuery(LINE_SELECT);
-  // applies_from/applies_to 列が未適用なら旧 select で再試行（migration 未適用でもタブを壊さない）
-  if (error && isMissingAppliesColumn(error)) {
-    console.warn('[lines] applies_from/applies_to 列が未適用。migrations/2026-06-27_estimate_line_applies_period.sql を本番Supabaseに適用してください。');
-    ({ data, error } = await runQuery(LINE_SELECT_LEGACY));
-  }
+  // pricing_* / applies_from/applies_to 列が未適用なら旧 select で再試行（migration 未適用でもタブを壊さない）
+  const { data, error } = await runLineSelectWithFallback(runQuery);
   if (error) {
     if (isMissingPelTable(error)) {
       console.warn('[lines] project_estimate_lines table missing. Apply migrations/2026-05-06_estimate_lines_and_fixed_items.sql');
@@ -2421,11 +2657,23 @@ router.get('/projects/:project_id/lines', requireAuth, async (req, res) => {
   const codes = await getEffectiveRoleCodes(req);
   const canViewClientPrice = await roleCodesHavePermission(codes, 'project.client_price');
   let rows = data || [];
+  await attachPricingRequesters(rows);
   if (!canViewClientPrice) {
-    rows = rows.map(({ client_unit_price, ...rest }) => rest);
+    rows = rows.map(stripClientPriceFromLine);
   }
   res.json(rows);
 });
+
+// project.client_price を持たないロール向けに client_unit_price を落とす（ADR 037: スナップショット内も同様）
+function stripClientPriceFromLine(row) {
+  if (!row) return row;
+  const { client_unit_price, ...rest } = row;
+  if (rest.pricing_prev_snapshot && typeof rest.pricing_prev_snapshot === 'object') {
+    const { client_unit_price: _c, ...snapRest } = rest.pricing_prev_snapshot;
+    rest.pricing_prev_snapshot = snapRest;
+  }
+  return rest;
+}
 
 // カテゴリの制作ロール（render_kind が video→editor / それ以外→designer）の role_id を返す。
 async function productionRoleIdForCategory(categoryId) {
@@ -2440,18 +2688,21 @@ async function productionRoleIdForCategory(categoryId) {
 
 // 制作者単価（編集者/デザイナーへの1本あたり支払）を 1 つの line_cost として保存する。
 // ロールはカテゴリの render_kind から自動判定。UI ではロールを扱わない。
+// 戻り値: 単価が実際に変わったか（ADR 037 の承認状態判定に使う）
 async function upsertProducerLineCost(lineId, categoryId, unitPrice) {
-  if (!lineId) return;
+  if (!lineId) return false;
   const price = Math.max(0, parseInt(unitPrice, 10) || 0);
   const roleId = await productionRoleIdForCategory(categoryId);
-  if (!roleId) return;
+  if (!roleId) return false;
   const { data: existing } = await supabase.from('project_estimate_line_costs')
-    .select('id').eq('line_id', lineId).eq('role_id', roleId).is('user_id', null).maybeSingle();
+    .select('id, unit_price').eq('line_id', lineId).eq('role_id', roleId).is('user_id', null).maybeSingle();
   if (existing) {
+    if ((Number(existing.unit_price) || 0) === price) return false;
     await supabase.from('project_estimate_line_costs').update({ unit_price: price }).eq('id', existing.id);
   } else {
     await supabase.from('project_estimate_line_costs').insert({ line_id: lineId, role_id: roleId, unit_price: price, pricing_type: 'fixed_per_unit', currency: 'JPY' });
   }
+  return true;
 }
 
 // ===== ディレクター費（案件共通・ランク不問の1本あたり単価） =====
@@ -2495,12 +2746,18 @@ const DIRECTOR_HOURLY_LINE_NAME = 'ディレクション（時給）';
 //   無ければ「ディレクション（時給）」グループを自動作成。client_unit_price は請求時給（円/h）
 //   として line 側に保存（ADR 028: 時間制 line の client_unit_price は円/h と解釈）。
 //   unit_price=0 は解除（自動作成した空の時間制 line はグループごと削除）。
-router.put('/projects/:project_id/director-fee', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.put('/projects/:project_id/director-fee', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const projectId = req.params.project_id;
   const body = req.body || {};
   const price = Math.max(0, parseInt(body.unit_price, 10) || 0);
   const roleId = await directorRoleId();
   if (!roleId) return res.status(500).json({ error: 'ディレクターロールが roles マスタに存在しません' });
+  // ADR 037: 単価を書き込んだ line の承認状態を確定し、レスポンスに line_pricing_approval を添える
+  const finishPricing = async (lineIds, extra = {}) => {
+    if (!lineIds || !lineIds.length) return null;
+    const r = await applyPricingApprovalAfterWrite(req, lineIds, { projectId, ...extra });
+    return r.canApprove ? 'approved' : 'pending';
+  };
 
   // ===== 時給モード =====
   if (body.pricing_type === 'hourly') {
@@ -2525,7 +2782,10 @@ router.put('/projects/:project_id/director-fee', requireAuth, requirePermission(
 
     if (price > 0) {
       let lineId = hostLine?.id || null;
+      let pricingApproval = null;
       if (hostLine) {
+        // ADR 037: 書き込み前の承認済み値を控える（差し戻し時の復元用）
+        const snapshots = await capturePricingSnapshots([hostLine.id]);
         const { error } = await supabase.from('project_estimate_line_costs')
           .update({ unit_price: price, percentage: null })
           .eq('id', hostCost.id);
@@ -2536,6 +2796,7 @@ router.put('/projects/:project_id/director-fee', requireAuth, requirePermission(
             .eq('id', hostLine.id);
           if (lineErr) return res.status(500).json({ error: lineErr.message });
         }
+        pricingApproval = await finishPricing([hostLine.id], { snapshots });
       } else {
         // 時間制 line を自動作成（status=contracted で作業時間側の単価解決対象に入れる / ADR 028）
         const { data: maxRow } = await supabase
@@ -2564,12 +2825,16 @@ router.put('/projects/:project_id/director-fee', requireAuth, requirePermission(
         const { error: costErr } = await supabase.from('project_estimate_line_costs')
           .insert({ line_id: lineId, role_id: roleId, unit_price: price, pricing_type: 'hourly', currency: 'JPY' });
         if (costErr) return res.status(500).json({ error: costErr.message });
+        // ADR 037: 新規作成 line（スナップショット無し）
+        pricingApproval = await finishPricing([lineId], { newLineIds: [lineId] });
       }
-      return res.json({ ok: true, mode: 'hourly', unit_price: price, client_unit_price: clientPrice, line_id: lineId, created: !hostLine });
+      return res.json({ ok: true, mode: 'hourly', unit_price: price, client_unit_price: clientPrice, line_id: lineId, created: !hostLine, line_pricing_approval: pricingApproval });
     }
 
     // price=0 → 時給の解除
     if (!hostLine) return res.json({ ok: true, mode: 'hourly', unit_price: 0, removed: 0 });
+    // ADR 037: 削除前の承認済み値を控える（line が残る場合の差し戻し復元用）
+    const removeSnapshots = await capturePricingSnapshots([hostLine.id]);
     const { error: delErr } = await supabase.from('project_estimate_line_costs')
       .delete().eq('id', hostCost.id);
     if (delErr) return res.status(500).json({ error: delErr.message });
@@ -2585,7 +2850,8 @@ router.put('/projects/:project_id/director-fee', requireAuth, requirePermission(
         if (!lineDelErr) lineRemoved = true;
       }
     }
-    return res.json({ ok: true, mode: 'hourly', unit_price: 0, removed: 1, line_removed: lineRemoved });
+    const removedPricingApproval = lineRemoved ? null : await finishPricing([hostLine.id], { snapshots: removeSnapshots });
+    return res.json({ ok: true, mode: 'hourly', unit_price: 0, removed: 1, line_removed: lineRemoved, line_pricing_approval: removedPricingApproval });
   }
 
   // ===== 1本あたりモード（従来） =====
@@ -2598,12 +2864,15 @@ router.put('/projects/:project_id/director-fee', requireAuth, requirePermission(
     return res.status(400).json({ error: '成果物グループがまだありません。先にグループを追加してください（時給精算の場合は「時給」を選ぶとグループが自動作成されます）' });
   }
 
+  // ADR 037: 書き込み前の承認済み値を全 line 分控える（実際に単価が変わった line だけ承認状態を更新）
+  const perUnitSnapshots = await capturePricingSnapshots(lines.map(l => l.id));
+  const touchedLineIds = [];
   let applied = 0, removed = 0;
   for (const line of lines) {
     // UNIQUE (line_id, role_id, user_id) のためロール固定行は最大1件
     const { data: existing, error: exErr } = await supabase
       .from('project_estimate_line_costs')
-      .select('id, pricing_type')
+      .select('id, pricing_type, unit_price')
       .eq('line_id', line.id).eq('role_id', roleId).is('user_id', null)
       .maybeSingle();
     if (exErr) return res.status(500).json({ error: exErr.message });
@@ -2611,24 +2880,29 @@ router.put('/projects/:project_id/director-fee', requireAuth, requirePermission(
     if (existing && existing.pricing_type === 'hourly') continue;
     if (price > 0) {
       if (existing) {
+        const unchanged = (Number(existing.unit_price) || 0) === price && existing.pricing_type === 'fixed_per_unit';
         const { error } = await supabase.from('project_estimate_line_costs')
           .update({ unit_price: price, pricing_type: 'fixed_per_unit', percentage: null, actual_hours: null })
           .eq('id', existing.id);
         if (error) return res.status(500).json({ error: error.message });
+        if (!unchanged) touchedLineIds.push(line.id);
       } else {
         const { error } = await supabase.from('project_estimate_line_costs')
           .insert({ line_id: line.id, role_id: roleId, unit_price: price, pricing_type: 'fixed_per_unit', currency: 'JPY' });
         if (error) return res.status(500).json({ error: error.message });
+        touchedLineIds.push(line.id);
       }
       applied++;
     } else if (existing && existing.pricing_type === 'fixed_per_unit') {
       const { error } = await supabase.from('project_estimate_line_costs')
         .delete().eq('id', existing.id);
       if (error) return res.status(500).json({ error: error.message });
+      touchedLineIds.push(line.id);
       removed++;
     }
   }
-  res.json({ ok: true, unit_price: price, applied, removed, lines_count: lines.length });
+  const pricingApproval = await finishPricing(touchedLineIds, { snapshots: perUnitSnapshots });
+  res.json({ ok: true, unit_price: price, applied, removed, lines_count: lines.length, line_pricing_approval: pricingApproval, pricing_touched_line_ids: touchedLineIds });
 });
 
 // ===== ランク単価プリセット（category × rank → 制作者単価）。category_rank_rates を再利用 =====
@@ -2671,7 +2945,7 @@ router.put('/rank-price-presets', requireAuth, requireRole(...PRESET_ROLES), asy
 
 // POST /api/projects/:project_id/lines/generate-preset  プリセットから A/B/C 成果物グループを一括生成
 // 既に同カテゴリで存在する rank はスキップ（重複作成しない）。client 単価は 0、制作者単価はプリセットから。
-router.post('/projects/:project_id/lines/generate-preset', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.post('/projects/:project_id/lines/generate-preset', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const projectId = req.params.project_id;
   const { category_id } = req.body || {};
   if (!category_id) return res.status(400).json({ error: 'category_id は必須です' });
@@ -2698,6 +2972,7 @@ router.post('/projects/:project_id/lines/generate-preset', requireAuth, requireP
   const dFee = dRoleId ? await projectDirectorFeeConsensus(projectId, dRoleId) : null;
 
   let createdCount = 0;
+  const createdLineIds = [];
   for (const rank of ['A', 'B', 'C']) {
     if (existingRanks.has(rank)) continue; // 既にある rank はスキップ
     sortOrder += 10;
@@ -2715,13 +2990,20 @@ router.post('/projects/:project_id/lines/generate-preset', requireAuth, requireP
         .insert({ line_id: line.id, role_id: dRoleId, unit_price: dFee, pricing_type: 'fixed_per_unit', currency: 'JPY' });
       if (dErr) console.warn('[lines/generate-preset] director fee inherit failed:', dErr.message);
     }
+    createdLineIds.push(line.id);
     createdCount++;
   }
-  res.json({ ok: true, created_count: createdCount, skipped: 3 - createdCount });
+  // ADR 037: 生成した全 line を新規作成扱いで承認状態確定（通知は 1 回）
+  const pricingResult = await applyPricingApprovalAfterWrite(req, createdLineIds, { projectId, newLineIds: createdLineIds });
+  res.json({
+    ok: true, created_count: createdCount, skipped: 3 - createdCount,
+    line_ids: createdLineIds,
+    line_pricing_approval: createdLineIds.length ? (pricingResult.canApprove ? 'approved' : 'pending') : null,
+  });
 });
 
 // POST /api/projects/:project_id/lines  新規作成
-router.post('/projects/:project_id/lines', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.post('/projects/:project_id/lines', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const projectId = req.params.project_id;
   const {
     category_id,
@@ -2815,7 +3097,7 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
     return res.status(500).json({ error: insErr.message });
   }
   // 返却は applies 列フォールバック付きで取得（列未適用環境でも 500 にしない）
-  const { data, error } = await selectLineRowById(inserted.id);
+  let { data, error } = await selectLineRowById(inserted.id);
   if (error) return res.status(500).json({ error: error.message });
 
   // 制作者単価（編集者/デザイナーへの1本あたり支払）を line_cost として保存（best-effort）
@@ -2830,24 +3112,31 @@ router.post('/projects/:project_id/lines', requireAuth, requirePermission('proje
     if (dErr) console.warn('[lines] director fee inherit failed:', dErr.message);
   }
 
+  // ADR 037: 新規作成 line は常に承認状態の対象（承認権限なし → スナップショット無しの pending）
+  if (data) {
+    await applyPricingApprovalAfterWrite(req, [data.id], { projectId, newLineIds: [data.id] });
+    const refetched = await selectLineRowById(data.id);
+    if (!refetched.error && refetched.data) data = refetched.data;
+  }
+
   res.json(data);
 });
 
 // PUT /api/projects/:project_id/lines/:line_id  部分更新
-router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.put('/projects/:project_id/lines/:line_id', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const { project_id: projectId, line_id: lineId } = req.params;
   const body = req.body || {};
 
   // 既存 line 取得 + project_id 一致チェック（applies 列が無い環境ではレガシー select で再試行）
   let { data: existing, error: getErr } = await supabase
     .from('project_estimate_lines')
-    .select('id, project_id, status, category_id, applies_from, applies_to')
+    .select('id, project_id, status, category_id, client_unit_price, applies_from, applies_to')
     .eq('id', lineId)
     .maybeSingle();
   if (getErr && isMissingAppliesColumn(getErr)) {
     ({ data: existing, error: getErr } = await supabase
       .from('project_estimate_lines')
-      .select('id, project_id, status, category_id')
+      .select('id, project_id, status, category_id, client_unit_price')
       .eq('id', lineId)
       .maybeSingle());
   }
@@ -2927,14 +3216,27 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     }
   }
 
+  // ADR 037: 単価に影響する変更（client_unit_price / producer_unit_price が現在値と異なる）だけ承認状態を動かす。
+  // name / sort_order / planned_count / is_active / status / rank / category_id だけの変更は対象外。
+  const clientPriceChanges = Object.prototype.hasOwnProperty.call(updates, 'client_unit_price')
+    && (Number(existing.client_unit_price) || 0) !== updates.client_unit_price;
+  const hasProducerPrice = Object.prototype.hasOwnProperty.call(body, 'producer_unit_price') && body.producer_unit_price !== null && body.producer_unit_price !== '';
+  // スナップショットは書き込み前に控える（差し戻し時は「最後に承認された値」へ戻す）
+  const pricingSnapshots = (clientPriceChanges || hasProducerPrice) ? await capturePricingSnapshots([lineId]) : null;
+  let pricingTouched = clientPriceChanges;
+
   // 制作者単価を line_cost へ反映（line 列の変更有無に関わらず実行）
-  if (Object.prototype.hasOwnProperty.call(body, 'producer_unit_price') && body.producer_unit_price !== null && body.producer_unit_price !== '') {
+  if (hasProducerPrice) {
     const catForCost = Object.prototype.hasOwnProperty.call(body, 'category_id') ? (body.category_id || existing.category_id) : existing.category_id;
-    try { await upsertProducerLineCost(lineId, catForCost, body.producer_unit_price); }
+    try {
+      const changed = await upsertProducerLineCost(lineId, catForCost, body.producer_unit_price);
+      if (changed) pricingTouched = true;
+    }
     catch (e) { console.warn('[lines] producer cost upsert (put) failed:', e?.message); }
   }
 
   if (Object.keys(updates).length === 0) {
+    if (pricingTouched) await applyPricingApprovalAfterWrite(req, [lineId], { projectId, snapshots: pricingSnapshots });
     // no-op: 既存をそのまま返す（フロントの fetch 再実行と整合性を保つ）
     const { data: row } = await selectLineRowById(lineId);
     return res.json(row);
@@ -2951,6 +3253,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
     }
     return res.status(500).json({ error: updErr.message });
   }
+  if (pricingTouched) await applyPricingApprovalAfterWrite(req, [lineId], { projectId, snapshots: pricingSnapshots });
   const { data, error } = await selectLineRowById(lineId);
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -2958,7 +3261,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requirePermissio
 
 // DELETE /api/projects/:project_id/lines/:line_id  削除
 // 紐付く creatives.line_id がある場合は 409 で防ぐ（line_costs は CASCADE で消える）
-router.delete('/projects/:project_id/lines/:line_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.delete('/projects/:project_id/lines/:line_id', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const { project_id: projectId, line_id: lineId } = req.params;
 
   const { data: existing, error: getErr } = await supabase
@@ -2998,7 +3301,7 @@ router.delete('/projects/:project_id/lines/:line_id', requireAuth, requirePermis
 // （制作者単価・ディレクター費・ロール別単価）を丸ごとコピーして新規 line を作る。
 // 名称は「元の名称（コピー）」。複製行は元の直後に並ぶよう案件内を 10刻みで再採番する。
 // 停止状態（applies_to）は引き継がず、複製は常に現役として作成する（すぐ使える行を作るのが目的）。
-router.post('/projects/:project_id/lines/:line_id/duplicate', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.post('/projects/:project_id/lines/:line_id/duplicate', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const { project_id: projectId, line_id: lineId } = req.params;
 
   // 元 line 取得（applies 列フォールバック付き）
@@ -3090,6 +3393,9 @@ router.post('/projects/:project_id/lines/:line_id/duplicate', requireAuth, requi
     }
   } catch (e) { console.warn('[lines/duplicate] reorder after copy failed:', e?.message); }
 
+  // ADR 037: 複製先は新規作成扱い（コピー元の承認状態は引き継がない）
+  await applyPricingApprovalAfterWrite(req, [newLineId], { projectId, newLineIds: [newLineId] });
+
   const { data, error } = await selectLineRowById(newLineId);
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -3111,7 +3417,7 @@ router.get('/projects/:project_id/lines/:line_id/creatives', requireAuth, async 
 
 // PATCH /api/projects/:project_id/lines/reorder  一括並び替え
 // body: { ids: [<line_id_1>, <line_id_2>, ...] } の順で sort_order を 10, 20, 30, ... に再付番
-router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.patch('/projects/:project_id/lines/reorder', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const projectId = req.params.project_id;
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(x => typeof x === 'string' && x) : [];
   if (!ids.length) return res.status(400).json({ error: 'ids 配列が必要です' });
@@ -3145,12 +3451,253 @@ router.patch('/projects/:project_id/lines/reorder', requireAuth, requirePermissi
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
-  let { data: updated, error: refErr } = await refQuery(LINE_SELECT);
-  if (refErr && isMissingAppliesColumn(refErr)) {
-    ({ data: updated, error: refErr } = await refQuery(LINE_SELECT_LEGACY));
-  }
+  const { data: updated, error: refErr } = await runLineSelectWithFallback(refQuery);
   if (refErr) return res.status(500).json({ error: refErr.message });
+  await attachPricingRequesters(updated || []);
   res.json(updated || []);
+});
+
+// ==================== 単価の承認 / 差し戻し（ADR 037 Decision 4） ====================
+// 承認待ち line は単価として即有効（集計・プレビューは止めない）。承認は admin（project.pricing_approve）だけ。
+
+// 承認 / 差し戻しの通知（申請者 pricing_requested_by 宛て）
+async function notifyPricingDecision({ line, projectId, requesterId, actorId, approved, reason }) {
+  if (!requesterId || requesterId === actorId) return;
+  try {
+    const { data: proj } = projectId
+      ? await supabase.from('projects').select('id, name, clients(name)').eq('id', projectId).maybeSingle()
+      : { data: null };
+    const clientName = proj?.clients?.name || '';
+    const projectName = proj?.name || '';
+    const lineLabel = line?.name || [line?.category?.name, line?.rank ? `ランク${line.rank}` : null].filter(Boolean).join(' ') || '成果物グループ';
+    const head = `${clientName} / ${projectName} ${lineLabel}`.trim();
+    await createNotification({
+      userId: requesterId,
+      type: 'pricing_approval',
+      title: approved ? '単価が承認されました' : '単価が差し戻されました',
+      body: approved ? head : `${head}\n理由: ${reason}`,
+      linkUrl: projectId ? projectEstimateLink(projectId) : null,
+      meta: { project_id: projectId, line_id: line?.id || null, decision: approved ? 'approved' : 'rejected', reason: approved ? null : reason },
+      senderId: actorId,
+    });
+  } catch (e) { console.warn('[pricing-approval] decision notify failed:', e?.message); }
+}
+
+// POST /api/projects/:project_id/lines/:line_id/pricing/approve
+router.post('/projects/:project_id/lines/:line_id/pricing/approve', requireAuth, requirePermission('project.pricing_approve'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const { data: before, error: getErr } = await selectLineRowById(lineId);
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  const requesterId = before?.pricing_requested_by || null;
+
+  const ok = await markLinePricingApproved(lineId, req.user?.id || null);
+  if (!ok) return res.status(500).json({ error: '承認状態の更新に失敗しました（pricing_* 列の migration が未適用の可能性があります）' });
+
+  await notifyPricingDecision({ line: before, projectId, requesterId, actorId: req.user?.id || null, approved: true });
+  const { data: line, error } = await selectLineRowById(lineId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, line });
+});
+
+// POST /api/projects/:project_id/lines/:line_id/pricing/reject   body: { reason }（必須）
+//   スナップショットあり → client_unit_price と line_costs を最後に承認された値へ戻し approved
+//   スナップショット無し → 紐づくクリエイティブが無ければ line 削除（deleted）／あれば line_costs 全削除＋
+//                          client_unit_price=0 で approved（cleared = 単価未設定に戻す）
+router.post('/projects/:project_id/lines/:line_id/pricing/reject', requireAuth, requirePermission('project.pricing_approve'), async (req, res) => {
+  const { project_id: projectId, line_id: lineId } = req.params;
+  const reason = (typeof req.body?.reason === 'string') ? req.body.reason.trim() : '';
+  if (!reason) return res.status(400).json({ error: '差し戻し理由（reason）は必須です' });
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+
+  const { data: before, error: getErr } = await selectLineRowById(lineId);
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!before) return res.status(404).json({ error: 'line が見つかりません' });
+  if (before.pricing_approval !== 'pending') {
+    return res.status(409).json({ error: 'この成果物グループは承認待ちではありません' });
+  }
+  const requesterId = before.pricing_requested_by || null;
+  const actorId = req.user?.id || null;
+  const snap = before.pricing_prev_snapshot && typeof before.pricing_prev_snapshot === 'object' ? before.pricing_prev_snapshot : null;
+
+  if (snap) {
+    // 復元: client_unit_price → line_costs（delete → insert で作り直す。ADR 037 Consequences）
+    const { error: lineErr } = await supabase.from('project_estimate_lines')
+      .update({ client_unit_price: Math.max(0, parseInt(snap.client_unit_price, 10) || 0) })
+      .eq('id', lineId);
+    if (lineErr) return res.status(500).json({ error: lineErr.message });
+    const { error: delErr } = await supabase.from('project_estimate_line_costs').delete().eq('line_id', lineId);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+    const costRows = (Array.isArray(snap.costs) ? snap.costs : [])
+      .filter(c => c && c.role_id)
+      .map(c => ({
+        line_id: lineId,
+        role_id: c.role_id,
+        user_id: c.user_id ?? null,
+        unit_price: Math.max(0, parseInt(c.unit_price, 10) || 0),
+        currency: 'JPY',
+        pricing_type: PRICING_TYPES.has(c.pricing_type) ? c.pricing_type : 'fixed_per_unit',
+        percentage: c.percentage ?? null,
+        actual_hours: c.actual_hours ?? null,
+      }));
+    if (costRows.length) {
+      const { error: insErr } = await supabase.from('project_estimate_line_costs').insert(costRows);
+      if (insErr) return res.status(500).json({ error: insErr.message });
+    }
+    await markLinePricingApproved(lineId, actorId);
+    await notifyPricingDecision({ line: before, projectId, requesterId, actorId, approved: false, reason });
+    const { data: line, error } = await selectLineRowById(lineId);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ ok: true, action: 'restored', line });
+  }
+
+  // スナップショット無し（新規作成 line）
+  const { count: creativeCount, error: cntErr } = await supabase
+    .from('creatives').select('id', { count: 'exact', head: true }).eq('line_id', lineId);
+  if (cntErr) return res.status(500).json({ error: cntErr.message });
+  if (!(creativeCount || 0)) {
+    const { error: delErr } = await supabase.from('project_estimate_lines').delete().eq('id', lineId);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+    await notifyPricingDecision({ line: before, projectId, requesterId, actorId, approved: false, reason });
+    return res.json({ ok: true, action: 'deleted' });
+  }
+  const { error: costDelErr } = await supabase.from('project_estimate_line_costs').delete().eq('line_id', lineId);
+  if (costDelErr) return res.status(500).json({ error: costDelErr.message });
+  const { error: clrErr } = await supabase.from('project_estimate_lines').update({ client_unit_price: 0 }).eq('id', lineId);
+  if (clrErr) return res.status(500).json({ error: clrErr.message });
+  await markLinePricingApproved(lineId, actorId);
+  await notifyPricingDecision({ line: before, projectId, requesterId, actorId, approved: false, reason });
+  const { data: line, error } = await selectLineRowById(lineId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, action: 'cleared', line });
+});
+
+// GET /api/pricing-approvals/pending  全案件横断の承認待ち一覧（最大 200 件・申請日時降順）
+const PRICING_PENDING_LIMIT = 200;
+router.get('/pricing-approvals/pending', requireAuth, requirePermission('project.pricing_approve'), async (req, res) => {
+  const { data: lines, error } = await supabase
+    .from('project_estimate_lines')
+    .select(`id, project_id, name, rank, client_unit_price, pricing_requested_by, pricing_requested_at, pricing_prev_snapshot, category:creative_categories(id, code, name), line_costs:project_estimate_line_costs(role_id, user_id, unit_price, pricing_type, percentage)`)
+    .eq('pricing_approval', 'pending')
+    .order('pricing_requested_at', { ascending: false, nullsFirst: false })
+    .limit(PRICING_PENDING_LIMIT);
+  if (error) {
+    if (isMissingPricingApprovalColumn(error) || isMissingPelTable(error)) {
+      console.warn('[pricing-approvals] pricing_* 列が未適用。migrations/2026-09-03_line_pricing_approval.sql を本番Supabaseに適用してください。');
+      return res.json({ count: 0, items: [], migration_pending: true });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  const rows = lines || [];
+  if (!rows.length) return res.json({ count: 0, items: [] });
+
+  // 関連マスタは ID 集合でまとめて取得（N+1 回避。件数は上限 200 で担保）
+  const projectIds = [...new Set(rows.map(r => r.project_id).filter(Boolean))];
+  const requesterIds = [...new Set(rows.map(r => r.pricing_requested_by).filter(Boolean))];
+  const roleIds = new Set();
+  const userIds = new Set(requesterIds);
+  for (const r of rows) {
+    for (const c of (r.line_costs || [])) { if (c.role_id) roleIds.add(c.role_id); if (c.user_id) userIds.add(c.user_id); }
+    for (const c of (r.pricing_prev_snapshot?.costs || [])) { if (c.role_id) roleIds.add(c.role_id); if (c.user_id) userIds.add(c.user_id); }
+  }
+  const [{ data: projects }, { data: users }, { data: roles }] = await Promise.all([
+    projectIds.length ? supabase.from('projects').select('id, name, clients(name)').in('id', projectIds) : { data: [] },
+    userIds.size ? supabase.from('users').select('id, full_name, nickname').in('id', [...userIds]) : { data: [] },
+    roleIds.size ? supabase.from('roles').select('id, code, label').in('id', [...roleIds]) : { data: [] },
+  ]);
+  const projById = new Map((projects || []).map(p => [p.id, p]));
+  const userById = new Map((users || []).map(u => [u.id, u]));
+  const roleById = new Map((roles || []).map(r => [r.id, r]));
+  const costView = (c) => ({
+    role_code: roleById.get(c.role_id)?.code || null,
+    role_label: roleById.get(c.role_id)?.label || null,
+    user_id: c.user_id ?? null,
+    user_name: c.user_id ? (formatUserLabel(userById.get(c.user_id)) || null) : null,
+    unit_price: Number(c.unit_price) || 0,
+    pricing_type: c.pricing_type || 'fixed_per_unit',
+    percentage: c.percentage ?? null,
+  });
+  const items = rows.map(r => {
+    const proj = projById.get(r.project_id);
+    const requester = r.pricing_requested_by ? userById.get(r.pricing_requested_by) : null;
+    const snap = r.pricing_prev_snapshot && typeof r.pricing_prev_snapshot === 'object' ? r.pricing_prev_snapshot : null;
+    return {
+      line_id: r.id,
+      project_id: r.project_id,
+      project_name: proj?.name || null,
+      client_name: proj?.clients?.name || null,
+      line_name: r.name || null,
+      category_name: r.category?.name || null,
+      category_code: r.category?.code || null,
+      rank: r.rank || null,
+      client_unit_price: Number(r.client_unit_price) || 0,
+      costs: (r.line_costs || []).map(costView),
+      prev_snapshot: snap ? {
+        client_unit_price: Number(snap.client_unit_price) || 0,
+        costs: (Array.isArray(snap.costs) ? snap.costs : []).map(costView),
+      } : null,
+      requested_by: requester ? { id: requester.id, full_name: requester.full_name, nickname: requester.nickname } : null,
+      requested_at: r.pricing_requested_at || null,
+    };
+  });
+  res.json({ count: items.length, items });
+});
+
+// POST /api/pricing-approvals/approve-all  body: { line_ids: [...] }（最大 200）一括承認
+router.post('/pricing-approvals/approve-all', requireAuth, requirePermission('project.pricing_approve'), async (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body?.line_ids) ? req.body.line_ids : []).filter(x => typeof x === 'string' && x))];
+  if (!ids.length) return res.status(400).json({ error: 'line_ids 配列が必要です' });
+  if (ids.length > PRICING_PENDING_LIMIT) return res.status(400).json({ error: `一度に承認できるのは ${PRICING_PENDING_LIMIT} 件までです` });
+
+  const { data: lines, error } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id, name, rank, pricing_requested_by, category:creative_categories(id, code, name)')
+    .in('id', ids)
+    .eq('pricing_approval', 'pending');
+  if (error) return res.status(500).json({ error: error.message });
+  const targets = lines || [];
+  const actorId = req.user?.id || null;
+  let approved = 0;
+  for (const l of targets) {
+    if (await markLinePricingApproved(l.id, actorId)) approved++;
+  }
+
+  // 申請者ごとに 1 通知（案件・グループ数をまとめる）
+  const byRequester = new Map();
+  for (const l of targets) {
+    if (!l.pricing_requested_by || l.pricing_requested_by === actorId) continue;
+    if (!byRequester.has(l.pricing_requested_by)) byRequester.set(l.pricing_requested_by, []);
+    byRequester.get(l.pricing_requested_by).push(l);
+  }
+  if (byRequester.size) {
+    const projectIds = [...new Set(targets.map(l => l.project_id).filter(Boolean))];
+    const { data: projects } = projectIds.length
+      ? await supabase.from('projects').select('id, name, clients(name)').in('id', projectIds)
+      : { data: [] };
+    const projById = new Map((projects || []).map(p => [p.id, p]));
+    for (const [requesterId, ls] of byRequester) {
+      const projNames = [...new Set(ls.map(l => {
+        const p = projById.get(l.project_id);
+        return p ? `${p.clients?.name || ''} / ${p.name || ''}`.trim() : null;
+      }).filter(Boolean))];
+      const firstProjectId = ls[0]?.project_id || null;
+      try {
+        await createNotification({
+          userId: requesterId,
+          type: 'pricing_approval',
+          title: '単価が承認されました',
+          body: `${projNames.join('、')}（${ls.length}グループ）`,
+          linkUrl: firstProjectId ? projectEstimateLink(firstProjectId) : null,
+          meta: { line_ids: ls.map(l => l.id), decision: 'approved' },
+          senderId: actorId,
+        });
+      } catch (e) { console.warn('[pricing-approvals] approve-all notify failed:', e?.message); }
+    }
+  }
+  res.json({ ok: true, approved });
 });
 
 // ==================== 案件固定費・追加収入（project_fixed_items）Stage 4c ====================
@@ -4358,7 +4905,7 @@ router.get('/projects/:project_id/lines/:line_id/costs', requireAuth, async (req
 
 // POST /api/projects/:project_id/lines/:line_id/costs  新規作成
 // body: { role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours }
-router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const { project_id: projectId, line_id: lineId } = req.params;
   const verify = await _verifyLineBelongsToProject(lineId, projectId);
   if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
@@ -4402,6 +4949,8 @@ router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requirePe
     actual_hours: Object.prototype.hasOwnProperty.call(v.values, 'actual_hours') ? v.values.actual_hours : null,
   };
 
+  // ADR 037: 書き込み前の承認済み値を控える
+  const pricingSnapshots = await capturePricingSnapshots([lineId]);
   const { data, error } = await supabase
     .from('project_estimate_line_costs')
     .insert(insertRow)
@@ -4416,11 +4965,12 @@ router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requirePe
     }
     return res.status(500).json({ error: error.message });
   }
-  res.json(data);
+  const pr = await applyPricingApprovalAfterWrite(req, [lineId], { projectId, snapshots: pricingSnapshots });
+  res.json({ ...data, line_pricing_approval: pr.canApprove ? 'approved' : 'pending' });
 });
 
 // PUT /api/projects/:project_id/lines/:line_id/costs/:cost_id  部分更新
-router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const { project_id: projectId, line_id: lineId, cost_id: costId } = req.params;
   const verify = await _verifyLineBelongsToProject(lineId, projectId);
   if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
@@ -4428,7 +4978,7 @@ router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, r
   // 既存 cost 取得 + line_id 一致チェック
   const { data: existing, error: getErr } = await supabase
     .from('project_estimate_line_costs')
-    .select('id, line_id, role_id, user_id, pricing_type, percentage, actual_hours')
+    .select('id, line_id, role_id, user_id, pricing_type, percentage, actual_hours, unit_price')
     .eq('id', costId)
     .maybeSingle();
   if (getErr) return res.status(500).json({ error: getErr.message });
@@ -4531,6 +5081,19 @@ router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, r
     }
   }
 
+  // ADR 037: 単価に影響する項目（unit_price/pricing_type/percentage/actual_hours/user_id/role_id）が
+  // 実際に変わる場合だけ承認状態を動かす（currency のみの変更は対象外）
+  const numEq = (a, b) => {
+    const na = (a === null || a === undefined || a === '') ? null : Number(a);
+    const nb = (b === null || b === undefined || b === '') ? null : Number(b);
+    return na === nb;
+  };
+  const pricingTouched = ['unit_price', 'pricing_type', 'percentage', 'actual_hours', 'user_id', 'role_id']
+    .some(k => Object.prototype.hasOwnProperty.call(updates, k)
+      && (['unit_price', 'percentage', 'actual_hours'].includes(k)
+        ? !numEq(updates[k], existing[k])
+        : (updates[k] ?? null) !== (existing[k] ?? null)));
+
   if (Object.keys(updates).length === 0) {
     const { data: row } = await supabase
       .from('project_estimate_line_costs')
@@ -4540,6 +5103,7 @@ router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, r
     return res.json(row);
   }
 
+  const pricingSnapshots = pricingTouched ? await capturePricingSnapshots([lineId]) : null;
   const { data, error } = await supabase
     .from('project_estimate_line_costs')
     .update(updates)
@@ -4552,11 +5116,19 @@ router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, r
     }
     return res.status(500).json({ error: error.message });
   }
-  res.json(data);
+  let linePricingApproval = null;
+  if (pricingTouched) {
+    const pr = await applyPricingApprovalAfterWrite(req, [lineId], { projectId, snapshots: pricingSnapshots });
+    linePricingApproval = pr.canApprove ? 'approved' : 'pending';
+  } else {
+    const { data: l } = await supabase.from('project_estimate_lines').select('pricing_approval').eq('id', lineId).maybeSingle();
+    linePricingApproval = l?.pricing_approval || null;
+  }
+  res.json({ ...data, line_pricing_approval: linePricingApproval });
 });
 
 // DELETE /api/projects/:project_id/lines/:line_id/costs/:cost_id  物理削除
-router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const { project_id: projectId, line_id: lineId, cost_id: costId } = req.params;
   const verify = await _verifyLineBelongsToProject(lineId, projectId);
   if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
@@ -4572,12 +5144,15 @@ router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth
     return res.status(400).json({ error: 'line_id と cost_id が一致しません' });
   }
 
+  // ADR 037: 削除前の承認済み値を控える（差し戻し時に復元）
+  const pricingSnapshots = await capturePricingSnapshots([lineId]);
   const { error: delErr } = await supabase
     .from('project_estimate_line_costs')
     .delete()
     .eq('id', costId);
   if (delErr) return res.status(500).json({ error: delErr.message });
-  res.json({ ok: true });
+  const pr = await applyPricingApprovalAfterWrite(req, [lineId], { projectId, snapshots: pricingSnapshots });
+  res.json({ ok: true, line_pricing_approval: pr.canApprove ? 'approved' : 'pending' });
 });
 
 // ==================== 支払スケジュール（一式の分割）ADR 029 Stage 2 ====================
@@ -14865,7 +15440,109 @@ router.get('/invoices/months', async (req, res) => {
   res.json(months);
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// ADR 037: 請求書プレビュー / 請求書生成が読む成果物グループ（line）のロード。
+//   - pricing_approval / pricing_requested_by（承認待ち判定）を含めて取得する。
+//   - 列がまだ本番DBに無い環境（migration 未適用 / schema cache 遅延）では列を外して再取得し、
+//     全 line を承認済み扱いにする（resolveCreativeRoleCost 側で列無し=approved）。
+//   - preview-items / generate の両方で同じ select を使う（形の食い違い防止）。
+// ─────────────────────────────────────────────────────────────────────────
+const INVOICE_LINE_SELECT_BASE = `
+        id, project_id, category_id, rank, name, planned_count, client_unit_price, status, sort_order,
+        category:creative_categories(id, code, name),
+        line_costs:project_estimate_line_costs(
+          id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours,
+          role:roles(id, code, label)
+        )
+      `;
+const INVOICE_LINE_APPROVAL_COLS = 'pricing_approval, pricing_requested_by, ';
+// 列なし判定は lines セクションの isMissingPricingApprovalColumn（:2367 付近）を共用する
+
+/**
+ * 対象案件の line + line_costs をまとめて取得し、単価解決用の索引にして返す。
+ * @returns {Promise<{ linesByProject: Map<string, object[]>, lineCostsByLine: Record<string, object[]> }>}
+ */
+async function loadInvoiceEstimateLines(projectIds, logTag) {
+  const linesByProject = new Map(); // project_id -> line[]
+  const lineCostsByLine = {};       // line_id -> line_cost[]
+  if (!projectIds || !projectIds.length) return { linesByProject, lineCostsByLine };
+
+  const query = (withApproval) => supabase
+    .from('project_estimate_lines')
+    .select(`${withApproval ? INVOICE_LINE_APPROVAL_COLS : ''}${INVOICE_LINE_SELECT_BASE}`)
+    .in('project_id', projectIds);
+
+  let { data: lines, error: linesErr } = await query(true);
+  if (linesErr && isMissingPricingApprovalColumn(linesErr)) {
+    console.warn(`[${logTag}] pricing_approval 列なし → fallback で再取得:`, linesErr.message);
+    ({ data: lines, error: linesErr } = await query(false));
+  }
+  if (linesErr) {
+    console.warn(`[${logTag}] estimate_lines load failed:`, linesErr.message);
+    return { linesByProject, lineCostsByLine };
+  }
+  for (const line of (lines || [])) {
+    if (!linesByProject.has(line.project_id)) linesByProject.set(line.project_id, []);
+    linesByProject.get(line.project_id).push(line);
+    lineCostsByLine[line.id] = Array.isArray(line.line_costs) ? line.line_costs : [];
+  }
+  return { linesByProject, lineCostsByLine };
+}
+
+/**
+ * 承認待ち line の一覧（レスポンス用）を組み立てる。
+ * 案件名は projectNameById に無いものだけ、申請者名は ID 集合で、それぞれ 1 クエリ（N+1 禁止）。
+ * @param {Set<string>} pendingLineIds
+ * @param {Map<string, object[]>} linesByProject
+ * @param {Map<string, string>} [projectNameById]  - 既にロード済みの案件名（あれば流用）
+ * @returns {Promise<Array<{ line_id, project_id, project_name, line_name, requested_by_id, requested_by_name, requested_by_nickname }>>}
+ */
+async function buildPendingLinesPayload(pendingLineIds, linesByProject, projectNameById) {
+  if (!pendingLineIds || !pendingLineIds.size) return [];
+  const pendingLines = [];
+  for (const lines of linesByProject.values()) {
+    for (const l of lines) if (pendingLineIds.has(l.id)) pendingLines.push(l);
+  }
+  if (!pendingLines.length) return [];
+
+  const nameById = new Map(projectNameById || []);
+  const missingProjectIds = [...new Set(pendingLines.map(l => l.project_id).filter(pid => pid && !nameById.has(pid)))];
+  const requesterIds = [...new Set(pendingLines.map(l => l.pricing_requested_by).filter(Boolean))];
+  const [{ data: projRows }, { data: userRows }] = await Promise.all([
+    missingProjectIds.length
+      ? supabase.from('projects').select('id, name').in('id', missingProjectIds)
+      : Promise.resolve({ data: [] }),
+    requesterIds.length
+      ? supabase.from('users').select('id, full_name, nickname').in('id', requesterIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+  for (const p of (projRows || [])) nameById.set(p.id, p.name || '');
+  const userById = new Map((userRows || []).map(u => [u.id, u]));
+
+  return pendingLines
+    .sort((a, b) =>
+      String(nameById.get(a.project_id) || '').localeCompare(String(nameById.get(b.project_id) || ''), 'ja')
+      || (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0)
+      || String(a.id).localeCompare(String(b.id)))
+    .map(l => {
+      const u = l.pricing_requested_by ? userById.get(l.pricing_requested_by) : null;
+      return {
+        line_id: l.id,
+        project_id: l.project_id,
+        project_name: nameById.get(l.project_id) || '',
+        line_name: l.name || '',
+        requested_by_id: l.pricing_requested_by || null,
+        requested_by_name: u?.full_name || '',
+        requested_by_nickname: u?.nickname || '',
+      };
+    });
+}
+
 // 請求書プレビュー：自分のクリエイティブ一覧＋単価を返す（:idより前に定義必須）
+// ADR 037: 承認待ち（pricing_approval='pending'）の line を単価根拠に含む明細は止めずに返し、
+//   - 各 item に pricing_pending: true|false を付ける
+//   - ?with_meta=1 のときだけ { items, pending_lines } の形で承認待ち line 一覧を添える
+//     （既定は従来どおり配列を返す。既存フロント loadInvoicePreview は配列前提のため後方互換を維持）
 router.get('/invoices/preview-items', async (req, res) => {
   const uid = req.user?.id;
   const year  = parseInt(req.query.year);
@@ -14978,30 +15655,11 @@ router.get('/invoices/preview-items', async (req, res) => {
   // 対象案件の単価を新スキーマ (lines + line_costs) からまとめて取得
   // ADR 002 (見積行統合) + ADR 005 (status filter) + Stage 5 (旧 rates テーブル参照撤去)
   const projectIds = [...new Set(myCreatives.map(c => c.project_id))];
-  const linesByProject = new Map(); // project_id -> line[]
-  const lineCostsByLine = {};       // line_id -> line_cost[]
-  if (projectIds.length) {
-    const { data: lines, error: linesErr } = await supabase
-      .from('project_estimate_lines')
-      .select(`
-        id, project_id, category_id, rank, name, planned_count, client_unit_price, status, sort_order,
-        category:creative_categories(id, code, name),
-        line_costs:project_estimate_line_costs(
-          id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours,
-          role:roles(id, code, label)
-        )
-      `)
-      .in('project_id', projectIds);
-    if (linesErr) {
-      console.warn('[preview-items] estimate_lines load failed:', linesErr.message);
-    } else {
-      for (const line of (lines || [])) {
-        if (!linesByProject.has(line.project_id)) linesByProject.set(line.project_id, []);
-        linesByProject.get(line.project_id).push(line);
-        lineCostsByLine[line.id] = Array.isArray(line.line_costs) ? line.line_costs : [];
-      }
-    }
-  }
+  // ADR 037: pricing_approval 込みでロード（列なし環境はフォールバック）
+  const { linesByProject, lineCostsByLine } = await loadInvoiceEstimateLines(projectIds, 'preview-items');
+  // ADR 037: 承認待ち line を単価根拠に使った明細を集める（止めない・警告用）
+  const pendingLineIds = new Set();
+  const notePending = (r) => { if (r && r.pricing_approval === 'pending' && r.line_id) pendingLineIds.add(r.line_id); };
 
   // ユーザーの現在のランクを取得（rank_appliedがNULLの古いデータ用）
   const { data: currentUser } = await supabase.from('users').select('rank').eq('id', uid).single();
@@ -15030,6 +15688,9 @@ router.get('/invoices/preview-items', async (req, res) => {
     let baseFeeAmount = 0;
     let directorFee = 0;
     let producerFee = 0;
+    // ADR 037: この明細の単価根拠に承認待ち line が含まれるか（金額が載った行だけ数える）
+    let pricingPending = false;
+    const markPending = (r) => { if (r?.pricing_approval === 'pending') { pricingPending = true; notePending(r); } };
 
     // editor/designer など primaryRole の単価（旧 base_fee 相当・新スキーマでは role 単位の単一 unit_price）
     if (assignment && primaryRole && primaryRole !== 'director' && primaryRole !== 'producer') {
@@ -15043,6 +15704,7 @@ router.get('/invoices/preview-items', async (req, res) => {
       baseFeeAmount = r.unit_price || 0;
       if (baseFeeAmount > 0) {
         breakdown.push({ cost_type: 'base_fee', label: PREVIEW_COST_TYPE_LABELS.base_fee, unit_price: baseFeeAmount });
+        markPending(r);
       }
     }
 
@@ -15058,6 +15720,7 @@ router.get('/invoices/preview-items', async (req, res) => {
       directorFee = r.unit_price || 0;
       if (directorFee > 0) {
         breakdown.push({ cost_type: 'director_fee', label: PREVIEW_COST_TYPE_LABELS.director_fee, unit_price: directorFee });
+        markPending(r);
       }
     }
 
@@ -15073,6 +15736,7 @@ router.get('/invoices/preview-items', async (req, res) => {
       producerFee = r.unit_price || 0;
       if (producerFee > 0) {
         breakdown.push({ cost_type: 'producer_fee', label: PREVIEW_COST_TYPE_LABELS.producer_fee, unit_price: producerFee });
+        markPending(r);
       }
     }
 
@@ -15103,6 +15767,8 @@ router.get('/invoices/preview-items', async (req, res) => {
       producer_fee: producerFee,
       breakdown,
       total,
+      // ADR 037: 承認待ち line を単価根拠に含む（請求書生成では 400 で止まる）
+      pricing_pending: pricingPending,
     };
   });
 
@@ -15111,7 +15777,7 @@ router.get('/invoices/preview-items', async (req, res) => {
   // 例: 「秘書業 3.27h × ¥1,600」「ハビー ディレクション 15.17h × ¥1,500」＝ project別 + 非紐付きまとめ。
   try {
     const hourlyItems = await whBuildInvoiceItems(uid, year, month);
-    if (hourlyItems.length) result.push(...hourlyItems);
+    if (hourlyItems.length) result.push(...hourlyItems.map(hi => ({ ...hi, pricing_pending: false })));
   } catch (e) {
     console.warn('[preview-items] work_hour_entries load failed:', e.message);
   }
@@ -15121,11 +15787,25 @@ router.get('/invoices/preview-items', async (req, res) => {
   // 例: 「プレスト／プレスト・ケアHP HP制作一式 着手金（1/2）」＝ payee_user_id = 自分の分割行。
   try {
     const instItems = await installmentBuildInvoiceItems(uid, year, month);
-    if (instItems.length) result.push(...instItems);
+    if (instItems.length) result.push(...instItems.map(ii => ({ ...ii, pricing_pending: false })));
   } catch (e) {
     console.warn('[preview-items] line_payment_installments load failed:', e.message);
   }
 
+  // ADR 037: 承認待ち line の一覧（案件名は creatives の projects embed から流用、申請者名は 1 クエリ）
+  let pendingLines = [];
+  if (pendingLineIds.size) {
+    try {
+      const projectNameById = new Map(myCreatives.map(c => [c.project_id, c.projects?.name || '']));
+      pendingLines = await buildPendingLinesPayload(pendingLineIds, linesByProject, projectNameById);
+    } catch (e) {
+      console.warn('[preview-items] pending_lines build failed:', e?.message || e);
+    }
+  }
+
+  // 後方互換: 既定は従来どおり配列。?with_meta=1 のときだけ { items, pending_lines } を返す。
+  const withMeta = ['1', 'true'].includes(String(req.query.with_meta || '').toLowerCase());
+  if (withMeta) return res.json({ items: result, pending_lines: pendingLines });
   res.json(result);
 });
 
@@ -17281,39 +17961,11 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   // 対象案件の単価を新スキーマ (lines + line_costs) からまとめて取得（Stage 5）
   // ADR 002 (見積行統合) + ADR 005 (status filter)
   const projectIds = [...new Set(creatives.map(c => c.project_id))];
-  const linesByProject = new Map();
-  const lineCostsByLine = {};
-  if (projectIds.length) {
-    const { data: lines, error: linesErr } = await supabase
-      .from('project_estimate_lines')
-      .select(`
-        id, project_id, category_id, rank, name, planned_count, client_unit_price, status, sort_order,
-        category:creative_categories(id, code, name),
-        line_costs:project_estimate_line_costs(
-          id, line_id, role_id, user_id, unit_price, pricing_type, percentage, actual_hours,
-          role:roles(id, code, label)
-        )
-      `)
-      .in('project_id', projectIds);
-    if (linesErr) {
-      console.warn('[invoices/generate] estimate_lines load failed:', linesErr.message);
-    } else {
-      for (const line of (lines || [])) {
-        if (!linesByProject.has(line.project_id)) linesByProject.set(line.project_id, []);
-        linesByProject.get(line.project_id).push(line);
-        lineCostsByLine[line.id] = Array.isArray(line.line_costs) ? line.line_costs : [];
-      }
-    }
-  }
-
-  // 請求書番号を自動採番
-  const now = new Date();
-  const ym = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
-  const { count } = await supabase
-    .from('invoices')
-    .select('*', { count: 'exact', head: true })
-    .like('invoice_number', `INV-${ym}-%`);
-  const invoiceNumber = `INV-${ym}-${String((count||0)+1).padStart(3,'0')}`;
+  // ADR 037: pricing_approval / pricing_requested_by / name 込みでロード（列なし環境はフォールバック）
+  const { linesByProject, lineCostsByLine } = await loadInvoiceEstimateLines(projectIds, 'invoices/generate');
+  // ADR 037: 承認待ち line を単価根拠に含む明細があれば請求書を作らない（INSERT より前で判定）
+  const pendingLineIds = new Set();
+  const notePending = (r) => { if (r && r.pricing_approval === 'pending' && r.line_id) pendingLineIds.add(r.line_id); };
 
   // 明細を生成
   // 新方式: 1 creative = 複数 invoice_items（コスト種別ごと）
@@ -17358,12 +18010,15 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
       || (isDirector ? 'director' : (isProducer ? 'producer' : null));
     const rankApplied = assignment?.rank_applied ?? null;
 
+    // ADR 037: cost_type ごとの単価根拠（resolve 結果）。breakdown に載った行の根拠 line が承認待ちなら止める
+    const resolvedByCostType = {};
     let defaultBaseFee = 0;
     if (assignment && primaryRole && primaryRole !== 'director' && primaryRole !== 'producer') {
       const r = resolveCreativeRoleCost({
         creative, roleCode: primaryRole, rankApplied, linesByProject, lineCostsByLine,
       });
       defaultBaseFee = r.unit_price || 0;
+      resolvedByCostType.base_fee = r;
     }
     let defaultDirectorFee = 0;
     if (isDirector || primaryRole === 'director') {
@@ -17371,6 +18026,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
         creative, roleCode: 'director', rankApplied, linesByProject, lineCostsByLine,
       });
       defaultDirectorFee = r.unit_price || 0;
+      resolvedByCostType.director_fee = r;
     }
     let defaultProducerFee = 0;
     if (isProducer || primaryRole === 'producer') {
@@ -17378,6 +18034,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
         creative, roleCode: 'producer', rankApplied, linesByProject, lineCostsByLine,
       });
       defaultProducerFee = r.unit_price || 0;
+      resolvedByCostType.producer_fee = r;
     }
     const defaultUnitPriceMap = {
       base_fee:     defaultBaseFee,
@@ -17411,6 +18068,9 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
       if (isOverridden && (!b.change_reason || !b.change_reason.trim())) {
         return res.status(400).json({ error: `単価を変更した行は変更理由が必須です（${creativeLabel} / ${COST_TYPE_LABELS[b.cost_type] || b.cost_type}）` });
       }
+      // ADR 037: この行の単価根拠（original_unit_price の出所）が承認待ち line なら記録
+      //（override で金額を変えていても根拠 line が pending なら止める対象）
+      notePending(resolvedByCostType[b.cost_type]);
       totalAmount += b.unit_price;
       itemRows.push({
         creative_id:    creative.id,
@@ -17431,6 +18091,26 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
       });
     }
   }
+
+  // ADR 037 Decision 3: 承認待ちの単価は集計・プレビューでは有効だが、金額が外部に出る請求書生成だけは止める。
+  // INSERT（invoices / invoice_items）と採番の前で判定するので副作用は無い。
+  if (pendingLineIds.size) {
+    const pendingLines = await buildPendingLinesPayload(pendingLineIds, linesByProject, null);
+    return res.status(400).json({
+      error: '承認待ちの単価が含まれているため請求書を生成できません',
+      code: 'PRICING_PENDING',
+      pending_lines: pendingLines,
+    });
+  }
+
+  // 請求書番号を自動採番（承認待ちチェックの後。count は副作用なしだが無駄なクエリを避ける）
+  const now = new Date();
+  const ym = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
+  const { count } = await supabase
+    .from('invoices')
+    .select('*', { count: 'exact', head: true })
+    .like('invoice_number', `INV-${ym}-%`);
+  const invoiceNumber = `INV-${ym}-${String((count||0)+1).padStart(3,'0')}`;
 
   // ADR 028 Stage 2: 時間制（作業時間報告）明細。
   // 金額は work_hour_entries から再計算（preview-items と同じ whBuildInvoiceItems を共有）し、
@@ -21266,6 +21946,8 @@ const VALID_PERMISSION_KEYS = new Set([
   // project.notification_edit は migration 2026-08-19 / ROLE_PERM_LIST に存在するのに
   // このリストから漏れており、権限マトリクスから保存すると 400 になるバグがあった（本PRで追記修正）
   'project.create','project.create_edit','project.notification_edit','project.client_price','project.unit_price_view','project.fee_view','project.delete',
+  // ADR 037: ディレクターの単価設定（pricing_edit）と admin の承認（pricing_approve）
+  'project.pricing_edit','project.pricing_approve',
   'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others','creative.wcheck_toggle',
   'member.list','member.edit_password','member.deactivate','member.reactivate','member.delete',
   'team.manage','team.assign','team.delete',

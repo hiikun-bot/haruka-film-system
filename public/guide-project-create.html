@@ -178,7 +178,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="step-card">
     <div class="step-card-title">🔑 だれが作れる？</div>
-    <p>案件の作成・編集ができるのは <b>管理者・秘書・プロデューサー（P兼D含む）</b> です。<b>ディレクター</b> は案件・クライアントの<b>新規追加のみ</b>可能で、追加後の編集や単価の設定はP層に依頼します。ボタンが表示されない場合は権限がない状態です（詳しくは <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">ロールと権限ガイド</a>）。</p>
+    <p>案件の作成・編集ができるのは <b>管理者・秘書・プロデューサー（P兼D含む）</b> です。<b>ディレクター</b> は案件・クライアントの<b>新規追加</b>と、<b>成果物グループ・単価の設定</b>ができます（案件名や担当などの編集はP層に依頼します）。ディレクターが入れた単価は <b>管理者の承認待ち</b> になりますが、承認前でも集計にはそのまま反映されます。ボタンが表示されない場合は権限がない状態です（詳しくは <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">ロールと権限ガイド</a>）。</p>
     <p style="margin-top:6px">案件は必ず <b>クライアントの下</b> にぶら下がります。クライアントがまだ登録されていない場合は、先にクライアントを登録してください。</p>
   </div>
 
@@ -361,6 +361,28 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <p><b>見積・費用</b>：成果物グループ（カテゴリ／ランク別の1本あたり単価）と、固定費・追加収入を設定します。ここは別ガイドでじっくり → <a href="/guide-budget-rates.html" style="color:var(--em-dark);font-weight:700">予算・単価の上書きガイド</a></p>
     <p style="margin-top:6px"><b>工程表</b>：案件開始日を起点に、テンプレからフェーズ・タスク・マイルストーンを展開できます（LP案件は専用のフェーズUIあり）。</p>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 これらのタブは案件のIDが確定してからしか操作できないため、<b>新規作成時は表示されません</b>。「タブがない！」と思ったら、まず保存を。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🎥 ディレクターの場合 ── 保存すると単価の設定へ進みます</div>
+    <div class="flow-row">
+      <div class="flow-step">
+        <div class="flow-step-icon">➕</div>
+        <div class="flow-step-label">案件を「追加する」</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">💴</div>
+        <div class="flow-step-label">「💰 見積・費用」が<br>自動で開く</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">🕓</div>
+        <div class="flow-step-label">単価を保存 →<br>管理者の承認待ち</div>
+      </div>
+    </div>
+    <p>ディレクターが案件を追加すると、続けて「💰 見積・費用」タブが <b>単価専用モード</b>（このタブだけが表示されます）で開きます。ここで成果物グループと単価を入れておくと、クリエイティブを登録した瞬間から単価が付いた状態になります。あとから開きたいときは、案件一覧の「<b>💴 単価</b>」ボタンからどうぞ。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 保存時に「保存しました（管理者の承認待ち）」と出ればOK。管理者が承認するまで <b>🕓 承認待ち</b> バッジが付きますが、集計・請求プレビューにはそのまま反映されます（請求書の発行だけは承認後）。詳しくは <a href="/guide-budget-rates.html" style="color:var(--em-dark);font-weight:700">予算・単価の上書きガイド</a>。</p>
   </div>
 </section>
 

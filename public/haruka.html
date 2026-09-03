@@ -4230,6 +4230,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   <div id="dash-my-stats"></div>
   <!-- 全体連絡（全ロール共通） -->
   <div id="dash-announcements" style="margin-bottom:14px"></div>
+  <!-- 💴 単価の承認待ち（ADR 037。project.pricing_approve 保持者にだけ renderPricingApprovalsCard() が描画。0件なら空） -->
+  <div id="dash-pricing-approvals"></div>
   <!-- 今日の納期（全ロール共通） -->
   <div id="dash-today" style="margin-bottom:14px"></div>
   <!-- 誕生日（全ロール共通） -->
@@ -6115,6 +6117,30 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
 </div>
 
+<!-- ADR 037: 単価の差し戻し確認モーダル（理由必須）。見積タブ／ホームの承認待ちカード両方から開く -->
+<div class="modal-overlay" id="modal-project-line-pricing-reject" data-no-overlay-close="true" style="z-index:320">
+  <div class="modal" style="max-width:460px;width:92vw;padding:22px;border-radius:14px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px">
+      <div style="font-size:22px;line-height:1">↩</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:700;color:#92400E;margin-bottom:4px">単価を差し戻しますか？</div>
+        <div id="plr-message" style="font-size:12px;color:var(--text);line-height:1.7"></div>
+      </div>
+    </div>
+    <input type="hidden" id="plr-line-id">
+    <input type="hidden" id="plr-project-id">
+    <input type="hidden" id="plr-source">
+    <div class="form-group" style="margin-bottom:0">
+      <label class="form-label">差し戻し理由（必須・申請者に通知されます）</label>
+      <textarea class="form-input" id="plr-reason" rows="3" placeholder="例: 制作単価が ¥3,500 の想定です。確認して入れ直してください" oninput="onPricingRejectReasonInput()" style="font-size:13px;resize:vertical"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" onclick="closeModal('modal-project-line-pricing-reject')">キャンセル</button>
+      <button class="btn-primary" id="plr-execute-btn" onclick="executeProjectLinePricingReject()" disabled style="background:#B45309;border-color:#B45309">差し戻す</button>
+    </div>
+  </div>
+</div>
+
 <!-- 成果物グループに紐付くクリエイティブ一覧モーダル -->
 <!-- 削除が 409 でブロックされたとき「どのクリエイティブが原因か」を検索付きで確認するためのポップアップ。 -->
 <!-- 行クリックでクリエイティブ詳細モーダル（z-index:310）へ遷移する。 -->
@@ -6819,9 +6845,13 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <span style="font-size:11px;color:var(--text-muted);font-weight:400">（カテゴリ/ランク別の1本あたり単価：クライアント請求・制作者支払）</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <button type="button" class="btn" onclick="generateLinesFromPreset()" style="padding:6px 12px;font-size:12px;white-space:nowrap" title="案件の主カテゴリの A/B/C 成果物グループをプリセット単価で一括生成">📋 プリセットから一括生成</button>
+          <button type="button" class="btn" id="p-lines-preset-btn" onclick="generateLinesFromPreset()" style="padding:6px 12px;font-size:12px;white-space:nowrap" title="案件の主カテゴリの A/B/C 成果物グループをプリセット単価で一括生成">📋 プリセットから一括生成</button>
           <button type="button" class="btn-primary" id="p-lines-add-btn" onclick="addProjectLine()" style="padding:6px 14px;font-size:12px;white-space:nowrap">+ 新規追加</button>
         </div>
+      </div>
+      <!-- ADR 037: 承認待ちの単価が 1 つ以上あるときだけ表示する注記（renderProjectLines で切替） -->
+      <div id="p-lines-pending-note" style="display:none;align-items:center;gap:8px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:7px 12px;margin-bottom:12px;font-size:11.5px;color:#92400E;line-height:1.5">
+        🕓 承認待ちの単価があります。承認前でも集計・請求プレビューには反映されます（請求書の発行は承認後）
       </div>
       <!-- ディレクター費（案件共通・ランク不問）: 1本あたり=全グループの role=director line_cost へ一括反映 / 時給=時間制グループを自動管理（ADR 028） -->
       <div id="p-director-fee-bar" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;background:#F0FDFA;border:1px solid #99F6E4;border-radius:8px;padding:8px 12px;margin-bottom:12px">
@@ -11733,6 +11763,7 @@ function renderProjectsView() {
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
+            ${!canEditProject() && canEditProjectPricing() ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectPricing('${p.id}')" title="成果物グループ・単価の設定（承認権限が無ければ管理者の承認待ちになります）">💴 単価</button>` : ''}
             ${!canEditProject() && canEditNotification() ? `<button class="btn-sm" onclick="event.stopPropagation();openNotificationModal('project','${p.id}')" title="通知連携先（Slack/Chatwork）の設定">🔔 通知</button>` : ''}
             ${canEditProject() ? `<button class="btn-sm" style="color:${p.is_hidden?'var(--em-dark)':'#999'}" onclick="event.stopPropagation();toggleHideProject('${p.id}',${!!p.is_hidden})" title="${p.is_hidden?'表示に戻す':'非表示にする'}">${p.is_hidden?'再表示':'非表示'}</button>` : ''}
           </div>`;
@@ -17836,9 +17867,9 @@ function updateProjectHourlyRow() {
   if (!row || !sel) return;
   const cat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
     ? _categoriesCache.find(c => c && c.id === (sel.value || '')) : null;
-  // 時給の設定は PUT /projects/:id/director-fee（project.create_edit ガード）を使うため、
-  // 新規作成のみの project.create 保持者（director）には行ごと非表示（時給はP層が後から設定）。
-  const isHourly = cat?.code === 'hourly' && (typeof canEditProject !== 'function' || canEditProject());
+  // 時給の設定は PUT /projects/:id/director-fee を使う。ADR 037 で create_edit / pricing_edit の
+  // どちらかで叩けるようになったため、単価編集権限（director 既定）があれば行を出す（無ければ非表示）。
+  const isHourly = cat?.code === 'hourly' && (typeof canEditProjectPricing !== 'function' || canEditProjectPricing());
   row.style.display = isHourly ? 'flex' : 'none';
   if (isHourly) {
     const clientWrap = document.getElementById('p-hourly-client-wrap');
@@ -18472,6 +18503,8 @@ const _ROLE_PERMS_FALLBACK = {
   'secretary|project.create_edit': true, 'producer|project.create_edit': true, 'producer_director|project.create_edit': true,
   // 案件・クライアントの新規作成のみ（単価・既存編集は含まない）。director に開放（migration 2026-08-26_project_create_permission.sql）
   'secretary|project.create': true, 'producer|project.create': true, 'producer_director|project.create': true, 'director|project.create': true,
+  // ADR 037: 成果物グループ・単価の編集。director にも開放（承認権限 project.pricing_approve は admin のみ = 'admin|*'）
+  'secretary|project.pricing_edit': true, 'producer|project.pricing_edit': true, 'producer_director|project.pricing_edit': true, 'director|project.pricing_edit': true,
   // 通知連携先（Slack/Chatwork）の設定。director 以上に開放（migration 2026-08-19_project_notification_edit_permission.sql）
   'secretary|project.notification_edit': true, 'producer|project.notification_edit': true, 'producer_director|project.notification_edit': true, 'director|project.notification_edit': true,
   'producer|project.unit_price_view': true, 'producer_director|project.unit_price_view': true,
@@ -18788,6 +18821,12 @@ function canEditProject() {
 // （director に開放）。create_edit 保持者は従来どおり作成も編集も可（ADR 015・hasPermission 判定）。
 function canCreateProject() {
   return hasPermission('project.create') || canEditProject();
+}
+
+// ADR 037: 成果物グループ・単価の編集可否。create_edit 保持者は従来どおり、pricing_edit（director 既定）にも開放。
+// pricing_edit だけの保持者は案件編集モーダルを「💰 見積・費用」タブ限定（単価専用モード）で開く。
+function canEditProjectPricing() {
+  return hasPermission('project.pricing_edit') || canEditProject();
 }
 
 // 通知連携先（Slack/Chatwork）の設定可否。director 以上に開放（ADR 015 準拠・hasPermission 判定）。
@@ -19598,6 +19637,8 @@ function openProjectModal(preClientId) {
   if (schedSec) schedSec.style.display = 'none';
   // ADR 007: ファイル名テンプレ UI を初期化（新規は default テンプレを表示）
   initProjectFilenameTemplateUI(null);
+  // ADR 037: 単価専用モードの残留を解除（新規作成は通常モード）
+  applyProjectModalPricingOnlyMode(false);
   openModal('modal-project');
 }
 
@@ -19619,10 +19660,33 @@ function openEditProjectById(projectId) {
 // キャッシュに無ければ API から取り直す（openEditProject が allClients を参照するため両方必要）。
 //   projectId    : 開く案件
 //   closeModalId : 呼び出し元モーダルを閉じたい場合に指定（分析の内訳モーダル等）
+// ADR 037: 案件編集モーダルの「単価専用モード」切替。
+// pricing_edit だけ（create_edit 無し）の保持者は PUT /projects/:id を叩けないため、
+// 見積・費用タブ以外のタブと「保存する」「非表示にする」「🗑️ 削除」を隠し、成果物グループの操作だけに絞る。
+function applyProjectModalPricingOnlyMode(on) {
+  const modal = document.getElementById('modal-project');
+  if (!modal) return;
+  modal.dataset.pricingOnly = on ? '1' : '';
+  ['main', 'products', 'appeal-axes', 'checklist', 'process'].forEach(t => {
+    const btn = document.getElementById(`p-tab-btn-${t}`);
+    if (btn) btn.style.display = on ? 'none' : '';
+  });
+  const submitBtn = document.getElementById('p-submit-btn');
+  if (submitBtn) submitBtn.style.display = on ? 'none' : '';
+  const hiddenChk = document.getElementById('p-is-hidden');
+  const hiddenLabel = hiddenChk ? hiddenChk.closest('label') : null;
+  if (hiddenLabel) hiddenLabel.style.visibility = on ? 'hidden' : '';
+  if (on) {
+    const pDelBtn = document.getElementById('p-delete-btn');
+    if (pDelBtn) pDelBtn.style.display = 'none';
+  }
+}
+
 async function openProjectPricing(projectId, closeModalId) {
   if (!projectId) { showToast('案件が特定できませんでした', 'warn'); return; }
-  // 案件編集モーダルは編集 UI なので、権限が無いロールには開かない（ADR 015）
-  if (!canEditProject()) { showToast('案件の単価を見る権限がありません', 'warn'); return; }
+  // 案件編集モーダルは編集 UI なので、権限が無いロールには開かない（ADR 015）。
+  // ADR 037: pricing_edit 保持者（director）は単価専用モードで開ける。
+  if (!canEditProjectPricing()) { showToast('案件の単価を見る権限がありません', 'warn'); return; }
   if (closeModalId) closeModal(closeModalId);
 
   if (!Array.isArray(allClients) || !allClients.length) {
@@ -19639,6 +19703,8 @@ async function openProjectPricing(projectId, closeModalId) {
 
   openEditProject(p);          // 内部で switchProjectTab('main') される
   switchProjectTab('estimate'); // ので、その後に見積・費用タブへ切り替える
+  // ADR 037: create_edit 無し（pricing_edit のみ）の保持者は単価専用モード（他タブ・保存ボタンを隠す）
+  applyProjectModalPricingOnlyMode(!canEditProject());
   // 成果物グループの見出しを画面内に入れる（描画完了を待つ）
   requestAnimationFrame(() => {
     const sec = document.getElementById('p-lines-section');
@@ -19649,6 +19715,8 @@ async function openProjectPricing(projectId, closeModalId) {
 }
 
 function openEditProject(p) {
+  // ADR 037: 通常の編集モードで開く（単価専用モードの残留を解除。openProjectPricing はこの後で再設定する）
+  applyProjectModalPricingOnlyMode(false);
   // どの案件を編集中かヘッダーで常に分かるように、クライアント名／案件名を出す
   {
     const clientName = (allClients || []).find(c => c.id === p.client_id)?.name || p.clients?.name || '';
@@ -20001,8 +20069,157 @@ const PRICING_TYPE_LABELS = {
 };
 
 function projectLinesCanEdit() {
-  // 案件編集権限を持つユーザーのみ操作可能（サーバー側でも同じ権限でガード）
-  return typeof hasPermission === 'function' ? hasPermission('project.create_edit') : true;
+  // 案件編集権限 or 単価編集権限（ADR 037: director にも開放。承認権限が無ければ保存後「承認待ち」になる）。
+  // サーバー側でも requireAnyPermission('project.create_edit', 'project.pricing_edit') で同じガード。
+  if (typeof hasPermission !== 'function') return true;
+  return hasPermission('project.create_edit') || hasPermission('project.pricing_edit');
+}
+
+// ADR 037: 単価の承認・差し戻しができるか（admin 既定）。保持者の単価書き込みは承認を経ずに確定する。
+function projectPricingCanApprove() {
+  return typeof hasPermission === 'function' ? hasPermission('project.pricing_approve') : false;
+}
+
+// ADR 037: line の承認状態。API 未対応（列が無い）の間は undefined → approved 扱い。
+function isLinePricingPending(line) {
+  return !!line && line.pricing_approval === 'pending';
+}
+
+// ADR 037: 申請者ラベル「申請: ニックネーム（氏名） M/D HH:mm」（JST）
+function formatPricingRequester(requester, requestedAt) {
+  if (!requester && !requestedAt) return '';
+  const name = requester
+    ? ((window.NameDisplay && typeof NameDisplay.full === 'function') ? NameDisplay.full(requester) : (requester.nickname || requester.full_name || ''))
+    : '不明';
+  let when = '';
+  if (requestedAt) {
+    const d = new Date(requestedAt);
+    if (!isNaN(d.getTime())) {
+      when = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+  }
+  return `申請: ${name}${when ? ' ' + when : ''}`;
+}
+
+// ADR 037: 承認前スナップショットから「変更前: クラ ¥x / 制作 ¥y」の文字列を作る。
+// 制作単価は editor/designer ロールの unit_price（role_id → code は roles マスタから引く。引けなければ先頭）。
+function formatPricingPrevSnapshot(snap) {
+  if (!snap || typeof snap !== 'object') return '';
+  const costs = Array.isArray(snap.costs) ? snap.costs : [];
+  const roleCodeOf = (c) => {
+    if (c?.role_code) return c.role_code;
+    const roles = (typeof getAllRolesForUI === 'function') ? getAllRolesForUI() : [];
+    const r = roles.find(x => x && x.id === c?.role_id);
+    return r?.code || '';
+  };
+  const prod = costs.find(c => ['editor', 'designer'].includes(roleCodeOf(c))) || costs[0] || null;
+  const parts = [];
+  if (hasPermission('project.client_price') && snap.client_unit_price != null) {
+    parts.push(`クラ ¥${(Number(snap.client_unit_price) || 0).toLocaleString()}`);
+  }
+  parts.push(`制作 ¥${(Number(prod?.unit_price) || 0).toLocaleString()}`);
+  return `変更前: ${parts.join(' / ')}`;
+}
+
+// ADR 037: 保存レスポンスが「承認待ち」なら文言を差し替える。
+// line 系は `pricing_approval`、line_costs 系は `line_pricing_approval` を見る。
+function pricingPendingToast(resJson, okText) {
+  const st = resJson?.pricing_approval || resJson?.line_pricing_approval || resJson?.line?.pricing_approval;
+  if (st === 'pending') return '保存しました（管理者の承認待ち）';
+  return okText;
+}
+
+// ADR 037: 承認（pricing_approve 保持者）。成功後は一覧を再描画。
+async function approveProjectLinePricing(lineId) {
+  const projectId = document.getElementById('p-id').value;
+  if (!projectId || !lineId) return;
+  return btnBusy(busyBtnFrom(), async () => {
+    try {
+      const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/pricing/approve`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || `承認に失敗しました（${res.status}）`, 'warn');
+        return;
+      }
+      showToast('単価を承認しました', 'ok');
+      await loadProjectLines(projectId);
+      if (typeof refreshPricingApprovalsCard === 'function') refreshPricingApprovalsCard();
+    } catch (e) {
+      showToast(`承認に失敗しました: ${e?.message || ''}`, 'warn');
+    }
+  });
+}
+
+// ADR 037: 差し戻しモーダルを開く（理由 textarea 必須）。
+//   source: 'project'（見積タブ）| 'dashboard'（ホームの承認待ちカード）。成功後の再描画先を切り替える
+function openProjectLinePricingReject(lineId, projectIdOpt, source, labelHtml) {
+  const projectId = projectIdOpt || document.getElementById('p-id').value;
+  if (!lineId || !projectId) return;
+  document.getElementById('plr-line-id').value = lineId;
+  document.getElementById('plr-project-id').value = projectId;
+  document.getElementById('plr-source').value = source || 'project';
+  let summary = labelHtml || '';
+  if (!summary) {
+    const line = _projectLinesCache.find(l => l.id === lineId);
+    if (line) {
+      const catName = line.category ? line.category.name : 'カテゴリ未設定';
+      const nameLabel = line.name ? `「${line.name}」` : '（名称未設定）';
+      const prev = line.pricing_prev_snapshot ? formatPricingPrevSnapshot(line.pricing_prev_snapshot) : '';
+      summary = `<div style="margin-bottom:4px"><strong>${esc(catName)}</strong> ${esc(nameLabel)}${line.rank ? ` ${esc(line.rank)}ランク` : ''}</div>`
+        + `<div style="color:var(--text-muted)">${esc(formatPricingRequester(line.pricing_requester, line.pricing_requested_at))}</div>`
+        + `<div style="color:var(--text-muted)">${prev ? esc(prev) + ' に戻します' : '変更前の単価が無いため、単価を未設定に戻します（クリエイティブが無ければグループごと削除）'}</div>`;
+    }
+  }
+  document.getElementById('plr-message').innerHTML = summary;
+  const reasonEl = document.getElementById('plr-reason');
+  reasonEl.value = '';
+  onPricingRejectReasonInput();
+  openModal('modal-project-line-pricing-reject');
+  setTimeout(() => reasonEl.focus(), 50);
+}
+
+function onPricingRejectReasonInput() {
+  const reason = (document.getElementById('plr-reason')?.value || '').trim();
+  const btn = document.getElementById('plr-execute-btn');
+  if (btn) btn.disabled = reason.length === 0;
+}
+
+async function executeProjectLinePricingReject() {
+  const lineId = document.getElementById('plr-line-id').value;
+  const projectId = document.getElementById('plr-project-id').value;
+  const source = document.getElementById('plr-source').value || 'project';
+  const reason = (document.getElementById('plr-reason')?.value || '').trim();
+  if (!lineId || !projectId) return;
+  if (!reason) { showToast('差し戻し理由を入力してください', 'warn'); return; }
+  const btn = document.getElementById('plr-execute-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/pricing/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || `差し戻しに失敗しました（${res.status}）`, 'warn');
+      return;
+    }
+    const j = await res.json().catch(() => ({}));
+    closeModal('modal-project-line-pricing-reject');
+    const msg = j.action === 'deleted' ? '差し戻しました（グループを削除）'
+      : j.action === 'cleared' ? '差し戻しました（単価を未設定に戻しました）'
+      : '差し戻しました（承認済みの単価に戻しました）';
+    showToast(msg, 'ok');
+    if (source === 'project' || document.getElementById('p-id')?.value === projectId) {
+      if (j.action === 'deleted') { delete _projectLineCostsCache[lineId]; _projectLineCostsOpen.delete(lineId); }
+      if (document.getElementById('p-id')?.value === projectId) await loadProjectLines(projectId);
+    }
+    if (typeof refreshPricingApprovalsCard === 'function') refreshPricingApprovalsCard();
+  } catch (e) {
+    showToast(`差し戻しに失敗しました: ${e?.message || ''}`, 'warn');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // utils/pricing.js calculateLineCost と同じロジック（フロント版）
@@ -20071,7 +20288,13 @@ async function generateLinesFromPreset() {
   });
   if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.error || '生成に失敗しました', 'error'); return; }
   const j = await res.json().catch(() => ({}));
-  showToast(`A/B/C を ${j.created_count || 0} 件生成しました${j.skipped ? `（既存 ${j.skipped} 件はスキップ）` : ''}`, 'ok');
+  // ADR 037: 生成された line のいずれかが承認待ちなら文言を差し替える（lines[] / line / pricing_approval のどれで返っても拾う）
+  const presetPending = j?.pricing_approval === 'pending'
+    || (Array.isArray(j?.lines) && j.lines.some(l => l?.pricing_approval === 'pending'))
+    || (Array.isArray(j?.created) && j.created.some(l => l?.pricing_approval === 'pending'));
+  showToast(presetPending
+    ? `保存しました（管理者の承認待ち）: A/B/C を ${j.created_count || 0} 件生成${j.skipped ? `（既存 ${j.skipped} 件はスキップ）` : ''}`
+    : `A/B/C を ${j.created_count || 0} 件生成しました${j.skipped ? `（既存 ${j.skipped} 件はスキップ）` : ''}`, 'ok');
   loadProjectLines(projectId);
   });
 }
@@ -20124,9 +20347,15 @@ function renderProjectLines() {
   const listEl = document.getElementById('p-lines-list');
   if (!listEl) return;
   const canEdit = projectLinesCanEdit();
-  // 「新規追加」ボタンの権限制御
+  const canApprove = projectPricingCanApprove();
+  // 「新規追加」「プリセットから一括生成」ボタンの権限制御（ADR 037: pricing_edit にも開放）
   const addBtn = document.getElementById('p-lines-add-btn');
   if (addBtn) addBtn.style.display = canEdit ? '' : 'none';
+  const presetBtn = document.getElementById('p-lines-preset-btn');
+  if (presetBtn) presetBtn.style.display = canEdit ? '' : 'none';
+  // ADR 037: 承認待ち line が 1 つ以上あるときだけ注記を出す
+  const pendingNote = document.getElementById('p-lines-pending-note');
+  if (pendingNote) pendingNote.style.display = _projectLinesCache.some(isLinePricingPending) ? 'flex' : 'none';
 
   if (!_projectLinesCache.length) {
     // グループ0件でも時給精算は設定できる（時間制グループが自動作成される）ためバーは出す
@@ -20157,13 +20386,24 @@ function renderProjectLines() {
     // ADR 025: applies_to に日付が入っていれば「停止中」。NULL=現役。
     const isStopped = !!line.applies_to;
     const stoppedBadge = isStopped ? `<span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:#F3F4F6;border:1px solid #D1D5DB;color:#6B7280;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap">⛔ 停止中</span>` : '';
+    // ADR 037: 承認待ちバッジ（amber）。title に申請者・申請日時（JST）
+    const isPending = isLinePricingPending(line);
+    const pendingTitle = isPending ? formatPricingRequester(line.pricing_requester, line.pricing_requested_at) : '';
+    const pendingBadge = isPending ? `<span style="flex-shrink:0;display:inline-flex;align-items:center;padding:3px 9px;background:#FEF3C7;border:1px solid #FCD34D;color:#92400E;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap" title="${esc(pendingTitle || '管理者の承認待ちです')}">🕓 承認待ち</span>` : '';
+    const prevSnapText = isPending && line.pricing_prev_snapshot ? formatPricingPrevSnapshot(line.pricing_prev_snapshot) : '';
+    const prevSnapLabel = prevSnapText ? `<div style="font-size:10.5px;color:#B45309;margin-top:1px">${esc(prevSnapText)}${pendingTitle ? `　<span style="color:#9CA3AF">${esc(pendingTitle)}</span>` : ''}</div>`
+      : (isPending && pendingTitle ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:1px">${esc(pendingTitle)}</div>` : '');
+    // ADR 037: 承認 / 差し戻しボタンは pricing_approve 保持者（admin）にだけ出す
+    const approveBtns = (isPending && canApprove) ? `
+            <button type="button" class="btn" onclick="approveProjectLinePricing('${esc(line.id)}')" style="padding:4px 10px;font-size:11px;color:#0F7A56;border-color:#86E0BE;white-space:nowrap" title="この成果物グループの単価を承認します">✅ 承認</button>
+            <button type="button" class="btn" onclick="openProjectLinePricingReject('${esc(line.id)}')" style="padding:4px 10px;font-size:11px;color:#92400E;border-color:#F0C98A;white-space:nowrap" title="理由を添えて差し戻し、承認済みの値に戻します">↩ 差し戻し</button>` : '';
     const appliesLabel = isStopped
       ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:1px">適用 ${esc(line.applies_from || '—')} 〜 ${esc(line.applies_to)}（停止）</div>`
       : '';
     const toggleBtn = `<button type="button" class="btn" onclick="toggleProjectLineActive('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${isStopped ? 'color:#0F7A56;border-color:#86E0BE;' : 'color:#92660A;border-color:#F0C98A;'}${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">${isStopped ? '再開' : '停止'}</button>`;
 
     return `
-      <div style="background:${isStopped ? '#FAFAFA' : '#fff'};border:1px solid var(--border);border-radius:10px;overflow:hidden;${isStopped ? 'opacity:.62' : ''}">
+      <div style="background:${isStopped ? '#FAFAFA' : (isPending ? '#FFFDF5' : '#fff')};border:1px solid ${isPending ? '#FCD34D' : 'var(--border)'};border-radius:10px;overflow:hidden;${isStopped ? 'opacity:.62' : ''}">
         <div style="display:flex;align-items:center;gap:10px;padding:10px 12px">
           <div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">
             <button type="button" onclick="moveProjectLine('${esc(line.id)}', -1)" ${idx === 0 || !canEdit ? 'disabled' : ''} title="上へ" style="width:22px;height:18px;border:1px solid var(--border);background:#fff;border-radius:4px;font-size:10px;cursor:pointer;color:var(--text-muted);${idx === 0 || !canEdit ? 'opacity:.3;cursor:not-allowed' : ''}">▲</button>
@@ -20174,15 +20414,18 @@ function renderProjectLines() {
           </div>
           ${rankBadge}
           ${hourlyBadge}
+          ${pendingBadge}
           ${stoppedBadge}
           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
             <div style="font-size:13px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nameLabel}</div>
             <div style="font-size:11px;color:var(--text-muted)">${hourlyDirectorCost
               ? `${hasPermission('project.client_price') ? `クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/h ／ ` : ''}ディレクター <strong style="color:var(--text)">¥${(Number(hourlyDirectorCost.unit_price) || 0).toLocaleString()}</strong>/h（作業時間報告に自動適用）`
               : `${hasPermission('project.client_price') ? `クライアント <strong style="color:var(--text)">¥${clientUnit.toLocaleString()}</strong>/本 ／ ` : ''}制作者 <strong style="color:var(--text)">¥${producerUnit.toLocaleString()}</strong>/本`}</div>
+            ${prevSnapLabel}
             ${appliesLabel}
           </div>
-          <div style="display:flex;gap:6px;flex-shrink:0">
+          <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+            ${approveBtns}
             <button type="button" class="btn" onclick="toggleLineCostsAccordion('${esc(line.id)}')" style="padding:4px 10px;font-size:11px" title="ロール別の支払単価（ディレクション費など）を確認・追加">${_projectLineCostsOpen.has(line.id) ? '▾' : '▸'} 💰 内訳</button>
             ${toggleBtn}
             <button type="button" class="btn" onclick="duplicateProjectLine('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}" title="この成果物グループを複製して、同じ内容の行をもう1つ作成します">⧉ 複製</button>
@@ -20364,9 +20607,10 @@ async function saveProjectDirectorFee() {
       }
       saved = true;
       _directorFeeDirty = false;
-      showToast(rate > 0
+      const jh = await res.json().catch(() => ({}));
+      showToast(pricingPendingToast(jh, rate > 0
         ? `ディレクター時給 ¥${rate.toLocaleString()}/h を設定しました（⏱ 作業時間報告に自動適用されます）`
-        : 'ディレクター時給を解除しました', 'ok');
+        : 'ディレクター時給を解除しました'), 'ok');
       await loadProjectLines(projectId);
     });
     return saved;
@@ -20393,9 +20637,14 @@ async function saveProjectDirectorFee() {
     saved = true;
     _directorFeeDirty = false;
     const j = await res.json().catch(() => ({}));
-    showToast(price > 0
-      ? `ディレクター費 ¥${price.toLocaleString()}/本 を全${j.lines_count || ''}グループに反映しました`
-      : 'ディレクター費を解除しました', 'ok');
+    // ADR 037: director-fee は複数 line を返し得る。どれかが承認待ちなら文言を差し替える
+    const feePending = j?.pricing_approval === 'pending'
+      || (Array.isArray(j?.lines) && j.lines.some(l => l?.pricing_approval === 'pending'));
+    showToast(feePending
+      ? '保存しました（管理者の承認待ち）'
+      : (price > 0
+        ? `ディレクター費 ¥${price.toLocaleString()}/本 を全${j.lines_count || ''}グループに反映しました`
+        : 'ディレクター費を解除しました'), 'ok');
     await loadProjectLines(projectId);
   });
   return saved;
@@ -20567,7 +20816,8 @@ function _installmentPayeeOptions(selectedId) {
 function renderLineInstallmentsBlock(line) {
   const lineId = line.id;
   const installments = _lineInstallmentsCache[lineId];
-  const canEdit = projectLinesCanEdit();
+  // 支払スケジュール API は ADR 037 の開放対象外（project.create_edit のまま）。pricing_edit だけの保持者には編集を出さない
+  const canEdit = typeof hasPermission === 'function' ? hasPermission('project.create_edit') : true;
   const canClientPrice = hasPermission('project.client_price');
   const jstThisMonth = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7);
 
@@ -20830,7 +21080,8 @@ async function duplicateProjectLine(lineId) {
       showToast(err.error || `複製に失敗しました（${res.status}）`, 'warn');
       return;
     }
-    showToast('成果物グループを複製しました', 'ok');
+    const dup = await res.json().catch(() => null);
+    showToast(pricingPendingToast(dup, '成果物グループを複製しました'), 'ok');
     await loadProjectLines(projectId);
   } catch (e) {
     showToast(`複製に失敗しました: ${e?.message || ''}`, 'warn');
@@ -20934,7 +21185,8 @@ async function saveProjectLine() {
       return;
     }
     closeModal('modal-project-line-edit');
-    showToast(lineId ? '成果物グループを更新しました' : '成果物グループを追加しました', 'ok');
+    const savedLine = await res.json().catch(() => null);
+    showToast(pricingPendingToast(savedLine, lineId ? '成果物グループを更新しました' : '成果物グループを追加しました'), 'ok');
     await loadProjectLines(projectId);
   } catch (e) {
     showErr(`保存に失敗しました: ${e?.message || ''}`);
@@ -21257,11 +21509,16 @@ async function saveProjectLineCost() {
       return;
     }
     closeModal('modal-project-line-cost-edit');
-    showToast(costId ? 'コストを更新しました' : 'コストを追加しました', 'ok');
-    // line_costs を再 fetch して再描画
-    await loadLineCosts(lineId);
+    const savedCost = await res.json().catch(() => null);
+    showToast(pricingPendingToast(savedCost, costId ? 'コストを更新しました' : 'コストを追加しました'), 'ok');
+    // line_costs を再 fetch して再描画。ADR 037: 承認状態（バッジ）が変わるので lines も取り直す
     _projectLineCostsOpen.add(lineId);
-    renderProjectLines();
+    if (savedCost?.line_pricing_approval && projectId) {
+      await loadProjectLines(projectId);
+    } else {
+      await loadLineCosts(lineId);
+      renderProjectLines();
+    }
   } catch (e) {
     showErr(`保存に失敗しました: ${e?.message || ''}`);
   } finally {
@@ -21304,9 +21561,15 @@ async function executeProjectLineCostDelete() {
       return;
     }
     closeModal('modal-project-line-cost-delete');
-    showToast('コストを削除しました', 'ok');
-    await loadLineCosts(lineId);
-    renderProjectLines();
+    const delJson = await res.json().catch(() => null);
+    showToast(pricingPendingToast(delJson, 'コストを削除しました'), 'ok');
+    // ADR 037: 削除でも承認待ちに落ちる（バッジ更新のため lines ごと取り直す）
+    if (delJson?.line_pricing_approval && projectId) {
+      await loadProjectLines(projectId);
+    } else {
+      await loadLineCosts(lineId);
+      renderProjectLines();
+    }
   } catch (e) {
     showToast(`削除に失敗しました: ${e?.message || ''}`, 'warn');
   } finally {
@@ -24010,9 +24273,9 @@ async function submitProject() {
       const _selCat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
         ? _categoriesCache.find(c => c && c.id === primary_category_id) : null;
       const payRaw = (document.getElementById('p-hourly-pay-input')?.value || '').trim();
-      // director-fee API は project.create_edit ガードのため、project.create のみの保持者では呼ばない
+      // director-fee API は create_edit / pricing_edit のどちらかで叩ける（ADR 037）。どちらも無い保持者では呼ばない
       // （入力行自体も updateProjectHourlyRow で非表示。二重ガード）
-      if (_selCat?.code === 'hourly' && savedId && payRaw !== '' && canEditProject()) {
+      if (_selCat?.code === 'hourly' && savedId && payRaw !== '' && canEditProjectPricing()) {
         const clientRaw = (document.getElementById('p-hourly-client-input')?.value || '').trim();
         const body = { pricing_type: 'hourly', unit_price: Math.max(0, parseInt(payRaw, 10) || 0) };
         if (clientRaw !== '') body.client_unit_price = Math.max(0, parseInt(clientRaw, 10) || 0);
@@ -24038,6 +24301,12 @@ async function submitProject() {
     }
     closeModal('modal-project');
     await loadProjects();
+    // ADR 037: 案件作成のみ（create_edit 無し）で単価編集権限を持つロール（director）は、
+    // 作成直後に単価専用モードで見積タブを開き「単価の無い案件」のまま放置されるのを防ぐ
+    if (!isEdit && savedId && !canEditProject() && canEditProjectPricing()) {
+      showToast('続けて成果物グループ・単価を設定してください（管理者の承認待ちになります）', 'ok');
+      openProjectPricing(savedId);
+    }
   } else {
     const e = await res.json();
     showToast('エラー: ' + translateError(e?.error), 'error');
@@ -29060,6 +29329,9 @@ function loadDashboard() {
   const myStatsEl = document.getElementById('dash-my-stats');
   if (myStatsEl) myStatsEl.innerHTML = '';
   _myStatsSeq++; // 取得中のカードがあれば無効化（editor → admin 切替中に遅れて描画されるのを防ぐ）
+  // 💴 単価の承認待ち（ADR 037）: 毎回の描画で表示/非表示を決める（VIEW AS 切替で前ロールのカードが残らない）。
+  // pricing_approve 保持者以外は API を叩かず空にする。
+  renderPricingApprovalsCard();
 
   if (['admin','secretary','producer','producer_director'].includes(role)) {
     // 管理者ダッシュ: ヒーロー統計が allProjects 依存。
@@ -29179,6 +29451,153 @@ function renderTodayDeadlines(today) {
     <div class="dash-section-title" style="color:#E24B4A">📅 今日の納期（${items.length}件）</div>
     ${rows}
   </div>`;
+}
+
+// ============================================================
+// 💴 単価の承認待ちカード（ホーム）— ADR 037
+// ------------------------------------------------------------
+// project.pricing_approve 保持者（既定 admin）にだけ GET /pricing-approvals/pending を叩いて描画。
+// それ以外のロールは API を呼ばず container を空にする（VIEW AS で切り替えても残らない）。
+// 0 件ならカード自体を出さない。承認 / 差し戻し / 案件を開く / すべて承認 ができる。
+let _pricingApprovalsSeq = 0;
+let _pricingApprovalsCache = [];
+
+async function renderPricingApprovalsCard() {
+  const el = document.getElementById('dash-pricing-approvals');
+  if (!el) return;
+  const seq = ++_pricingApprovalsSeq;
+  if (!projectPricingCanApprove()) { el.innerHTML = ''; el.style.marginBottom = ''; return; }
+  let data = null;
+  try {
+    const res = await apiFetch(`${API}/pricing-approvals/pending`);
+    if (res.ok) data = await res.json().catch(() => null);
+  } catch (e) { console.warn('[pricing-approvals] load failed', e); }
+  if (seq !== _pricingApprovalsSeq) return; // VIEW AS 切替などで後発の描画が始まっていたら破棄
+  if (!projectPricingCanApprove()) { el.innerHTML = ''; el.style.marginBottom = ''; return; }
+  const items = Array.isArray(data?.items) ? data.items : [];
+  _pricingApprovalsCache = items;
+  if (!items.length) { el.innerHTML = ''; el.style.marginBottom = ''; return; }
+  const count = Number(data?.count) || items.length;
+  const canClientPrice = hasPermission('project.client_price');
+
+  const rows = items.map(it => {
+    const prodCost = (Array.isArray(it.costs) ? it.costs : []).find(c => ['editor', 'designer'].includes(c?.role_code)) || (it.costs || [])[0] || null;
+    const prevCosts = Array.isArray(it.prev_snapshot?.costs) ? it.prev_snapshot.costs : [];
+    const prevProd = prevCosts.find(c => ['editor', 'designer'].includes(c?.role_code)) || prevCosts[0] || null;
+    const hasPrev = !!it.prev_snapshot;
+    const yen = v => `¥${(Number(v) || 0).toLocaleString()}`;
+    const prodText = hasPrev
+      ? `制作 ${yen(prevProd?.unit_price)} → <strong style="color:var(--text)">${yen(prodCost?.unit_price)}</strong>`
+      : `制作 <strong style="color:var(--text)">${yen(prodCost?.unit_price)}</strong>`;
+    const clientText = canClientPrice
+      ? (hasPrev && Number(it.prev_snapshot.client_unit_price) !== Number(it.client_unit_price)
+        ? `クラ ${yen(it.prev_snapshot.client_unit_price)} → <strong style="color:var(--text)">${yen(it.client_unit_price)}</strong>`
+        : `クラ <strong style="color:var(--text)">${yen(it.client_unit_price)}</strong>`)
+      : '';
+    const otherCosts = (Array.isArray(it.costs) ? it.costs : []).filter(c => c !== prodCost).map(c =>
+      `${esc(c.role_label || c.role_code || '')}${c.user_name ? `(${esc(c.user_name)})` : ''} ${c.pricing_type === 'percentage' ? `${Number(c.percentage) || 0}%` : yen(c.unit_price)}`
+    ).join(' ／ ');
+    const groupLabel = [it.category_name, it.rank ? `${it.rank}ランク` : ''].filter(Boolean).join(' ');
+    const requester = formatPricingRequester(it.requested_by, it.requested_at);
+    const newTag = hasPrev ? '' : `<span style="font-size:10px;color:#92400E;background:#FEF3C7;border:1px solid #FCD34D;border-radius:999px;padding:1px 7px;white-space:nowrap">新規グループ</span>`;
+    const summaryHtml = `<div style="margin-bottom:4px"><strong>${esc(it.client_name || '')}</strong> ／ ${esc(it.project_name || '')}</div>`
+      + `<div style="color:var(--text-muted)">${esc(it.line_name || '（名称未設定）')}${groupLabel ? `　${esc(groupLabel)}` : ''}</div>`
+      + `<div style="color:var(--text-muted)">${esc(requester)}</div>`
+      + `<div style="color:var(--text-muted)">${hasPrev ? esc(formatPricingPrevSnapshot(it.prev_snapshot)) + ' に戻します' : '変更前の単価が無いため、単価を未設定に戻します（クリエイティブが無ければグループごと削除）'}</div>`;
+    return `<div class="today-dl-row" style="align-items:flex-start;cursor:default;gap:10px;flex-wrap:wrap" data-line-id="${esc(it.line_id)}">
+      <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:3px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:13px;font-weight:600;color:var(--text)">${esc(it.client_name || '')}</span>
+          <span style="color:var(--text-muted)">／</span>
+          <span style="font-size:13px;color:var(--text)">${esc(it.project_name || '')}</span>
+          ${newTag}
+        </div>
+        <div style="font-size:12px;color:var(--text)">
+          <span style="font-weight:600">${esc(it.line_name || '（名称未設定）')}</span>
+          ${groupLabel ? `<span style="color:var(--text-muted);margin-left:6px">${esc(groupLabel)}</span>` : ''}
+        </div>
+        <div style="font-size:12px;color:var(--text-muted)">${prodText}${clientText ? `　${clientText}` : ''}${otherCosts ? `　<span style="font-size:11px">${otherCosts}</span>` : ''}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${esc(requester)}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:center">
+        <button type="button" class="btn" onclick="dashApprovePricing('${esc(it.project_id)}','${esc(it.line_id)}')" style="padding:4px 10px;font-size:11px;color:#0F7A56;border-color:#86E0BE">承認</button>
+        <button type="button" class="btn" onclick="dashRejectPricing('${esc(it.line_id)}')" style="padding:4px 10px;font-size:11px;color:#92400E;border-color:#F0C98A">差し戻し</button>
+        <button type="button" class="btn" onclick="openProjectPricing('${esc(it.project_id)}')" style="padding:4px 10px;font-size:11px">案件を開く</button>
+      </div>
+      <template data-reject-summary>${summaryHtml}</template>
+    </div>`;
+  }).join('');
+
+  el.style.marginBottom = '14px';
+  el.innerHTML = `<div class="dash-section" style="border-left:4px solid #F59E0B">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+      <div class="dash-section-title" style="color:#B45309;margin-bottom:0">💴 単価の承認待ち（${count}件）</div>
+      <button type="button" class="btn" id="dash-pricing-approve-all" onclick="dashApproveAllPricing()" style="padding:4px 12px;font-size:11px;color:#0F7A56;border-color:#86E0BE">すべて承認</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin:4px 0 8px">承認前でも集計・請求プレビューには反映されています（請求書の発行は承認後）</div>
+    ${rows}
+  </div>`;
+}
+
+// 見積タブ側の承認 / 差し戻し後にホームのカードも同期する（ホーム表示中でなくても軽い）
+function refreshPricingApprovalsCard() {
+  if (document.getElementById('dash-pricing-approvals')) renderPricingApprovalsCard();
+}
+
+async function dashApprovePricing(projectId, lineId) {
+  if (!projectId || !lineId) return;
+  return btnBusy(busyBtnFrom(), async () => {
+    try {
+      const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/pricing/approve`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || `承認に失敗しました（${res.status}）`, 'warn');
+        return;
+      }
+      showToast('単価を承認しました', 'ok');
+      await renderPricingApprovalsCard();
+      // 同じ案件の見積タブが開いていれば再描画
+      if (document.getElementById('p-id')?.value === projectId && document.getElementById('modal-project')?.classList.contains('open')) {
+        loadProjectLines(projectId);
+      }
+    } catch (e) {
+      showToast(`承認に失敗しました: ${e?.message || ''}`, 'warn');
+    }
+  });
+}
+
+function dashRejectPricing(lineId) {
+  const it = _pricingApprovalsCache.find(x => x.line_id === lineId);
+  if (!it) { showToast('承認待ちの行が見つかりません。再読み込みします', 'warn'); renderPricingApprovalsCard(); return; }
+  const row = document.querySelector(`#dash-pricing-approvals [data-line-id="${CSS.escape(lineId)}"] template[data-reject-summary]`);
+  openProjectLinePricingReject(lineId, it.project_id, 'dashboard', row ? row.innerHTML : '');
+}
+
+async function dashApproveAllPricing() {
+  const ids = _pricingApprovalsCache.map(x => x.line_id).filter(Boolean);
+  if (!ids.length) return;
+  if (!confirm(`承認待ちの単価 ${ids.length} 件をすべて承認します。よろしいですか？`)) return;
+  return btnBusy(busyBtnFrom('dash-pricing-approve-all'), async () => {
+    try {
+      const res = await apiFetch(`${API}/pricing-approvals/approve-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ line_ids: ids }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || `一括承認に失敗しました（${res.status}）`, 'warn');
+        return;
+      }
+      const j = await res.json().catch(() => ({}));
+      showToast(`${Number(j.approved) || ids.length} 件の単価を承認しました`, 'ok');
+      await renderPricingApprovalsCard();
+      const openPid = document.getElementById('p-id')?.value;
+      if (openPid && document.getElementById('modal-project')?.classList.contains('open')) loadProjectLines(openPid);
+    } catch (e) {
+      showToast(`一括承認に失敗しました: ${e?.message || ''}`, 'warn');
+    }
+  });
 }
 
 // ダッシュボード: 全体連絡
@@ -31989,7 +32408,7 @@ async function loadInvoicePreview() {
           </td>
           <td style="padding:10px 10px;text-align:left;vertical-align:top;color:var(--text-muted);font-size:11px;white-space:nowrap">${deliveryDate}</td>
           <td style="padding:10px 10px;vertical-align:top">
-            <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">${esc(item.client_name)} / ${esc(item.project_name)}</div>
+            <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">${esc(item.client_name)} / ${esc(item.project_name)}${item.pricing_pending ? ' <span title="単価が管理者の承認待ちです。承認されるまで請求書は作成できません（ADR 037）" style="font-size:10px;padding:1px 6px;border-radius:8px;background:#FEF3C7;color:#92400E;white-space:nowrap">🕓 単価 承認待ち</span>' : ''}</div>
             <div style="font-family:monospace;font-size:12px;color:#111;word-break:break-all">${esc(item.file_name)}</div>
           </td>
           <td style="padding:10px 10px;text-align:center;vertical-align:top">
@@ -32169,7 +32588,17 @@ async function generateMyInvoice() {
   });
   btn.textContent = '請求書を作成する'; btn.disabled = false;
   const data = await res.json();
-  if (!res.ok) { showToast(data.error || '作成に失敗しました', 'error'); return; }
+  if (!res.ok) {
+    // ADR 037: 承認待ちの単価が根拠に含まれる場合はどの成果物グループかを併記する
+    if (data.code === 'PRICING_PENDING' && Array.isArray(data.pending_lines) && data.pending_lines.length) {
+      const lines = data.pending_lines.slice(0, 5).map(l => `${l.project_name || ''}：${l.line_name || '(名称なし)'}`).join(' / ');
+      const more = data.pending_lines.length > 5 ? ` ほか${data.pending_lines.length - 5}件` : '';
+      showToast(`${data.error}（${lines}${more}）管理者の承認後にもう一度お試しください`, 'error');
+      return;
+    }
+    showToast(data.error || '作成に失敗しました', 'error');
+    return;
+  }
   closeModal('modal-gen-invoice');
   showToast(`請求書 ${data.invoice_number} を作成しました（¥${(data.total_amount||0).toLocaleString()}）`, 'success');
   await loadMyInvoices();
@@ -34483,6 +34912,9 @@ const ROLE_PERM_LIST = [
   { section:'ダッシュボード', key:'dashboard.monthly_forecast',  label:'月次予測閲覧' },
   { section:'案件管理',       key:'project.create',              label:'案件・クライアントの新規追加（既存の編集・単価は含まない）' },
   { section:'案件管理',       key:'project.create_edit',         label:'案件作成・編集' },
+  // ADR 037: ディレクターにも単価設定を開放。承認権限が無い人の単価変更は「有効なまま admin 承認待ち」
+  { section:'案件管理',       key:'project.pricing_edit',        label:'成果物グループ・単価の編集（承認権限が無ければ承認待ち）' },
+  { section:'案件管理',       key:'project.pricing_approve',     label:'単価の承認・差し戻し（保持者の変更は即確定）' },
   { section:'案件管理',       key:'project.notification_edit',   label:'通知連携先の設定（Slack/Chatwork）' },
   { section:'案件管理',       key:'project.client_price',        label:'クライアント単価の閲覧・編集' },
   { section:'案件管理',       key:'project.unit_price_view',     label:'単価設定閲覧' },
