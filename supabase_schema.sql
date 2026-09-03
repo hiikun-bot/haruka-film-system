@@ -2702,4 +2702,42 @@ CREATE INDEX IF NOT EXISTS idx_personal_tasks_kpi_id      ON personal_tasks(kpi_
 CREATE INDEX IF NOT EXISTS idx_personal_tasks_user_status ON personal_tasks(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_personal_tasks_due_date    ON personal_tasks(due_date);
 
+
+-- ==================== 🏆 作品ギャラリー: 👏 拍手 / 💬 ひとこと（ADR 037） ====================
+-- 詳細: migrations/2026-09-03_portfolio_reactions.sql
+-- tweets 系 / posts 系とは統合しない専用テーブル（philosophy 4 項・open-questions Q3）。
+-- reaction_type の許可値は utils/reactions.js が正（CHECK は付けない＝tweet_reactions と同じ流儀）。
+
+CREATE TABLE IF NOT EXISTS portfolio_reactions (
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id   UUID        NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  user_id       UUID        NOT NULL REFERENCES users(id)     ON DELETE CASCADE,
+  reaction_type TEXT        NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (creative_id, user_id, reaction_type)
+);
+CREATE INDEX IF NOT EXISTS idx_portfolio_reactions_creative
+  ON portfolio_reactions (creative_id);
+CREATE INDEX IF NOT EXISTS idx_portfolio_reactions_user_created
+  ON portfolio_reactions (user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS portfolio_comments (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  creative_id UUID        NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+  user_id     UUID        NOT NULL REFERENCES users(id)     ON DELETE CASCADE,
+  body        TEXT        NOT NULL CHECK (char_length(body) <= 500),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_portfolio_comments_creative
+  ON portfolio_comments (creative_id, created_at);
+
+ALTER TABLE portfolio_reactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE portfolio_comments  ENABLE ROW LEVEL SECURITY;
+
+-- 通知種別 portfolio_reaction / portfolio_comment の ON/OFF 列
+ALTER TABLE notification_settings
+  ADD COLUMN IF NOT EXISTS portfolio_reaction_enabled BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS portfolio_comment_enabled  BOOLEAN NOT NULL DEFAULT true;
+
 NOTIFY pgrst, 'reload schema';

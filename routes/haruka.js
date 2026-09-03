@@ -16172,7 +16172,8 @@ const TWEET_IMAGE_MAX_BYTES = 500 * 1024; // base64 後 500KB 上限（1枚あ�
 const TWEET_IMAGE_MAX_COUNT = 4;          // 1投稿あたりの写真上限
 const TWEET_BODY_MAX = 280;
 const TWEET_COMMENT_MAX = 500;
-const TWEET_REACTION_TYPES = ['good', 'heart', 'clap', 'smile', 'surprised'];
+// リアクション 5 種の定義は utils/reactions.js が正（フロントも /js/reactions.js で同じ定義を読む）
+const { REACTION_TYPES: TWEET_REACTION_TYPES, REACTION_EMOJI } = require('../utils/reactions');
 
 // 一覧で取得する列。image_data（base64 data URL・最大 500KB）はここに含めない。
 //   一覧に base64 を載せると 200 件で数 MB になり、転送・JSON パース・<img> デコードが
@@ -16614,9 +16615,7 @@ router.post('/tweets/:id/reactions', requireAuth, async (req, res) => {
   // 投稿者が自分以外なら post_reaction 通知
   if (tweet.user_id !== req.user.id) {
     const senderName = req.user.nickname || req.user.full_name || '誰か';
-    const reactionEmoji = {
-      good: '👍', heart: '❤️', clap: '👏', smile: '😊', surprised: '😳',
-    }[reactionType] || '✨';
+    const reactionEmoji = REACTION_EMOJI[reactionType] || '✨';
     const excerpt = (tweet.body || '').length > 50
       ? tweet.body.slice(0, 50) + '…'
       : (tweet.body || '');
@@ -22610,6 +22609,9 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const roleCodes = await getEffectiveRoleCodes(req);
     const userId = req.user?.id;
 
+    // 👏 拍手 / 💬 ひとこと の集計（ADR 037）。表示中の creative 集合でまとめて引く（N+1 禁止）
+    const socialMap = await fetchPortfolioSocialMap(creativeIds, userId);
+
     // クレジット表示用のアバター（users.avatar_url は base64 なので select には含めず、
     // 配信URL の参照キャッシュから注入する。#947 / #940 と同じ方式）
     const avatarMap = await getAvatarRefMap(supabase).catch(e => {
@@ -22658,6 +22660,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
         ? (sizeAspectMap[String(c.creative_size)] || parsePortfolioAspect(c.creative_size))
         : null;
       const editable = canEditPortfolioNote({ roleCodes, userId, creative: c });
+      const social = socialMap.get(c.id) || emptyPortfolioSocial();
       // ⭐ を操作できるのは本人（この作品の担当者）だけ。ロールに依らない本人判定なので
       // VIEW AS の影響を受けない（他人のベストを勝手に編集させない）
       const canStar = (c.creative_assignments || []).some(a => a.users?.id === userId);
@@ -22736,6 +22739,11 @@ router.get('/portfolio', requireAuth, async (req, res) => {
           style_name:       style.name,
           style_overridden: style.overridden,
           can_edit_genre:   editable,   // 説明文の編集権限と同じ（担当者・案件のP/D・admin/秘書）
+          // 👏 拍手 / 💬 ひとこと（ADR 037）。creative 単位なので過去版カードにも同じ値が乗る
+          reactions:        social.reactions,       // { good: n, heart: n, clap: n, smile: n, surprised: n }
+          my_reactions:     social.my_reactions,    // 自分が押している種別
+          reaction_total:   social.reaction_total,
+          comment_count:    social.comment_count,
         });
       }
     }
@@ -22791,6 +22799,255 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     });
   } catch (e) {
     console.error('[portfolio] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== 🏆 作品への 👏 拍手 と 💬 ひとこと（ADR 037） ====================
+//
+// つぶやきと同じ 5 種のリアクション（utils/reactions.js）と短いコメントを作品に付けられる。
+// テーブルは tweet_reactions / tweet_comments と統合せず専用（portfolio_reactions / portfolio_comments）。
+// もらった本人（制作担当）には createNotification() でベル通知を届ける。宛先・抑制・文面の
+// ロジックは utils/portfolio-reactions.js（純関数・jest テストあり）。
+//
+// 認可: 作品ページは全ロール閲覧可なので requireAuth（一覧と同じ）。
+//   自分の作品にも押せる（つぶやきと同じ）が、通知はアクター本人には飛ばさない。
+//   ひとことの削除は本人 or admin（実効ロール getEffectiveRoleCodes・ADR 015）。
+
+const {
+  PORTFOLIO_COMMENT_MAX,
+  buildPortfolioSocialMap, emptyPortfolioSocial,
+  resolvePortfolioNotifyRecipients, portfolioNotifyWindowStart, buildPortfolioNotification,
+} = require('../utils/portfolio-reactions');
+const { isReactionType } = require('../utils/reactions');
+
+// migration 未適用の環境（テーブルが無い）でも作品ページを落とさないための判定
+function isMissingPortfolioSocialTable(err) {
+  return /portfolio_(reactions|comments)/.test(err?.message || '') && /(does not exist|schema cache|relation)/i.test(err?.message || '');
+}
+
+// 表示中の creative 集合について、リアクションとひとこと件数をまとめて引く。
+// .in() の ID 数は PORTFOLIO_ID_CHUNK ずつに分割（URL 長超過 #919 の教訓）し、チャンクは並列で投げる。
+async function fetchPortfolioSocialMap(creativeIds, currentUserId) {
+  if (!creativeIds || creativeIds.length === 0) return new Map();
+  const chunks = [];
+  for (let i = 0; i < creativeIds.length; i += PORTFOLIO_ID_CHUNK) {
+    chunks.push(creativeIds.slice(i, i + PORTFOLIO_ID_CHUNK));
+  }
+  try {
+    const [reactionRes, commentRes] = await Promise.all([
+      Promise.all(chunks.map(chunk =>
+        supabase.from('portfolio_reactions').select('creative_id, user_id, reaction_type').in('creative_id', chunk))),
+      Promise.all(chunks.map(chunk =>
+        supabase.from('portfolio_comments').select('creative_id').in('creative_id', chunk).is('deleted_at', null))),
+    ]);
+    const firstErr = [...reactionRes, ...commentRes].find(r => r.error)?.error;
+    if (firstErr) {
+      if (isMissingPortfolioSocialTable(firstErr)) {
+        console.warn('[portfolio] 拍手/ひとことのテーブルが未反映のため、集計なしで表示します:', firstErr.message);
+        return new Map();
+      }
+      throw new Error(firstErr.message);
+    }
+    const reactionRows = reactionRes.flatMap(r => r.data || []);
+    const commentRows = commentRes.flatMap(r => r.data || []);
+    return buildPortfolioSocialMap(reactionRows, commentRows, currentUserId);
+  } catch (e) {
+    console.warn('[portfolio] 拍手/ひとことの集計に失敗（集計なしで表示）:', e.message);
+    return new Map();
+  }
+}
+
+// リアクション操作・ひとこと投稿の対象となる作品を引く（通知の宛先決定に必要な担当情報つき）
+async function fetchPortfolioCreativeForSocial(creativeId) {
+  const { data, error } = await supabase
+    .from('creatives')
+    .select('id, file_name, delivered_director_ids, creative_assignments(role, user_id)')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+
+// 制作担当へのベル通知。同じ人 × 同じ作品 × 同じ種別は 1 日 1 回に抑える（連打・トグル往復対策）。
+// 補助処理なので失敗しても主処理（リアクション／ひとことの保存）は止めない。
+async function notifyPortfolioMakers({ req, creative, kind, reactionType, commentBody }) {
+  try {
+    const actorId = req.user?.id;
+    const recipients = resolvePortfolioNotifyRecipients({
+      assignments: creative.creative_assignments,
+      deliveredDirectorIds: creative.delivered_director_ids,
+      actorId,
+    });
+    if (recipients.length === 0) return;
+
+    const n = buildPortfolioNotification({
+      kind, reactionType, commentBody,
+      actorName: req.user?.nickname || req.user?.full_name || '誰か',
+      creativeId: creative.id,
+      fileName: creative.file_name,
+    });
+
+    // 抑制判定: 直近 24h に同じ (actor, creative, 通知種別) の通知があれば送らない
+    const { data: recent, error: rErr } = await supabase
+      .from('notification_logs')
+      .select('id')
+      .eq('sender_id', actorId)
+      .eq('notification_type', n.type)
+      .eq('meta->>creative_id', creative.id)
+      .gte('created_at', portfolioNotifyWindowStart())
+      .limit(1);
+    if (rErr) console.warn('[portfolio] 通知の抑制判定に失敗（送信は続行）:', rErr.message);
+    if ((recent || []).length > 0) return;
+
+    await Promise.all(recipients.map(uid => createNotification({
+      userId: uid,
+      type: n.type,
+      title: n.title,
+      body: n.body,
+      linkUrl: n.linkUrl,
+      meta: { creative_id: creative.id, reaction_type: reactionType || null, file_name: creative.file_name },
+      senderId: actorId,
+    })));
+  } catch (e) {
+    console.warn('[portfolio] 通知発火失敗（主処理は継続）:', e.message);
+  }
+}
+
+// POST /api/haruka/portfolio/:creativeId/reactions  body: { reaction_type }
+// トグル: 押していなければ追加、押していれば外す → { added, counts, my_reactions }
+router.post('/portfolio/:creativeId/reactions', requireAuth, async (req, res) => {
+  try {
+    const creativeId = req.params.creativeId;
+    const userId = req.user?.id;
+    const reactionType = String(req.body?.reaction_type || '').trim();
+    if (!isReactionType(reactionType)) return res.status(400).json({ error: 'リアクション種別が不正です' });
+
+    const creative = await fetchPortfolioCreativeForSocial(creativeId);
+    if (!creative) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+    const { data: existing, error: eErr } = await supabase
+      .from('portfolio_reactions').select('id')
+      .eq('creative_id', creativeId).eq('user_id', userId).eq('reaction_type', reactionType)
+      .maybeSingle();
+    if (eErr) return res.status(500).json({ error: eErr.message });
+
+    let added;
+    if (existing) {
+      const { error } = await supabase.from('portfolio_reactions').delete().eq('id', existing.id);
+      if (error) return res.status(500).json({ error: error.message });
+      added = false;
+    } else {
+      const { error } = await supabase.from('portfolio_reactions')
+        .insert({ creative_id: creativeId, user_id: userId, reaction_type: reactionType });
+      // UNIQUE 違反（同時押し）は「もう付いている」扱いで続行
+      if (error && error.code !== '23505') return res.status(500).json({ error: error.message });
+      added = true;
+    }
+
+    // 追加時だけ制作担当へ通知（解除では通知しない）。await せず主処理を先に返す
+    if (added) notifyPortfolioMakers({ req, creative, kind: 'reaction', reactionType });
+
+    const socialMap = await fetchPortfolioSocialMap([creativeId], userId);
+    const social = socialMap.get(creativeId) || emptyPortfolioSocial();
+    res.json({ added, counts: social.reactions, my_reactions: social.my_reactions, reaction_total: social.reaction_total });
+  } catch (e) {
+    console.error('[portfolio/reactions] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ひとことの 1 行を API 形式にする（users.avatar_url は base64 なので返さない・#940）
+function portfolioCommentRow(c, viewerId, isAdmin) {
+  return {
+    id: c.id,
+    creative_id: c.creative_id,
+    user_id: c.user_id,
+    body: c.body,
+    created_at: c.created_at,
+    user: c.users ? { id: c.users.id, full_name: c.users.full_name, nickname: c.users.nickname } : null,
+    can_delete: c.user_id === viewerId || !!isAdmin,
+  };
+}
+
+// GET /api/haruka/portfolio/:creativeId/comments — ひとこと一覧（古い順・削除済み除外）
+router.get('/portfolio/:creativeId/comments', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('portfolio_comments')
+      .select('id, creative_id, user_id, body, created_at, users!user_id(id, full_name, nickname)')
+      .eq('creative_id', req.params.creativeId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true });
+    if (error) {
+      if (isMissingPortfolioSocialTable(error)) return res.json({ comments: [] });
+      return res.status(500).json({ error: error.message });
+    }
+    const roleCodes = await getEffectiveRoleCodes(req);
+    const isAdmin = roleCodes.includes('admin');
+    res.json({ comments: (data || []).map(c => portfolioCommentRow(c, req.user?.id, isAdmin)) });
+  } catch (e) {
+    console.error('[portfolio/comments] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/haruka/portfolio/:creativeId/comments  body: { body } — ひとことを投稿
+router.post('/portfolio/:creativeId/comments', requireAuth, async (req, res) => {
+  try {
+    const creativeId = req.params.creativeId;
+    const body = String(req.body?.body || '').trim();
+    if (!body) return res.status(400).json({ error: 'ひとことを入力してください' });
+    if (body.length > PORTFOLIO_COMMENT_MAX) {
+      return res.status(400).json({ error: `ひとことは ${PORTFOLIO_COMMENT_MAX} 字以内にしてください` });
+    }
+    const creative = await fetchPortfolioCreativeForSocial(creativeId);
+    if (!creative) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+
+    const { data: comment, error } = await supabase
+      .from('portfolio_comments')
+      .insert({ creative_id: creativeId, user_id: req.user.id, body })
+      .select('id, creative_id, user_id, body, created_at, users!user_id(id, full_name, nickname)')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    notifyPortfolioMakers({ req, creative, kind: 'comment', commentBody: body });
+
+    const { count } = await supabase
+      .from('portfolio_comments').select('id', { count: 'exact', head: true })
+      .eq('creative_id', creativeId).is('deleted_at', null);
+    res.json({ comment: portfolioCommentRow(comment, req.user.id, false), comment_count: count ?? null });
+  } catch (e) {
+    console.error('[portfolio/comments] post failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/haruka/portfolio/:creativeId/comments/:commentId — 本人 or admin（論理削除）
+router.delete('/portfolio/:creativeId/comments/:commentId', requireAuth, async (req, res) => {
+  try {
+    const { data: c, error: cErr } = await supabase
+      .from('portfolio_comments').select('id, creative_id, user_id, deleted_at')
+      .eq('id', req.params.commentId).eq('creative_id', req.params.creativeId).maybeSingle();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!c) return res.status(404).json({ error: 'ひとことが見つかりません' });
+    if (c.deleted_at) return res.json({ ok: true });
+
+    const isSelf = c.user_id === req.user?.id;
+    const roleCodes = await getEffectiveRoleCodes(req);   // req.user.role 直書き禁止（ADR 015）
+    if (!isSelf && !roleCodes.includes('admin')) {
+      return res.status(403).json({ error: '本人か管理者だけが削除できます' });
+    }
+    const { error } = await supabase
+      .from('portfolio_comments').update({ deleted_at: new Date().toISOString() }).eq('id', c.id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    const { count } = await supabase
+      .from('portfolio_comments').select('id', { count: 'exact', head: true })
+      .eq('creative_id', c.creative_id).is('deleted_at', null);
+    res.json({ ok: true, comment_count: count ?? null });
+  } catch (e) {
+    console.error('[portfolio/comments] delete failed:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
