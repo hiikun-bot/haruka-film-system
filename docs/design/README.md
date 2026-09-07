@@ -69,6 +69,7 @@ NNN は連番（`001`, `002`, ...）。
 | [010](decisions/010-project-schedule-tasks.md) | 案件スケジュール / フェーズ・タスク管理（LP・HP 等カテゴリ横断） | projects, schedule, tasks, gantt, lp, hp |
 | [016](decisions/016-project-work-type-and-ball-state.md) | 案件業務管理：業務種別（制作/保守）とボール状態モデル | projects, schedule, work-type, ball-state, lp, hp, maintenance |
 | [022](decisions/022-estimate-line-rank.md) | 成果物グループ（見積明細）にランクを第一級の列として持たせる | pricing, rank, estimate, payout, editor |
+| [035](decisions/035-contract-management.md) | 契約管理：業務委託契約の依頼URL発行・閲覧・同意・版管理・期限監視（法人化対応） | contracts, consent, legal-entity, incorporation, onboarding, audit |
 
 ### 共通参照
 - [philosophy.md](philosophy.md) — 共通設計原則
