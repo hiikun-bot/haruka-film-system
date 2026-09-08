@@ -9,7 +9,9 @@ const { validateNewPassword } = require('../utils/password');
 const { requireAuth, requireRole, requireLevel, requirePermission, requireAnyPermission, requireSuperAdmin, isSuperAdminUser, userHasPermission, getEffectiveRole, getEffectiveRoleCodes, invalidatePermissionsCache, invalidateUserCache } = require('../auth');
 const { google } = require('googleapis');
 const { Readable } = require('stream');
-const { createSheetWithData, overwriteFirstSheet, getServiceAccountEmail, extractSpreadsheetId, readSheetData } = require('../sheets');
+const { createSheetWithData, overwriteFirstSheet, getServiceAccountEmail, extractSpreadsheetId, readSheetData, listSheetTabs, readSheetColumn } = require('../sheets');
+// ADR 038: 連番のシート連動（純関数）
+const { resolveSerialDigits, normalizeColumnLetter, parseSerialCells } = require('../utils/serial-sheet');
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
 const { createNotification, extractMentions } = require('../utils/notification');
@@ -1094,6 +1096,35 @@ async function replaceProjectTags(projectId, tags) {
 // 案件作成
 // project.create（新規作成のみの限定権限。director に開放、migration 2026-08-26）でも作成可。
 // 既存案件の編集（PUT）・成果物グループ/単価/D費/分割請求などは従来どおり project.create_edit のまま。
+// ADR 038: 連番連動シートの接続確認（案件モーダル「上級設定」→「接続確認」）
+//   URL / タブ / 列を受け取り、SA で読んで「最終番号 → 次の番号」とタブ一覧を返す。DB は触らない。
+router.post('/projects/serial-sheet-probe', requireAuth, requireAnyPermission('project.create_edit', 'project.create'), async (req, res) => {
+  const { url, tab, column } = req.body || {};
+  const spreadsheetId = extractSpreadsheetId(url);
+  if (!spreadsheetId) {
+    return res.status(400).json({ error: 'スプレッドシート URL を認識できません（https://docs.google.com/spreadsheets/d/... の形式）' });
+  }
+  const col = normalizeColumnLetter(column || 'A');
+  if (!col) return res.status(400).json({ error: '列は A〜ZZZ の列記号で指定してください' });
+  const saEmail = getServiceAccountEmail();
+  try {
+    const tabs = await listSheetTabs(spreadsheetId);
+    if (!tabs.length) return res.status(400).json({ error: 'スプレッドシートにタブがありません' });
+    const wantTab = tab ? String(tab).trim() : '';
+    if (wantTab && !tabs.includes(wantTab)) {
+      return res.status(404).json({ error: `タブ「${wantTab}」が見つかりません。タブ名を確認してください。`, tabs, sa_email: saEmail });
+    }
+    const useTab = wantTab || tabs[0];
+    const values = await readSheetColumn(spreadsheetId, useTab, col);
+    const parsed = parseSerialCells(values);
+    res.json({ ok: true, tab: useTab, column: col, tabs, ...parsed, sa_email: saEmail });
+  } catch (e) {
+    const err = _serialSheetErrorFromApi(e, { serial_sheet_tab: tab, serial_sheet_column: col });
+    const status = /閲覧者/.test(err.message) ? 403 : (/見つかりません/.test(err.message) ? 404 : 500);
+    res.status(status).json({ error: err.message, sa_email: saEmail });
+  }
+});
+
 router.post('/projects', requireAuth, requireAnyPermission('project.create_edit', 'project.create'), async (req, res) => {
   const {
     client_id, name, status, producer_id, director_id,
@@ -1108,9 +1139,14 @@ router.post('/projects', requireAuth, requireAnyPermission('project.create_edit'
     tags,
     filename_template_id, filename_token_overrides,
     wcheck_required, // ADR 024: 案件単位のWチェック要否（静止画のみ・初期あり）
-    billing_timing   // ADR 034: 計上タイミング（on_delivery=既定 / on_first_draft）
+    billing_timing,  // ADR 034: 計上タイミング（on_delivery=既定 / on_first_draft）
+    // ADR 008 Phase 4 / ADR 038: 連番カスタマイズ（起点・桁数・採番元・連動シート）
+    next_filename_serial, serial_digits
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
+  // ADR 038: 連番の採番元・連動シート
+  const serialSheetNorm = normalizeProjectSerialSheetFields(req.body);
+  if (serialSheetNorm.error) return res.status(400).json({ error: serialSheetNorm.error });
   // ADR 034: 不正値は 400（DB CHECK 制約より手前で弾く）
   if (billing_timing !== undefined && billing_timing !== null && billing_timing !== ''
       && !['on_delivery', 'on_first_draft'].includes(billing_timing)) {
@@ -1161,11 +1197,42 @@ router.post('/projects', requireAuth, requireAnyPermission('project.create_edit'
       ? filename_token_overrides
       : {};
   }
+  // ADR 008 Phase 4 / ADR 038: 連番起点・桁数（桁数 null = テンプレ既定）
+  if (next_filename_serial !== undefined) {
+    const n = Number(next_filename_serial);
+    if (Number.isFinite(n) && n >= 1 && n <= 1_000_000) insertPayload.next_filename_serial = Math.floor(n);
+  }
+  if (serial_digits !== undefined) {
+    if (serial_digits === null || serial_digits === '') {
+      insertPayload.serial_digits = null;
+    } else {
+      const d = Number(serial_digits);
+      if (Number.isInteger(d) && d >= 1 && d <= 10) insertPayload.serial_digits = d;
+    }
+  }
+  Object.assign(insertPayload, serialSheetNorm.fields);
   let { data, error } = await supabase
     .from('projects')
     .insert(insertPayload)
     .select()
     .single();
+  // ADR 038 migration 未適用ガード（serial_source 系の列が無い）
+  if (error && /serial_source|serial_sheet_url|serial_sheet_tab|serial_sheet_column/i.test(error.message || '')) {
+    const { serial_source: _o8a, serial_sheet_url: _o8b, serial_sheet_tab: _o8c, serial_sheet_column: _o8d, ...fallback8 } = insertPayload;
+    const retry8 = await supabase.from('projects').insert(fallback8).select().single();
+    data = retry8.data; error = retry8.error;
+  }
+  // ADR 038 migration 未適用ガード（projects.serial_digits がまだ NOT NULL → null は 3 に置換）
+  if (error && /serial_digits/i.test(error.message || '') && /null value|not-null/i.test(error.message || '')) {
+    const retry8b = await supabase.from('projects').insert({ ...insertPayload, serial_digits: 3 }).select().single();
+    data = retry8b.data; error = retry8b.error;
+  }
+  // ADR 008 Phase 4 migration 未適用ガード（next_filename_serial / serial_digits 列が無い）
+  if (error && /next_filename_serial|serial_digits/i.test(error.message || '')) {
+    const { next_filename_serial: _o9a, serial_digits: _o9b, ...fallback9 } = insertPayload;
+    const retry9 = await supabase.from('projects').insert(fallback9).select().single();
+    data = retry9.data; error = retry9.error;
+  }
   // schema-sync 失敗で sub_director_ids 列が本番にまだ無い場合のフォールバック
   if (error && /sub_director_ids/i.test(error.message || '')) {
     const { sub_director_ids: _omit, ...fallback } = insertPayload;
@@ -1235,7 +1302,7 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     scheduled_start_date, active_phase_template_id,
     // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL
     creatives_export_sheet_url,
-    // ADR 008 Phase 4: ファイル名連番カスタマイズ
+    // ADR 008 Phase 4: ファイル名連番カスタマイズ（ADR 038: serial_digits は null=テンプレ既定 も受ける）
     next_filename_serial, serial_digits,
     // ADR 024: 案件単位のWチェック要否
     wcheck_required,
@@ -1313,10 +1380,20 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     }
   }
   if (serial_digits !== undefined) {
-    const d = Number(serial_digits);
-    if (Number.isInteger(d) && d >= 1 && d <= 10) {
-      updateData.serial_digits = d;
+    if (serial_digits === null || serial_digits === '') {
+      updateData.serial_digits = null; // ADR 038: テンプレ既定に従う
+    } else {
+      const d = Number(serial_digits);
+      if (Number.isInteger(d) && d >= 1 && d <= 10) {
+        updateData.serial_digits = d;
+      }
     }
+  }
+  // ADR 038: 連番の採番元・連動シート（明示時のみ反映）
+  {
+    const norm = normalizeProjectSerialSheetFields(req.body);
+    if (norm.error) return res.status(400).json({ error: norm.error });
+    Object.assign(updateData, norm.fields);
   }
   // primary_category_id: 明示的に渡された時のみ反映（部分更新で巻き込み消失しないよう）。
   if (primary_category_id !== undefined) {
@@ -1417,6 +1494,17 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { scheduled_start_date: _o4a, active_phase_template_id: _o4b, ...fallback4 } = updateData;
     const retry4 = await supabase.from('projects').update(fallback4).eq('id', req.params.id).select().single();
     data = retry4.data; error = retry4.error;
+  }
+  // ADR 038 migration 未適用ガード（serial_source 系の列が無い）
+  if (error && /serial_source|serial_sheet_url|serial_sheet_tab|serial_sheet_column/i.test(error.message || '')) {
+    const { serial_source: _o8a, serial_sheet_url: _o8b, serial_sheet_tab: _o8c, serial_sheet_column: _o8d, ...fallback8 } = updateData;
+    const retry8 = await supabase.from('projects').update(fallback8).eq('id', req.params.id).select().single();
+    data = retry8.data; error = retry8.error;
+  }
+  // ADR 038 migration 未適用ガード（projects.serial_digits がまだ NOT NULL → null は 3 に置換）
+  if (error && /serial_digits/i.test(error.message || '') && /null value|not-null/i.test(error.message || '') && updateData.serial_digits === null) {
+    const retry8b = await supabase.from('projects').update({ ...updateData, serial_digits: 3 }).eq('id', req.params.id).select().single();
+    data = retry8b.data; error = retry8b.error;
   }
   // ADR 008 Phase 4 migration 未適用ガード（schema-sync 失敗時）
   if (error && /next_filename_serial|serial_digits/i.test(error.message || '')) {
@@ -2082,6 +2170,48 @@ function validateFilenameTemplateTokens(tokens) {
 // 区切り文字の許可リスト（UI でも同じ選択肢を出す）
 const ALLOWED_FILENAME_SEPARATORS = new Set(['_', '-', '']);
 
+// ADR 038: テンプレ既定の連番桁数のパース。undefined=未指定 / null・''=既定(3)に戻す / 1〜10
+function parseTemplateSerialDigits(raw) {
+  if (raw === undefined) return { value: undefined };
+  if (raw === null || raw === '') return { value: null };
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 10) return { error: 'serial_digits は 1〜10 の整数か空（既定 3）で指定してください' };
+  return { value: n };
+}
+
+// ADR 038: 案件の連番採番元・シート接続フィールドの正規化（POST / PUT 共通）
+//   戻り値: { fields, error }。fields は「明示された項目だけ」を含む（部分更新で巻き込み消失しない）。
+function normalizeProjectSerialSheetFields(body) {
+  const fields = {};
+  const b = body || {};
+  if (b.serial_source !== undefined) {
+    if (b.serial_source !== 'counter' && b.serial_source !== 'sheet') {
+      return { error: 'serial_source は counter / sheet のいずれかにしてください' };
+    }
+    fields.serial_source = b.serial_source;
+  }
+  if (b.serial_sheet_url !== undefined) {
+    const u = b.serial_sheet_url ? String(b.serial_sheet_url).trim() : '';
+    if (u && !extractSpreadsheetId(u)) {
+      return { error: '連番連動シートの URL を認識できません（https://docs.google.com/spreadsheets/d/... の形式）' };
+    }
+    fields.serial_sheet_url = u || null;
+  }
+  if (b.serial_sheet_tab !== undefined) {
+    const t = b.serial_sheet_tab ? String(b.serial_sheet_tab).trim() : '';
+    fields.serial_sheet_tab = t || null;
+  }
+  if (b.serial_sheet_column !== undefined) {
+    const c = normalizeColumnLetter(b.serial_sheet_column || 'A');
+    if (!c) return { error: '連番の列は A〜ZZZ の列記号で指定してください' };
+    fields.serial_sheet_column = c;
+  }
+  if (fields.serial_source === 'sheet' && fields.serial_sheet_url === null) {
+    return { error: '連番の採番元を「スプレッドシート連動」にするにはシート URL が必要です' };
+  }
+  return { fields };
+}
+
 // GET /api/filename-templates  一覧（is_default が先頭、その後 name 昇順）
 router.get('/filename-templates', async (_req, res) => {
   try {
@@ -2122,10 +2252,13 @@ router.get('/filename-templates/:id', async (req, res) => {
 
 // POST /api/filename-templates  新規（master.page または master.filename_templates。既定: admin/secretary/producer/director）
 router.post('/filename-templates', requireAuth, requireAnyPermission('master.page', 'master.filename_templates'), async (req, res) => {
-  const { name, separator, tokens, is_default } = req.body || {};
+  const { name, separator, tokens, is_default, serial_digits } = req.body || {};
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: 'name は必須です' });
   }
+  // ADR 038: テンプレ既定の連番桁数（null=既定3 / 1〜10）
+  const sdParsed = parseTemplateSerialDigits(serial_digits);
+  if (sdParsed.error) return res.status(400).json({ error: sdParsed.error });
   const sep = (separator === undefined || separator === null) ? '_' : String(separator);
   if (!ALLOWED_FILENAME_SEPARATORS.has(sep)) {
     return res.status(400).json({ error: 'separator は "_" / "-" / "" のいずれかで指定してください' });
@@ -2139,11 +2272,18 @@ router.post('/filename-templates', requireAuth, requireAnyPermission('master.pag
     tokens,
     is_default: !!is_default,
   };
-  const { data, error } = await supabase
+  if (sdParsed.value !== undefined) insert.serial_digits = sdParsed.value;
+  let { data, error } = await supabase
     .from('filename_templates')
     .insert(insert)
     .select()
     .single();
+  // ADR 038 migration 未適用ガード（filename_templates.serial_digits 列が無い）
+  if (error && /serial_digits/i.test(error.message || '') && insert.serial_digits !== undefined) {
+    const { serial_digits: _oSd, ...fallbackSd } = insert;
+    const retrySd = await supabase.from('filename_templates').insert(fallbackSd).select().single();
+    data = retrySd.data; error = retrySd.error;
+  }
   if (error) {
     if (isMissingFilenameTemplatesTable(error)) {
       return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migrations/2026-05-07_filename_templates.sql を本番Supabaseに適用してください。' });
@@ -2156,8 +2296,14 @@ router.post('/filename-templates', requireAuth, requireAnyPermission('master.pag
 
 // PUT /api/filename-templates/:id  更新
 router.put('/filename-templates/:id', requireAuth, requireAnyPermission('master.page', 'master.filename_templates'), async (req, res) => {
-  const { name, separator, tokens, is_default } = req.body || {};
+  const { name, separator, tokens, is_default, serial_digits } = req.body || {};
   const update = {};
+  // ADR 038: テンプレ既定の連番桁数（null=既定3 / 1〜10）
+  if (serial_digits !== undefined) {
+    const sdParsed = parseTemplateSerialDigits(serial_digits);
+    if (sdParsed.error) return res.status(400).json({ error: sdParsed.error });
+    update.serial_digits = sdParsed.value;
+  }
   if (name !== undefined) {
     if (typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'name は空にできません' });
@@ -2182,12 +2328,21 @@ router.put('/filename-templates/:id', requireAuth, requireAnyPermission('master.
   }
   // updated_at はトリガで自動更新される
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('filename_templates')
     .update(update)
     .eq('id', req.params.id)
     .select()
     .single();
+  // ADR 038 migration 未適用ガード（filename_templates.serial_digits 列が無い）
+  if (error && /serial_digits/i.test(error.message || '') && update.serial_digits !== undefined) {
+    const { serial_digits: _oSd, ...fallbackSd } = update;
+    if (Object.keys(fallbackSd).length === 0) {
+      return res.status(503).json({ error: 'filename_templates.serial_digits 列が未適用です。migrations/2026-09-08_serial_sheet_link.sql を適用してください。' });
+    }
+    const retrySd = await supabase.from('filename_templates').update(fallbackSd).eq('id', req.params.id).select().single();
+    data = retrySd.data; error = retrySd.error;
+  }
   if (error) {
     if (isMissingFilenameTemplatesTable(error)) {
       return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migration を適用してください。' });
@@ -9341,16 +9496,57 @@ router.get('/creatives/:id', async (req, res) => {
   res.json(data);
 });
 
-// ADR 008 Phase 4: 案件の連番起点 / 桁数を読み出すヘルパ。
-//   既存案件で migration 未適用 / 列欠損のときは null を返し、呼び出し側で旧仕様にフォールバック。
-async function resolveProjectSerialConfig(project) {
+// ADR 008 Phase 4 / ADR 038: 案件の連番起点 / 桁数を読み出すヘルパ。
+//   桁数: projects.serial_digits → filename_templates.serial_digits → 3（utils/serial-sheet.js）
+//   起点:
+//     - serial_source = 'sheet'   … 連動シートの列を読み「先頭数字列の最大値 + 1」。
+//                                    読めない場合は SerialSheetError（status 400）を throw する。
+//                                    ※ 黙ってカウンタに落とすとシートとのズレを再発させるため、明示エラーにする（ADR 038）
+//     - serial_source = 'counter' … projects.next_filename_serial（既存）。列欠損時は null → 呼び出し側で旧仕様。
+class SerialSheetError extends Error {
+  constructor(message) { super(message); this.name = 'SerialSheetError'; this.status = 400; }
+}
+
+function _serialSheetErrorFromApi(e, project) {
+  const msg = String(e?.message || e);
+  const sa = getServiceAccountEmail() || 'サービスアカウント';
+  if (/permission|forbidden|denied|PERMISSION_DENIED/i.test(msg)) {
+    return new SerialSheetError(`連番連動シートを読めません。シートを ${sa} に「閲覧者」で共有してください。`);
+  }
+  if (/not found|Requested entity was not found/i.test(msg)) {
+    return new SerialSheetError('連番連動シートが見つかりません。案件モーダル「上級設定」の URL を確認してください。');
+  }
+  if (/Unable to parse range/i.test(msg)) {
+    return new SerialSheetError(`連番連動シートのタブ「${project?.serial_sheet_tab || ''}」または列「${project?.serial_sheet_column || 'A'}」が見つかりません。`);
+  }
+  return new SerialSheetError('連番連動シートの読み取りに失敗しました: ' + msg);
+}
+
+async function readProjectSerialFromSheet(project) {
+  const spreadsheetId = extractSpreadsheetId(project?.serial_sheet_url);
+  if (!spreadsheetId) {
+    throw new SerialSheetError('連番の採番元が「スプレッドシート連動」ですが、シート URL が未設定または不正です。案件モーダル「上級設定」で設定してください。');
+  }
+  const column = normalizeColumnLetter(project?.serial_sheet_column) || 'A';
+  let values;
+  try {
+    values = await readSheetColumn(spreadsheetId, project?.serial_sheet_tab || null, column);
+  } catch (e) {
+    throw _serialSheetErrorFromApi(e, project);
+  }
+  return parseSerialCells(values);
+}
+
+async function resolveProjectSerialConfig(project, template) {
+  const digits = resolveSerialDigits(project, template);
+  const source = project?.serial_source === 'sheet' ? 'sheet' : 'counter';
+  if (source === 'sheet') {
+    const sheet = await readProjectSerialFromSheet(project);
+    return { start: sheet.next, digits, source, sheet };
+  }
   const startRaw = project?.next_filename_serial;
-  const digitsRaw = project?.serial_digits;
   const start = Number.isFinite(Number(startRaw)) && Number(startRaw) >= 1 ? Math.floor(Number(startRaw)) : null;
-  const digits = Number.isInteger(Number(digitsRaw)) && Number(digitsRaw) >= 1 && Number(digitsRaw) <= 10
-    ? Number(digitsRaw)
-    : null;
-  return { start, digits };
+  return { start, digits, source, sheet: null };
 }
 
 // 一括登録プレビュー（DBには保存しない）
@@ -9386,8 +9582,14 @@ router.post('/creatives/bulk-preview', async (req, res) => {
   // ADR 007: ファイル名テンプレ解決（schema-sync 失敗時は null → ハードコードフォールバック）
   const tplResolved = await resolveProjectFilenameTemplate(project);
 
-  // ADR 008 Phase 4: 連番起点 & 桁数
-  const { start: cfgStart, digits: cfgDigits } = await resolveProjectSerialConfig(project);
+  // ADR 008 Phase 4 / ADR 038: 連番起点 & 桁数（採番元がシート連動なら読み取り失敗を 400 で返す）
+  let serialCfg;
+  try {
+    serialCfg = await resolveProjectSerialConfig(project, tplResolved?.template);
+  } catch (e) {
+    return res.status(e?.status || 500).json({ error: e?.message || String(e) });
+  }
+  const { start: cfgStart, digits: cfgDigits, source: serialSource, sheet: serialSheet } = serialCfg;
   const serialDigits = cfgDigits || 3;
   const overrideStart = (() => {
     const n = Number(serial_start);
@@ -9433,7 +9635,8 @@ router.post('/creatives/bulk-preview', async (req, res) => {
     previews.push({ file_name: fileName, draft_deadline: draft_deadline || null, final_deadline: final_deadline || null });
     nextSeq++;
   }
-  res.json({ previews, serial_start: startSeq, next_serial_after: startSeq + count, serial_digits: serialDigits });
+  res.json({ previews, serial_start: startSeq, next_serial_after: startSeq + count, serial_digits: serialDigits,
+    serial_source: serialSource, sheet_max: serialSheet ? serialSheet.max : null, sheet_count: serialSheet ? serialSheet.count : null });
 });
 
 // クリエイティブ作成
@@ -9479,8 +9682,14 @@ router.post('/creatives/bulk', async (req, res) => {
   // ADR 007: ファイル名テンプレ解決（schema-sync 失敗時は null → ハードコードフォールバック）
   const tplResolved = await resolveProjectFilenameTemplate(project);
 
-  // ADR 008 Phase 4: 連番起点 & 桁数
-  const { start: cfgStart, digits: cfgDigits } = await resolveProjectSerialConfig(project);
+  // ADR 008 Phase 4 / ADR 038: 連番起点 & 桁数（採番元がシート連動なら読み取り失敗を 400 で返す）
+  let serialCfg;
+  try {
+    serialCfg = await resolveProjectSerialConfig(project, tplResolved?.template);
+  } catch (e) {
+    return res.status(e?.status || 500).json({ error: e?.message || String(e) });
+  }
+  const { start: cfgStart, digits: cfgDigits, source: serialSource, sheet: serialSheet } = serialCfg;
   const serialDigits = cfgDigits || 3;
   const overrideStart = (() => {
     const n = Number(serial_start);
@@ -9558,7 +9767,7 @@ router.post('/creatives/bulk', async (req, res) => {
     console.warn('[bulk] advance serial failed:', e?.message || e);
   }
 
-  res.json({ ok: true, count: data.length, creatives: data, next_serial_after: advancedTo, serial_digits: serialDigits });
+  res.json({ ok: true, count: data.length, creatives: data, next_serial_after: advancedTo, serial_digits: serialDigits, serial_source: serialSource });
 });
 
 // 個別登録
@@ -18052,8 +18261,17 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     })
     .filter(n => n !== null);
 
-  // ADR 008 Phase 4: 連番起点（projects.next_filename_serial）優先、無ければ最小未使用
-  const { start: cfgStart, digits: cfgDigits } = await resolveProjectSerialConfig(project);
+  // ADR 007: ファイル名テンプレ解決（桁数の既定はテンプレ側にもあるため、連番より先に引く）
+  const tplResolved = await resolveProjectFilenameTemplate(project);
+
+  // ADR 008 Phase 4 / ADR 038: 連番起点（sheet 連動 or projects.next_filename_serial）優先、無ければ最小未使用
+  let serialCfg;
+  try {
+    serialCfg = await resolveProjectSerialConfig(project, tplResolved?.template);
+  } catch (e) {
+    return res.status(e?.status || 500).json({ error: e?.message || String(e) });
+  }
+  const { start: cfgStart, digits: cfgDigits, source: serialSource, sheet: serialSheet } = serialCfg;
   const serialDigits = cfgDigits || 3;
   let nextSeq = cfgStart;
   if (!nextSeq) {
@@ -18090,8 +18308,6 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     return _todayStrJST().slice(2).replace(/-/g, '');
   })();
 
-  // ADR 007: ファイル名テンプレ解決
-  const tplResolved = await resolveProjectFilenameTemplate(project);
   let newFileName;
   if (tplResolved) {
     const tokenValues = buildFilenameTokenValues({
@@ -18128,6 +18344,9 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     appeal_code: appealType?.code || null,
     date_str: dateStr,
     template_name: templateName,
+    serial_source: serialSource,
+    sheet_max: serialSheet ? serialSheet.max : null,
+    serial_digits: serialDigits,
     format_hint: formatHint,
   });
 });

@@ -252,4 +252,33 @@ async function readSheetData(spreadsheetId) {
   return res.data.values || [];
 }
 
-module.exports = { createSheetWithData, overwriteFirstSheet, getServiceAccountEmail, extractSpreadsheetId, readSheetData };
+// ADR 038: タブ名一覧（案件モーダル「接続確認」でタブを選ばせる用）
+async function listSheetTabs(spreadsheetId) {
+  const auth = getAuth();
+  const sheets = google.sheets({ version: 'v4', auth });
+  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties.title' });
+  return (meta.data.sheets || []).map(s => s.properties?.title).filter(Boolean);
+}
+
+// ADR 038: 指定タブ（null=1枚目）の 1 列分を読む。戻り値は values.get の 2 次元配列。
+//   column は 'A' 〜 'ZZZ'。タブ名にシングルクォートが含まれる場合はエスケープする。
+async function readSheetColumn(spreadsheetId, tabTitle, column) {
+  const auth = getAuth();
+  const sheets = google.sheets({ version: 'v4', auth });
+  let tab = tabTitle;
+  if (!tab) {
+    const tabs = await listSheetTabs(spreadsheetId);
+    if (!tabs.length) throw new Error('スプレッドシートにシートが存在しません');
+    tab = tabs[0];
+  }
+  const col = String(column || 'A').toUpperCase();
+  const quoted = `'${String(tab).replace(/'/g, "''")}'`;
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoted}!${col}:${col}`,
+    valueRenderOption: 'FORMATTED_VALUE',
+  });
+  return res.data.values || [];
+}
+
+module.exports = { createSheetWithData, overwriteFirstSheet, getServiceAccountEmail, extractSpreadsheetId, readSheetData, listSheetTabs, readSheetColumn };
