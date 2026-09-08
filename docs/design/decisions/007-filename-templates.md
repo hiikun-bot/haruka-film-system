@@ -121,6 +121,11 @@ projects.filename_token_overrides jsonb
 > migration: `migrations/2026-06-08_filename_template_version_optional.sql`
 > （`validate_filename_template_tokens()` を version 不要版に再定義）。
 
+
+> **追補（2026-09-08・ADR 038）**: 連番の桁数はテンプレ側 `filename_templates.serial_digits` でも設定可能になり、
+> 解決順は「案件 `projects.serial_digits` → テンプレ → 3」。`custom` トークンは UI 上「固定文字」と呼ぶ。
+> 連番の採番元を案件ごとに「カウンタ / スプレッドシート連動」から選べる。詳細は [038](038-serial-sheet-link.md)。
+
 ### UI
 
 #### 設定タブ「📁 ファイル名テンプレート」（新セクション）
