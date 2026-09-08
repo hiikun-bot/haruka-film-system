@@ -6707,10 +6707,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
               </div>
               <div class="form-group" style="margin-bottom:0">
                 <label class="form-label" style="font-size:11px">連番桁数</label>
-                <select class="form-select" id="p-serial-digits" style="font-family:monospace;font-size:13px">
+                <select class="form-select" id="p-serial-digits" style="font-family:monospace;font-size:13px" onchange="updateProjectFilenamePreview()">
+                  <option value="" id="p-serial-digits-default-opt">テンプレ既定</option>
                   <option value="1">1（例: 1）</option>
                   <option value="2">2（例: 01）</option>
-                  <option value="3" selected>3（例: 001）</option>
+                  <option value="3">3（例: 001）</option>
                   <option value="4">4（例: 0001）</option>
                   <option value="5">5（例: 00001）</option>
                   <option value="6">6（例: 000001）</option>
@@ -6719,8 +6720,50 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
               </div>
             </div>
             <div style="font-size:11px;color:#5b8a73;margin-top:8px;line-height:1.6">
-              シート側で先行採番されている場合、ここで起点を合わせると一括登録の連番がシートと揃います。
+              桁数は「テンプレ既定」のままならテンプレ側の設定（マスター → ファイル名テンプレート）に従います。
               桁数を変えると次回以降の生成ファイル名のゼロパディング桁数が変わります。
+            </div>
+
+            <!-- ADR 038: 連番の採番元（案件カウンタ / スプレッドシート連動） -->
+            <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #C9E5D6">
+              <div style="font-size:11px;font-weight:600;color:#0F7A56;margin-bottom:6px">連番の採番元</div>
+              <div style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                  <input type="radio" name="p-serial-source" value="counter" checked onchange="onProjectSerialSourceChange()">
+                  <span>案件カウンタ <span style="color:var(--text-muted);font-size:11px">（上の「次のファイル名連番」から採番）</span></span>
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                  <input type="radio" name="p-serial-source" value="sheet" onchange="onProjectSerialSourceChange()">
+                  <span>スプレッドシート連動 <span style="color:var(--text-muted);font-size:11px">（管理シートの最終番号 +1 を次の連番にする）</span></span>
+                </label>
+              </div>
+              <div id="p-serial-sheet-wrap" style="display:none;margin-top:10px">
+                <div class="form-group" style="margin-bottom:8px">
+                  <label class="form-label" style="font-size:11px">連動するスプレッドシート URL</label>
+                  <div style="display:flex;gap:6px">
+                    <input class="form-input" id="p-serial-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/..." style="flex:1;min-width:0">
+                    <button type="button" class="btn" onclick="openLink('p-serial-sheet-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+                  </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 110px auto;gap:10px;align-items:end">
+                  <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label" style="font-size:11px">タブ名 <span style="font-weight:400;color:var(--text-muted)">（空欄＝1枚目）</span></label>
+                    <input class="form-input" id="p-serial-sheet-tab" list="p-serial-sheet-tab-list" placeholder="例: 静止画">
+                    <datalist id="p-serial-sheet-tab-list"></datalist>
+                  </div>
+                  <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label" style="font-size:11px">番号の列</label>
+                    <input class="form-input" id="p-serial-sheet-column" value="A" placeholder="A" maxlength="3" style="font-family:monospace;text-transform:uppercase">
+                  </div>
+                  <button type="button" class="btn" id="p-serial-sheet-probe-btn" onclick="probeProjectSerialSheet()" style="white-space:nowrap;padding:8px 12px">🔍 接続確認</button>
+                </div>
+                <div id="p-serial-sheet-result" style="display:none;margin-top:8px;font-size:11.5px;line-height:1.6;padding:8px 10px;border-radius:6px"></div>
+                <div style="font-size:11px;color:#5b8a73;margin-top:8px;line-height:1.6">
+                  シートを <b id="p-serial-sheet-sa-email" style="font-family:monospace;user-select:all">サービスアカウント</b> に「閲覧者」で共有してください。
+                  一括登録・個別登録のたびにこの列を読み、「先頭の数字」の最大値 +1 を連番にします（例: 最終 010 → 次は 011）。
+                  シートを読めないときは登録を止めてエラーを出します（黙ってズレた番号を振りません）。
+                </div>
+              </div>
             </div>
           </details>
         </div>
@@ -19617,7 +19660,8 @@ function openProjectModal(preClientId) {
   { const _r = document.getElementById('p-sync-sheet-result'); if (_r) _r.style.display = 'none'; }
   // ADR 008 Phase 4: 連番カスタマイズ初期値
   { const _nfs = document.getElementById('p-next-filename-serial'); if (_nfs) _nfs.value = ''; }
-  { const _sd = document.getElementById('p-serial-digits'); if (_sd) _sd.value = '3'; }
+  { const _sd = document.getElementById('p-serial-digits'); if (_sd) _sd.value = ''; } // ADR 038: 既定は「テンプレ既定」
+  _resetProjectSerialSheetFields(null); // ADR 038
   selectDeadlineUnit('monthly');
   document.getElementById('p-deadline-weekday').value = '';
   // サブディレクター / サブプロデューサー: 新規は空で初期化（ADR 014: 共通 MemberPicker 経由）
@@ -19809,7 +19853,8 @@ function openEditProject(p) {
     const _nfs = document.getElementById('p-next-filename-serial');
     if (_nfs) _nfs.value = (p.next_filename_serial != null && p.next_filename_serial !== '') ? String(p.next_filename_serial) : '';
     const _sd = document.getElementById('p-serial-digits');
-    if (_sd) _sd.value = (p.serial_digits != null && p.serial_digits !== '') ? String(p.serial_digits) : '3';
+    if (_sd) _sd.value = (p.serial_digits != null && p.serial_digits !== '') ? String(p.serial_digits) : ''; // ADR 038: '' = テンプレ既定
+    _resetProjectSerialSheetFields(p); // ADR 038: 採番元・連動シート
   }
 
   // サブディレクター: DB値を復元（無効化IDが残っていれば render 側で警告クリア）
@@ -23817,7 +23862,7 @@ function _projFilenameSampleValues() {
   const yymmdd = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
   const flagOn = _projFilenameState.previewFlagOn !== false; // 未指定はデフォルト ON
   return {
-    serial: '0000001',
+    serial: String(1).padStart(_projFilenameCurrentSerialDigits(), '0'), // ADR 038: 桁数を反映
     project_name: projectName,
     version: 'v1',
     date_yymmdd: yymmdd,
@@ -23945,10 +23990,104 @@ function updateProjectFilenamePreview() {
   if (onBtn)  onBtn.style.cssText  = `font-size:10px;padding:1px 7px;${isOn ? 'background:#F59E0B;color:#fff;border-color:#F59E0B' : ''}`;
   if (offBtn) offBtn.style.cssText = `font-size:10px;padding:1px 7px;${!isOn ? 'background:#0F7A56;color:#fff;border-color:#0F7A56' : ''}`;
 
+  // ADR 038: 「テンプレ既定」選択肢にテンプレ側の桁数を表示
+  const defOpt = document.getElementById('p-serial-digits-default-opt');
+  if (defOpt) {
+    const td = Number(tpl && tpl.serial_digits);
+    defOpt.textContent = `テンプレ既定（${(Number.isInteger(td) && td >= 1 && td <= 10) ? td : 3}桁）`;
+  }
   if (!tpl) { previewEl.textContent = '—'; return; }
   const values = _projFilenameSampleValues();
   const fn = renderFilenameClient(tpl, values, _projFilenameState.overrides);
   previewEl.textContent = fn || '—';
+}
+
+// ---- ADR 038: 連番の採番元（案件モーダル「上級設定」） ----
+let _projSerialSaEmail = null;
+
+// 現在の案件モーダルで有効な桁数（案件セレクト → テンプレ既定 → 3）
+function _projFilenameCurrentSerialDigits() {
+  const sdRaw = document.getElementById('p-serial-digits')?.value;
+  const sd = Number(sdRaw);
+  if (sdRaw != null && String(sdRaw) !== '' && Number.isInteger(sd) && sd >= 1 && sd <= 10) return sd;
+  const tpl = (typeof _projFilenameSelectedTemplate === 'function') ? _projFilenameSelectedTemplate() : null;
+  const td = Number(tpl && tpl.serial_digits);
+  return (Number.isInteger(td) && td >= 1 && td <= 10) ? td : 3;
+}
+
+function _projSerialSourceValue() {
+  return document.querySelector('input[name="p-serial-source"]:checked')?.value === 'sheet' ? 'sheet' : 'counter';
+}
+
+function _setProjectSerialSource(v) {
+  const r = document.querySelector(`input[name="p-serial-source"][value="${v === 'sheet' ? 'sheet' : 'counter'}"]`);
+  if (r) r.checked = true;
+  onProjectSerialSourceChange();
+}
+
+async function onProjectSerialSourceChange() {
+  const wrap = document.getElementById('p-serial-sheet-wrap');
+  if (!wrap) return;
+  const isSheet = _projSerialSourceValue() === 'sheet';
+  wrap.style.display = isSheet ? '' : 'none';
+  if (isSheet && !_projSerialSaEmail) {
+    try {
+      const r = await apiFetch(`${API}/personal-tasks/sheet-info`);
+      if (r.ok) { const j = await r.json().catch(() => ({})); _projSerialSaEmail = j?.sa_email || null; }
+    } catch (_) {}
+  }
+  const el = document.getElementById('p-serial-sheet-sa-email');
+  if (el && _projSerialSaEmail) el.textContent = _projSerialSaEmail;
+}
+
+// 新規 / 編集オープン時に採番元・連動シート欄を復元（p=null で初期化）
+function _resetProjectSerialSheetFields(p) {
+  const url = document.getElementById('p-serial-sheet-url'); if (url) url.value = p?.serial_sheet_url || '';
+  const tab = document.getElementById('p-serial-sheet-tab'); if (tab) tab.value = p?.serial_sheet_tab || '';
+  const col = document.getElementById('p-serial-sheet-column'); if (col) col.value = p?.serial_sheet_column || 'A';
+  const res = document.getElementById('p-serial-sheet-result'); if (res) { res.style.display = 'none'; res.innerHTML = ''; }
+  const dl = document.getElementById('p-serial-sheet-tab-list'); if (dl) dl.innerHTML = '';
+  _setProjectSerialSource(p?.serial_source || 'counter');
+}
+
+// 「接続確認」: SA でシートを読み、最終番号 → 次の番号を表示。タブ一覧は datalist に流し込む
+async function probeProjectSerialSheet() {
+  const url = document.getElementById('p-serial-sheet-url')?.value.trim();
+  const tab = document.getElementById('p-serial-sheet-tab')?.value.trim();
+  const column = (document.getElementById('p-serial-sheet-column')?.value.trim() || 'A').toUpperCase();
+  const out = document.getElementById('p-serial-sheet-result');
+  const btn = document.getElementById('p-serial-sheet-probe-btn');
+  if (!url) { showToast('スプレッドシート URL を入力してください', 'warn'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '確認中…'; }
+  try {
+    const res = await apiFetch(`${API}/projects/serial-sheet-probe`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, tab, column }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (j?.sa_email) {
+      _projSerialSaEmail = j.sa_email;
+      const el = document.getElementById('p-serial-sheet-sa-email'); if (el) el.textContent = j.sa_email;
+    }
+    const dl = document.getElementById('p-serial-sheet-tab-list');
+    if (dl && Array.isArray(j?.tabs)) dl.innerHTML = j.tabs.map(t => `<option value="${esc(t)}"></option>`).join('');
+    if (!out) return;
+    out.style.display = '';
+    if (!res.ok) {
+      out.style.background = '#FDECEC'; out.style.color = '#A32D2D';
+      out.innerHTML = `❌ ${esc(j?.error || ('HTTP ' + res.status))}`
+        + ((Array.isArray(j?.tabs) && j.tabs.length) ? `<br>このシートのタブ: ${j.tabs.map(esc).join(' / ')}` : '');
+      return;
+    }
+    const digits = _projFilenameCurrentSerialDigits();
+    out.style.background = '#E8F5EE'; out.style.color = '#0F7A56';
+    out.innerHTML = `✅ タブ「${esc(j.tab)}」の ${esc(j.column)} 列: 番号セル ${j.count} 個、最終 <b>${esc(j.lastRaw || '—')}</b> → 次の連番は <b style="font-family:monospace">${String(j.next).padStart(digits, '0')}</b>`
+      + ((j.digitsHint && j.digitsHint !== digits) ? `<br>⚠️ シート側は ${j.digitsHint} 桁が多いようです（現在の設定は ${digits} 桁）。揃えるなら上の「連番桁数」を変更してください。` : '');
+  } catch (e) {
+    if (out) { out.style.display = ''; out.style.background = '#FDECEC'; out.style.color = '#A32D2D'; out.textContent = '❌ ' + (e?.message || e); }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔍 接続確認'; }
+  }
 }
 
 function onProjectFilenameTemplateChange() {
@@ -24024,7 +24163,16 @@ async function submitProject() {
   const _nfsRaw = document.getElementById('p-next-filename-serial')?.value;
   const next_filename_serial = (_nfsRaw != null && String(_nfsRaw).trim() !== '') ? Number(_nfsRaw) : undefined;
   const _sdRaw = document.getElementById('p-serial-digits')?.value;
-  const serial_digits = (_sdRaw != null && String(_sdRaw).trim() !== '') ? Number(_sdRaw) : undefined;
+  const serial_digits = (_sdRaw != null && String(_sdRaw).trim() !== '') ? Number(_sdRaw) : null; // ADR 038: null = テンプレ既定
+  // ADR 038: 連番の採番元・連動シート
+  const serial_source = _projSerialSourceValue();
+  const serial_sheet_url = document.getElementById('p-serial-sheet-url')?.value.trim() || null;
+  const serial_sheet_tab = document.getElementById('p-serial-sheet-tab')?.value.trim() || null;
+  const serial_sheet_column = (document.getElementById('p-serial-sheet-column')?.value.trim() || 'A').toUpperCase();
+  if (serial_source === 'sheet' && !serial_sheet_url) {
+    showToast('連番をスプレッドシート連動にするにはシート URL が必要です', 'warn');
+    return;
+  }
 
   // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（編集時に明示送信、新規時は空）
   const creatives_export_sheet_url = document.getElementById('p-creatives-export-sheet-url')?.value.trim() || null;
@@ -24052,7 +24200,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, wcheck_required, billing_timing })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, serial_source, serial_sheet_url, serial_sheet_tab, serial_sheet_column, wcheck_required, billing_timing })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -33302,7 +33450,8 @@ async function generateFileName() {
     _lastAutoFileName = data.file_name || '';
     if (statusEl) {
       statusEl.style.color = 'var(--em-dark)';
-      statusEl.textContent = `この案件の ${data.seq} 本目（登録済み ${data.total} 本）`;
+      statusEl.textContent = `この案件の ${data.seq} 本目（登録済み ${data.total} 本）`
+        + (data.serial_source === 'sheet' ? `　／　連番はシート連動（最終 ${data.sheet_max != null ? String(data.sheet_max).padStart(Number(data.serial_digits) || 3, '0') : '—'} → ${String(data.seq).padStart(Number(data.serial_digits) || 3, '0')}）` : '');
     }
     // 凡例（形式の説明文）を、この案件に当たっているテンプレ名・トークン並びで更新する
     updateFilenameFormatHint(data);
@@ -33979,10 +34128,19 @@ async function bulkPreviewCreative() {
   });
   btn.textContent = origText; btn.disabled = false;
   if (!res.ok) { const e = await res.json(); showToast('エラー: ' + translateError(e?.error), 'error'); return; }
-  const { previews } = await res.json();
+  const bulkPreviewRes = await res.json();
+  const { previews } = bulkPreviewRes;
 
-  // 確認リストを描画
-  document.getElementById('bulk-confirm-count').textContent = `${previews.length} 本を登録します`;
+  // 確認リストを描画（ADR 038: 連番起点と採番元も表示）
+  {
+    const sd = Number(bulkPreviewRes.serial_digits) || 3;
+    const startStr = bulkPreviewRes.serial_start != null ? String(bulkPreviewRes.serial_start).padStart(sd, '0') : null;
+    const srcText = bulkPreviewRes.serial_source === 'sheet'
+      ? `シート連動: 最終 ${bulkPreviewRes.sheet_max != null ? String(bulkPreviewRes.sheet_max).padStart(sd, '0') : '—'}`
+      : '案件カウンタ';
+    document.getElementById('bulk-confirm-count').textContent =
+      `${previews.length} 本を登録します` + (startStr ? `（連番 ${startStr} から／${srcText}）` : '');
+  }
   const fmtDate = d => d ? d.slice(0,10).replace(/-/g,'/') : '—';
   const th = t => `<th style="padding:6px 10px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:600;white-space:nowrap">${t}</th>`;
   const td = t => `<td style="padding:6px 10px;font-size:12px;color:var(--text-muted);white-space:nowrap">${t||'—'}</td>`;
@@ -37174,6 +37332,7 @@ function _fnTplDraftFromTemplate(tpl) {
         { kind: 'system', key: 'version',      label: 'バージョン' },
       ],
       is_default: false,
+      serial_digits: null,
     };
   }
   return {
@@ -37182,7 +37341,23 @@ function _fnTplDraftFromTemplate(tpl) {
     separator: tpl.separator ?? '_',
     tokens: Array.isArray(tpl.tokens) ? JSON.parse(JSON.stringify(tpl.tokens)) : [],
     is_default: !!tpl.is_default,
+    // ADR 038: テンプレ既定の連番桁数（null = 既定 3）
+    serial_digits: (Number.isInteger(Number(tpl.serial_digits)) && Number(tpl.serial_digits) >= 1 && Number(tpl.serial_digits) <= 10)
+      ? Number(tpl.serial_digits) : null,
   };
+}
+
+// ADR 038: テンプレ draft の連番桁数（未設定は 3）
+function _fnDraftSerialDigits(draft) {
+  const d = Number(draft && draft.serial_digits);
+  return (Number.isInteger(d) && d >= 1 && d <= 10) ? d : 3;
+}
+function updateFnSerialDigits(value) {
+  const d = _fnTplState.draft;
+  if (!d) return;
+  const n = Number(value);
+  d.serial_digits = (value !== '' && Number.isInteger(n) && n >= 1 && n <= 10) ? n : null;
+  _fnRefreshPreview();
 }
 
 async function renderFilenameTemplatesPage() {
@@ -37269,8 +37444,8 @@ async function renderFilenameTemplatesPage() {
             <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px">
               <input type="radio" name="fn-custom-kind" value="custom" onchange="onFnCustomKindChange()" style="margin-top:3px">
               <span>
-                <span style="font-weight:600">テキスト</span>
-                <span style="color:var(--text-muted);font-size:11px;margin-left:6px">（固定値1つ・案件側で上書き可）</span>
+                <span style="font-weight:600">固定文字</span>
+                <span style="color:var(--text-muted);font-size:11px;margin-left:6px">（例: ネコ・イヌスエール。常にこの文字を入れる。案件側で上書きも可）</span>
               </span>
             </label>
           </div>
@@ -37292,11 +37467,14 @@ async function renderFilenameTemplatesPage() {
           <input class="form-input" id="fn-custom-label" placeholder="例: 芸能人有無">
         </div>
 
-        <!-- テキスト型: default 値 -->
+        <!-- 固定文字型: default 値 -->
         <div id="fn-custom-fields-text" style="display:none">
           <div class="form-group">
-            <label class="form-label">デフォルト値（任意・案件側で上書き可）</label>
-            <input class="form-input" id="fn-custom-default" placeholder="例: 上地無">
+            <label class="form-label">固定文字 <span style="color:#E24B4A">*</span></label>
+            <input class="form-input" id="fn-custom-default" placeholder="例: ネコ・イヌスエール">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              この文字がそのままファイル名に入ります。案件ごとに変えたい場合は案件モーダルで上書きできます。
+            </div>
           </div>
         </div>
 
@@ -37352,7 +37530,7 @@ function _renderFnTplList() {
           ${t.is_default ? '<span title="デフォルト" style="color:#F59E0B;margin-right:4px">★</span>' : ''}${esc(t.name)}
         </div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px;font-family:monospace">
-          ${(t.tokens || []).length} 個 / sep="${esc(t.separator || '')}"
+          ${(t.tokens || []).length} 個 / sep="${esc(t.separator || '')}" / 連番${(Number(t.serial_digits) >= 1 && Number(t.serial_digits) <= 10) ? Number(t.serial_digits) : 3}桁
         </div>
       </div>
     `;
@@ -37410,7 +37588,7 @@ function _renderFnTplEditor() {
                        <span style="color:var(--text-muted);font-family:monospace;font-size:10px;margin-left:6px">[${esc(t.key)}]</span>`;
     let kindBadge = '';
     if (t.kind === 'custom') {
-      kindBadge = '<span style="font-size:10px;color:#fff;background:#A06CD5;padding:1px 6px;border-radius:8px;margin-left:6px">CUSTOM</span>';
+      kindBadge = '<span style="font-size:10px;color:#fff;background:#A06CD5;padding:1px 6px;border-radius:8px;margin-left:6px">固定文字</span>';
     } else if (t.kind === 'flag') {
       kindBadge = '<span style="font-size:10px;color:#fff;background:#F59E0B;padding:1px 6px;border-radius:8px;margin-left:6px">FLAG</span>';
     } else if (required) {
@@ -37420,10 +37598,24 @@ function _renderFnTplEditor() {
     let inlineInputs = '';
     if (t.kind === 'custom') {
       inlineInputs = `
-        <input class="form-input" style="width:120px;font-size:12px;padding:4px 8px"
+        <input class="form-input" style="width:160px;font-size:12px;padding:4px 8px"
           value="${esc(t.default || '')}"
-          placeholder="default 値"
+          placeholder="固定文字（例: ネコ・イヌスエール）"
+          title="この文字がそのままファイル名に入ります（案件側で上書きも可）"
           onchange="updateFnCustomDefault(${idx}, this.value)">
+      `;
+    } else if (t.kind === 'system' && t.key === 'serial') {
+      // ADR 038: 連番の桁数（テンプレ既定）。案件側「上級設定」で個別上書き可
+      const cur = _fnTplState.draft && _fnTplState.draft.serial_digits;
+      const opts = [''].concat([1,2,3,4,5,6,7,8,9,10]).map(v => {
+        const label = v === '' ? '既定（3桁）' : `${v}桁（例: ${'1'.padStart(v, '0')}）`;
+        const sel = (v === '' ? (cur == null) : (Number(cur) === v)) ? 'selected' : '';
+        return `<option value="${v}" ${sel}>${label}</option>`;
+      }).join('');
+      inlineInputs = `
+        <span style="font-size:11px;color:var(--text-muted);white-space:nowrap">桁数:</span>
+        <select class="form-select" style="width:150px;font-size:12px;padding:4px 8px" title="連番のゼロ埋め桁数（案件側の上級設定で個別に上書きできます）"
+          onchange="updateFnSerialDigits(this.value)">${opts}</select>
       `;
     } else if (t.kind === 'flag') {
       const sourceLabel = t.source === 'talent_flag' ? '🎬 芸能人' : esc(t.source || '');
@@ -37513,6 +37705,7 @@ function _renderFnTplEditor() {
       </div>
       <div id="fn-palette" style="display:flex;flex-wrap:wrap;gap:6px;padding:10px;background:#FAFAFA;border:1px dashed var(--border);border-radius:8px;min-height:48px">
         ${paletteSystem || '<span style="font-size:12px;color:var(--text-muted)">未使用のシステムトークンはありません</span>'}
+        <button class="btn-sm" onclick="openFnCustomModal('custom')" style="font-size:11px;padding:4px 10px;border-color:#A06CD5;color:#7B3FB5" title="ファイル名に固定で入れる文字（例: ネコ・イヌスエール）">＋ 固定文字</button>
         <button class="btn-sm" onclick="openFnCustomModal()" style="font-size:11px;padding:4px 10px">＋ トークンを追加</button>
       </div>
     </div>
@@ -37550,8 +37743,10 @@ function _renderFnTplEditor() {
 // flag トークンは _fnTplState.previewFlagOn が true なら on_value、false なら off_value を出す。
 function _fnRenderPreview(draft) {
   const flagOn = !!(_fnTplState && _fnTplState.previewFlagOn);
+  const serialDigits = _fnDraftSerialDigits(draft);
   const parts = (draft.tokens || []).map(t => {
     if (t.kind === 'system') {
+      if (t.key === 'serial') return String(7).padStart(serialDigits, '0'); // ADR 038: 桁数を反映
       const sys = _fnSystemTokenDef(t.key);
       return sys ? sys.sample : t.key;
     }
@@ -37736,22 +37931,25 @@ function _fnPopulateMasterRefPicker() {
   }
 }
 
-function openFnCustomModal() {
+// ADR 038: presetKind='custom' で「固定文字」を選択済みの状態で開く（パレットの「＋ 固定文字」）
+function openFnCustomModal(presetKind) {
   document.getElementById('fn-custom-label').value = '';
   document.getElementById('fn-custom-default').value = '';
   const onInput  = document.getElementById('fn-custom-on-value');
   const offInput = document.getElementById('fn-custom-off-value');
   if (onInput)  onInput.value  = '';
   if (offInput) offInput.value = '';
-  // 種類ラジオを「マスター引用」に戻す
-  const masterRadio = document.querySelector('input[name="fn-custom-kind"][value="master_ref"]');
-  if (masterRadio) masterRadio.checked = true;
+  // 種類ラジオを「マスター引用」（または指定種別）に
+  const kind = (presetKind === 'custom' || presetKind === 'flag') ? presetKind : 'master_ref';
+  const radio = document.querySelector(`input[name="fn-custom-kind"][value="${kind}"]`);
+  if (radio) radio.checked = true;
   // マスター引用ピッカーを組み立て
   _fnPopulateMasterRefPicker();
   onFnCustomKindChange();
   document.getElementById('fn-custom-modal').style.display = 'flex';
-  // 既定の master_ref モードでは select にフォーカス、それ以外はラベル入力欄
+  // 既定の master_ref モードでは select にフォーカス、固定文字なら固定文字欄、それ以外はラベル入力欄
   setTimeout(() => {
+    if (kind === 'custom') { document.getElementById('fn-custom-default')?.focus(); return; }
     const sel = document.getElementById('fn-custom-master-key');
     if (sel && !sel.disabled) sel.focus();
   }, 50);
@@ -37793,7 +37991,16 @@ function confirmAddFnCustomToken() {
     addFnTokenFromPalette(pickedKey, 'system');
     return;
   }
-  const label = document.getElementById('fn-custom-label').value.trim();
+  let label = document.getElementById('fn-custom-label').value.trim();
+  // ADR 038: 固定文字は文字そのものが必須。ラベル省略時は固定文字をラベルにする
+  if (kind === 'custom') {
+    const fixed = document.getElementById('fn-custom-default').value.trim();
+    if (!fixed) {
+      showToast('固定文字を入力してください', 'warn');
+      return;
+    }
+    if (!label) label = fixed;
+  }
   if (!label) {
     showToast('表示ラベルは必須です', 'warn');
     return;
@@ -37872,6 +38079,7 @@ async function saveFilenameTemplate() {
     separator: d.separator ?? '_',
     tokens: d.tokens,
     is_default: !!d.is_default,
+    serial_digits: d.serial_digits ?? null, // ADR 038: null = 既定 3
   };
   const isNew = !d.id;
   const url = isNew ? `${API}/filename-templates` : `${API}/filename-templates/${d.id}`;
