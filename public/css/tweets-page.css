@@ -708,10 +708,12 @@
 }
 
 /* ---------- FAB （右下投稿ボタン） ---------- */
+/* 右下には全画面共通の 🐛不具合報告FAB（haruka.html #error-report-fab: right:16px / bottom:16px / 48px角）が
+   常駐するため、その真上に積む（bottom = 16 + 48 + 16）。同じ高さに置くと重なって虫が押せなくなる。 */
 .tweets-fab {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  right: 20px;
+  bottom: 80px;
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -770,8 +772,8 @@
   }
 
   .tweets-fab {
-    right: 16px;
-    bottom: 16px;
+    right: 14px;
+    bottom: 76px; /* 🐛FAB(16px + 48px) の上に 12px 空けて積む */
     width: 52px;
     height: 52px;
   }
