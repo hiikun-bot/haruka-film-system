@@ -21,6 +21,7 @@
 <!-- 通知UI（Phase 1 段階2） -->
 <link rel="stylesheet" href="/css/notification.css">
 <link rel="stylesheet" href="/css/tweets-page.css">
+<link rel="stylesheet" href="/css/contract.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP',sans-serif}
 :root{
@@ -4059,11 +4060,14 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">学び広場</button>
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
+    <!-- 📝 契約・登録手続き: 本人の依頼・契約のみ（requireAuth・全ロール）。ADR 035 -->
+    <button class="nav-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
     <button class="nav-btn" id="nav-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">オンボーディング</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
     <button class="nav-btn" id="nav-payout" data-page="payout" onclick="showPage('payout',this)" style="display:none">💸 振込管理</button>
+    <button class="nav-btn" id="nav-contract-admin" data-page="contract-admin" onclick="showPage('contract-admin',this)" style="display:none">📝 契約管理</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
     <button class="nav-btn" id="nav-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">素材広場</button>
   </div>
@@ -4188,11 +4192,13 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
+    <button class="nav-drawer-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
     <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
     <button class="nav-drawer-btn" id="nav-drawer-payout" data-page="payout" onclick="showPage('payout',this)" style="display:none">💸 振込管理</button>
+    <button class="nav-drawer-btn" id="nav-drawer-contract-admin" data-page="contract-admin" onclick="showPage('contract-admin',this)" style="display:none">📝 契約管理</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
     <button class="nav-drawer-btn" id="nav-drawer-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">🗂️ 素材広場</button>
     <div class="nav-drawer-account">
@@ -4228,6 +4234,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
   <!-- 🏅 マイ実績（本人専用・ADR 036。editor/designer/director ダッシュで renderMyStatsCard() が描画。admin ダッシュには出さない） -->
   <div id="dash-my-stats"></div>
+  <!-- 📝 契約・登録手続きバナー（ADR 035）: GET /contracts/me の banner が非 null のとき contract-wizard.js の renderContractBanner() が描画 -->
+  <div id="dash-contract-banner"></div>
   <!-- 全体連絡（全ロール共通） -->
   <div id="dash-announcements" style="margin-bottom:14px"></div>
   <!-- 今日の納期（全ロール共通） -->
@@ -8981,6 +8989,16 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
 </div>
 
+<!-- 📝 契約・登録手続き（本人用・ADR 035）: 描画は public/js/contract-wizard.js の loadContractPage() -->
+<div id="page-contract" class="page">
+  <div id="contract-root"><div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div></div>
+</div>
+
+<!-- 📝 契約管理（contract.page / contract.view・ADR 035）: 描画は public/js/contract-admin.js の loadContractAdminPage() -->
+<div id="page-contract-admin" class="page">
+  <div id="contract-admin-root"><div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div></div>
+</div>
+
 <div id="page-bulk-deliver" class="page">
   <div style="max-width:1200px;margin:0 auto;padding:0 4px">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px">
@@ -10746,6 +10764,19 @@ async function applyDeepLinkOnLoad() {
           openVerupModal();
         }
       } catch (e) { console.warn('[deepLink verup]', e); }
+      return;
+    }
+
+    // 📝 契約依頼 URL（/haruka.html?contract_req=<token>・ADR 035）。トークンは contract-wizard.js が
+    // GET /contracts/req/:token に渡す（他人のトークンは 403 → 本人の一覧へフォールバック）
+    const contractReq = params.get('contract_req');
+    if (contractReq) {
+      stripQueryParam('contract_req');
+      try {
+        window._contractReqToken = contractReq;
+        const navBtn = document.querySelector('.nav-btn[data-page="contract"]');
+        if (typeof showPage === 'function') showPage('contract', navBtn || null);
+      } catch (e) { console.warn('[deepLink contract_req]', e); }
       return;
     }
 
@@ -18516,6 +18547,9 @@ const _ROLE_PERMS_FALLBACK = {
   // チーム状況（負荷ダッシュボード）はプロデューサー層にも開放（migration 2026-08-21_team_load_permission.sql）。
   // DB seed と同じ既定を持たせ、/role-permissions の読込に失敗した回でもP層のナビが消えないようにする
   'producer|team_load.page': true, 'producer_director|team_load.page': true,
+  // 📝 契約管理（migration 2026-09-07_contracts.sql・ADR 035）。contract.page / contract.bank_reveal は admin のみ（'admin' は hasPermission で常に true）。
+  // contract.view（参照のみ）は producer / producer_director。DB seed と同じ既定を持たせ、/role-permissions 読込失敗時もナビが消えないようにする
+  'producer|contract.view': true, 'producer_director|contract.view': true,
 };
 async function loadRolePermissions() {
   try {
@@ -18637,6 +18671,10 @@ function setPreviewRole(role) {
   if (document.getElementById('page-team-load')?.classList.contains('active') && typeof loadTeamLoadPage === 'function') loadTeamLoadPage();
   // 💸 振込管理: payout.page 限定ページ。VIEW AS 切替で前ロールの振込データ（金額・口座）が残らないよう再描画（ADR 015）
   if (document.getElementById('page-payout')?.classList.contains('active') && typeof loadPayoutPage === 'function') loadPayoutPage();
+  // 📝 契約・登録手続き: 本人データのみだが描画一貫性のため再ロード／📝 契約管理: contract.page（全操作）と contract.view（参照のみ）で
+  // 操作ボタン・個人情報欄の出し分けが変わるため VIEW AS 切替で必ず再描画（ADR 015 / ADR 035）
+  if (document.getElementById('page-contract')?.classList.contains('active') && typeof loadContractPage === 'function') loadContractPage();
+  if (document.getElementById('page-contract-admin')?.classList.contains('active') && typeof loadContractAdminPage === 'function') loadContractAdminPage();
   // VIEW AS 切替時は master ページも再描画（最高管理者専用タブが previewRole 切替で見えなくなるべきため）
   if (document.getElementById('page-master')?.classList.contains('active')) {
     // 現在開いているマスターサブページを再ロード。サブページごとに renderXxxPage が定義されているのでそれを再呼び出し
@@ -18728,6 +18766,13 @@ function applyRoleBasedUI() {
   if (payoutNav) payoutNav.style.display = canPayout ? '' : 'none';
   const drawerPayout = document.getElementById('nav-drawer-payout');
   if (drawerPayout) drawerPayout.style.display = canPayout ? '' : 'none';
+  // 📝 契約管理ナビ — permission 'contract.page'（既定 admin・全操作）または 'contract.view'（既定 producer / producer_director・参照のみ）。
+  // 本人用「📝 契約・登録手続き」は全ロール表示のため制御不要（ADR 035 / ADR 015: hasPermission で VIEW AS 追従）
+  const canContractAdmin = hasPermission('contract.page') || hasPermission('contract.view');
+  const contractAdminNav = document.getElementById('nav-contract-admin');
+  if (contractAdminNav) contractAdminNav.style.display = canContractAdmin ? '' : 'none';
+  const drawerContractAdmin = document.getElementById('nav-drawer-contract-admin');
+  if (drawerContractAdmin) drawerContractAdmin.style.display = canContractAdmin ? '' : 'none';
   // サイドバーのうち analytics.view が必要な項目（経営系メニューと将来追加されるサブメニュー）は
   // フル権限がないロールでは隠す。data-an-perm="analytics.view" を目印にする。
   document.querySelectorAll('#an-sidebar [data-an-perm="analytics.view"]').forEach(el => {
@@ -24126,6 +24171,9 @@ function showPage(name, btn) {
   if(name==='bulk-deliver') loadBulkDeliverPage();
   if(name==='onboarding') loadOnboardingPage();
   if(name==='my-goals') loadMyGoalsPage();
+  // 📝 契約（ADR 035）: 描画関数は外部 JS（contract-wizard.js / contract-admin.js）
+  if(name==='contract' && typeof loadContractPage === 'function') loadContractPage();
+  if(name==='contract-admin' && typeof loadContractAdminPage === 'function') loadContractAdminPage();
   if(name==='material-square') loadMaterialSquarePage();
   else { try { if (typeof msStopListPolling === 'function') msStopListPolling(); } catch (_) {} }
 
@@ -26055,6 +26103,9 @@ function renderOnboardingDetail() {
   const buttons = [
     canCopyMsg ? `<button class="btn-sm" onclick="obCopyFirstMessage()">📋 初回メッセージ文例をコピー</button>` : '',
     canManage ? `<button class="btn-sm" onclick="obRenameRecord()">✏️ 名前を変更</button>` : '',
+    // 📝 契約依頼の発行（ADR 035）: HFS メンバー紐付け済み かつ contract.page のときだけ。承認時に hf_contract タスクが自動チェックされる
+    (canManage && r.user_id && hasPermission('contract.page') && typeof openContractRequestModal === 'function')
+      ? `<button class="btn-sm" onclick="openContractRequestModal({user_ids:['${esc(r.user_id)}'],onboarding_record_id:'${esc(r.id)}'})">📝 契約依頼を発行</button>` : '',
     canManage ? (r.status === 'in_progress' ? `<button class="btn-sm" onclick="obUpdateStatus('completed')" style="color:#27AE60">✅ 完了にする</button>
       <button class="btn-sm" onclick="obUpdateStatus('cancelled')" style="color:#95A5A6">中止にする</button>` : `<button class="btn-sm" onclick="obUpdateStatus('in_progress')">↩ 進行中に戻す</button>`) : '',
     isDeletable ? `<button class="btn-sm" onclick="obDeleteRecord()" style="color:#C0392B;margin-left:auto">🗑 削除</button>` : '',
@@ -29041,6 +29092,8 @@ function loadDashboard() {
   loadAnnouncements();
   // 全ロール共通: 誕生日セクション
   loadDashboardBirthdays();
+  // 全ロール共通: 📝 契約・登録手続きバナー（本人宛の依頼があるときだけ表示。ADR 035）
+  if (typeof renderContractBanner === 'function') renderContractBanner();
   // つぶやきは独立タブ（#page-tweets）に集約（PR #209）。ダッシュボード内表示は廃止。
 
   // 初回ロード中はプレースホルダを出す（既に何か描画済みなら触らない＝再表示時のチラつき防止）。
@@ -56175,6 +56228,10 @@ function votStatusBadge(status) {
 
 <!-- 共通マスター選択 UI（ADR 014）— メンバー選択は全画面でこれを使う -->
 <script src="/js/member-picker.js"></script>
+
+<!-- 📝 契約管理（ADR 035）— 順序重要: wizard（共有ヘルパー HFSContract を定義）→ admin -->
+<script src="/js/contract-wizard.js"></script>
+<script src="/js/contract-admin.js"></script>
 
 <!-- 通知UI（Phase 1 段階2）— 順序重要: card → bell → panel → realtime -->
 <!-- card: 描画ヘルパー / bell: バッジ管理 / panel: 開閉 + read-all / realtime: Supabase購読 -->
