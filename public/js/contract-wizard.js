@@ -174,42 +174,46 @@
     setTimeout(() => { document.title = prev; }, 500);
   }
 
-  // 同意記録の控え（GET /member-contracts/:id/receipt の JSON → 印刷用 HTML）
-  // 返却形の揺れに耐えるよう、consents[] / documents[] / 単一レコードのいずれでも描画する
+  // 同意記録の控え（GET /member-contracts/:id/receipt / POST submit の receipt → 印刷用 HTML）
+  // 形は routes/contracts.js buildReceipt(): { request_id, signer_name, submitted_at, member{id,full_name,email,business_type,invoice_name},
+  //   party{code,legal_name,display_name,representative_title,representative_name},
+  //   documents[{member_contract_id,title,doc_type,version_no,version_label,effective_from,pdf_sha256,body_sha256,status,contract_date,start_date,end_date,
+  //              auto_renew,approved_at,fill_snapshot,consents[{consent_kind,signer_name_typed,signer_name_registered,consented_at,ip_address,user_agent,pdf_sha256,record_hash,prev_record_hash}],viewed_at[],chain_ok}],
+  //   generated_at }
   function receiptHtml(rc) {
     const r = rc || {};
-    const user = r.user || { full_name: r.signer_name_registered || r.user_full_name, nickname: r.user_nickname, email: r.user_email };
-    const party = r.party || r.party_code;
-    const items = Array.isArray(r.consents) ? r.consents : (Array.isArray(r.documents) ? r.documents : [r]);
-    const contract = r.contract || r.member_contract || {};
-    const rows = items.map(c => {
-      const doc = c.document || c;
-      const ver = c.version || c;
-      return `<tr>
-        <td>${esc(docTitle(doc))} ${esc(verLabel(ver))}${ver.effective_from ? `<br><span style="color:#666">適用 ${esc(fmtD(ver.effective_from))}〜</span>` : ''}</td>
-        <td>${esc(c.consent_kind === 'acknowledged' ? '確認' : (c.consent_kind === 'viewed' ? '閲覧' : '同意'))}</td>
-        <td>${esc(fmtDTS(c.consented_at || r.consented_at))}</td>
-        <td class="mono">${esc(c.pdf_sha256 || ver.pdf_sha256 || '—')}</td>
-        <td class="mono">${esc(c.record_hash || '—')}</td>
-      </tr>`;
+    const member = r.member || {};
+    const party = r.party || null;
+    const docs = Array.isArray(r.documents) ? r.documents : [];
+    const firstConsent = docs.flatMap(d => d.consents || [])[0] || {};
+    const rows = docs.map(d => {
+      const cs = (d.consents || []).length ? d.consents : [{}];
+      return cs.map(c => `<tr>
+        <td>${esc(d.title || '—')} ${esc(verLabel(d))}${d.effective_from ? `<br><span style="color:#666">適用 ${esc(fmtD(d.effective_from))}〜</span>` : ''}</td>
+        <td>${esc(c.consent_kind === 'acknowledged' ? '確認' : (c.consent_kind ? '同意' : '—'))}</td>
+        <td>${esc(fmtDTS(c.consented_at || r.submitted_at))}</td>
+        <td class="mono">${esc(c.pdf_sha256 || d.pdf_sha256 || '—')}</td>
+        <td class="mono">${esc(c.record_hash || '—')}${d.chain_ok === false ? '<br><span style="color:#c9384a">（連鎖検証 NG）</span>' : ''}</td>
+      </tr>`).join('');
     }).join('');
-    const first = items[0] || {};
+    const period = docs[0] ? `${fmtD(docs[0].start_date)} 〜 ${docs[0].end_date ? fmtD(docs[0].end_date) : (docs[0].auto_renew ? '自動更新' : '—')}` : '—';
     return `<div class="c-receipt">
       <h1>同意記録の控え</h1>
       <table>
-        <tr><th>署名者名（入力）</th><td>${esc(r.signer_name_typed || first.signer_name_typed || '—')}</td></tr>
-        <tr><th>登録氏名</th><td>${esc(user.full_name || r.signer_name_registered || first.signer_name_registered || '—')}</td></tr>
-        <tr><th>ユーザーID / メール</th><td>${esc(r.user_id || first.user_id || '—')} / ${esc(user.email || r.user_email || first.user_email || '—')}</td></tr>
-        <tr><th>契約相手</th><td>${esc(partyLabel(party))}${partyRep(party) ? `（${esc(partyRep(party))}）` : ''}</td></tr>
-        <tr><th>契約開始日</th><td>${esc(fmtD(contract.start_date || r.start_date))}</td></tr>
-        <tr><th>接続元IP / ブラウザ</th><td>${esc(r.ip_address || first.ip_address || '—')}<br><span style="font-size:10px">${esc(r.user_agent || first.user_agent || '—')}</span></td></tr>
-        <tr><th>記録ID</th><td class="mono">${esc(r.member_contract_id || contract.id || first.member_contract_id || '—')}</td></tr>
+        <tr><th>署名者名（入力）</th><td>${esc(r.signer_name || firstConsent.signer_name_typed || '—')}</td></tr>
+        <tr><th>登録氏名</th><td>${esc(member.full_name || firstConsent.signer_name_registered || '—')}</td></tr>
+        <tr><th>ユーザーID / メール</th><td>${esc(member.id || '—')} / ${esc(member.email || '—')}</td></tr>
+        <tr><th>契約相手</th><td>${esc(partyLabel(party))}${partyRep(party) ? `（${esc(partyRep(party))}）` : ''}${party && party.legal_name && party.legal_name !== party.display_name ? `<br><span style="color:#666">${esc(party.legal_name)}</span>` : ''}</td></tr>
+        <tr><th>契約期間</th><td>${esc(period)}</td></tr>
+        <tr><th>送信日時</th><td>${esc(fmtDTS(r.submitted_at))}</td></tr>
+        <tr><th>接続元IP / ブラウザ</th><td>${esc(firstConsent.ip_address || '—')}<br><span style="font-size:10px">${esc(firstConsent.user_agent || '—')}</span></td></tr>
+        <tr><th>記録ID</th><td class="mono">${docs.map(d => esc(d.member_contract_id)).join('<br>') || '—'}</td></tr>
       </table>
       <table>
         <thead><tr><th style="width:auto">文書 / 版</th><th style="width:auto">種別</th><th style="width:auto">日時</th><th style="width:auto">文書ハッシュ (SHA-256)</th><th style="width:auto">記録ハッシュ</th></tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${rows || '<tr><td colspan="5">同意記録がありません</td></tr>'}</tbody>
       </table>
-      <div class="foot">この控えは HARUKA FILM SYSTEM に記録された同意証跡（contract_consents・追記専用）から生成しています。記録ハッシュは直前レコードのハッシュを含む連鎖値で、後から書き換えることはできません。出力日時：${esc(fmtDTS(new Date().toISOString()))}</div>
+      <div class="foot">この控えは HARUKA FILM SYSTEM に記録された同意証跡（contract_consents・追記専用）から生成しています。記録ハッシュは直前レコードのハッシュを含む連鎖値で、後から書き換えることはできません。出力日時：${esc(fmtDTS(r.generated_at || new Date().toISOString()))}</div>
     </div>`;
   }
 
@@ -260,24 +264,29 @@
         <div class="c-notice ${r.notReady ? '' : 'bad'}">${esc(r.error)}</div></div>`;
       return;
     }
+    // 形は routes/contracts.js GET /me: requests[]=requestToJson(self)（token/url/has_draft/status: open|submitted|completed|cancelled）、
+    // contracts[]=contractToJson（request_id/document/version/status/party_name）。依頼→文書は contracts を request_id で結合する
     const me = r.data || {};
     const requests = Array.isArray(me.requests) ? me.requests : [];
     const contracts = Array.isArray(me.contracts) ? me.contracts : [];
-    const openReqs = requests.filter(q => !['submitted', 'closed', 'cancelled', 'completed'].includes(q.status));
-    const otherReqs = requests.filter(q => !openReqs.includes(q));
+    const docsOf = (q) => contracts.filter(c => String(c.request_id) === String(q.id));
+    const openReqs = requests.filter(q => q.status === 'open');
+    const otherReqs = requests.filter(q => q.status !== 'open');
 
     const reqRow = (q) => {
-      const docs = (q.documents || q.member_contracts || []).map(d => `${docTitle(d)} ${verLabel(d.version || d)}`.trim()).join('・');
-      const st = q.member_status || q.contract_status || (q.status === 'submitted' ? 'submitted' : (q.status === 'revision_requested' ? 'revision_requested' : 'requested'));
-      const isOpen = openReqs.includes(q);
-      const label = q.draft_state && Object.keys(q.draft_state || {}).length ? '続きから再開' : '手続きを始める';
+      const cs = docsOf(q);
+      const docs = cs.map(c => `${docTitle(c)} ${verLabel(c.version)}`.trim()).join('・');
+      const isOpen = q.status === 'open';
+      const st = isOpen ? (cs.some(c => c.status === 'revision_requested') ? 'revision_requested' : 'requested')
+        : (q.status === 'submitted' ? 'submitted' : (q.status === 'cancelled' ? 'cancelled' : (cs[0] ? cs[0].status : 'active')));
+      const label = q.has_draft ? '続きから再開' : '手続きを始める';
       const btn = isOpen && q.token
         ? `<button class="btn-primary" style="font-size:13px;padding:7px 16px" onclick="HFSContractWizard.open('${esc(q.token)}')">${label} ▶</button>`
-        : (isOpen ? `<span class="c-mini">URL はチャットで届いた依頼リンクからお入りください</span>` : '');
+        : (q.status === 'submitted' && q.token ? `<button class="btn-sm" onclick="HFSContractWizard.open('${esc(q.token)}')">控えを見る</button>` : '');
       const due = q.due_date ? `<span class="c-mini">回答期限 ${esc(fmtD(q.due_date))}</span>` : '';
       return `<div class="cw-list-item">
-        <div class="t"><b>${esc(partyLabel(q.party || q.party_code))}</b><div class="c-mini">${esc(docs || '—')}${q.sent_at ? `　依頼日 ${esc(fmtD(q.sent_at))}` : ''}</div></div>
-        ${memberStatus(st, { hasDraft: !!(q.draft_state && Object.keys(q.draft_state).length) })}
+        <div class="t"><b>${esc((cs[0] && cs[0].party_name) || partyLabel(q.party_code))}</b><div class="c-mini">${esc(docs || '—')}　依頼日 ${esc(fmtD(q.sent_at || q.requested_at))}</div></div>
+        ${memberStatus(st, { hasDraft: !!q.has_draft })}
         ${due}
         ${btn}
       </div>`;
@@ -285,13 +294,14 @@
     const ctRow = (c) => {
       const ver = c.version || {};
       const period = c.start_date ? `${fmtD(c.start_date)} 〜 ${c.end_date ? fmtD(c.end_date) : (c.auto_renew ? '自動更新' : '—')}` : '—';
-      const pdf = ver.id ? `<a class="btn-sm" href="${pdfUrl(ver.id)}" target="_blank" rel="noopener">⬇ 契約書PDF</a>` : '';
-      const rec = (c.status === 'active' || c.status === 'ending' || c.status === 'ended' || c.status === 'submitted' || c.status === 'reconsent_required')
+      const pdf = ver.id && ver.has_pdf !== false ? `<a class="btn-sm" href="${pdfUrl(ver.id)}" target="_blank" rel="noopener">⬇ 契約書PDF</a>` : '';
+      const extPdf = c.external_pdf_url ? `<a class="btn-sm" href="${esc(c.external_pdf_url)}" target="_blank" rel="noopener">⬇ 締結済みPDF</a>` : '';
+      const rec = (c.execution_method === 'hfs' && ['submitted', 'active', 'ending', 'ended', 'reconsent_required'].includes(c.status))
         ? `<button class="btn-sm" onclick="HFSContract.printReceipt('${esc(c.id)}')">🧾 同意記録の控え</button>` : '';
       return `<div class="cw-list-item">
-        <div class="t"><b>${esc(docTitle(c))} ${esc(verLabel(ver))}</b><div class="c-mini">${esc(partyLabel(c.party || c.party_code))}　${esc(EXEC_LABELS[c.execution_method] || '')}　期間 ${esc(period)}</div></div>
+        <div class="t"><b>${esc(docTitle(c))} ${esc(verLabel(ver))}</b><div class="c-mini">${esc(c.party_name || partyLabel(c.party_code))}　${esc(EXEC_LABELS[c.execution_method] || '')}　期間 ${esc(period)}</div></div>
         ${memberStatus(c.status)}
-        ${pdf}${rec}
+        ${pdf}${extPdf}${rec}
       </div>`;
     };
 
@@ -304,7 +314,7 @@
       </div>
       <div class="c-card">
         <h4>あなたの契約</h4>
-        ${contracts.length ? contracts.map(ctRow).join('') : '<div class="c-empty">登録済みの契約はまだありません。</div>'}
+        ${contracts.filter(c => !['requested', 'revision_requested', 'cancelled'].includes(c.status)).length ? contracts.filter(c => !['requested', 'revision_requested', 'cancelled'].includes(c.status)).map(ctRow).join('') : '<div class="c-empty">登録済みの契約はまだありません。</div>'}
       </div>
       ${otherReqs.length ? `<div class="c-card"><h4>過去の依頼</h4>${otherReqs.map(reqRow).join('')}</div>` : ''}
       <div class="c-mini">操作方法は <a href="/guide-contract.html" target="_blank" rel="noopener" style="color:var(--em-dark);font-weight:600">📖 契約・登録手続きガイド</a> をご覧ください。</div>
@@ -322,13 +332,19 @@
       await renderHome();
       return;
     }
+    // 形は routes/contracts.js GET /req/:token: { request(requestToJson self), party(billing_parties 行), documents[{member_contract_id,status,
+    //   member_status_label,document{title,doc_type},version{id,version_no,version_label,effective_from,pdf_sha256,has_pdf,body_html,fill_fields},
+    //   consent_kind,first_viewed_at,viewed_completed_at,revision_reason,start_date,end_date,auto_renew,renew_notice_days,fill_values}], profile, fill_values }
     const d = r.data || {};
     const req = d.request || {};
     const docs = Array.isArray(d.documents) ? d.documents : [];
+    if (req.status === 'cancelled') { toast('この依頼は取り消されています', 'warn'); await renderHome(); return; }
+    if (req.token_expired) toast('この依頼URLの有効期限は切れていますが、ご本人のためそのまま手続きできます', 'info');
     cw = {
-      token, req, party: d.party || req.party || req.party_code, docs,
+      token, req, party: d.party || req.party_code, docs,
       profile: d.profile || {}, fill: d.fill_values || {},
       step: 0, checks: {}, bankChange: false, receipt: null, submitted: false,
+      revisionReason: (docs.find(x => x.revision_reason) || {}).revision_reason || null,
       steps: [],
     };
     cw.steps = [
@@ -345,11 +361,11 @@
       cw.bankChange = !!ds.bankChange;
       if (Number.isInteger(ds.step)) cw.step = Math.min(Math.max(ds.step, 0), cw.steps.length - 2);
     }
-    // 送信済み（確認待ち／承認済み）なら完了画面
+    // 送信済み（確認待ち／承認済み）なら完了画面（request.status: open | submitted | completed | cancelled）
     const allDone = docs.length && docs.every(x => ['submitted', 'active', 'ending', 'ended'].includes(x.status));
-    if (req.status === 'submitted' || allDone) { cw.submitted = true; cw.step = cw.steps.length - 1; }
+    if (req.status === 'submitted' || req.status === 'completed' || allDone) { cw.submitted = true; cw.step = cw.steps.length - 1; }
     // 修正依頼はステップ1から（理由を表示）
-    if (docs.some(x => x.status === 'revision_requested') || req.status === 'revision_requested') { cw.step = 0; cw.revision = true; }
+    if (docs.some(x => x.status === 'revision_requested')) { cw.step = 0; cw.revision = true; }
     render();
   }
 
@@ -380,7 +396,7 @@
     const total = cw.steps.length - 1; // done を除いた段数
     const progress = cw.submitted ? '完了' : `${Math.min(cw.step + 1, total)} / ${total}`;
     const revisionNote = cw.revision && !cw.submitted
-      ? `<div class="c-notice bad" style="margin-bottom:12px"><b>修正依頼があります。</b>${cw.req.revision_reason || cw.req.last_revision_reason ? `<br>${esc(cw.req.revision_reason || cw.req.last_revision_reason)}` : ''}<br><span class="c-mini">内容を確認・修正のうえ、もう一度「同意して送信」してください。</span></div>`
+      ? `<div class="c-notice bad" style="margin-bottom:12px"><b>修正依頼があります。</b>${cw.revisionReason ? `<br>${esc(cw.revisionReason)}` : ''}<br><span class="c-mini">内容を確認・修正のうえ、もう一度「同意して送信」してください。</span></div>`
       : '';
     el.innerHTML = `<div class="c-wrap">
       <div class="c-bar">
@@ -424,18 +440,17 @@
     const due = req.due_date ? fmtD(req.due_date) : null;
     const left = due ? daysDiff(todayJst(), due) : null;
     const dueHtml = due ? `<div class="cw-due ${left != null && left < 0 ? 'over' : ''}">回答期限：${esc(due)}${left != null ? (left >= 0 ? `（あと${left}日）` : `（${-left}日超過）`) : ''}</div>` : '';
-    const requester = req.requested_by_user || req.created_by_user || req.requester;
-    const period = req.auto_renew ? `1年・自動更新${req.renew_notice_days ? `（拒絶は${req.renew_notice_days}日前まで）` : ''}` : (req.end_date ? `〜 ${fmtD(req.end_date)}` : '—');
+    const d0 = cw.docs[0] || {};
+    const period = d0.auto_renew ? `1年・自動更新${d0.renew_notice_days ? `（拒絶は${d0.renew_notice_days}日前まで）` : ''}` : (d0.end_date ? `〜 ${fmtD(d0.end_date)}` : (d0.start_date ? '1年' : '—'));
     const biz = { individual: '個人', sole_proprietor: '個人事業主', corporation: '法人' }[prof.business_type] || prof.business_type || '';
     return `<h4>この契約について</h4>
       <dl class="c-kv">
         <dt>契約相手</dt><dd>${esc(partyLabel(p))}${partyRep(p) ? `<br><span class="c-mini">${esc(partyRep(p))}</span>` : ''}</dd>
         <dt>あなた</dt><dd>${esc(prof.full_name || nameOf(window.currentUser))}${biz || prof.invoice_registration_number ? `<br><span class="c-mini">${esc(biz)}${prof.invoice_registration_number ? '・登録番号あり' : ''}</span>` : ''}</dd>
-        <dt>契約開始日</dt><dd>${esc(fmtD(req.start_date))}</dd>
+        <dt>契約開始日</dt><dd>${esc(fmtD(d0.start_date))}</dd>
         <dt>期間</dt><dd>${esc(period)}</dd>
-        <dt>文書</dt><dd>${cw.docs.map(d => `${esc(docTitle(d))} ${esc(verLabel(d.version))}${d.version && d.version.effective_from ? `<span class="c-mini">（${esc(fmtD(d.version.effective_from))} 公開）</span>` : ''}`).join('<br>') || '—'}</dd>
-        ${requester ? `<dt>依頼者</dt><dd>${nameHtml(requester)}</dd>` : ''}
-        <dt>依頼日</dt><dd>${esc(fmtD(req.sent_at || req.created_at))}</dd>
+        <dt>文書</dt><dd>${cw.docs.map(d => `${esc(docTitle(d))} ${esc(verLabel(d.version))}${d.version && d.version.effective_from ? `<span class="c-mini">（${esc(fmtD(d.version.effective_from))}〜）</span>` : ''}`).join('<br>') || '—'}</dd>
+        <dt>依頼日</dt><dd>${esc(fmtD(req.sent_at || req.requested_at))}</dd>
       </dl>
       ${dueHtml}
       ${req.first_viewed_at ? `<div class="c-mini" style="margin-top:10px">閲覧を始めた日時は記録されます（初回閲覧 ${esc(fmtDT(req.first_viewed_at))}）。</div>` : ''}`;
@@ -535,21 +550,28 @@
       const d = s.doc;
       const v = d.version || {};
       const viewed = isDocViewed(d);
-      const isAck = (d.document && d.document.doc_type) === 'rules_confirmation';
-      const fills = Object.entries(cw.fill || {}).filter(([, val]) => val != null && val !== '');
+      const isAck = d.consent_kind === 'acknowledged';
+      const fv = d.fill_values || cw.fill || {};
+      const fills = [
+        ['甲', fv.party_legal_name], ['乙', fv.member_invoice_name || fv.member_full_name], ['契約開始日', fv.start_date],
+        ['適用', fv.effective_from], ['回答期限', fv.due_date],
+      ].filter(([, val]) => val != null && val !== '');
+      const hasPdf = !!(v.id && v.has_pdf !== false);
       return `<div class="cw-viewer">
         <div class="vh"><b>${esc(docTitle(d))}</b>${chip('c-em', verLabel(v) || 'v?')}<span class="sp" style="flex:1"></span>${viewed ? chip('c-ok', `閲覧完了 ${fmtMD(d.viewed_completed_at)}`) : chip('c-info', '閲覧中')}</div>
         <div class="paper">
-          ${v.id
+          ${hasPdf
             ? `<iframe src="${pdfUrl(v.id)}#toolbar=1&view=FitH" title="${esc(docTitle(d))}"></iframe>`
-            : `<div class="c-empty">PDF がまだ登録されていません。管理者にご連絡ください。</div>`}
+            : (v.body_html
+              ? `<div style="background:#fff;padding:26px 30px;font-size:12.5px;line-height:1.8;color:#222;overflow:auto;max-height:640px">${v.body_html}</div>`
+              : `<div class="c-empty">PDF がまだ登録されていません。管理者にご連絡ください。</div>`)}
         </div>
-        ${fills.length ? `<div style="padding:8px 12px;border-top:0.5px solid var(--border-light);font-size:12px"><span class="c-mini">この契約の差し込み値：</span>${fills.map(([k, val]) => `<span class="cw-fill" style="margin-right:8px">${esc(k)}: ${esc(val)}</span>`).join('')}</div>` : ''}
+        ${fills.length ? `<div style="padding:8px 12px;border-top:0.5px solid var(--border-light);font-size:12px"><span class="c-mini">差し込み値：</span>${fills.map(([k, val]) => `<span class="cw-fill" style="margin-right:8px">${esc(k)}: ${esc(val)}</span>`).join('')}</div>` : ''}
         <div class="vf">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="cw-viewed-${d.member_contract_id}" ${viewed ? 'checked disabled' : ''} onchange="HFSContractWizard.markViewed('${esc(d.member_contract_id)}', this)"> ${isAck ? '内容を確認しました' : '最後まで読みました'}</label>
           <span class="c-mini">${viewed ? '' : 'PDF を最後まで読んでからチェックすると「次へ」が押せます'}</span>
           <span style="flex:1"></span>
-          ${v.id ? `<a class="btn-sm" href="${pdfUrl(v.id)}" target="_blank" rel="noopener">⬇ PDFを保存</a>` : ''}
+          ${hasPdf ? `<a class="btn-sm" href="${pdfUrl(v.id)}" target="_blank" rel="noopener">⬇ PDFを保存</a>` : ''}
           <button class="btn-sm" onclick="HFSContractWizard.go(${cw.step - 1})">◀ 戻る</button>
           <button class="btn-primary" id="cw-doc-next" style="font-size:13px;padding:7px 16px" ${viewed ? '' : 'disabled style="opacity:.5;font-size:13px;padding:7px 16px"'} onclick="HFSContractWizard.go(${cw.step + 1})">次へ ▶</button>
         </div>
@@ -557,7 +579,7 @@
     }
     if (s.key === 'sign') {
       const docChecks = cw.docs.map(d => {
-        const isAck = (d.document && d.document.doc_type) === 'rules_confirmation';
+        const isAck = d.consent_kind === 'acknowledged';
         const id = `cw-agree-${d.member_contract_id}`;
         return `<label><input type="checkbox" id="${id}" ${cw.checks[id] ? 'checked' : ''} onchange="HFSContractWizard.onCheck('${id}', this.checked)"> ${esc(docTitle(d))} ${esc(verLabel(d.version))}（${esc(partyLabel(cw.party))}）${isAck ? 'を確認しました' : 'を最後まで読み、内容に同意します'}</label>`;
       }).join('');
@@ -582,23 +604,24 @@
     }
     if (s.key === 'done') {
       const rc = cw.receipt;
-      const first = rc && (Array.isArray(rc.consents) ? rc.consents[0] : (Array.isArray(rc.documents) ? rc.documents[0] : rc));
+      const rcDocs = rc && Array.isArray(rc.documents) ? rc.documents : [];
+      const first = rcDocs.flatMap(x => x.consents || [])[0] || null;
       const anyActive = cw.docs.some(d => ['active', 'ending'].includes(d.status));
-      const mcId = (cw.docs[0] && cw.docs[0].member_contract_id) || (rc && rc.member_contract_id);
+      const mcId = (cw.docs[0] && cw.docs[0].member_contract_id) || (rcDocs[0] && rcDocs[0].member_contract_id);
       return `<div class="cw-panel cw-done">
         <div class="ok">✓</div>
         <h3>${anyActive ? '契約手続きが完了しています' : '同意を受け付けました'}</h3>
         <div class="c-mini">${anyActive ? '契約書PDFと同意記録の控えはいつでもここからダウンロードできます。' : '管理者が確認すると「契約手続き完了」になります。ホームの表示は「確認待ち」に変わります。'}</div>
         <div class="cw-rec">
           <b>同意記録（控え）</b><br>
-          同意日時：${esc(fmtDTS((rc && rc.consented_at) || (first && first.consented_at) || cw.req.submitted_at))} ／ 署名者：${esc((rc && rc.signer_name_typed) || (first && first.signer_name_typed) || cw.signer || p.full_name || '—')} ／ 契約相手：${esc(partyLabel(cw.party))}<br>
+          同意日時：${esc(fmtDTS((first && first.consented_at) || (rc && rc.submitted_at) || cw.req.submitted_at))} ／ 署名者：${esc((rc && rc.signer_name) || (first && first.signer_name_typed) || cw.req.signer_name || cw.signer || p.full_name || '—')} ／ 契約相手：${esc(partyLabel(cw.party))}<br>
           文書：${cw.docs.map(d => `${esc(docTitle(d))} ${esc(verLabel(d.version))}${d.version && d.version.effective_from ? `（適用 ${esc(fmtD(d.version.effective_from))}〜）` : ''}`).join('、')}<br>
           ${cw.docs.map(d => d.version && d.version.pdf_sha256 ? `文書ハッシュ（SHA-256）：<span class="c-mono">${esc(d.version.pdf_sha256)}</span><br>` : '').join('')}
           ${first && first.record_hash ? `記録ハッシュ：<span class="c-mono">${esc(first.record_hash)}</span><br>` : ''}
           ${mcId ? `記録ID：<span class="c-mono">${esc(mcId)}</span>` : ''}
         </div>
         <div class="actions">
-          ${cw.docs.map(d => d.version && d.version.id ? `<a class="btn" href="${pdfUrl(d.version.id)}" target="_blank" rel="noopener">⬇ ${esc(docTitle(d))} PDF</a>` : '').join('')}
+          ${cw.docs.map(d => d.version && d.version.id && d.version.has_pdf !== false ? `<a class="btn" href="${pdfUrl(d.version.id)}" target="_blank" rel="noopener">⬇ ${esc(docTitle(d))} PDF</a>` : '').join('')}
           ${mcId ? `<button class="btn" onclick="HFSContract.printReceipt('${esc(mcId)}')">⬇ 同意記録の控え（PDF）</button>` : ''}
           <button class="btn-sm" onclick="HFSContractWizard.home()">手続き一覧へ</button>
         </div>
@@ -784,6 +807,7 @@
       return;
     }
     cw.receipt = (r.data && r.data.receipt) || null;
+    if (r.data && r.data.request) cw.req = r.data.request;
     cw.submitted = true;
     cw.docs.forEach(d => { if (['requested', 'revision_requested', 'reconsent_required'].includes(d.status) || !d.status) d.status = 'submitted'; });
     cw.req.status = 'submitted';
@@ -815,9 +839,10 @@
     const b = me.banner;
     if (!b || !b.kind) { box.innerHTML = ''; return; }
     const requests = Array.isArray(me.requests) ? me.requests : [];
-    const req = requests.find(q => String(q.id) === String(b.request_id)) || requests.find(q => q.status !== 'submitted') || null;
-    const n = me.pending_count || requests.filter(q => !['submitted', 'closed', 'cancelled'].includes(q.status)).length || 1;
-    const docs = req ? (req.documents || req.member_contracts || []).map(d => `${docTitle(d)} ${verLabel(d.version || d)}`.trim()).join('・') : '';
+    const contracts = Array.isArray(me.contracts) ? me.contracts : [];
+    const req = requests.find(q => String(q.id) === String(b.request_id)) || requests.find(q => q.status === 'open') || null;
+    const n = me.pending_count || requests.filter(q => q.status === 'open').length || 1;
+    const docs = req ? contracts.filter(c => String(c.request_id) === String(req.id)).map(c => `${docTitle(c)} ${verLabel(c.version)}`.trim()).join('・') : '';
     const due = req && req.due_date ? `回答期限 ${fmtD(req.due_date)}` : '';
     const texts = {
       requested: { title: `契約・登録手続きのお願いが${n}件あります`, btn: '手続きを始める', cls: '' },
@@ -825,7 +850,7 @@
       reconsent: { title: '契約書が改訂されました。再同意をお願いします', btn: '新しい版を確認する', cls: 'reconsent' },
     };
     const t = texts[b.kind] || texts.requested;
-    const token = req && req.token ? req.token : '';
+    const token = req && req.token && req.status === 'open' ? req.token : '';
     box.innerHTML = `<div class="c-banner ${t.cls}">
       <span class="ic">📝</span>
       <div class="tx"><b>${esc(t.title)}</b><div class="c-mini">${esc([docs, due].filter(Boolean).join(' ／ ') || '「契約・登録手続き」から進めてください')}</div></div>

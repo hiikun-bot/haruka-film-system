@@ -25,16 +25,19 @@
     reqModal: { userIds: [], users: new Map(), preset: null },
   };
 
+  // contract_events.action（routes/contracts.js の logEvent 呼び出し）→ 表示ラベル
   const ACTION_LABELS = {
-    requested: '依頼を発行', request_sent: '依頼を送信', viewed: '閲覧', first_viewed: '初回閲覧', viewed_completed: '最終ページまで閲覧',
-    draft_saved: '下書き保存', profile_updated: '本人情報を更新', submitted: '同意・署名', approved: '承認（締結済み）',
-    revision_requested: '修正依頼', reminded: '催促', cancelled: '依頼を取消', ended: '終了', ending: '終了予定を設定',
+    requested: '依頼を発行', sent: '依頼を送信', viewed: '初回閲覧', view_completed: '最終ページまで閲覧',
+    draft_saved: '下書き保存', submitted: '同意・署名', approved: '承認（締結済み）',
+    revision_requested: '修正依頼', reminded: '催促', cancelled: '依頼を取消', ended: '終了', ending_set: '終了予定を設定',
     bank_revealed: '口座番号を全桁表示', pdf_downloaded: 'PDF ダウンロード', external_registered: '既存契約を登録',
-    published: '文書を公開', version_created: '版を作成', document_created: '文書を作成', reconsent_required: '再同意が必要に',
-    renewed: '自動更新', settings_updated: '設定を変更', party_updated: '契約主体を更新',
+    version_published: '版を公開', version_created: '版を作成', document_created: '文書を作成', reconsent_requested: '再同意が必要に',
+    renewed: '自動更新', expiry_notice: '期限のお知らせ', renew_notice: '更新拒絶期限のお知らせ', due_notice: '回答期限のお知らせ',
+    settings_updated: '設定を変更', party_updated: '契約主体を更新',
   };
-  const ADMIN_ACTIONS = new Set(['requested', 'request_sent', 'approved', 'revision_requested', 'reminded', 'cancelled', 'ended', 'ending', 'bank_revealed', 'external_registered', 'published', 'version_created', 'document_created', 'settings_updated', 'party_updated']);
+  const ADMIN_ACTIONS = new Set(['requested', 'sent', 'approved', 'revision_requested', 'reminded', 'cancelled', 'ended', 'ending_set', 'bank_revealed', 'external_registered', 'version_published', 'version_created', 'document_created', 'settings_updated', 'party_updated', 'reconsent_requested']);
   const BIZ_LABELS = { individual: '個人', sole_proprietor: '個人事業主', corporation: '法人' };
+  const CHANNEL_LABELS = { chatwork_direct: 'Chatwork 個別チャット', chatwork_room: 'Chatwork ルーム（To 付き）', slack_dm: 'Slack DM', none: '未送信' };
 
   function root() { return document.getElementById(ROOT_ID); }
   function esc(v) { return H().esc(v); }
@@ -131,43 +134,51 @@
   }
 
   // ───────────────── メンバー一覧 ─────────────────
-  // GET /requests の1行（メンバー単位に集約）を表示用に正規化。返却形の揺れに耐える
+  // GET /requests の1行（routes/contracts.js: メンバー単位に集約）を表示用に正規化。
+  // row = { user{id,full_name,nickname,is_active,email?,has_chatwork?,has_slack?}, summary_status, latest_request(requestToJson),
+  //         contracts[](contractToJson), effective_count, pending_count, reconsent_required, next_end_date, days_to_end, overdue, unattended }
   function normRow(r) {
     const h = H();
-    const user = r.user || r.member || { id: r.user_id, full_name: r.full_name, nickname: r.nickname, role: r.role, is_active: r.is_active };
-    const req = r.latest_request || r.request || null;
-    const ct = r.active_contract || r.contract || r.member_contract || null;
-    let docs = r.documents || (req && req.documents) || (ct ? [ct] : []) || [];
-    if (!Array.isArray(docs)) docs = [];
-    const status = r.status || r.display_status || (ct && ct.status) || (req && (req.member_status || req.contract_status)) || (req && req.status === 'open' ? 'requested' : null) || 'none';
-    const partyCode = r.party_code || (ct && ct.party_code) || (req && req.party_code) || null;
-    const endDate = r.end_date || (ct && ct.end_date) || null;
-    const startDate = r.start_date || (ct && ct.start_date) || (req && req.start_date) || null;
-    const daysLeft = endDate ? h.daysDiff(h.todayJst(), h.fmtD(endDate)) : null;
+    const user = r.user || { id: r.user_id };
+    const req = r.latest_request || null;
+    const all = Array.isArray(r.contracts) ? r.contracts : [];
+    const effective = all.filter(c => ['active', 'ending', 'reconsent_required'].includes(c.status));
+    const pendingish = all.filter(c => ['requested', 'revision_requested', 'submitted'].includes(c.status));
+    // 一覧に出す文書: 進行中の依頼があればその文書、無ければ有効契約、それも無ければ最新の契約
+    const docs = pendingish.length ? pendingish : (effective.length ? effective : all.slice(0, 1));
+    const primary = all.find(c => c.status === 'submitted') || pendingish[0] || effective[0] || all[0] || null;
+    const status = r.summary_status || (primary ? primary.status : 'none');
+    const endDate = r.next_end_date || (effective[0] && effective[0].end_date) || null;
+    const daysLeft = r.days_to_end != null ? r.days_to_end : (endDate ? h.daysDiff(h.todayJst(), h.fmtD(endDate)) : null);
+    const viewedAll = docs.length && docs.every(c => c.viewed_completed_at);
     return {
-      raw: r, user, user_id: user.id || r.user_id, req, ct, docs, status, partyCode,
-      request_id: r.request_id || (req && req.id) || null,
-      member_contract_id: r.member_contract_id || (ct && ct.id) || (docs[0] && docs[0].member_contract_id) || null,
-      first_viewed_at: r.first_viewed_at || (req && req.first_viewed_at) || null,
-      viewed_completed_at: r.viewed_completed_at || (ct && ct.viewed_completed_at) || null,
-      consented_at: r.consented_at || r.submitted_at || (ct && (ct.consented_at || ct.submitted_at)) || (req && req.submitted_at) || null,
-      sent_at: r.sent_at || (req && (req.sent_at || req.created_at)) || null,
-      due_date: r.due_date || (req && req.due_date) || null,
-      start_date: startDate, end_date: endDate, auto_renew: r.auto_renew ?? (ct && ct.auto_renew) ?? (req && req.auto_renew) ?? null,
-      execution_method: r.execution_method || (ct && ct.execution_method) || null,
-      reconsent: !!(r.reconsent_required || status === 'reconsent_required'),
-      has_draft: !!(r.has_draft || (req && req.draft_state && Object.keys(req.draft_state).length)),
+      raw: r, user, user_id: user.id, req, ct: primary, docs, status,
+      partyCode: (primary && primary.party_code) || (req && req.party_code) || null,
+      request_id: req ? req.id : null,
+      member_contract_id: primary ? primary.id : null,
+      first_viewed_at: (req && req.first_viewed_at) || (primary && primary.first_viewed_at) || null,
+      viewed_completed_at: viewedAll ? docs.map(c => c.viewed_completed_at).sort().slice(-1)[0] : null,
+      consented_at: (primary && (primary.submitted_at || primary.signed_at)) || (req && req.submitted_at) || null,
+      sent_at: req ? (req.sent_at || req.requested_at) : null,
+      due_date: req ? req.due_date : null,
+      start_date: (effective[0] && effective[0].start_date) || (primary && primary.start_date) || null,
+      end_date: endDate,
+      auto_renew: effective[0] ? effective[0].auto_renew : (primary ? primary.auto_renew : null),
+      execution_method: primary ? primary.execution_method : null,
+      reconsent: !!r.reconsent_required,
+      has_draft: !!(req && req.has_draft),
+      overdue: !!r.overdue, unattended: !!r.unattended,
       daysLeft,
-      predecessor_party: r.predecessor_party_code || null,
     };
   }
 
   // 一覧の状態チップ（画面モック①⑥の凡例に対応）
   function adminStatus(row) {
     const h = H();
-    if (row.reconsent) return { cls: 'c-info', label: '再同意が必要', key: 'reconsent', order: 1 };
+    if (row.reconsent && !['submitted', 'requested', 'revision_requested'].includes(row.status)) return { cls: 'c-info', label: '再同意が必要', key: 'reconsent', order: 1 };
     switch (row.status) {
       case 'requested': {
+        if (row.overdue) return { cls: 'c-bad', label: `回答期限切れ ${h.fmtD(row.due_date)}`, key: 'pending', order: 1 };
         if (row.has_draft) return { cls: 'c-info', label: '入力中', key: 'pending', order: 3 };
         if (row.first_viewed_at) return { cls: 'c-info', label: '閲覧済み・同意待ち', key: 'pending', order: 3 };
         const d = h.daysSince(row.sent_at);
@@ -188,16 +199,22 @@
     }
   }
 
+  // サーバーが解釈する status= の値（それ以外はフロントで絞る）
+  const SERVER_STATUS = new Set(['requested', 'submitted', 'revision_requested', 'active', 'ending', 'ended', 'cancelled', 'reconsent_required', 'overdue', 'unattended', 'expiring']);
   async function fetchRows() {
     const q = new URLSearchParams();
-    if (S.filter.status) q.set('status', S.filter.status);
+    if (S.filter.status && SERVER_STATUS.has(S.filter.status)) q.set('status', S.filter.status);
     if (S.filter.party) q.set('party', S.filter.party);
     if (S.filter.doc) q.set('doc', S.filter.doc);
     if (S.filter.q) q.set('q', S.filter.q);
+    if (S.filter.includeAll) q.set('include_all', '1');
     const r = await H().api('/requests' + (q.toString() ? `?${q}` : ''));
     if (!r.ok) return r;
-    const arr = Array.isArray(r.data) ? r.data : (r.data && (r.data.rows || r.data.items || r.data.requests)) || [];
+    const d = r.data || {};
+    const arr = Array.isArray(d) ? d : (Array.isArray(d.rows) ? d.rows : []);
     S.rows = arr.map(normRow);
+    if (!S.parties.length && Array.isArray(d.parties)) S.parties = d.parties;
+    if (!S.documents.length && Array.isArray(d.documents)) S.documents = d.documents;
     S.loaded = true;
     return r;
   }
@@ -226,9 +243,7 @@
     const tile = S.filter.tile;
     let shown = rows.filter(x => !tile || x.st.key === tile);
     // 一覧での絞り込み（サーバーが未対応でもフロントで効かせる）
-    if (S.filter.party) shown = shown.filter(x => !x.partyCode || x.partyCode === S.filter.party);
-    if (S.filter.q) { const k = S.filter.q.toLowerCase(); shown = shown.filter(x => h.nameOf(x.user).toLowerCase().includes(k)); }
-    if (S.filter.status) shown = shown.filter(x => x.status === S.filter.status || x.st.key === S.filter.status);
+    if (S.filter.status && !SERVER_STATUS.has(S.filter.status)) shown = shown.filter(x => x.status === S.filter.status || x.st.key === S.filter.status);
     shown.sort((a, b) => a.st.order - b.st.order || h.nameOf(a.user).localeCompare(h.nameOf(b.user), 'ja'));
 
     const tiles = `<div class="ca-tiles">
@@ -240,28 +255,33 @@
     const filters = `<div class="ca-filters">
       <select id="ca-f-status" onchange="HFSContractAdmin.filter()">
         <option value="">状態: すべて</option>
-        <option value="pending" ${S.filter.status === 'pending' ? 'selected' : ''}>未対応</option>
+        <option value="requested" ${S.filter.status === 'requested' ? 'selected' : ''}>未対応（依頼中）</option>
+        <option value="unattended" ${S.filter.status === 'unattended' ? 'selected' : ''}>未対応・3日以上未閲覧</option>
+        <option value="overdue" ${S.filter.status === 'overdue' ? 'selected' : ''}>回答期限切れ</option>
         <option value="submitted" ${S.filter.status === 'submitted' ? 'selected' : ''}>確認待ち</option>
         <option value="revision_requested" ${S.filter.status === 'revision_requested' ? 'selected' : ''}>修正依頼中</option>
         <option value="active" ${S.filter.status === 'active' ? 'selected' : ''}>締結済み</option>
-        <option value="expiry" ${S.filter.status === 'expiry' ? 'selected' : ''}>期限切れ／間近</option>
-        <option value="reconsent" ${S.filter.status === 'reconsent' ? 'selected' : ''}>再同意が必要</option>
+        <option value="expiring" ${S.filter.status === 'expiring' ? 'selected' : ''}>30日以内に切れる</option>
+        <option value="expiry" ${S.filter.status === 'expiry' ? 'selected' : ''}>期限切れ／間近（画面判定）</option>
+        <option value="reconsent_required" ${S.filter.status === 'reconsent_required' ? 'selected' : ''}>再同意が必要</option>
+        <option value="ending" ${S.filter.status === 'ending' ? 'selected' : ''}>終了予定</option>
         <option value="ended" ${S.filter.status === 'ended' ? 'selected' : ''}>終了</option>
         <option value="none" ${S.filter.status === 'none' ? 'selected' : ''}>未着手</option>
       </select>
       <select id="ca-f-party" onchange="HFSContractAdmin.filter()"><option value="">契約相手: すべて</option>${partyOptions(S.filter.party)}</select>
       <select id="ca-f-doc" onchange="HFSContractAdmin.filter()"><option value="">文書: すべて</option>${docOptions(S.filter.doc, false)}</select>
       <input id="ca-f-q" placeholder="氏名で検索" value="${esc(S.filter.q)}" onkeydown="if(event.key==='Enter')HFSContractAdmin.filter()">
+      <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted)"><input type="checkbox" id="ca-f-all" ${S.filter.includeAll ? 'checked' : ''} onchange="HFSContractAdmin.filter()"> 契約なしのメンバーも表示</label>
       <button class="btn-sm" onclick="HFSContractAdmin.filter()">絞り込む</button>
       <button class="btn-sm" onclick="HFSContractAdmin.reload()">🔄 更新</button>
       <span class="c-mini" style="margin-left:auto">${shown.length} / ${rows.length} 件</span>
     </div>`;
 
     const tr = shown.map(row => {
-      const docsTxt = row.docs.map(d => `${h.docTitle(d)} ${h.verLabel(d.version || d)}`.trim()).join(' ／ ') || (row.execution_method && row.execution_method !== 'hfs' ? `（外部締結・${h.EXEC_LABELS[row.execution_method] || row.execution_method}）` : '—');
+      const docsTxt = (row.docs.map(d => `${h.docTitle(d)} ${h.verLabel(d.version || d)}`.trim()).join(' ／ ') || '—') + (row.execution_method && row.execution_method !== 'hfs' ? `（${h.EXEC_LABELS[row.execution_method] || row.execution_method}）` : '');
       const viewed = row.viewed_completed_at ? `✓ ${h.fmtMD(row.viewed_completed_at)}` : (row.first_viewed_at ? `👁 ${h.fmtMD(row.first_viewed_at)}` : (row.status === 'requested' && row.sent_at ? `— ${h.daysSince(row.sent_at) || 0}日経過` : '—'));
       const period = row.start_date ? `${h.fmtD(row.start_date)} 〜 ${row.end_date ? h.fmtD(row.end_date) : (row.auto_renew ? '自動更新' : '—')}` : (row.due_date ? `回答期限 ${h.fmtD(row.due_date)}` : '—');
-      const partyChip = row.partyCode ? h.chip(row.partyCode === 'haruka_film_inc' ? 'c-em' : 'c-gray', partyLabelByCode(row.partyCode)) : '—';
+      const partyChip = row.partyCode ? h.chip(row.partyCode === 'haruka_film_inc' ? 'c-em' : 'c-gray', (row.ct && row.ct.party_name) || partyLabelByCode(row.partyCode)) : '—';
       const acts = [];
       if (S.canManage) {
         if (row.status === 'submitted' && row.member_contract_id) acts.push(`<button class="btn-sm" onclick="event.stopPropagation();openContractDetail('${esc(row.member_contract_id)}')">確認</button>`);
@@ -273,7 +293,7 @@
       if (row.member_contract_id && !(row.status === 'submitted' && S.canManage)) acts.push(`<button class="btn-sm" onclick="event.stopPropagation();openContractDetail('${esc(row.member_contract_id)}')">詳細</button>`);
       const clickable = row.member_contract_id ? 'clickable' : '';
       return `<tr class="${row.st.key === 'expiry' ? 'hl' : ''} ${clickable}" ${row.member_contract_id ? `onclick="openContractDetail('${esc(row.member_contract_id)}')"` : ''}>
-        <td class="name">${h.nameHtml(row.user)}${row.user && row.user.is_active === false ? ' ' + h.chip('c-gray', '無効') : ''}</td>
+        <td class="name">${h.nameHtml(row.user)}${row.user && row.user.is_active === false ? ' ' + h.chip('c-gray', '無効') : ''}${S.canManage && row.user && row.user.has_chatwork === false && row.user.has_slack === false ? ' <span class="c-mini" title="Chatwork DM / Slack DM のどちらも未登録">📵 DM先なし</span>' : ''}</td>
         <td>${partyChip}</td>
         <td class="wrap">${esc(docsTxt)}</td>
         <td>${h.chip(row.st.cls, row.st.label)}</td>
@@ -297,6 +317,7 @@
     S.filter.party = document.getElementById('ca-f-party')?.value || '';
     S.filter.doc = document.getElementById('ca-f-doc')?.value || '';
     S.filter.q = (document.getElementById('ca-f-q')?.value || '').trim();
+    S.filter.includeAll = !!document.getElementById('ca-f-all')?.checked;
     renderList();
   }
   function setTile(key) {
@@ -309,7 +330,8 @@
     if (!ok) return;
     const r = await H().api(`/requests/${encodeURIComponent(requestId)}/remind`, { method: 'POST', json: {} });
     if (!r.ok) { toast(r.error, 'error'); return; }
-    toast('催促を送信しました', 'success');
+    if (r.data && r.data.sent) toast(`催促を送信しました（${CHANNEL_LABELS[r.data.channel] || r.data.channel}）`, 'success');
+    else toast(`催促を送信できませんでした：${(r.data && r.data.reason) || 'DM 先が未登録の可能性があります'}`, 'warn');
     renderList();
   }
   async function cancelRequest(requestId) {
@@ -395,11 +417,11 @@
     if (m.result) {
       const rows = m.result.map(x => {
         const u = m.users.get(String(x.user_id)) || { id: x.user_id, full_name: `ID:${x.user_id}` };
-        return `<div class="cw-list-item"><div class="t"><b>${h.nameHtml(u)}</b><div class="ca-urlbox"><div class="u">${esc(x.url || '')}</div></div></div>
-          ${x.sent ? h.chip('c-ok', `送信済み（${x.channel || 'DM'}）`) : h.chip('c-gray', x.error ? `送信失敗: ${x.error}` : '未送信')}
-          <button class="btn-sm" onclick="HFSContractAdmin.copyText('${esc(x.url || '')}')">URLをコピー</button></div>`;
+        return `<div class="cw-list-item"><div class="t"><b>${h.nameHtml(u)}</b>${x.resent ? ' ' + h.chip('c-info', '既存の依頼を再送') : ''}<div class="ca-urlbox"><div class="u">${esc(x.url || '（URL なし）')}</div></div></div>
+          ${x.sent ? h.chip('c-ok', `送信済み（${CHANNEL_LABELS[x.channel] || x.channel || 'DM'}）`) : h.chip(x.reason && x.reason !== '送信しない指定' ? 'c-bad' : 'c-gray', x.reason ? `未送信：${x.reason}` : '未送信')}
+          ${x.url ? `<button class="btn-sm" onclick="HFSContractAdmin.copyText('${esc(x.url)}')">URLをコピー</button>` : ''}</div>`;
       }).join('');
-      body.innerHTML = `<div class="c-notice" style="margin-bottom:10px">依頼を発行しました。URL はメンバーごとに別トークンで、ログイン必須・期限付きです。</div>
+      body.innerHTML = `<div class="c-notice" style="margin-bottom:10px">依頼を発行しました。URL はメンバーごとに別トークンで、ログイン必須・90日で失効します。すでに同じ文書を依頼中のメンバーには既存の URL を再送しています。</div>
         ${rows || '<div class="c-empty">結果がありません</div>'}
         <div class="c-actions"><button class="btn-sm" onclick="HFSContractAdmin.copyText(${esc(JSON.stringify(m.result.map(x => `${h.nameOf(m.users.get(String(x.user_id)) || {})}: ${x.url || ''}`).join('\n')))})">すべてコピー</button><button class="btn-primary" onclick="closeModal('modal-contract-request');HFSContractAdmin.reload()">閉じる</button></div>`;
       return;
@@ -409,6 +431,7 @@
       <div class="form-group" style="margin-bottom:12px">
         <label class="form-label">対象メンバー（複数可）</label>
         <div id="ca-req-pills">${pills || '<span class="c-mini">まだ選択されていません</span>'} <button class="btn-sm" id="ca-req-add" onclick="HFSContractAdmin.reqPickUsers(this)">＋ 追加</button></div>
+        ${p.reconsent ? '<div class="c-mini" style="margin-top:4px">再同意の依頼です。改訂後の版を選んで発行してください（同意までは現在の版が有効のままです）。</div>' : ''}
       </div>
       <div class="c-row2">
         <div class="form-group" style="margin-bottom:12px">
@@ -418,7 +441,7 @@
         </div>
         <div class="form-group" style="margin-bottom:12px">
           <label class="form-label">回答期限</label>
-          <input class="form-input" type="date" id="ca-req-due" value="${esc(m.due)}" onchange="HFSContractAdmin.reqField('due', this.value)">
+          <input class="form-input" type="date" id="ca-req-due" value="${esc(m.due)}" onchange="HFSContractAdmin.reqField('due', this.value);HFSContractAdmin.reqRegenMessage()">
         </div>
       </div>
       <div class="form-group" style="margin-bottom:12px">
@@ -442,9 +465,13 @@
       ${p.onboarding_record_id ? `<div class="c-notice" style="margin-bottom:12px">🚀 オンボーディングと連携します（承認時に「HARUKA FILM契約書の提出」が自動でチェックされます）。</div>` : ''}
       <div class="ca-urlbox" style="margin-bottom:12px"><div class="c-mini" style="margin-bottom:4px">発行されるURL（メンバーごとに別トークン・ログイン必須・90日で失効）</div><div class="u">${esc(location.origin)}/haruka.html?contract_req=&lt;token&gt;</div></div>
       <div class="form-group" style="margin-bottom:12px">
-        <label class="form-label">送信メッセージ（Chatwork個別チャット → 無ければ Slack DM）　<button class="btn-sm" style="padding:2px 8px;font-size:11px" onclick="HFSContractAdmin.reqRegenMessage()">文面を作り直す</button></label>
-        <textarea class="ca-msgprev" id="ca-req-msg">${esc(m.message != null ? m.message : buildRequestMessage())}</textarea>
-        <div class="c-mini" style="margin-top:3px">{name}・{url}・{due} はメンバーごとに差し込まれます。</div>
+        <label class="form-label">送信メッセージのプレビュー（Chatwork個別チャット → 無ければ Slack DM）</label>
+        <div class="ca-msgprev" style="min-height:auto;background:var(--surface)" id="ca-req-preview">${esc(buildRequestMessage())}</div>
+        <div class="c-mini" style="margin-top:3px">文面はシステムが生成します（宛名・URL・期限はメンバーごとに差し込み）。下の追記文は文末に添えられます。</div>
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label class="form-label">追記メッセージ（任意）</label>
+        <textarea class="ca-msgprev" id="ca-req-msg" style="min-height:64px" placeholder="例) ご不明点は Chatwork でお気軽にどうぞ。" oninput="HFSContractAdmin.reqRegenMessage()">${esc(m.message || '')}</textarea>
       </div>
       <div class="c-actions">
         <button class="btn-sm" onclick="HFSContractAdmin.reqSubmit(false)">URLだけコピー（送信しない）</button>
@@ -452,16 +479,25 @@
       </div>`;
   }
 
+  // utils/contract-messages.js buildRequestMessage() と同じ組み立てのプレビュー（送信文そのものはサーバーが生成）
   function buildRequestMessage() {
     const h = H();
     const m = S.reqModal;
     const party = partyByCode(m.partyCode);
-    const docNames = S.documents.filter(d => { const v = latestPublished(d); return v && m.versionIds.has(String(v.id)); }).map(d => `『${h.docTitle(d)}』`).join('と');
-    const isReconsent = m.preset && m.preset.reconsent;
-    if (isReconsent) {
-      return `{name}さん、お疲れさまです。\n${docNames || '『業務委託基本契約書』'}が改訂されました。新しい版へのご同意をお願いします。同意までは現在の版が有効のままです。\n{url}\n回答期限：{due}`;
-    }
-    return `{name}さん、お疲れさまです。\n${h.partyLabel(party || m.partyCode)}としての${docNames || '『業務委託基本契約書』と『業務ルール確認書』'}のご確認・ご同意をお願いします。下記URLからHARUKA FILM SYSTEMにログインして進めてください（所要 約10分）。\n{url}\n回答期限：{due}`;
+    const titles = S.documents.filter(d => { const v = latestPublished(d); return v && m.versionIds.has(String(v.id)); }).map(d => `『${h.docTitle(d)}』`);
+    const joined = titles.length <= 1 ? (titles[0] || '『（文書未選択）』') : (titles.length === 2 ? `${titles[0]}と${titles[1]}` : titles.join(''));
+    const fmtJa = (ymd) => { const x = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return x ? `${+x[1]}年${+x[2]}月${+x[3]}日` : '未設定'; };
+    const first = m.userIds[0] ? h.nameOf(m.users.get(String(m.userIds[0])) || {}) : '';
+    const lines = [
+      `${first ? `${first}さん` : 'お疲れさまです'}、お疲れさまです。`,
+      `${h.partyLabel(party || m.partyCode)}としての${joined}のご確認・ご同意をお願いします。`,
+      '下記URLからHARUKA FILM SYSTEMにログインして進めてください（所要 約10分）。',
+      `${location.origin}/haruka.html?contract_req=<token>`,
+    ];
+    if (m.due) lines.push(`回答期限：${fmtJa(m.due)}`);
+    const extra = (document.getElementById('ca-req-msg')?.value || m.message || '').trim();
+    if (extra) lines.push('', extra);
+    return `【契約書のご確認・ご同意のお願い】\n${lines.join('\n')}`;
   }
 
   function reqPickUsers(btn) {
@@ -485,14 +521,14 @@
   function reqToggleVersion(id, on) {
     const m = S.reqModal;
     if (on) m.versionIds.add(String(id)); else m.versionIds.delete(String(id));
-    m.message = null; // 文書が変わったら文面を作り直す
+    m.message = document.getElementById('ca-req-msg')?.value || m.message;
     drawRequestModal();
   }
   function reqPartyChange(code) {
     const m = S.reqModal;
     m.partyCode = code;
     m.versionIds = null;
-    m.message = null;
+    m.message = document.getElementById('ca-req-msg')?.value || m.message;
     drawRequestModal();
   }
   function reqField(k, v) {
@@ -502,8 +538,8 @@
     else m[k] = v;
   }
   function reqRegenMessage() {
-    S.reqModal.message = null;
-    drawRequestModal();
+    const pv = document.getElementById('ca-req-preview');
+    if (pv) pv.textContent = buildRequestMessage();
   }
 
   async function reqSubmit(send) {
@@ -512,7 +548,7 @@
     if (!m.userIds.length) { toast('対象メンバーを選択してください', 'warn'); return; }
     if (!m.versionIds.size) { toast('依頼する文書を選択してください', 'warn'); return; }
     if (!m.due) { toast('回答期限を入力してください', 'warn'); return; }
-    const message = document.getElementById('ca-req-msg')?.value || buildRequestMessage();
+    const message = (document.getElementById('ca-req-msg')?.value || '').trim() || null;
     const btn = document.getElementById('ca-req-send');
     if (btn) { btn.disabled = true; btn.textContent = '発行中…'; }
     const body = {
@@ -526,10 +562,11 @@
     const list = Array.isArray(r.data) ? r.data : (r.data && (r.data.results || r.data.requests)) || [];
     m.result = list;
     if (!send) {
-      const text = list.map(x => `${h.nameOf(m.users.get(String(x.user_id)) || {})}: ${x.url || ''}`).join('\n');
+      const text = list.filter(x => x.url).map(x => `${h.nameOf(m.users.get(String(x.user_id)) || {})}: ${x.url}`).join('\n');
       copyText(text);
     } else {
-      toast(`${list.filter(x => x.sent).length} / ${list.length} 件に送信しました`, 'success');
+      const ok = list.filter(x => x.sent).length;
+      toast(`${ok} / ${list.length} 件に送信しました${ok < list.length ? '（未送信は結果一覧の理由をご確認ください）' : ''}`, ok < list.length ? 'warn' : 'success');
     }
     drawRequestModal();
   }
@@ -557,47 +594,60 @@
     body.innerHTML = '<div class="c-loading">読み込み中…</div>';
     const r = await h.api(`/member-contracts/${encodeURIComponent(memberContractId)}`);
     if (!r.ok) { body.innerHTML = `<div class="c-notice bad">${esc(r.error)}</div>`; return; }
+    // 形: { contract(contractToJson full=manage), request(requestToJson manage), profile(admin: マスク済み / view: PII なし),
+    //       consents[], chain_ok, events[], related_contracts[], can_bank_reveal }
     const d = r.data || {};
-    const contract = d.contract || d.member_contract || d;
-    let events = Array.isArray(d.events) ? d.events : null;
-    if (!events) {
-      const er = await h.api(`/events?member_contract_id=${encodeURIComponent(memberContractId)}&limit=200`);
-      events = er.ok ? (Array.isArray(er.data) ? er.data : (er.data && er.data.events) || []) : [];
-    }
-    S.detail = { id: memberContractId, contract, consents: Array.isArray(d.consents) ? d.consents : [], events, profile: d.profile || null, request: d.request || contract.request || null, user: d.user || contract.user || null, party: d.party || contract.party || null, version: d.version || contract.version || null, document: d.document || contract.document || null, related: Array.isArray(d.contracts) ? d.contracts : [] };
+    const contract = d.contract || {};
+    const profile = d.profile || null;
+    S.detail = {
+      id: memberContractId, contract, consents: Array.isArray(d.consents) ? d.consents : [], events: Array.isArray(d.events) ? d.events : [],
+      profile, request: d.request || null,
+      user: profile ? { id: profile.id, full_name: profile.full_name, nickname: profile.nickname } : null,
+      party: contract.party_name ? { code: contract.party_code, display_name: contract.party_name } : contract.party_code,
+      version: contract.version || null, document: contract.document || null,
+      related: Array.isArray(d.related_contracts) ? d.related_contracts : [], chainOk: d.chain_ok, canBankReveal: !!d.can_bank_reveal,
+    };
     drawDetail();
   }
   function closeDetail() { closeModalId('modal-contract-detail'); }
 
+  // contract_events 行: { action, actor_user_id, actor_name, actor_role, user_id, from_status, to_status, detail{...}, ip_address?, user_agent?, created_at }
   function eventLine(e) {
     const h = H();
-    const action = e.action || e.event_type || e.kind || '';
+    const action = e.action || '';
     const label = ACTION_LABELS[action] || action;
-    const who = e.actor || e.actor_user || e.user || (e.actor_user_id ? { full_name: e.actor_name || `ID:${e.actor_user_id}` } : null);
-    const whoTxt = e.actor_role === 'system' || action === 'renewed' ? 'システム' : (who ? h.nameOf(who) : (e.by_member ? '本人' : ''));
-    const meta = e.meta || e.detail || e.payload || {};
+    const isSystem = !e.actor_user_id || e.actor_role === 'system';
+    const isSelf = e.actor_user_id && e.user_id && String(e.actor_user_id) === String(e.user_id);
+    const whoTxt = isSystem ? 'システム' : `${e.actor_name || `ID:${e.actor_user_id}`}${isSelf ? '（本人）' : (e.actor_role ? `（${e.actor_role}）` : '')}`;
+    const meta = e.detail || {};
     const bits = [];
-    if (meta.reason) bits.push(`理由：${meta.reason}`);
-    if (meta.signer_name_typed) bits.push(`署名者名「${meta.signer_name_typed}」`);
-    if (meta.ip_address || e.ip_address) bits.push(`IP ${meta.ip_address || e.ip_address}`);
-    if (meta.channel) bits.push(`${meta.channel}へ送信`);
+    if (meta.reason && meta.reason !== 'cancelled') bits.push(`理由：${meta.reason === 'superseded' ? '後継契約の承認により終了' : meta.reason}`);
+    if (meta.channel) bits.push(`${CHANNEL_LABELS[meta.channel] || meta.channel}${meta.ok === false ? '（送信失敗）' : ''}${meta.resent ? '・再送' : ''}`);
     if (meta.due_date) bits.push(`期限 ${h.fmtD(meta.due_date)}`);
+    if (meta.contract_date) bits.push(`締結日 ${h.fmtD(meta.contract_date)}`);
+    if (meta.start_date) bits.push(`開始 ${h.fmtD(meta.start_date)}`);
     if (meta.end_date) bits.push(`終了日 ${h.fmtD(meta.end_date)}`);
-    if (meta.version_label || meta.version_no) bits.push(`v${meta.version_no || ''} ${meta.version_label || ''}`.trim());
-    if (meta.note) bits.push(meta.note);
-    const dot = ['bank_revealed', 'cancelled', 'ended'].includes(action) ? 'bad' : (['revision_requested', 'reminded', 'reconsent_required', 'ending'].includes(action) ? 'warn' : (ADMIN_ACTIONS.has(action) ? 'admin' : ''));
-    return `<li><time>${esc(h.fmtDT(e.created_at || e.at))}</time><span class="dot ${dot}"></span><span><b>${esc(label)}</b>　${esc(whoTxt)}${bits.length ? ` ／ ${esc(bits.join(' ／ '))}` : ''}${e.user_agent ? `<div class="c-mini">${esc(String(e.user_agent).slice(0, 80))}</div>` : ''}</span></li>`;
+    if (meta.version_no != null) bits.push(`v${meta.version_no}`);
+    if (meta.step != null) bits.push(`ステップ ${Number(meta.step) + 1}`);
+    if (Array.isArray(meta.profile_updated) && meta.profile_updated.length) bits.push(`本人情報を更新（${meta.profile_updated.join(', ')}）`);
+    if (meta.record_hash) bits.push(`記録 ${String(meta.record_hash).slice(0, 12)}…`);
+    if (meta.consent_kind) bits.push(meta.consent_kind === 'acknowledged' ? '確認' : '同意');
+    if (meta.reconsent_required_count) bits.push(`再同意対象 ${meta.reconsent_required_count}件`);
+    if (Array.isArray(meta.keys) && meta.keys.length) bits.push(meta.keys.join(', '));
+    if (e.ip_address) bits.push(`IP ${e.ip_address}`);
+    const dot = ['bank_revealed', 'cancelled', 'ended'].includes(action) ? 'bad' : (['revision_requested', 'reminded', 'reconsent_requested', 'ending_set'].includes(action) ? 'warn' : (ADMIN_ACTIONS.has(action) && !isSelf ? 'admin' : ''));
+    return `<li><time>${esc(h.fmtDT(e.created_at))}</time><span class="dot ${dot}"></span><span><b>${esc(label)}</b>　${esc(whoTxt)}${bits.length ? ` ／ ${esc(bits.join(' ／ '))}` : ''}${e.user_agent ? `<div class="c-mini">${esc(String(e.user_agent).slice(0, 80))}</div>` : ''}</span></li>`;
   }
 
   function drawDetail() {
     const h = H();
     const D = S.detail;
     const c = D.contract || {};
-    const user = D.user || c.user || (D.profile ? { full_name: D.profile.full_name, nickname: D.profile.nickname } : null);
-    const party = D.party || c.party || c.party_code;
-    const ver = D.version || c.version || {};
-    const doc = D.document || c.document || {};
-    const st = adminStatus(normRow(Object.assign({}, c, { user, status: c.status })));
+    const user = D.user;
+    const party = D.party;
+    const ver = c.version || {};
+    const doc = c.document || {};
+    const st = adminStatus(normRow({ user: user || {}, summary_status: c.status, latest_request: D.request, contracts: [c], reconsent_required: c.status === 'reconsent_required', next_end_date: c.end_date, days_to_end: c.end_date ? h.daysDiff(h.todayJst(), h.fmtD(c.end_date)) : null }));
     const canManage = S.canManage;
     document.getElementById('modal-contract-detail-title').innerHTML = `${user ? h.nameHtml(user) : '契約'} の契約　${h.chip(st.cls, st.label)}`;
 
@@ -638,7 +688,7 @@
       </div>`;
 
     // タイムライン
-    const tl = (D.events || []).slice().sort((a, b) => new Date(a.created_at || a.at) - new Date(b.created_at || b.at)).map(eventLine).join('');
+    const tl = (D.events || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map(eventLine).join('');
     const pendingLine = c.status === 'submitted' ? `<li><time>—</time><span class="dot warn"></span><span><b>管理者の確認待ち</b>　承認すると締結日＝承認日、契約開始日 ${esc(h.fmtD(c.start_date || (D.request && D.request.start_date)))}</span></li>` : '';
 
     // 同意記録
@@ -652,7 +702,7 @@
         ${canManage ? `<dt>IP／ブラウザ</dt><dd>${esc(x.ip_address || '—')} ／ <span class="c-mini">${esc(String(x.user_agent || '—').slice(0, 120))}</span></dd>` : ''}
         <dt>文書ハッシュ</dt><dd><div class="c-hash">${esc(x.pdf_sha256 || '—')}</div></dd>
         <dt>記録ハッシュ</dt><dd><div class="c-hash">${esc(x.record_hash || '—')}</div></dd>
-        <dt>検証</dt><dd>${okHash === null ? '<span class="c-mini">（版の PDF ハッシュ未取得）</span>' : (okHash ? '<span class="c-verify">● 公開中の PDF と一致（改ざんなし）</span>' : '<span class="c-verify ng">● 公開中の PDF と不一致</span>')}</dd>
+        <dt>検証</dt><dd>${okHash === null ? '<span class="c-mini">（版の PDF ハッシュ未取得）</span>' : (okHash ? '<span class="c-verify">● 公開中の PDF と一致（改ざんなし）</span>' : '<span class="c-verify ng">● 公開中の PDF と不一致</span>')}${D.chainOk === false ? ' <span class="c-verify ng">● 記録の連鎖検証 NG</span>' : (D.chainOk === true ? ' <span class="c-verify">● 記録の連鎖 OK</span>' : '')}</dd>
       </dl>`;
     }).join('') : `<div class="c-mini">${c.status === 'submitted' || ['active', 'ending', 'ended'].includes(c.status) ? (canManage ? '同意記録がありません（外部締結の可能性）' : '参照権限では同意記録の本文は表示されません') : 'まだ同意されていません'}</div>`;
     const fillSnap = c.fill_snapshot && typeof c.fill_snapshot === 'object' && Object.keys(c.fill_snapshot).length
@@ -660,9 +710,9 @@
 
     // 契約情報
     const renewDeadline = c.auto_renew && c.end_date && c.renew_notice_days != null ? (() => { const t = new Date(h.fmtD(c.end_date) + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() - Number(c.renew_notice_days)); return t.toISOString().slice(0, 10); })() : null;
-    const pred = c.predecessor || c.predecessor_contract || null;
+    const pred = c.predecessor_contract_id ? (D.related.find(x => String(x.id) === String(c.predecessor_contract_id)) || null) : null;
     const contractInfo = `<dl class="c-kv">
-      <dt>文書 / 版</dt><dd>${esc(h.docTitle(doc))} ${esc(h.verLabel(ver))}${ver.id ? ` <a class="btn-sm" style="padding:1px 8px;font-size:11px" href="${h.pdfUrl(ver.id)}" target="_blank" rel="noopener">⬇ PDF</a>` : ''}</dd>
+      <dt>文書 / 版</dt><dd>${esc(h.docTitle(doc))} ${esc(h.verLabel(ver))}${ver.id && ver.has_pdf !== false ? ` <a class="btn-sm" style="padding:1px 8px;font-size:11px" href="${h.pdfUrl(ver.id)}" target="_blank" rel="noopener">⬇ PDF</a>` : ''}</dd>
       <dt>契約相手</dt><dd>${esc(h.partyLabel(party))}</dd>
       <dt>締結方法</dt><dd>${esc(h.EXEC_LABELS[c.execution_method] || c.execution_method || 'HFS内同意')}</dd>
       <dt>締結日</dt><dd>${c.contract_date ? esc(h.fmtD(c.contract_date)) : '（承認時に確定）'}</dd>
@@ -670,7 +720,10 @@
       <dt>契約終了日</dt><dd>${c.end_date ? esc(h.fmtD(c.end_date)) : '—'}${c.auto_renew ? '（自動更新あり）' : ''}</dd>
       ${renewDeadline ? `<dt>更新拒絶期限</dt><dd>${esc(renewDeadline)} → 30日前に通知</dd>` : ''}
       ${c.billing_party_code ? `<dt>請求先</dt><dd>${esc(partyLabelByCode(c.billing_party_code))}</dd>` : ''}
-      ${pred ? `<dt>旧契約</dt><dd>${esc(h.partyLabel(pred.party || pred.party_code))} ${esc(h.verLabel(pred.version || pred))}（${esc(h.EXEC_LABELS[pred.execution_method] || '')}・${esc(h.fmtD(pred.start_date))}〜）${pred.status === 'ending' ? `<br>${h.chip('c-warn', `終了予定：${h.fmtD(pred.end_date)}`)}` : ''}</dd>` : ''}
+      ${pred ? `<dt>旧契約</dt><dd>${esc(pred.party_name || h.partyLabel(pred.party_code))} ${esc(h.verLabel(pred.version))}（${esc(h.EXEC_LABELS[pred.execution_method] || '')}・${esc(h.fmtD(pred.start_date))}〜）${pred.status === 'ending' ? `<br>${h.chip('c-warn', `終了予定：${h.fmtD(pred.end_date)}`)}` : (pred.status === 'ended' ? `<br>${h.chip('c-gray', `終了 ${h.fmtD(pred.end_date)}`)}` : '')}</dd>` : ''}
+      ${c.execution_method && c.execution_method !== 'hfs' && c.external_pdf_url ? `<dt>締結済みPDF</dt><dd><a href="${esc(c.external_pdf_url)}" target="_blank" rel="noopener" style="color:var(--em-dark)">Drive で開く</a></dd>` : ''}
+      ${c.external_note ? `<dt>外部締結メモ</dt><dd>${esc(c.external_note)}</dd>` : ''}
+      ${c.has_existing_projects != null ? `<dt>既存案件</dt><dd>${c.has_existing_projects ? `あり${c.existing_projects_party ? `（${esc(partyLabelByCode(c.existing_projects_party))}のまま）` : '（個人契約のまま）'}` : 'なし'}</dd>` : ''}
       ${c.storage_note ? `<dt>保存場所</dt><dd>${esc(c.storage_note)}</dd>` : ''}
       ${c.note ? `<dt>メモ</dt><dd>${esc(c.note)}</dd>` : ''}
       ${D.request && D.request.due_date ? `<dt>回答期限</dt><dd>${esc(h.fmtD(D.request.due_date))}</dd>` : ''}
@@ -687,12 +740,12 @@
         <dt>連絡先</dt><dd>${esc(p.email || '—')}<br>${esc(p.phone || '—')}</dd>
         <dt>住所</dt><dd>${esc(p.postal_code ? `〒${p.postal_code} ` : '')}${esc(p.address || '—')}</dd>
         <dt>振込先</dt><dd>${esc(p.bank_name || '—')}${p.bank_code ? `(${esc(p.bank_code)})` : ''} ${esc(p.branch_name || '')}${p.branch_code ? `(${esc(p.branch_code)})` : ''} ${esc(p.account_type || '')} <span class="c-masked" id="ca-d-acct">${esc(p.account_number_masked || p.account_number || '—')}</span> ${esc(p.account_holder_kana || '')}
-          ${h.permission('contract.bank_reveal') ? `<button class="btn-sm" style="padding:2px 8px;font-size:11px" id="ca-d-reveal" onclick="HFSContractAdmin.bankReveal()">全桁を表示（履歴に残ります）</button>` : ''}</dd>
+          ${D.canBankReveal && h.permission('contract.bank_reveal') ? `<button class="btn-sm" style="padding:2px 8px;font-size:11px" id="ca-d-reveal" onclick="HFSContractAdmin.bankReveal()">全桁を表示（履歴に残ります）</button>` : ''}</dd>
         ${p.profile_confirmed_at ? `<dt>本人確認日時</dt><dd>${esc(h.fmtDT(p.profile_confirmed_at))}</dd>` : ''}
       </dl></div>` : (canManage ? '' : '<div class="c-mini">参照権限では本人情報（住所・口座）は表示されません。</div>');
 
     const related = (D.related || []).filter(x => String(x.id) !== String(D.id));
-    const relatedHtml = related.length ? `<div class="c-card"><h4>同じメンバーの他の契約</h4>${related.map(x => `<div class="cw-list-item"><div class="t"><b>${esc(h.docTitle(x.document || x))} ${esc(h.verLabel(x.version || x))}</b><div class="c-mini">${esc(h.partyLabel(x.party || x.party_code))}　${esc(h.fmtD(x.start_date))}〜${esc(x.end_date ? h.fmtD(x.end_date) : '')}</div></div>${h.memberStatus(x.status)}<button class="btn-sm" onclick="openContractDetail('${esc(x.id)}')">開く</button></div>`).join('')}</div>` : '';
+    const relatedHtml = related.length ? `<div class="c-card"><h4>同じメンバーの他の契約</h4>${related.map(x => `<div class="cw-list-item"><div class="t"><b>${esc(h.docTitle(x.document))} ${esc(h.verLabel(x.version))}</b><div class="c-mini">${esc(x.party_name || h.partyLabel(x.party_code))}　${esc(h.EXEC_LABELS[x.execution_method] || '')}　${esc(h.fmtD(x.start_date))}〜${esc(x.end_date ? h.fmtD(x.end_date) : '')}</div></div>${h.memberStatus(x.status)}<button class="btn-sm" onclick="openContractDetail('${esc(x.id)}')">開く</button></div>`).join('')}</div>` : '';
 
     document.getElementById('modal-contract-detail-body').innerHTML = `
       ${acts.length ? `<div class="c-actions" style="margin:0 0 12px;justify-content:flex-start">${acts.join('')}</div>` : ''}
@@ -702,7 +755,7 @@
           <div class="c-card"><h4>タイムライン（操作履歴）</h4><ul class="ca-tl">${tl}${pendingLine}${!tl && !pendingLine ? '<li><time>—</time><span class="dot"></span><span class="c-mini">履歴がありません</span></li>' : ''}</ul></div>
           <div class="c-card"><h4>同意記録（書き換え不可）</h4>${consentHtml}${fillSnap}
             <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-              ${ver.id ? `<a class="btn-sm" href="${h.pdfUrl(ver.id)}" target="_blank" rel="noopener">⬇ 契約書PDF</a>` : ''}
+              ${ver.id && ver.has_pdf !== false ? `<a class="btn-sm" href="${h.pdfUrl(ver.id)}" target="_blank" rel="noopener">⬇ 契約書PDF</a>` : ''}
               ${consents.length && canManage ? `<button class="btn-sm" onclick="HFSContract.printReceipt('${esc(D.id)}')">⬇ 同意記録（控え）</button>` : ''}
             </div>
           </div>
@@ -727,7 +780,7 @@
     const sd = document.getElementById('ca-d-approve-start')?.value; if (sd) body.start_date = sd;
     const r = await H().api(`/member-contracts/${encodeURIComponent(D.id)}/approve`, { method: 'POST', json: body });
     if (!r.ok) { toast(r.error, 'error'); return; }
-    toast('承認しました（締結済み）', 'success');
+    toast(`承認しました（締結済み）${r.data && r.data.notified ? `・本人へ通知済み（${CHANNEL_LABELS[r.data.notify_channel] || r.data.notify_channel}）` : '・本人への通知は送れませんでした'}`, r.data && r.data.notified ? 'success' : 'warn');
     await openContractDetail(D.id);
     if (S.tab === 'list') renderList();
   }
@@ -737,7 +790,7 @@
     if (!reason) { toast('修正依頼の理由を入力してください', 'warn'); return; }
     const r = await H().api(`/member-contracts/${encodeURIComponent(D.id)}/revision`, { method: 'POST', json: { reason } });
     if (!r.ok) { toast(r.error, 'error'); return; }
-    toast('修正を依頼しました', 'success');
+    toast(`修正を依頼しました${r.data && r.data.notified ? '・本人へ通知済み' : '・本人への通知は送れませんでした（DM 先をご確認ください）'}`, r.data && r.data.notified ? 'success' : 'warn');
     await openContractDetail(D.id);
     if (S.tab === 'list') renderList();
   }
@@ -784,7 +837,7 @@
           ${v.change_summary ? `<span class="c-mini">変更点：${esc(v.change_summary)}</span>` : ''}
           ${v.pdf_sha256 ? `<span class="c-mono" title="SHA-256">${esc(String(v.pdf_sha256).slice(0, 12))}…</span>` : ''}
           <span style="flex:1"></span>
-          ${v.id && (canManage || v.status === 'published') ? `<a class="btn-sm" href="${h.pdfUrl(v.id)}" target="_blank" rel="noopener">⬇ PDF</a>` : ''}
+          ${v.id && v.has_pdf && (canManage || v.status === 'published') ? `<a class="btn-sm" href="${h.pdfUrl(v.id)}" target="_blank" rel="noopener">⬇ PDF</a>` : (v.id && !v.has_pdf ? '<span class="c-mini">（PDF なし・本文のみ）</span>' : '')}
           ${canManage && v.status === 'draft' ? `<button class="btn-primary" style="font-size:12px;padding:5px 12px" onclick="HFSContractAdmin.publish('${esc(v.id)}', ${v.requires_reconsent ? 'true' : 'false'})">公開する</button>` : ''}
           ${v.status === 'published' ? '<span class="c-mini">公開後は本文・PDF・適用日を変更できません</span>' : ''}
         </div>`;
@@ -861,7 +914,8 @@
     if (!ok) return;
     const r = await H().api(`/versions/${encodeURIComponent(versionId)}/publish`, { method: 'POST', json: {} });
     if (!r.ok) { toast(r.error, 'error'); return; }
-    toast('公開しました', 'success');
+    const n = r.data && r.data.reconsent_required_count;
+    toast(n ? `公開しました。${n} 件の有効契約が「再同意が必要」になりました（依頼は「＋ 依頼URLを発行」から）` : '公開しました', 'success');
     renderDocs();
   }
 
@@ -889,7 +943,7 @@
       </div>
       <div class="c-row3" style="margin-top:8px">
         <div><label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-top:26px"><input type="checkbox" id="ca-ext-renew" checked> 自動更新あり</label></div>
-        <div><label class="form-label">切替方法（法人契約への移行）</label><select class="form-select" id="ca-ext-switch"><option value="">未定</option><option value="new_contract">新規締結（旧契約は終了予定）</option><option value="succession">承継のお知らせ</option><option value="amendment">覚書で変更</option></select></div>
+        <div><label class="form-label">切替方法（法人契約への移行）</label><select class="form-select" id="ca-ext-switch"><option value="">未定</option><option value="new">新規締結（旧契約は終了予定）</option><option value="succession">承継のお知らせ</option></select></div>
         <div><label class="form-label">切替日</label><input class="form-input" type="date" id="ca-ext-switchdate"></div>
       </div>
       <div class="c-row3" style="margin-top:8px">
@@ -900,6 +954,10 @@
       <div class="c-row2" style="margin-top:8px">
         <div><label class="form-label">保存場所（原本）</label><input class="form-input" id="ca-ext-storage" placeholder="例) Drive ／ 契約書／2026／◯◯"></div>
         <div><label class="form-label">締結済み PDF（任意）</label><input class="form-input" type="file" accept="application/pdf" id="ca-ext-pdf"></div>
+      </div>
+      <div class="c-row2" style="margin-top:8px">
+        <div><label class="form-label">締結済み PDF の URL（Drive 等・PDF を添付しない場合）</label><input class="form-input" id="ca-ext-pdfurl" placeholder="https://drive.google.com/file/d/…"></div>
+        <div><label class="form-label">外部締結メモ（締結の経緯など）</label><input class="form-input" id="ca-ext-extnote"></div>
       </div>
       <div class="form-group" style="margin-top:8px"><label class="form-label">メモ</label><textarea class="form-input" id="ca-ext-note" rows="2"></textarea></div>
       <div class="c-actions"><button class="btn-primary" onclick="HFSContractAdmin.extSubmit()">登録する（締結済みとして記録）</button></div>
@@ -948,6 +1006,8 @@
     if (g('ca-ext-billparty')) fd.append('billing_party_code', g('ca-ext-billparty'));
     if (g('ca-ext-storage')) fd.append('storage_note', g('ca-ext-storage'));
     if (g('ca-ext-note')) fd.append('note', g('ca-ext-note'));
+    if (g('ca-ext-pdfurl')) fd.append('external_pdf_url', g('ca-ext-pdfurl'));
+    if (g('ca-ext-extnote')) fd.append('external_note', g('ca-ext-extnote'));
     const pdf = document.getElementById('ca-ext-pdf')?.files?.[0];
     if (pdf) {
       if (pdf.size > 20 * 1024 * 1024) { toast('PDF は 20MB 以下にしてください', 'warn'); return; }
@@ -1029,12 +1089,12 @@
   }
 
   // ───────────────── 契約主体マスタ ─────────────────
+  // routes/contracts.js PARTY_EDITABLE（billing_parties の編集可能列）
   const PARTY_FIELDS = [
-    ['display_name', '表示名'], ['legal_name', '正式名称'], ['representative_title', '代表者肩書'], ['representative_name', '代表者名'],
-    ['postal_code', '郵便番号'], ['address', '本店所在地／住所'], ['corporate_number', '法人番号'], ['invoice_registration_number', '適格請求書発行事業者登録番号'],
-    ['phone', '電話番号'], ['email', 'メール'], ['jurisdiction', '管轄裁判所'], ['effective_from', '有効開始日'], ['note', 'メモ'],
+    ['display_name', '表示名'], ['legal_name', '正式名称（契約書の甲）'], ['trade_name', '屋号（個人事業主のみ）'], ['representative_title', '代表者肩書'], ['representative_name', '代表者名'],
+    ['postal_code', '郵便番号'], ['address', '本店所在地／住所'], ['corporate_number', '法人番号（13桁）'], ['invoice_registration_number', '適格請求書発行事業者登録番号（T+13桁）'],
+    ['court_name', '合意管轄裁判所'], ['contact_email', '連絡先メール'], ['effective_from', '有効開始日'], ['effective_to', '有効終了日'],
   ];
-  const PARTY_SKIP = new Set(['id', 'code', 'created_at', 'updated_at', 'is_active', 'sort_order']);
   async function renderParties() {
     const h = H();
     const body = document.getElementById('ca-body');
@@ -1043,12 +1103,9 @@
     if (!S.parties.length) { body.innerHTML = `<div class="c-notice">${S.notReady ? '契約管理の準備中です（バックエンド未適用）' : '契約主体がまだ登録されていません（migration の seed をご確認ください）'}</div>`; return; }
     body.innerHTML = `<div class="c-mini" style="margin-bottom:10px">契約書の甲欄・請求先に使う自社情報です。本店所在地・法人番号・登録番号など未確定の項目は空欄のままで構いません（確定後に入力）。</div>` +
       S.parties.map(p => {
-        const known = new Set(PARTY_FIELDS.map(f => f[0]));
-        const extra = Object.keys(p).filter(k => !known.has(k) && !PARTY_SKIP.has(k) && (p[k] == null || ['string', 'number', 'boolean'].includes(typeof p[k])));
-        const fields = [...PARTY_FIELDS, ...extra.map(k => [k, k])];
         return `<div class="c-card">
-          <h4>${esc(h.partyLabel(p))} <span class="c-mono">${esc(p.code)}</span></h4>
-          <div class="c-row2">${fields.map(([k, label]) => `<div><label class="form-label">${esc(label)}</label><input class="form-input" data-party="${esc(p.code)}" data-key="${esc(k)}" value="${esc(p[k] == null ? '' : p[k])}" ${k === 'effective_from' ? 'type="date"' : ''}></div>`).join('')}</div>
+          <h4>${esc(h.partyLabel(p))} <span class="c-mono">${esc(p.code)}</span> ${h.chip('c-gray', p.party_kind === 'individual' ? '個人事業主' : '法人')}${p.is_active === false ? h.chip('c-gray', '無効') : ''}</h4>
+          <div class="c-row2">${PARTY_FIELDS.map(([k, label]) => `<div><label class="form-label">${esc(label)}</label><input class="form-input" data-party="${esc(p.code)}" data-key="${esc(k)}" value="${esc(p[k] == null ? '' : p[k])}" ${k === 'effective_from' || k === 'effective_to' ? 'type="date"' : ''}></div>`).join('')}</div>
           <div class="c-actions"><button class="btn-primary" onclick="HFSContractAdmin.saveParty('${esc(p.code)}')">保存</button></div>
         </div>`;
       }).join('');

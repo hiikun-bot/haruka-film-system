@@ -10780,6 +10780,18 @@ async function applyDeepLinkOnLoad() {
       return;
     }
 
+    // ?page=contract-admin : 管理者日次サマリ（Slack DM）のリンク先。契約管理ページだけ受け付ける（ADR 035）
+    const pageParam = params.get('page');
+    if (pageParam === 'contract-admin') {
+      stripQueryParam('page');
+      try {
+        const navBtn = document.querySelector('.nav-btn[data-page="contract-admin"]');
+        // 権限で非表示のナビなら開かない（applyRoleBasedUI 適用後の inline display で判定）
+        if (navBtn && navBtn.style.display !== 'none' && typeof showPage === 'function') showPage('contract-admin', navBtn);
+      } catch (e) { console.warn('[deepLink page]', e); }
+      return;
+    }
+
     const creativeId = params.get('creative');
     if (!creativeId) return;
     if (typeof openCreativeDetail === 'function') {
