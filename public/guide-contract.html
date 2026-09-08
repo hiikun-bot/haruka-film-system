@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜契約・登録手続きガイド</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero */
+.hero{background:linear-gradient(135deg,#2BB8B4 0%,#3ECFCA 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+/* Progress bar */
+.progress-wrap{position:sticky;top:0;background:rgba(255,255,255,0.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:50;border-bottom:1px solid var(--border-light);padding:12px 16px}
+.progress-inner{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:16px}
+.progress-track{flex:1;height:6px;background:var(--border-light);border-radius:99px;overflow:hidden;position:relative}
+.progress-fill{position:absolute;top:0;left:0;height:100%;width:0;background:linear-gradient(90deg,var(--em),var(--em-dark));transition:width .3s ease;border-radius:99px}
+.progress-text{font-size:12px;font-weight:700;color:var(--em-dark);white-space:nowrap;letter-spacing:0.04em}
+.progress-dots{display:flex;gap:8px}
+.progress-dot{width:10px;height:10px;border-radius:50%;background:var(--border);transition:all .3s;cursor:pointer}
+.progress-dot.done{background:var(--em-dark)}
+.progress-dot.current{background:var(--em);box-shadow:0 0 0 4px var(--em-pale)}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:80px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram (SVG) */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+
+/* Wanpoint (sticky-note callout) */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Compact step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card-title-num{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+
+/* Mock screen */
+.mock{margin-top:10px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:12px 16px}
+.mock-input{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:8px 11px;font-size:13px;font-family:inherit;color:var(--text);width:100%;margin-bottom:8px}
+.mock-btn{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:3px;display:block}
+
+/* Tab pills */
+.tab-pills{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+.tab-pill{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px 8px;text-align:center;font-size:12px;font-weight:700;color:var(--text);position:relative;transition:transform .15s}
+.tab-pill-icon{font-size:22px;margin-bottom:4px;line-height:1}
+.tab-pill.star{border-color:var(--star);background:linear-gradient(135deg,var(--star-bg),#fff);color:var(--star-deep);box-shadow:0 4px 12px rgba(245,158,11,0.2)}
+.tab-pill.star::after{content:"⭐";position:absolute;top:-8px;right:-6px;font-size:14px}
+
+/* Field hierarchy: must / recommended / optional */
+.fields{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.must-card{background:linear-gradient(135deg,#FFF7ED 0%,#fff 60%);border:2px solid var(--star);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:flex-start;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.18)}
+.must-card-icon{font-size:28px;line-height:1;flex-shrink:0}
+.must-card-body{flex:1;min-width:0}
+.must-card-tag{display:inline-block;font-size:10px;font-weight:800;letter-spacing:0.14em;color:#fff;background:var(--star);padding:2px 9px;border-radius:99px;margin-bottom:6px;text-transform:uppercase}
+.must-card h4{font-size:15px;font-weight:800;color:var(--star-deep);margin-bottom:4px}
+.must-card p{font-size:12.5px;color:#78350F;line-height:1.65}
+.must-card p strong{font-weight:800;background:rgba(245,158,11,0.2);padding:1px 5px;border-radius:3px}
+
+.reco-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.reco-label{font-size:11px;color:var(--text-muted);font-weight:700;letter-spacing:0.06em;flex-shrink:0}
+.reco-chip{display:inline-flex;align-items:center;gap:5px;background:var(--em-pale);color:var(--em-dark);font-size:12px;font-weight:600;padding:5px 11px;border-radius:99px;border:1px solid var(--em-light)}
+
+.opt-row{margin-top:6px;font-size:11px;color:#9ca3af;line-height:1.6}
+.opt-row strong{color:#6b7280;font-weight:600}
+
+/* Basic-info interactive explorer */
+.bie{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.bie-mock{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.bie-mock-title{font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.bie-mock-title::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#EF4444;box-shadow:14px 0 #F59E0B,28px 0 #10B981}
+.bie-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;background:#fafdfd}
+.bie-row:hover{background:var(--em-pale);border-color:var(--em-light)}
+.bie-row.selected{background:var(--em-pale);border-color:var(--em-dark);box-shadow:0 4px 12px rgba(43,184,180,0.18)}
+.bie-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#fff;border:2px solid var(--em-dark);color:var(--em-dark);font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.bie-row:hover .bie-num{transform:scale(1.1)}
+.bie-row.selected .bie-num{background:var(--em-dark);color:#fff}
+.bie-input-area{flex:1;min-width:0}
+.bie-label{font-size:11px;color:var(--text);font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:4px}
+.bie-mock-input{background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;color:#9ca3af;font-family:inherit;min-height:22px;display:flex;align-items:center}
+.bie-mock-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#A8EDEA,#3ECFCA);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bie-mock-input.disabled{background:#f5f5f5;color:#9ca3af}
+.bie-explain{background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px solid var(--star-border);border-radius:12px;padding:16px 18px;min-height:200px;position:relative}
+.bie-explain-prompt{font-size:12px;color:var(--star-deep);text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:center;height:100%;padding:12px}
+.bie-explain-prompt-arrow{font-size:24px;animation:bie-arrow 1.4s ease-in-out infinite}
+@keyframes bie-arrow{0%,100%{transform:translateX(0)}50%{transform:translateX(-6px)}}
+.bie-explain-content{display:none}
+.bie-explain-content.show{display:block;animation:bie-fade 0.25s ease-out}
+@keyframes bie-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.bie-explain-num{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--star);color:#fff;font-size:11px;font-weight:800;margin-right:6px}
+.bie-explain-title{font-size:14px;font-weight:800;color:var(--star-deep);margin-bottom:10px;display:flex;align-items:center}
+.bie-explain h5{font-size:11px;font-weight:800;color:var(--star);letter-spacing:0.06em;margin:10px 0 4px;text-transform:uppercase}
+.bie-explain h5::before{content:"";display:inline-block;width:4px;height:12px;background:var(--star);margin-right:6px;vertical-align:middle;border-radius:2px}
+.bie-explain p{font-size:12.5px;color:#78350F;line-height:1.7}
+.bie-explain-eg{margin-top:8px;background:#fff;border-radius:8px;padding:10px 12px;font-size:11.5px;color:#78350F;line-height:1.7;border-left:3px solid var(--star)}
+.bie-explain-eg b{color:#92400E;background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px}
+@media (max-width:768px){
+  .bie{grid-template-columns:1fr;gap:10px}
+  .bie-explain{min-height:auto}
+}
+
+/* Done banner (compact) */
+.done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
+.done-icon{font-size:24px;flex-shrink:0}
+.done-text{flex:1;font-size:13px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:2px}
+
+/* Next button */
+.next-btn-wrap{display:flex;justify-content:center;margin-top:18px}
+.next-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--em-dark);text-decoration:none;font-weight:700;font-size:13px;padding:11px 22px;border-radius:99px;border:2px solid var(--em);transition:all .2s;box-shadow:0 2px 8px rgba(43,184,180,0.15)}
+.next-btn:hover{background:var(--em-dark);color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(43,184,180,0.3)}
+.next-btn::after{content:"↓";font-weight:900}
+
+/* Final */
+.final{margin-top:56px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:32px 24px;text-align:center;position:relative;overflow:hidden}
+.final::before{content:"🎉";position:absolute;font-size:120px;opacity:0.06;top:50%;left:50%;transform:translate(-50%,-50%)}
+.final-icon{font-size:42px;margin-bottom:6px}
+.final h2{font-size:22px;font-weight:800;color:#92400E;margin-bottom:6px}
+.final p{font-size:13px;color:#78350F;line-height:1.85;max-width:480px;margin:0 auto 16px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35);transition:transform .15s,box-shadow .15s}
+.final-cta:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(43,184,180,0.45)}
+
+/* Trouble (compact, single block) */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .progress-dots{display:none}
+  .flow-row{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .tab-pills{grid-template-columns:repeat(2,1fr)}
+  .must-card{padding:14px 16px;gap:12px}
+  .must-card-icon{font-size:24px}
+  .must-card h4{font-size:14px}
+  .final{padding:24px 18px}
+  .final h2{font-size:18px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">GUIDE ／ 全員共通</span>
+    <h1>📝 契約・登録手続き<span>契約書の閲覧・同意と、本人情報・振込先の登録</span></h1>
+    <div class="hero-eta">⏱ 約 10 分</div>
+  </div>
+</header>
+
+<div class="progress-wrap">
+  <div class="progress-inner">
+    <div class="progress-text" id="progress-text">準備OK ／ 0 / 5</div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-dots">
+      <span class="progress-dot current" data-step="1"></span>
+      <span class="progress-dot" data-step="2"></span>
+      <span class="progress-dot" data-step="3"></span>
+      <span class="progress-dot" data-step="4"></span>
+      <span class="progress-dot" data-step="5"></span>
+    </div>
+  </div>
+</div>
+
+<main class="container">
+
+<p style="margin-top:28px;font-size:13px;color:#374151;line-height:1.8">HARUKA FILM と交わす <b>業務委託基本契約書</b> や <b>業務ルール確認書</b> は、紙やメールではなく HARUKA FILM SYSTEM の画面で読んで同意します。<br>「誰が・いつ・どの版に同意したか」がシステムに記録され、契約書 PDF と同意記録の控えはいつでもダウンロードできます。</p>
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>依頼 URL からページを開く</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">💬</div>
+      <div class="flow-step-label">Chatwork / Slack に<br>依頼 URL が届く</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔐</div>
+      <div class="flow-step-label">URL を開いて<br>ログイン</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📝</div>
+      <div class="flow-step-label">「契約・登録手続き」<br>画面が開く</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">1</span>URL が無くても入れます</div>
+    <p>ヘッダーの <b>📝 契約・登録手続き</b>（スマホはメニュー内）から同じ画面に入れます。ホーム画面にも「契約・登録手続きのお願いが◯件あります」のバナーが出るので、<b>手続きを始める ▶</b> を押してください。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">2</span>途中で閉じても大丈夫</div>
+    <p>入力内容とチェックは自動で下書き保存されます。次に開いたとき「続きから再開」で同じところから始められます。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>依頼 URL は <strong>あなた専用</strong> です。他の人の URL を開いても自分の手続きしか表示されません。URL は発行から <strong>90 日</strong> で無効になりますが、期限が切れてもメニューの「📝 契約・登録手続き」から同じ依頼に入れます。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step2" onclick="markStep(1)">STEP 2 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>本人情報・請求情報・振込先を確認する</h2>
+      <div class="step-section-eta">⏱ 約 3 分</div>
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:#374151;margin-bottom:6px">画面左の「手続きの流れ」の <b>1. 本人情報</b> → <b>2. 請求情報・振込先</b> の順に進みます。プロフィールに登録済みの内容が最初から入っているので、確認して足りないところを埋めるだけです。</p>
+
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title"><span class="step-card-title-num">1</span>本人情報</div>
+    <div class="mock">
+      <span class="mock-fieldlabel">氏名（登録氏名） <span style="color:#E24B4A">*</span></span>
+      <input class="mock-input" type="text" value="山田 太郎" readonly>
+      <span class="mock-fieldlabel">メールアドレス（変更不可）</span>
+      <input class="mock-input" type="text" value="taro@gmail.com" readonly>
+      <span class="mock-fieldlabel">電話番号 <span style="color:#E24B4A">*</span> ／ 住所 <span style="color:#E24B4A">*</span> ／ 事業区分 <span style="color:#E24B4A">*</span></span>
+      <input class="mock-input" type="text" value="個人事業主（屋号あり） → 屋号・代表者名を入力" readonly>
+      <button class="mock-btn">保存して次へ ▶</button>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 氏名は契約書に差し込まれ、あとの署名でも同じ表記を入力します。メールアドレスの変更は管理者へ連絡してください。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">2</span>請求情報・振込先</div>
+    <p><b>請求名義</b>（必須）と <b>インボイス登録番号</b>（T ＋ 13 桁。未登録なら空欄）を入力します。<br>登録済みの口座は <code>****1234</code> のように下 4 桁だけ表示されます。変えたいときだけ <b>変更する</b> を押して入力欄を出してください。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ワンポイント</div>
+    <p>ここで保存した内容は <strong>プロフィールの登録情報にもそのまま反映</strong> されます。請求書の名義や振込先を後から直したいときは、プロフィール編集からでも変更できます。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step3" onclick="markStep(2)">STEP 3 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>契約書・確認書を最後まで読む</h2>
+      <div class="step-section-eta">⏱ 約 5 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">📄</div>
+      <div class="flow-step-label">画面中央に<br>PDF が表示される</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">☑️</div>
+      <div class="flow-step-label">「最後まで読みました」<br>にチェック</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">▶️</div>
+      <div class="flow-step-label">「次へ」が押せる<br>ようになる</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">1</span>文書は 1 つずつ</div>
+    <p>依頼された文書（例：業務委託基本契約書 → 業務ルール確認書）が順番に表示されます。PDF の下にある <b>最後まで読みました</b>（確認書は <b>内容を確認しました</b>）にチェックを入れると、閲覧完了の日時が記録され <b>次へ ▶</b> が押せるようになります。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">2</span>手元に残したいとき</div>
+    <p><b>⬇ PDFを保存</b> を押すと、PDF が別タブで開きます。ブラウザの保存機能でダウンロードできます。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">3</span>右側の「この契約について」</div>
+    <p>契約相手（個人事業主 髙橋聖 ／ 株式会社HARUKA FILM）・契約開始日・期間・文書の版・回答期限が表示されます。回答期限が近い／過ぎているときは色付きで出ます。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>チェックは <strong>本当に最後まで読んでから</strong>。チェックした日時は「閲覧完了」として記録され、あとから取り消せません。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step4" onclick="markStep(3)">STEP 4 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>同意して署名する</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">1</span>すべての項目にチェック</div>
+    <div class="mock">
+      <p style="font-size:12.5px;line-height:1.9">☑ 業務委託基本契約書 v2（株式会社HARUKA FILM）を最後まで読み、内容に同意します<br>☑ 業務ルール確認書 v1（株式会社HARUKA FILM）を確認しました<br>☑ 秘密保持、個人情報・機密情報の取扱い、著作権・制作データ・実績公開、請求方法と支払条件に関する条項を確認しました</p>
+      <span class="mock-fieldlabel">署名者名（登録氏名と同じ表記で入力） <span style="color:#E24B4A">*</span></span>
+      <input class="mock-input" type="text" value="山田 太郎" readonly>
+      <button class="mock-btn">同意して送信</button>
+    </div>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">2</span>送信すると記録されること</div>
+    <p>ユーザーID ／ 署名者名 ／ 契約相手 ／ 文書の種類と版 ／ 同意日時（日本時間）／ 接続元 IP アドレス ／ ブラウザ情報 ／ 同意した時点の文書のハッシュ値。この記録は <b>あとから誰も書き換えられません</b>。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>署名者名は STEP 2 で保存した <strong>登録氏名とまったく同じ表記</strong> で入力してください（スペースの有無や全角・半角は自動で揃えます）。違うと「登録氏名と同じ表記で入力してください」と出て送信できません。</p>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">送信すると「同意を受け付けました」に変わります<small>管理者が確認して承認すると「契約手続き完了」になります</small></div>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step5" onclick="markStep(4)">STEP 5 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>控えをダウンロードする・その後の流れ</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">1</span>完了画面のボタン</div>
+    <p><b>⬇ 契約書 PDF</b> … 同意した版の PDF を開きます。<br><b>⬇ 同意記録の控え（PDF）</b> … 同意日時・署名者名・文書ハッシュをまとめた控えを印刷画面で開きます。ブラウザの「PDF に保存」を選ぶと手元に残せます。<br><b>手続き一覧へ</b> … あなたの依頼と契約の一覧に戻ります。一覧からもいつでも PDF と控えを開けます。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">2</span>状態の見かた（一覧・ホームバナー）</div>
+    <p><b>未着手（依頼あり）</b>／<b>入力中</b> … まだ送信していません。<br><b>確認待ち</b> … 送信済み。管理者の確認中です。<br><b>修正依頼あり</b> … 管理者から入力内容の確認依頼が来ています。理由が画面上部に出るので、直してもう一度「同意して送信」してください。<br><b>契約手続き完了</b> … 承認されました。<br><b>再同意が必要</b> … 文書が改訂されました。新しい版に同意するまでは今の版が有効のままです。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">3</span>期限のお知らせ</div>
+    <p>回答期限の前、契約の有効期限の 60 日前・30 日前などに Chatwork（個別チャット）または Slack DM でお知らせが届きます。基本契約は 1 年・自動更新なので、更新を希望しない場合だけ期限までに連絡してください。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ワンポイント</div>
+    <p>2026 年 9 月 22 日の法人化にともない、契約相手が <strong>個人事業主 髙橋聖</strong> から <strong>株式会社HARUKA FILM</strong> に変わります。法人としての契約依頼が届いたら、同じ手順で進めてください。進行中の案件は、切り替えの合意がない限り今までの契約のままです。</p>
+  </div>
+</section>
+
+<!-- 管理者向け -->
+<section class="step-section" id="admin">
+  <div class="step-section-head">
+    <div class="step-section-num">⚙</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">FOR ADMIN</div>
+      <h2>管理者・プロデューサー向け：📝 契約管理</h2>
+      <div class="step-section-eta">権限：contract.page（管理者）／ contract.view（プロデューサー・参照のみ）</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">📄</div>
+      <div class="flow-step-label">文書バージョンで<br>PDF を登録・公開</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔗</div>
+      <div class="flow-step-label">「＋ 依頼URLを発行」<br>で送信</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">✅</div>
+      <div class="flow-step-label">確認待ちを開いて<br>承認</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">1</span>文書バージョン</div>
+    <p>「文書を作成」で種類・契約主体・タイトルを登録 → 「＋ 新しい版（PDF）」で PDF（20MB まで）・適用開始日・変更点を登録 → <b>公開する</b>。公開後は本文・PDF・適用日を変更できません。「公開時に旧版の有効契約を『再同意が必要』にする」にチェックすると、旧版で締結済みのメンバーが一覧で「再同意が必要」になります（本人への依頼は別途発行します）。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">2</span>依頼 URL を発行</div>
+    <p>対象メンバー（複数可）・契約相手・文書・回答期限・契約開始日・自動更新を選び、送信文を確認して <b>発行して送信</b>。Chatwork 個別チャット → 無ければ Slack DM に届きます。送らずに URL だけ控えたいときは <b>URLだけコピー（送信しない）</b>。オンボーディング詳細の <b>📝 契約依頼を発行</b> から出すと、承認時に「HARUKA FILM契約書の提出」が自動でチェックされます。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">3</span>確認して承認</div>
+    <p>一覧の <b>確認</b> で詳細を開き、タイムライン・同意記録・本人情報を確認して <b>承認して締結済みにする</b>。入力に問題があれば <b>修正依頼（理由必須）</b>。口座番号の <b>全桁を表示（履歴に残ります）</b> は誰がいつ表示したかが操作履歴に残ります。紙や外部電子契約で結んだ旧契約は <b>既存契約の登録</b> タブから記録できます。</p>
+  </div>
+</section>
+
+<!-- 完了 -->
+<section class="final" id="finished">
+  <div class="final-icon">🎉</div>
+  <h2>契約・登録手続き、これで OK！</h2>
+  <p>契約書 PDF と同意記録の控えは「📝 契約・登録手続き」からいつでも開けます。</p>
+  <a class="final-cta" href="/haruka.html" onclick="markStep(5)">システムを開く →</a>
+</section>
+
+<!-- 困ったら -->
+<section class="trouble">
+  <h3>💬 困ったら…</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">🚫</span>
+      <div><div class="trouble-q">「この依頼URLはあなた宛てではありません」と出る</div><div class="trouble-a">他の人の URL を開いています。メニューの「📝 契約・登録手続き」から自分の依頼を開いてください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🔒</span>
+      <div><div class="trouble-q">「次へ」が押せない</div><div class="trouble-a">PDF の下の「最後まで読みました」にチェックが必要です。前のステップ（本人情報・振込先）が未保存でも先へ進めません</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">✍️</span>
+      <div><div class="trouble-q">「登録氏名と同じ表記で入力してください」と出る</div><div class="trouble-a">署名者名を STEP 2 の氏名と同じ表記に。氏名そのものを直したいときは STEP 2 に戻って保存し直してください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🛠</span>
+      <div><div class="trouble-q">「契約管理の準備中です」と出る</div><div class="trouble-a">システム側の準備が終わっていません。管理者に連絡してください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🆘</span>
+      <div><div class="trouble-q">それ以外</div><div class="trouble-a">管理者（ひーくん）に Chatwork で気軽に。スクショを添えると早い</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <p>HARUKA FILM SYSTEM ／ 契約・登録手続きガイド</p>
+</footer>
+
+<script>
+const TOTAL_STEPS = 5;
+let completed = parseInt(localStorage.getItem('haruka_contract_guide_progress') || '0', 10);
+function updateProgress() {
+  const pct = Math.min(100, (completed / TOTAL_STEPS) * 100);
+  document.getElementById('progress-fill').style.width = pct + '%';
+  const label = completed === 0 ? '準備OK' : (completed >= TOTAL_STEPS ? '完了 🎉' : '進行中');
+  document.getElementById('progress-text').textContent = `${label} ／ ${completed} / ${TOTAL_STEPS}`;
+  document.querySelectorAll('.progress-dot').forEach((d, i) => {
+    const step = i + 1;
+    d.classList.toggle('done', step <= completed);
+    d.classList.toggle('current', step === completed + 1);
+  });
+}
+function markStep(n){ if(n>completed){ completed=n; localStorage.setItem('haruka_contract_guide_progress', String(completed)); updateProgress(); } }
+updateProgress();
+document.querySelectorAll('.progress-dot').forEach(d=>{
+  d.addEventListener('click',()=>document.getElementById('step'+d.dataset.step)?.scrollIntoView({behavior:'smooth',block:'start'}));
+});
+</script>
+
+</body>
+</html>
