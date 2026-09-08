@@ -286,6 +286,9 @@ app.use('/api/', (req, res, next) => {
   next();
 });
 
+// 契約管理 API（ADR 035）。/api/haruka の汎用ルートより前に mount する
+app.use('/api/haruka/contracts', require('./routes/contracts'));
+
 // HARUKA FILM SYSTEM API
 app.use('/api/haruka', harukaRouter);
 
@@ -727,6 +730,13 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] billing-count-inquiry-scheduler 起動失敗:', e.message);
     }
+    // 契約管理（ADR 035）: 未対応催促・回答期限・有効期限・自動更新・管理者日次サマリ（毎日 JST 10時台）
+    try {
+      const { startContractReminder } = require('./workers/contract-reminder');
+      startContractReminder();
+    } catch (e) {
+      console.error('[startup] contract-reminder 起動失敗:', e.message);
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
@@ -781,6 +791,12 @@ const runSchemaSync = require('./db/migrate');
       stopBillingInquiryScheduler();
     } catch (e) {
       console.error('[shutdown] billing-count-inquiry-scheduler 停止失敗:', e.message);
+    }
+    try {
+      const { stopContractReminder } = require('./workers/contract-reminder');
+      stopContractReminder();
+    } catch (e) {
+      console.error('[shutdown] contract-reminder 停止失敗:', e.message);
     }
     // 新規接続の受付を止め、処理中のリクエスト完了を待って終了
     server.close((err) => {

@@ -21279,6 +21279,8 @@ const VALID_PERMISSION_KEYS = new Set([
   'team_load.page',
   'payout.page',
   'invoice_folder.view_own','invoice_folder.view_any','invoice_folder.generate_own','invoice_folder.generate_any',
+  // ADR 035 契約管理（migration 2026-09-07_contracts.sql）
+  'contract.page','contract.view','contract.bank_reveal',
 ]);
 
 // ロール権限保存（最高管理者のみ・ホワイトリスト検証あり）
