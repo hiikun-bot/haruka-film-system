@@ -2169,8 +2169,9 @@ function validateFilenameTemplateTokens(tokens) {
     }
     keySet.add(k);
   }
-  // version は任意化（バグ報告 #271af257）。必須は serial / project_name のみ。
-  for (const required of ['serial', 'project_name']) {
+  // version は任意化（バグ報告 #271af257）。project_name も任意化（2026-09-09・固定文字が案件名の役割を担うため）。
+  // 必須は serial のみ。
+  for (const required of ['serial']) {
     if (!keys.includes(required)) {
       return { ok: false, error: `必須トークン "${required}" が含まれていません` };
     }
@@ -2183,6 +2184,16 @@ function validateFilenameTemplateTokens(tokens) {
 
 // 区切り文字の許可リスト（UI でも同じ選択肢を出す）
 const ALLOWED_FILENAME_SEPARATORS = new Set(['_', '-', '']);
+
+// 2026-09-09: project_name 任意化。DB 側の CHECK 関数（validate_filename_template_tokens）が旧定義のままだと
+// 案件名なしテンプレの保存が CHECK 違反になるので、migration 未適用を案内する。
+const FILENAME_PROJECT_NAME_OPTIONAL_MIGRATION_HINT =
+  '案件名なしのテンプレを保存するには migrations/2026-09-08b_serial_sheet_used_column.sql（validate_filename_template_tokens の再定義）を本番Supabaseに適用してください。';
+function isFilenameTokensCheckViolation(error, tokens) {
+  if (!error || !/filename_templates_tokens_valid|check constraint/i.test(error.message || '')) return false;
+  const keys = Array.isArray(tokens) ? tokens.map(t => t && t.key) : [];
+  return !keys.includes('project_name');
+}
 
 // ADR 038: テンプレ既定の連番桁数のパース。undefined=未指定 / null・''=既定(3)に戻す / 1〜10
 function parseTemplateSerialDigits(raw) {
@@ -2313,6 +2324,9 @@ router.post('/filename-templates', requireAuth, requireAnyPermission('master.pag
     if (isMissingFilenameTemplatesTable(error)) {
       return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migrations/2026-05-07_filename_templates.sql を本番Supabaseに適用してください。' });
     }
+    if (isFilenameTokensCheckViolation(error, tokens)) {
+      return res.status(503).json({ error: FILENAME_PROJECT_NAME_OPTIONAL_MIGRATION_HINT });
+    }
     return res.status(500).json({ error: error.message });
   }
   invalidateByKey('filename-templates:list');
@@ -2371,6 +2385,9 @@ router.put('/filename-templates/:id', requireAuth, requireAnyPermission('master.
   if (error) {
     if (isMissingFilenameTemplatesTable(error)) {
       return res.status(503).json({ error: 'filename_templates テーブルが未作成です。migration を適用してください。' });
+    }
+    if (isFilenameTokensCheckViolation(error, update.tokens)) {
+      return res.status(503).json({ error: FILENAME_PROJECT_NAME_OPTIONAL_MIGRATION_HINT });
     }
     return res.status(500).json({ error: error.message });
   }
