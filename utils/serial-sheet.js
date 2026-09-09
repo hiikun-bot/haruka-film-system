@@ -32,7 +32,23 @@ function normalizeColumnLetter(s) {
 }
 
 /**
- * シート 1 列分（values.get の 2 次元配列 or 1 次元配列）から連番を集計する。
+ * 列記号 → 0 始まりの index（A=0, B=1, ..., Z=25, AA=26）
+ */
+function columnLetterToIndex(letter) {
+  const v = normalizeColumnLetter(letter);
+  if (!v) return null;
+  let n = 0;
+  for (const ch of v) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+/**
+ * シートの値配列（values.get の 2 次元配列 or 1 次元配列）から連番を集計する。
+ *
+ * opts:
+ *   numberIdx … 番号が入っている列の index（行配列内の位置。既定 0）
+ *   usedIdx   … 「この列が空でない行だけを使用中とみなす」列の index（null = 判定しない）
+ *               例) A 列「No」が 1〜300 まで事前採番されているシートで、B 列「CR名」が埋まっている行だけを数える
  *
  * ルール:
  *   - 各セルの文字列の先頭にある数字列（^\d+）を採用。'010' も '010_ネコ…png' も 10 として扱う
@@ -42,19 +58,25 @@ function normalizeColumnLetter(s) {
  * 戻り値: { max, next, count, digitsHint, lastRaw }
  *   max        … 最大番号（数値セルが無ければ 0）
  *   next       … max + 1
- *   count      … 数字で始まるセルの個数
- *   digitsHint … 数字列の最頻出桁数（表示用ヒント。採番の桁数には使わない）。無ければ null
+ *   count      … 採用したセルの個数（usedIdx 指定時は「使用中」行の中の番号セル数）
+ *   digitsHint … シート側がゼロ埋め（'010' など）されているときの最頻出桁数。素の数字だけなら null
  *   lastRaw    … 最大番号を持つセルの生の文字列（接続確認の表示用）
  */
-function parseSerialCells(values) {
+function parseSerialCells(values, opts = {}) {
   const rows = Array.isArray(values) ? values : [];
+  const numberIdx = Number.isInteger(opts.numberIdx) && opts.numberIdx >= 0 ? opts.numberIdx : 0;
+  const usedIdx = Number.isInteger(opts.usedIdx) && opts.usedIdx >= 0 ? opts.usedIdx : null;
   let max = 0;
   let lastRaw = null;
   let count = 0;
   const widthFreq = new Map();
   for (const row of rows) {
-    const cell = Array.isArray(row) ? row[0] : row;
+    const cell = Array.isArray(row) ? row[numberIdx] : row;
     if (cell == null) continue;
+    if (usedIdx != null) {
+      const used = Array.isArray(row) ? row[usedIdx] : null;
+      if (used == null || String(used).trim() === '') continue;
+    }
     const str = String(cell).trim();
     const m = str.match(/^(\d+)/);
     if (!m) continue;
@@ -62,7 +84,10 @@ function parseSerialCells(values) {
     const n = Number(digitsStr);
     if (!Number.isFinite(n)) continue;
     count++;
-    widthFreq.set(digitsStr.length, (widthFreq.get(digitsStr.length) || 0) + 1);
+    // ゼロ埋めされている（'010' → 10 の桁数 2 < 3）ときだけ桁数ヒントの材料にする
+    if (digitsStr.length > String(n).length) {
+      widthFreq.set(digitsStr.length, (widthFreq.get(digitsStr.length) || 0) + 1);
+    }
     if (n > max) { max = n; lastRaw = str; }
   }
   let digitsHint = null;
@@ -77,5 +102,6 @@ module.exports = {
   DEFAULT_SERIAL_DIGITS,
   resolveSerialDigits,
   normalizeColumnLetter,
+  columnLetterToIndex,
   parseSerialCells,
 };

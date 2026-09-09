@@ -6745,7 +6745,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                     <button type="button" class="btn" onclick="openLink('p-serial-sheet-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
                   </div>
                 </div>
-                <div style="display:grid;grid-template-columns:1fr 110px auto;gap:10px;align-items:end">
+                <div style="display:grid;grid-template-columns:1fr 90px 120px auto;gap:10px;align-items:end">
                   <div class="form-group" style="margin-bottom:0">
                     <label class="form-label" style="font-size:11px">タブ名 <span style="font-weight:400;color:var(--text-muted)">（空欄＝1枚目）</span></label>
                     <input class="form-input" id="p-serial-sheet-tab" list="p-serial-sheet-tab-list" placeholder="例: 静止画">
@@ -6755,12 +6755,17 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                     <label class="form-label" style="font-size:11px">番号の列</label>
                     <input class="form-input" id="p-serial-sheet-column" value="A" placeholder="A" maxlength="3" style="font-family:monospace;text-transform:uppercase">
                   </div>
+                  <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label" style="font-size:11px" title="No が先まで振ってあるシートで、この列（例: CR名）が埋まっている行だけを使用中とみなします">使用中判定の列 <span style="font-weight:400;color:var(--text-muted)">（任意）</span></label>
+                    <input class="form-input" id="p-serial-sheet-used-column" value="" placeholder="例: B" maxlength="3" style="font-family:monospace;text-transform:uppercase">
+                  </div>
                   <button type="button" class="btn" id="p-serial-sheet-probe-btn" onclick="probeProjectSerialSheet()" style="white-space:nowrap;padding:8px 12px">🔍 接続確認</button>
                 </div>
                 <div id="p-serial-sheet-result" style="display:none;margin-top:8px;font-size:11.5px;line-height:1.6;padding:8px 10px;border-radius:6px"></div>
                 <div style="font-size:11px;color:#5b8a73;margin-top:8px;line-height:1.6">
                   シートを <b id="p-serial-sheet-sa-email" style="font-family:monospace;user-select:all">サービスアカウント</b> に「閲覧者」で共有してください。
                   一括登録・個別登録のたびにこの列を読み、「先頭の数字」の最大値 +1 を連番にします（例: 最終 010 → 次は 011）。
+                  No が先まで振ってあるシートは「使用中判定の列」に CR名 などの列（例: B）を指定すると、その列が埋まっている行だけを数えます。
                   シートを読めないときは登録を止めてエラーを出します（黙ってズレた番号を振りません）。
                 </div>
               </div>
@@ -24045,6 +24050,7 @@ function _resetProjectSerialSheetFields(p) {
   const url = document.getElementById('p-serial-sheet-url'); if (url) url.value = p?.serial_sheet_url || '';
   const tab = document.getElementById('p-serial-sheet-tab'); if (tab) tab.value = p?.serial_sheet_tab || '';
   const col = document.getElementById('p-serial-sheet-column'); if (col) col.value = p?.serial_sheet_column || 'A';
+  const ucol = document.getElementById('p-serial-sheet-used-column'); if (ucol) ucol.value = p?.serial_sheet_used_column || '';
   const res = document.getElementById('p-serial-sheet-result'); if (res) { res.style.display = 'none'; res.innerHTML = ''; }
   const dl = document.getElementById('p-serial-sheet-tab-list'); if (dl) dl.innerHTML = '';
   _setProjectSerialSource(p?.serial_source || 'counter');
@@ -24055,6 +24061,7 @@ async function probeProjectSerialSheet() {
   const url = document.getElementById('p-serial-sheet-url')?.value.trim();
   const tab = document.getElementById('p-serial-sheet-tab')?.value.trim();
   const column = (document.getElementById('p-serial-sheet-column')?.value.trim() || 'A').toUpperCase();
+  const used_column = (document.getElementById('p-serial-sheet-used-column')?.value.trim() || '').toUpperCase() || null;
   const out = document.getElementById('p-serial-sheet-result');
   const btn = document.getElementById('p-serial-sheet-probe-btn');
   if (!url) { showToast('スプレッドシート URL を入力してください', 'warn'); return; }
@@ -24062,7 +24069,7 @@ async function probeProjectSerialSheet() {
   try {
     const res = await apiFetch(`${API}/projects/serial-sheet-probe`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, tab, column }),
+      body: JSON.stringify({ url, tab, column, used_column }),
     });
     const j = await res.json().catch(() => ({}));
     if (j?.sa_email) {
@@ -24081,7 +24088,7 @@ async function probeProjectSerialSheet() {
     }
     const digits = _projFilenameCurrentSerialDigits();
     out.style.background = '#E8F5EE'; out.style.color = '#0F7A56';
-    out.innerHTML = `✅ タブ「${esc(j.tab)}」の ${esc(j.column)} 列: 番号セル ${j.count} 個、最終 <b>${esc(j.lastRaw || '—')}</b> → 次の連番は <b style="font-family:monospace">${String(j.next).padStart(digits, '0')}</b>`
+    out.innerHTML = `✅ タブ「${esc(j.tab)}」の ${esc(j.column)} 列${j.used_column ? `（${esc(j.used_column)} 列が埋まっている行のみ）` : ''}: 使用中 ${j.count} 行、最終 <b>${esc(j.lastRaw || '—')}</b> → 次の連番は <b style="font-family:monospace">${String(j.next).padStart(digits, '0')}</b>`
       + ((j.digitsHint && j.digitsHint !== digits) ? `<br>⚠️ シート側は ${j.digitsHint} 桁が多いようです（現在の設定は ${digits} 桁）。揃えるなら上の「連番桁数」を変更してください。` : '');
   } catch (e) {
     if (out) { out.style.display = ''; out.style.background = '#FDECEC'; out.style.color = '#A32D2D'; out.textContent = '❌ ' + (e?.message || e); }
@@ -24169,6 +24176,7 @@ async function submitProject() {
   const serial_sheet_url = document.getElementById('p-serial-sheet-url')?.value.trim() || null;
   const serial_sheet_tab = document.getElementById('p-serial-sheet-tab')?.value.trim() || null;
   const serial_sheet_column = (document.getElementById('p-serial-sheet-column')?.value.trim() || 'A').toUpperCase();
+  const serial_sheet_used_column = (document.getElementById('p-serial-sheet-used-column')?.value.trim() || '').toUpperCase() || null;
   if (serial_source === 'sheet' && !serial_sheet_url) {
     showToast('連番をスプレッドシート連動にするにはシート URL が必要です', 'warn');
     return;
@@ -24200,7 +24208,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, serial_source, serial_sheet_url, serial_sheet_tab, serial_sheet_column, wcheck_required, billing_timing })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, serial_source, serial_sheet_url, serial_sheet_tab, serial_sheet_column, serial_sheet_used_column, wcheck_required, billing_timing })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -37307,7 +37315,7 @@ async function deleteCategory(id) {
 //       - プレビュー: ダミー値で生成例
 //       - 保存 / キャンセル
 //
-// 必須トークン: serial / project_name。serial は先頭固定。version は任意（バグ報告 #271af257）。
+// 必須トークン: serial のみ（先頭固定）。project_name / version は任意（#271af257・2026-09-09 固定文字が案件名の役割を担うため）。
 // custom トークンは追加時に key/label/default を入力。
 //
 // Stage 2 で案件モーダルから選択 + override 入力 + bulk/preview の関数置き換え。
@@ -37326,7 +37334,7 @@ const _fnTplState = {
 // label はユーザー編集可だが、ここでは初期表示用のラベル
 const FN_SYSTEM_TOKENS = [
   { key: 'serial',       label: '連番',         required: true,  pinFirst: true,  sample: '007' },
-  { key: 'project_name', label: '案件名',       required: true,                   sample: 'あるる' },
+  { key: 'project_name', label: '案件名',       sample: 'あるる' },
   { key: 'version',      label: 'バージョン',                                     sample: 'v1' },
   { key: 'date_yymmdd',  label: '制作日',       sample: '260507' },
   { key: 'client_code',  label: 'クライアント', sample: 'CLT001' },
@@ -37344,7 +37352,7 @@ function _fnSystemTokenDef(key) {
 // 編集中テンプレが「未保存変更あり」かを雑に判定（ID単位の比較は行わない・seed 対比は省略）
 function _fnTplDraftFromTemplate(tpl) {
   if (!tpl) {
-    // 新規: 必須トークン（serial / project_name）＋ version を初期投入。
+    // 新規: 必須トークン（serial）＋ project_name / version を初期投入（後者2つは任意なのでパレットへ戻せる）。
     // version は任意なので不要ならパレットへ戻せる（バグ報告 #271af257）。
     return {
       id: null,
@@ -37882,7 +37890,7 @@ function removeFnBuilderToken(idx) {
   if (!d) return;
   const t = d.tokens[idx];
   if (!t) return;
-  // 必須トークン（serial / project_name）は削除不可。version は任意なので削除可（#271af257）
+  // 必須トークン（serial）は削除不可。project_name / version は任意なので削除可
   if (t.kind === 'system') {
     const sys = _fnSystemTokenDef(t.key);
     if (sys && sys.required) {
@@ -37934,7 +37942,7 @@ function onFnCustomKindChange() {
 }
 
 // マスター引用ピッカーの選択肢を組み立て
-//   - required: true（serial / project_name）は除外
+//   - required: true（serial）は除外。project_name は任意なので外すとここに出て再追加できる
 //   - 既にビルダーに追加済みの system トークンは除外
 //   - version は任意なので、ビルダーから外すとここに出て再追加できる（#271af257）
 function _fnPopulateMasterRefPicker() {
@@ -38085,9 +38093,9 @@ async function saveFilenameTemplate() {
     return;
   }
   // サーバー側でも検証されるが、UI でも事前チェック
-  // version は任意化済み（バグ報告 #271af257）。必須は serial / project_name のみ。
+  // project_name / version は任意。必須は serial のみ。
   const keys = (d.tokens || []).map(t => t.key);
-  for (const k of ['serial', 'project_name']) {
+  for (const k of ['serial']) {
     if (!keys.includes(k)) {
       showToast(`必須トークン "${k}" が含まれていません`, 'warn');
       return;
