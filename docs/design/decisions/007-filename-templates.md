@@ -126,6 +126,11 @@ projects.filename_token_overrides jsonb
 > 解決順は「案件 `projects.serial_digits` → テンプレ → 3」。`custom` トークンは UI 上「固定文字」と呼ぶ。
 > 連番の採番元を案件ごとに「カウンタ / スプレッドシート連動」から選べる。詳細は [038](038-serial-sheet-link.md)。
 
+
+> **追補（2026-09-09）**: `project_name` も**任意**に変更。固定文字トークン（例: ネコ・イヌスエール）が
+> 案件名の役割を担うテンプレでは案件名が不要なため。必須は `serial`（先頭固定）のみ。
+> migration: `migrations/2026-09-08b_serial_sheet_used_column.sql`（追補2）。
+
 ### UI
 
 #### 設定タブ「📁 ファイル名テンプレート」（新セクション）

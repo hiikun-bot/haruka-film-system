@@ -24,3 +24,24 @@ END$$;
 
 COMMENT ON COLUMN projects.serial_sheet_used_column IS
   'ADR 038 追補: 連番連動シートで「この列が空でない行だけを使用中」とみなす列（例: B=CR名）。NULL = 番号列のみで判定。';
+
+-- ----------------------------------------------------------------------------
+-- 追補2（2026-09-09）: ファイル名テンプレートの project_name（案件名）トークンを任意化
+--   固定文字トークン（例: ネコ・イヌスエール）で案件名の役割を担うテンプレでは案件名が不要なため。
+--   必須は serial（先頭固定）のみ。
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION validate_filename_template_tokens(t jsonb) RETURNS boolean AS $$
+BEGIN
+  IF jsonb_typeof(t) <> 'array' OR jsonb_array_length(t) = 0 THEN
+    RETURN false;
+  END IF;
+  -- 必須は serial のみ・先頭固定（project_name / version は任意）
+  IF (t->0->>'key') <> 'serial' THEN
+    RETURN false;
+  END IF;
+  RETURN true;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+COMMENT ON COLUMN filename_templates.tokens IS
+  '順序付き配列。要素は { kind: "system"|"custom"|"flag", key, label, default? }。serial 必須・先頭固定（CHECK 制約）。project_name / version は任意（2026-09-09）。';
