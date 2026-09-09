@@ -28445,7 +28445,29 @@ function loadWorkHoursPage() {
   }
   // VIEW AS でロールを切り替えた場合に他人選択状態が残らないようにする
   if (!whIsManagerRole()) _whUserId = null;
+  // 案件プルダウンはページを開くたびに取り直す（ユーザー報告 2026-09-09: 案件画面で
+  // 時給設定した直後に作業時間報告へ来ても、タブ内キャッシュが古くて案件が出なかった）
+  _whHourlyProjects = null;
   whFetch();
+}
+
+// 案件プルダウンの裏側リフレッシュ（行追加時）。同じタブを開いたまま別タブで案件を作った／
+// 時給設定した場合でも、リロードなしで新しい案件を選べるようにする。
+// 差分があれば画面上の全行の選択肢を差し替える（各行の現在の選択は維持）。
+async function whRefreshProjects() {
+  try {
+    const r = await apiFetch(`${API}/work-hours/projects`);
+    if (!r.ok) return;
+    const next = await r.json();
+    const key = (list) => (list || []).map(p => `${p.project_id}:${p.has_hourly ? 1 : 0}:${p.hourly_rate || ''}`).join('|');
+    if (key(next) === key(_whHourlyProjects)) return;
+    _whHourlyProjects = next;
+    document.querySelectorAll('#wh-tbody select[data-f="project_id"]').forEach(s => {
+      const cur = s.value;
+      s.innerHTML = whProjectOptionsHtml(cur, s.options[s.selectedIndex]?.textContent || '');
+      s.value = cur;
+    });
+  } catch (_) { /* 裏側の更新なので失敗は無視（次回ページ表示時に取り直す） */ }
 }
 
 // VIEW AS 切替時の再初期化（setPreviewRole から呼ばれる / ADR 015）。
@@ -29047,6 +29069,8 @@ function whAddRow() {
   const tr = tbody.lastElementChild;
   // 案件を最初に選ぶ入力順（ユーザー指示）。秘書は既定「ひーくん（管理者サポート）」のまま進めばよい
   tr.querySelector('[data-f="project_id"]')?.focus();
+  // 新しく作られた案件・時給設定を拾う（裏側で取得し、差分があれば選択肢を更新）
+  whRefreshProjects();
 }
 
 function whCollectRow(tr) {
