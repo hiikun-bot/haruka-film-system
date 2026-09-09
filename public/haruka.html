@@ -37972,7 +37972,19 @@ function onFnCustomKindChange() {
   if (flagFields)   flagFields.style.display   = kind === 'flag'       ? '' : 'none';
   // master_ref はラベルの手動指定不要（system token は固定定義）
   if (labelGroup) labelGroup.style.display = kind === 'master_ref' ? 'none' : '';
+  // 固定文字を選んだら表示ラベルは「固定文字」を初期値にする（毎回打たなくて済む・入れ間違い防止）。
+  // 自分で書き換えた値は尊重する（空 or 直前の自動値のときだけ上書き）。
+  const labelInput = document.getElementById('fn-custom-label');
+  if (labelInput) {
+    const cur = labelInput.value.trim();
+    if (kind === 'custom') {
+      if (!cur || cur === _FN_FIXED_LABEL_DEFAULT) labelInput.value = _FN_FIXED_LABEL_DEFAULT;
+    } else if (cur === _FN_FIXED_LABEL_DEFAULT) {
+      labelInput.value = '';
+    }
+  }
 }
+const _FN_FIXED_LABEL_DEFAULT = '固定文字';
 
 // マスター引用ピッカーの選択肢を組み立て
 //   - required: true（serial）は除外。project_name は任意なので外すとここに出て再追加できる
@@ -38064,7 +38076,7 @@ function confirmAddFnCustomToken() {
       showToast('固定文字を入力してください', 'warn');
       return;
     }
-    if (!label) label = fixed;
+    if (!label) label = _FN_FIXED_LABEL_DEFAULT;
   }
   if (!label) {
     showToast('表示ラベルは必須です', 'warn');
