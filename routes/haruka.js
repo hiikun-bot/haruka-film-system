@@ -2492,6 +2492,8 @@ function buildFilenameTokenValues({ project, appealType, body, seqStr7, dateStr,
     size:         sizeCode || '',
     format:       fmtCode || '',
     media:        mediaCode || '',
+    // 2026-09-09: タイトル/内容（クリエイティブごとに生成時に入力。DB 列は持たずファイル名に埋め込む）
+    title:        (body && body.title != null) ? String(body.title).trim() : '',
     // flag 値（v1: talent_flag のみ）
     __flag__talent_flag: !!(body && body.talent_flag === true),
   };
@@ -18403,6 +18405,8 @@ router.post('/projects/:id/generate-filename', async (req, res) => {
     sheet_max: serialSheet ? serialSheet.max : null,
     serial_digits: serialDigits,
     format_hint: formatHint,
+    // テンプレに「タイトル/内容」トークンがあるか（登録モーダルで入力欄を出す判定）
+    has_title_token: !!(tplResolved?.template?.tokens || []).some(t => t && t.kind === 'system' && t.key === 'title'),
   });
 });
 

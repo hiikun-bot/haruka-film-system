@@ -4875,6 +4875,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                 <input class="form-input" id="c-file-name" placeholder="案件のテンプレートから自動生成されます（任意で手動入力もOK）" style="font-family:monospace;font-size:12px;min-width:0;flex:1">
                 <button class="btn" onclick="generateFileName()" style="white-space:nowrap;padding:8px 10px;font-size:12px;flex-shrink:0">↺再生成</button>
               </div>
+              <!-- タイトル/内容トークン（テンプレに含まれる案件でのみ表示。生成時にファイル名へ埋め込む） -->
+              <div id="c-filename-title-wrap" style="display:none;margin-top:6px">
+                <input class="form-input" id="c-filename-title" placeholder="タイトル/内容（例: 大好きなペットとの毎日に）" style="font-size:12px" oninput="onCreativeFilenameTitleInput()">
+                <div style="font-size:11px;color:var(--text-muted);margin-top:3px">このテンプレには「タイトル/内容」があります。入力するとファイル名の該当部分に入ります（空欄なら詰めます）。</div>
+              </div>
               <div id="filename-status" style="margin-top:4px;font-size:12px"></div>
               <div id="filename-format-hint" style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.6">形式: YYMMDD_商材_媒体_FMT_訴求軸_サイズ_連番　／　手動編集可<br>※ 自動生成に従わず手動でタイトルを付けてもOK。ここで設定した名前がクリエイティブ一覧の表示名になり、Googleドライブにアップされるファイル名としてもそのまま使われます。</div>
             </div>
@@ -4981,6 +4986,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
             <label class="form-label">連番起点 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・空欄で案件設定）</span></label>
             <input class="form-input" id="bulk-serial-start" type="number" min="1" placeholder="（案件の「次のファイル名連番」を使用）" style="font-family:monospace">
             <div style="font-size:11.5px;color:var(--text-muted);margin-top:4px;line-height:1.5">シート側で先行採番されている時はここで起点を合わせるとズレが直ります。</div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">タイトル/内容 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・全件共通）</span></label>
+            <input class="form-input" id="bulk-title" placeholder="例: 新規">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:4px;line-height:1.5">テンプレに「タイトル/内容」トークンがある案件でファイル名に入ります。1本ずつ変えたい場合は登録後にファイル名を編集してください。</div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div class="form-group" style="margin-bottom:0">
@@ -23877,6 +23887,7 @@ function _projFilenameSampleValues() {
     size: '1:1',
     format: '30s',
     media: 'TVCM',
+    title: '大好きなペットとの毎日に',
     __flag__talent_flag: flagOn,
   };
 }
@@ -33358,6 +33369,10 @@ async function onProjectChange(projectId) {
     if (_titleEl) _titleEl.value = '';
     const _statusEl = document.getElementById('filename-status');
     if (_statusEl) _statusEl.textContent = '';
+    const _ftEl = document.getElementById('c-filename-title');
+    if (_ftEl) _ftEl.value = '';
+    const _ftWrap = document.getElementById('c-filename-title-wrap');
+    if (_ftWrap) _ftWrap.style.display = 'none';
     _autoFileNameDone = false;
     _lastAutoFileName = ''; // 案件が変わったら手動編集ガードもリセット（新案件のテンプレで再生成可能に）
   }
@@ -33470,11 +33485,13 @@ async function generateFileName() {
   const production_date = new Date().toISOString().slice(0, 10);
   // ADR 007: flag トークン（talent_flag）連動。チェック有無を generate-filename にも渡す
   const talent_flag = document.getElementById('c-talent-flag')?.checked || false;
+  // タイトル/内容トークン（テンプレに含まれる案件のみ意味を持つ）
+  const title = (document.getElementById('c-filename-title')?.value || '').trim();
 
   const res = await apiFetch(`${API}/projects/${projectId}/generate-filename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appeal_type_id: appealTypeId || null, product_code, media_code, creative_fmt, creative_size, production_date, talent_flag })
+    body: JSON.stringify({ appeal_type_id: appealTypeId || null, product_code, media_code, creative_fmt, creative_size, production_date, talent_flag, title })
   });
   if (res.ok) {
     const data = await res.json();
@@ -33487,6 +33504,9 @@ async function generateFileName() {
     }
     // 凡例（形式の説明文）を、この案件に当たっているテンプレ名・トークン並びで更新する
     updateFilenameFormatHint(data);
+    // テンプレに「タイトル/内容」があるときだけ入力欄を出す
+    const titleWrap = document.getElementById('c-filename-title-wrap');
+    if (titleWrap) titleWrap.style.display = data.has_title_token ? '' : 'none';
   } else {
     const e = await res.json();
     if (statusEl) {
@@ -33498,6 +33518,13 @@ async function generateFileName() {
 
 // ファイル名の凡例（#filename-format-hint）を、案件に設定されたテンプレマスターの
 // 名称＋トークン並びで動的に更新する。固定文だと案件ごとのテンプレ設定と食い違うため。
+// タイトル/内容の入力に追従してファイル名を再生成（入力中は 400ms デバウンス）
+let _filenameTitleTimer = null;
+function onCreativeFilenameTitleInput() {
+  clearTimeout(_filenameTitleTimer);
+  _filenameTitleTimer = setTimeout(() => { generateFileName(); }, 400);
+}
+
 function updateFilenameFormatHint(data) {
   const hint = document.getElementById('filename-format-hint');
   if (!hint) return;
@@ -33844,6 +33871,10 @@ async function openCreateCreative(opts = {}) {
   try {
   const presetProjectId = (opts && typeof opts === 'object') ? (opts.presetProjectId || '') : '';
   _autoFileNameDone = false; // 自動生成フラグをリセット
+  // タイトル/内容欄（ファイル名トークン）は開くたびに空にする（同じ案件で再度開いても前回値を引きずらない）
+  { const _ft = document.getElementById('c-filename-title'); if (_ft) _ft.value = ''; }
+  { const _ftw = document.getElementById('c-filename-title-wrap'); if (_ftw) _ftw.style.display = 'none'; }
+  { const _bt = document.getElementById('bulk-title'); if (_bt) _bt.value = ''; }
   // モーダルを開き直したときに、前回開いたときの案件IDが残っていると
   // onProjectChange の差分検知が「同じ案件」と誤判定してファイル名クリアが効かない。
   // モーダルを開くたびに「前回案件IDなし」状態に戻して必ずクリアが走るようにする。
@@ -34148,7 +34179,8 @@ async function bulkPreviewCreative() {
     draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
     product_id, product_code, media_code, creative_fmt, creative_size,
     assignee_id, team_id, talent_flag,
-    serial_start };
+    serial_start,
+    title: (document.getElementById('bulk-title')?.value || '').trim() || undefined };
 
   const btn = document.querySelector('#tab-bulk .btn-primary');
   const origText = btn.textContent;
@@ -37343,6 +37375,7 @@ const FN_SYSTEM_TOKENS = [
   { key: 'size',         label: 'サイズ',       sample: '1:1' },
   { key: 'format',       label: 'FMT',          sample: '30s' },
   { key: 'media',        label: '媒体',         sample: 'TVCM' },
+  { key: 'title',        label: 'タイトル/内容', sample: '大好きなペットとの毎日に' },
 ];
 
 function _fnSystemTokenDef(key) {

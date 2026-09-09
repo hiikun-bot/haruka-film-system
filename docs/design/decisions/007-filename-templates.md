@@ -92,6 +92,7 @@ projects.filename_token_overrides jsonb
 | `size`         | サイズ            | `creatives.creative_size`             |
 | `format`       | フォーマット      | `creatives.creative_fmt`              |
 | `media`        | 媒体              | `creatives.media_code`                |
+| `title`        | タイトル/内容     | 生成時の入力値（登録モーダル／一括登録の「タイトル/内容」欄）。DB 列は持たずファイル名に埋め込む（2026-09-09） |
 
 ### カスタムトークン（`kind: "custom"`）
 
