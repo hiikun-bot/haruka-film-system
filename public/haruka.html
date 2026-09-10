@@ -50027,11 +50027,36 @@ async function cdHandleUploadSuccess(data, version, statusEl) {
 const CD_RESUMABLE_THRESHOLD_BYTES = 20 * 1024 * 1024; // これ以上は Resumable 直送
 const CD_RESUMABLE_CHUNK_BYTES = 16 * 1024 * 1024;     // 16MB（256KB の倍数 = Drive 要件）。進捗の粒度兼リトライ単位
 
+// ===== Drive Resumable 直送: 共通コア（クリエイティブ詳細・素材広場で共用） =====
+// 背景（2026-09-10 報告）: 動画が毎回 52% 付近で「ネットワークエラー（Drive 直送）」で止まる。
+// 旧実装は「同じチャンクを最大 4 回・待ち合計 3.5 秒で再送」するだけで、
+//   - 回線断が数秒以上続くと即失敗し、送信が止まったまま固まっても検知しない
+//   - Drive 側の受領済み位置を問い合わせず、常にチャンク先頭から再送していた
+//   - 「回線が切れた」のか「ブラウザが元ファイルを読めなくなった（書き出し途中・クラウド同期
+//     フォルダ・外付け/ネットワークドライブ・ドラッグ元の仮想ファイル等 → Chrome は同じく
+//     onerror になる）」のかを区別できず、利用者に案内もできなかった
+// ため、以下を共通コア driveUploadToSession() に実装する:
+//   1) 失敗時は Drive に受領済み位置を問い合わせ（Content-Range: bytes */total）、そこから再開
+//   2) 連続失敗 8 回まで・指数バックオフ最大 30 秒・オフライン中は復帰を待ってから再送
+//   3) 失敗のたびにチャンクを半分に（最小 1MB）— 大きい PUT を途中で切る回線/機器向け
+//   4) 60 秒間バイトが進まなければ停止とみなして中断 → 再送
+//   5) 失敗チャンクをローカルで読めるか診断し、読めなければ「ファイル側の問題」として即終了＋案内
+//   6) 最終失敗時は診断情報付きで自動エラー通知（/api/haruka/auto-error → Slack）
+const DRIVE_CHUNK_ALIGN_BYTES = 256 * 1024;            // Drive 要件: 最終以外のチャンクは 256KB の倍数
+const DRIVE_MIN_CHUNK_BYTES = 1024 * 1024;             // チャンク縮小の下限 1MB
+const DRIVE_UPLOAD_MAX_CONSECUTIVE_FAILURES = 8;       // 連続失敗の上限（チャンク成功で 0 に戻る）
+const DRIVE_UPLOAD_STALL_MS = 60 * 1000;               // この時間バイトが進まなければ停止扱い
+const DRIVE_UPLOAD_OFFLINE_WAIT_MS = 90 * 1000;        // navigator.onLine=false のとき復帰を待つ上限
+
+function driveAlignChunkBytes(bytes) {
+  return Math.max(DRIVE_MIN_CHUNK_BYTES, Math.floor(bytes / DRIVE_CHUNK_ALIGN_BYTES) * DRIVE_CHUNK_ALIGN_BYTES);
+}
+
 // Drive セッションURLへ 1 チャンクを XHR で PUT（XHR は upload 進捗が取れる）。
-// クリエイティブ詳細・素材広場の両方から使う共通関数。
 // 解決値: { status, fileId, rangeEnd }。308=部分受領 / 200・201=完了。
 // 失敗時の reject:
 //   - 4xx → err.__noRetry = true（リトライしても無駄）
+//   - 通信断（onerror）/ 停止検知 → err.__transport = true（リトライ対象）
 //   - abort → err.__cancelled = true
 // opts.onXhrReady(xhr): send 前に XHR インスタンスを受け取る（キャンセル用に保持する目的）
 // 認証について: Drive resumable セッションURLは URL 自体が認可情報を含むため認証ヘッダ不要。
@@ -50040,12 +50065,21 @@ function drivePutChunkXhr(sessionUrl, chunk, contentRange, { onProgress, onXhrRe
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     if (onXhrReady) onXhrReady(xhr);
+    // 停止検知: 進捗イベントが DRIVE_UPLOAD_STALL_MS 来なければ abort して __transport で reject
+    let stalled = false;
+    let watchdog = null;
+    const armWatchdog = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => { stalled = true; try { xhr.abort(); } catch (_) {} }, DRIVE_UPLOAD_STALL_MS);
+    };
     xhr.open('PUT', sessionUrl, true);
     xhr.setRequestHeader('Content-Range', contentRange);
     xhr.upload.onprogress = (e) => {
+      armWatchdog();
       if (e.lengthComputable && onProgress) onProgress(e.loaded);
     };
     xhr.onload = () => {
+      clearTimeout(watchdog);
       const status = xhr.status;
       if (status === 308 || status === 200 || status === 201) {
         let fileId = null;
@@ -50064,18 +50098,248 @@ function drivePutChunkXhr(sessionUrl, chunk, contentRange, { onProgress, onXhrRe
         reject(new Error(`Drive 応答 ${status}: ${(xhr.responseText || '').slice(0, 200)}`));
       }
     };
-    xhr.onerror = () => reject(new Error('ネットワークエラー（Drive 直送）'));
-    xhr.onabort = () => reject(Object.assign(new Error('キャンセルされました'), { __cancelled: true }));
+    xhr.onerror = () => {
+      clearTimeout(watchdog);
+      reject(Object.assign(new Error('ネットワークエラー（Drive 直送）'), { __transport: true }));
+    };
+    xhr.onabort = () => {
+      clearTimeout(watchdog);
+      if (stalled) {
+        reject(Object.assign(new Error(`送信が ${Math.round(DRIVE_UPLOAD_STALL_MS / 1000)} 秒間進まなかったため中断しました`), { __transport: true, __stalled: true }));
+      } else {
+        reject(Object.assign(new Error('キャンセルされました'), { __cancelled: true }));
+      }
+    };
+    armWatchdog();
     xhr.send(chunk);
   });
 }
 
-// クリエイティブ詳細用ラッパー: cancelUpload() から abort できるよう _cdActiveUploadXhr を管理
-function cdPutChunkToDrive(sessionUrl, chunk, contentRange, onProgress) {
-  return drivePutChunkXhr(sessionUrl, chunk, contentRange, {
-    onProgress,
-    onXhrReady: (xhr) => { _cdActiveUploadXhr = xhr; },
-  }).finally(() => { _cdActiveUploadXhr = null; });
+// Drive に「ここまで受け取った」を問い合わせる（本文なし PUT + Content-Range: bytes */total）。
+// 解決値: { status, fileId, rangeEnd }。308 で未受領なら rangeEnd = -1、完了済みなら fileId。
+// セッション失効（404/410）は __noRetry で reject（最初からやり直すしかない）。
+function driveQueryUploadStatus(sessionUrl, total) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', sessionUrl, true);
+    xhr.setRequestHeader('Content-Range', `bytes */${total}`);
+    xhr.timeout = 30 * 1000;
+    xhr.onload = () => {
+      const status = xhr.status;
+      if (status === 308) {
+        const r = xhr.getResponseHeader('Range');
+        const m = r && /bytes=0-(\d+)/.exec(r);
+        resolve({ status, fileId: null, rangeEnd: m ? Number(m[1]) : -1 });
+      } else if (status === 200 || status === 201) {
+        let fileId = null;
+        try { fileId = JSON.parse(xhr.responseText)?.id || null; } catch (_) {}
+        resolve({ status, fileId, rangeEnd: total - 1 });
+      } else if (status === 404 || status === 410) {
+        reject(Object.assign(new Error('Drive のアップロードセッションが失効しました。最初からやり直してください'), { __noRetry: true }));
+      } else {
+        reject(new Error(`Drive 受領位置の確認に失敗 (${status})`));
+      }
+    };
+    xhr.onerror = () => reject(Object.assign(new Error('ネットワークエラー（Drive 受領位置の確認）'), { __transport: true }));
+    xhr.ontimeout = () => reject(Object.assign(new Error('Drive 受領位置の確認がタイムアウトしました'), { __transport: true }));
+    xhr.send(null);
+  });
+}
+
+// 失敗したチャンクをブラウザ側で読めるか診断する。
+// Chrome は選択後にファイルが変更/移動された・同期フォルダの実体が無い・ドラッグ元の仮想ファイル
+// などで読めなくなると、送信は onerror（＝ネットワークエラーと同じ見え方）になる。
+// ここで Blob を実際に読み、NotReadableError 等なら「ファイル側の問題」と判定する。
+async function driveCheckBlobReadable(blob) {
+  try {
+    if (typeof blob.arrayBuffer === 'function') {
+      await blob.arrayBuffer();
+    } else {
+      await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res();
+        fr.onerror = () => rej(fr.error || new Error('read error'));
+        fr.readAsArrayBuffer(blob);
+      });
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: (e && (e.name || e.message)) || 'unknown' };
+  }
+}
+
+// オフライン（navigator.onLine=false）なら online イベントまで待つ（上限 DRIVE_UPLOAD_OFFLINE_WAIT_MS）
+function driveWaitOnline(onStatus) {
+  if (typeof navigator === 'undefined' || navigator.onLine !== false) return Promise.resolve();
+  onStatus && onStatus('オフラインになりました。回線の復帰を待っています…');
+  return new Promise((resolve) => {
+    let done = false;
+    let timer = null;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      window.removeEventListener('online', finish);
+      resolve();
+    };
+    timer = setTimeout(finish, DRIVE_UPLOAD_OFFLINE_WAIT_MS);
+    window.addEventListener('online', finish);
+  });
+}
+
+// Resumable セッションへファイル全体をチャンク送信する共通ループ。
+//   file            : File / Blob
+//   sessionUrl      : Drive resumable セッションURL
+//   chunkBytes      : 初期チャンクサイズ（256KB 倍数に丸める。失敗のたびに半減、最小 1MB）
+//   onProgress(done): 送信済みバイト（チャンク内進捗を含む）
+//   onStatus(text)  : リトライ・オフライン待ちなどの状態文言
+//   shouldAbort()   : true を返すと __cancelled で中断（送信中なら XHR を abort）
+//   onXhrReady(xhr) : 送信中 XHR（キャンセル用）。チャンク完了/失敗時に null で呼ぶ
+//   onChunkCommitted(uploaded): Drive が受領を確定した位置（任意。進捗DB更新など）
+// 戻り値: { driveFileId, diag }。失敗時の例外には __uploadDiag（診断情報）を付ける。
+async function driveUploadToSession({ file, sessionUrl, chunkBytes, onProgress, onStatus, shouldAbort, onXhrReady, onChunkCommitted }) {
+  const total = file.size;
+  let uploaded = 0;
+  let driveFileId = null;
+  let curChunk = driveAlignChunkBytes(Number(chunkBytes) || CD_RESUMABLE_CHUNK_BYTES);
+  let failures = 0;
+  let activeXhr = null;
+  const diag = { total, offset: 0, failures: 0, chunkBytes: curChunk, errors: [] };
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const withDiag = (err) => Object.assign(err, { __uploadDiag: diag });
+  const abortIfRequested = () => {
+    if (shouldAbort && shouldAbort()) throw Object.assign(new Error('キャンセルされました'), { __cancelled: true });
+  };
+
+  // 失敗処理: 読取診断 → 上限判定 → オフライン待ち → バックオフ → Drive 受領位置に同期 → チャンク縮小
+  const handleFailure = async (err, base, chunk) => {
+    failures++;
+    diag.failures = failures;
+    diag.offset = base;
+    diag.chunkBytes = curChunk;
+    diag.errors.push(String((err && err.message) || err).slice(0, 120));
+    if (err.__noRetry) throw withDiag(err);
+    if (chunk) {
+      const readable = await driveCheckBlobReadable(chunk);
+      if (!readable.ok) {
+        diag.unreadable = readable.reason;
+        throw withDiag(Object.assign(new Error(`ファイルを読み取れませんでした（${readable.reason}）`), { __noRetry: true, __fileUnreadable: true }));
+      }
+    }
+    const pct = total ? Math.round((base / total) * 100) : 0;
+    if (failures >= DRIVE_UPLOAD_MAX_CONSECUTIVE_FAILURES) {
+      throw withDiag(Object.assign(new Error(`${(err && err.message) || err}／${pct}% 付近で ${failures} 回連続失敗`), { __transport: !!err.__transport }));
+    }
+    await driveWaitOnline(onStatus);
+    abortIfRequested();
+    const backoffMs = Math.min(30000, 1000 * Math.pow(2, failures - 1));
+    onStatus && onStatus(`リトライ中… (${failures}/${DRIVE_UPLOAD_MAX_CONSECUTIVE_FAILURES}) ${pct}% — ${(err && err.message) || err}`);
+    await sleep(backoffMs);
+    abortIfRequested();
+    try {
+      const st = await driveQueryUploadStatus(sessionUrl, total);
+      if (st.fileId) { driveFileId = st.fileId; uploaded = total; return; }
+      if (st.rangeEnd != null && st.rangeEnd + 1 > uploaded) uploaded = st.rangeEnd + 1;
+    } catch (qe) {
+      if (qe.__noRetry) throw withDiag(qe);
+      // 問い合わせ自体の失敗は無視（確定済みの位置から再送する）
+    }
+    curChunk = driveAlignChunkBytes(curChunk / 2);
+  };
+
+  while (uploaded < total) {
+    abortIfRequested();
+    const base = uploaded;
+    const end = Math.min(base + curChunk, total);
+    const chunk = file.slice(base, end);
+    let putRes;
+    try {
+      putRes = await drivePutChunkXhr(sessionUrl, chunk, `bytes ${base}-${end - 1}/${total}`, {
+        onXhrReady: (xhr) => { activeXhr = xhr; onXhrReady && onXhrReady(xhr); },
+        onProgress: (loadedInChunk) => {
+          // キャンセル要求が来ていたら送信中でも即 abort（onabort → __cancelled で reject）
+          if (shouldAbort && shouldAbort()) {
+            if (activeXhr) { try { activeXhr.abort(); } catch (_) {} }
+            return;
+          }
+          onProgress && onProgress(Math.min(total, base + loadedInChunk));
+        },
+      });
+    } catch (e) {
+      activeXhr = null;
+      onXhrReady && onXhrReady(null);
+      if (e && e.__cancelled) throw e;
+      await handleFailure(e, base, chunk);
+      continue;
+    }
+    activeXhr = null;
+    onXhrReady && onXhrReady(null);
+
+    if (putRes.status === 308) {
+      // 308: Range ヘッダ由来の受領済み末尾から続ける（無ければ end を仮置き）
+      const next = (putRes.rangeEnd != null) ? putRes.rangeEnd + 1 : end;
+      if (next <= base) {
+        // 受領位置が進まない（Range 巻き戻り等）→ 無限ループにせず失敗として扱う
+        await handleFailure(new Error(`Drive の受領位置が進みません（${next}/${total}）`), base, null);
+        continue;
+      }
+      uploaded = next;
+    } else {
+      driveFileId = putRes.fileId;
+      uploaded = total;
+    }
+    failures = 0;
+    onProgress && onProgress(uploaded);
+    onChunkCommitted && onChunkCommitted(uploaded);
+  }
+  if (!driveFileId) throw withDiag(new Error('Drive から fileId が返りませんでした'));
+  return { driveFileId, diag };
+}
+
+// 利用者向けの失敗メッセージ（原因の切り分けに応じた対処案つき）
+function driveUploadFailureMessage(e) {
+  const base = String((e && e.message) || e || '');
+  if (e && e.__fileUnreadable) {
+    return `${base}。アップロード中にファイルが変更・移動されたか、書き出し途中のファイル／クラウド同期フォルダ（Google Drive・OneDrive・Dropbox）や外付け・ネットワークドライブ上のファイルの可能性があります。PC 内蔵ディスクにコピーしてから「クリックして選択」で再度お試しください`;
+  }
+  if (e && e.__transport) {
+    return `${base}。回線が不安定な可能性があります。Wi-Fi なら有線接続に切り替える／VPN やセキュリティソフトの Web 保護を一時的に無効にする／ブラウザを再起動する、などをお試しください`;
+  }
+  return base;
+}
+
+// 最終失敗を診断情報付きで自動エラー通知（Slack）。キャンセルは通知しない。
+function driveReportUploadFailure(where, file, e) {
+  try {
+    if (!e || e.__cancelled || /キャンセル/.test(String(e.message || ''))) return;
+    if (!window.__postAutoError) return;
+    const d = (e && e.__uploadDiag) || {};
+    const conn = (typeof navigator !== 'undefined' && navigator.connection) || {};
+    const detail = {
+      where,
+      fileName: file && file.name,
+      fileSize: file && file.size,
+      fileType: file && file.type,
+      lastModified: file && file.lastModified,
+      offset: d.offset ?? null,
+      total: d.total ?? null,
+      pct: d.total ? Math.round(((d.offset || 0) / d.total) * 100) : null,
+      failures: d.failures ?? null,
+      chunkBytes: d.chunkBytes ?? null,
+      unreadable: d.unreadable || null,
+      errors: d.errors || [],
+      transport: !!e.__transport,
+      online: (typeof navigator !== 'undefined') ? navigator.onLine : null,
+      effectiveType: conn.effectiveType || null,
+      downlink: conn.downlink ?? null,
+      rtt: conn.rtt ?? null,
+    };
+    window.__postAutoError({
+      kind: 'drive-direct-upload',
+      message: `[Drive直送失敗] ${e.message || e} ${JSON.stringify(detail)}`,
+      apiPath: 'drive-resumable-upload',
+    });
+  } catch (_) { /* swallow */ }
 }
 
 // Resumable 直送の本体。init → チャンク PUT ループ → complete。
@@ -50109,51 +50373,26 @@ async function cdUploadResumable({ file, width, height, version, generated, prog
   const srvName = initData.generated_name || generated;
   if (!sessionUrl) throw new Error('セッションURLが取得できませんでした');
 
-  // 2) チャンク PUT ループ
+  // 2) チャンク PUT ループ（共通コア: 受領位置再開・チャンク縮小・停止検知・読取診断つき）
   const total = file.size;
-  let uploaded = 0;
-  let driveFileId = null;
-  progressLabel.textContent = 'Driveへ直接アップロード中...';
-  while (uploaded < total) {
-    if (_cdResumableCancelled) {
-      throw Object.assign(new Error('キャンセルされました'), { __cancelled: true });
-    }
-    const end = Math.min(uploaded + CD_RESUMABLE_CHUNK_BYTES, total);
-    const chunk = file.slice(uploaded, end);
-    const contentRange = `bytes ${uploaded}-${end - 1}/${total}`;
-
-    let attempt = 0;
-    const MAX_ATTEMPTS = 4;
-    let putRes = null;
-    while (true) {
-      attempt++;
-      try {
-        const base = uploaded;
-        putRes = await cdPutChunkToDrive(sessionUrl, chunk, contentRange, (loadedInChunk) => {
-          const done = Math.min(total, base + loadedInChunk);
-          const pct = Math.min(100, Math.round((done / total) * 100));
-          progressBar.style.width = pct + '%';
-          progressPct.textContent = pct + '%';
-        });
-        break;
-      } catch (e) {
-        if (e.__cancelled || e.__noRetry || attempt >= MAX_ATTEMPTS) throw e;
-        progressLabel.textContent = `リトライ中… (${attempt}/${MAX_ATTEMPTS})`;
-        await new Promise(r => setTimeout(r, Math.min(8000, 500 * Math.pow(2, attempt - 1))));
-      }
-    }
-
-    if (putRes.status === 308) {
-      uploaded = (putRes.rangeEnd != null) ? putRes.rangeEnd + 1 : end;
-    } else {
-      driveFileId = putRes.fileId;
-      uploaded = total;
-    }
-    const pct = Math.min(100, Math.round((uploaded / total) * 100));
+  const UPLOADING_LABEL = 'Driveへ直接アップロード中...';
+  progressLabel.textContent = UPLOADING_LABEL;
+  const paintPct = (done) => {
+    const pct = Math.min(100, Math.round((done / total) * 100));
     progressBar.style.width = pct + '%';
     progressPct.textContent = pct + '%';
-  }
-  if (!driveFileId) throw new Error('Drive から fileId が返りませんでした');
+  };
+  const { driveFileId } = await driveUploadToSession({
+    file,
+    sessionUrl,
+    chunkBytes: CD_RESUMABLE_CHUNK_BYTES,
+    onProgress: paintPct,
+    onStatus: (msg) => { progressLabel.textContent = msg; },
+    shouldAbort: () => _cdResumableCancelled,
+    onXhrReady: (xhr) => { _cdActiveUploadXhr = xhr; },
+    // リトライ表示のまま残らないよう、チャンクが確定したら通常表示に戻す
+    onChunkCommitted: () => { progressLabel.textContent = UPLOADING_LABEL; },
+  });
 
   // 3) 完了登録
   progressLabel.textContent = '登録中...';
@@ -50245,7 +50484,8 @@ async function executeUpload() {
         progressWrap.style.display = 'none';
         uploadBtn.disabled = false;
         progressBar.style.cssText = 'height:100%;background:var(--primary);border-radius:6px;width:0%';
-        statusEl.textContent = `アップロード失敗 ${e?.message || e}（大容量直送）`;
+        driveReportUploadFailure('creative-detail', file, e);
+        statusEl.textContent = `アップロード失敗 ${driveUploadFailureMessage(e)}（大容量直送）`;
         statusEl.style.color = '#E24B4A';
       }
     }
@@ -56209,10 +56449,12 @@ async function msProcessUploadRow(f, row, opts) {
       controls.style.display = 'none';
       warn.style.display = 'none';
     } catch (e) {
+      driveReportUploadFailure('material-square', f, e);
+      const failMsg = driveUploadFailureMessage(e) || 'アップロード失敗';
       bar.style.background = '#dc2626';
-      stat.textContent = '❌ ' + (e.message || 'アップロード失敗');
+      stat.textContent = '❌ ' + failMsg;
       stat.style.color = '#dc2626';
-      ufError('❌ ' + (e.message || 'アップロード失敗'));
+      ufError('❌ ' + failMsg);
       controls.style.display = 'none';
       warn.style.display = 'none';
     }
@@ -56306,13 +56548,11 @@ async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {
     const driveSessionUrl = initBody.driveSessionUrl;
     const chunkSize = Number(initBody.recommended_chunk_size_bytes) || MS_CHUNK_SIZE_BYTES;
 
-    // 2) チャンク PUT
+    // 2) チャンク PUT（共通コア driveUploadToSession: 受領位置再開・チャンク縮小・停止検知・読取診断つき）
     const totalSize = file.size;
-    let uploaded = 0;
     let driveFileId = null;
     let lastReportedSec = Date.now();
     let lastReportedBytes = 0;
-    let activeXhr = null; // 送信中チャンクの XHR（キャンセル時に mid-chunk abort する）
 
     // チャンク内バイト進捗 → バー% とスループット/残り時間表示（0.5秒スロットル）
     const reportProgress = (doneBytes) => {
@@ -56334,67 +56574,29 @@ async function msUploadResumable(file, { onStatus, onProgress, shouldAbort } = {
       }
     };
 
-    while (uploaded < totalSize) {
-      if (shouldAbort && shouldAbort()) {
+    try {
+      ({ driveFileId } = await driveUploadToSession({
+        file,
+        sessionUrl: driveSessionUrl,
+        chunkBytes: chunkSize,
+        onProgress: reportProgress,
+        onStatus: (msg) => onStatus && onStatus(msg),
+        shouldAbort,
+        // 任意: サーバー側の進捗 DB を更新（ベストエフォート）
+        onChunkCommitted: (uploaded) => {
+          votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/progress', {
+            method: 'POST',
+            body: JSON.stringify({ uploadedBytes: uploaded }),
+          }).catch(() => {});
+        },
+      }));
+    } catch (e) {
+      if (e && e.__cancelled) {
+        // キャンセル（チャンク間 / mid-chunk）→ サーバー側セッションも掃除して中断
         try { await votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/cancel', { method: 'POST' }); } catch (_) {}
         throw new Error('キャンセルされました');
       }
-      const end = Math.min(uploaded + chunkSize, totalSize);
-      const chunk = file.slice(uploaded, end);
-      const contentRange = `bytes ${uploaded}-${end - 1}/${totalSize}`;
-
-      let attempt = 0;
-      const MAX_ATTEMPTS = 5;
-      let putRes = null;
-      const chunkBase = uploaded; // このチャンクの先頭オフセット（進捗計算用に固定）
-      while (true) {
-        attempt++;
-        try {
-          // XHR で PUT（fetch と違い upload.onprogress でチャンク内進捗が取れる）。
-          // ヘッダは fetch 版と同一: Content-Range のみ明示、Content-Length/Type は自動付与。
-          putRes = await drivePutChunkXhr(driveSessionUrl, chunk, contentRange, {
-            onXhrReady: (xhr) => { activeXhr = xhr; },
-            onProgress: (loadedInChunk) => {
-              // キャンセル要求が来ていたら送信中でも即 abort（onabort → __cancelled で reject）
-              if (shouldAbort && shouldAbort()) {
-                if (activeXhr) { try { activeXhr.abort(); } catch (_) {} }
-                return;
-              }
-              reportProgress(Math.min(totalSize, chunkBase + loadedInChunk));
-            },
-          }).finally(() => { activeXhr = null; });
-          break; // 308 / 200 / 201 のみ resolve される
-        } catch (e) {
-          if (e.__cancelled) {
-            // mid-chunk キャンセル → サーバー側セッションも掃除して中断
-            try { await votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/cancel', { method: 'POST' }); } catch (_) {}
-            throw new Error('キャンセルされました');
-          }
-          // 4xx（__noRetry）はリトライしても無駄なので即時 throw
-          if (e.__noRetry || attempt >= MAX_ATTEMPTS) throw e;
-          const backoffMs = Math.min(30000, 500 * Math.pow(2, attempt - 1));
-          onStatus && onStatus(`リトライ中… (${attempt}/${MAX_ATTEMPTS}) — ${e.message || e}`);
-          await new Promise(r => setTimeout(r, backoffMs));
-        }
-      }
-
-      // 進捗計算（308 の場合は Range ヘッダ由来の受領済み末尾。無ければ end を仮置き）
-      if (putRes.status === 308) {
-        uploaded = (putRes.rangeEnd != null) ? putRes.rangeEnd + 1 : end;
-      } else {
-        // 200/201: 完了。レスポンス JSON 由来の fileId
-        driveFileId = putRes.fileId;
-        uploaded = totalSize;
-      }
-
-      // チャンク確定時点の進捗 UI（Range 巻き戻りがあればここで正確な位置に補正される）
-      reportProgress(uploaded);
-
-      // 任意: サーバー側の進捗 DB を更新（ベストエフォート）
-      votFetch('/upload-session/' + encodeURIComponent(sessionId) + '/progress', {
-        method: 'POST',
-        body: JSON.stringify({ uploadedBytes: uploaded }),
-      }).catch(() => {});
+      throw e;
     }
 
     if (!driveFileId) {

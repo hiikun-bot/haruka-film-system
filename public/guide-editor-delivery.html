@@ -214,7 +214,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="step-card">
     <div class="step-card-title">⚡ 20MB を超えると自動で「直送モード」</div>
-    <p>20MB 以上のファイルは、サーバーを経由せず <b>ブラウザから Google Drive へ直接</b>（16MB ずつの分割送信で）アップロードされます。回線が不安定でもチャンク単位でリトライされるので、<b>数十 GB の 4K 動画でも OK</b>。切り替えは全自動で、操作は何も変わりません。</p>
+    <p>20MB 以上のファイルは、サーバーを経由せず <b>ブラウザから Google Drive へ直接</b>（16MB ずつの分割送信で）アップロードされます。回線が不安定でも Drive に届いた位置から自動で再開されるので、<b>数十 GB の 4K 動画でも OK</b>。切り替えは全自動で、操作は何も変わりません。</p>
     <div class="mock">
       <span class="mock-fieldlabel">アップロード中…（進捗バーと ✕ キャンセルボタンが出ます）</span>
       <div class="mock-bar"><div class="mock-bar-fill"></div></div>
@@ -374,7 +374,7 @@ Drive 上の名前: 007_あるる_ドラム_上地無_v2.mp4</div>
   <div class="trouble-list">
     <div class="trouble-item">
       <span class="trouble-icon">⏸</span>
-      <div><div class="trouble-q">アップロードが途中で止まる・失敗する</div><div class="trouble-a">✕ キャンセルしてもう一度ドロップ。20MB 以上は自動リトライ付きの直送になるので、たいてい 2 回目で通ります</div></div>
+      <div><div class="trouble-q">アップロードが途中で止まる・失敗する</div><div class="trouble-a">✕ キャンセルしてもう一度ドロップ。20MB 以上の直送は回線が切れても最大 8 回まで自動で再開します（送れた分は無駄になりません）。「ファイルを読み取れませんでした」と出たら回線ではなくファイル側の問題です。書き出しが完了しているか確認し、クラウド同期フォルダ（Google Drive・OneDrive・Dropbox）や外付けドライブにある場合は PC 内蔵ディスクにコピーしてから「クリックして選択」で上げ直してください</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🏷</span>
