@@ -458,6 +458,50 @@ async function insertCreativeFileRow({
   return { fileRecord, error, willFaststart };
 }
 
+// ==================== creative_files 登録の直列化（同一クリエイティブ） ====================
+// 背景（2026-09-04 フロントエラー通知 fetch-5xx 500 /upload-session/complete）:
+//   同じクリエイティブ・同じ version に対して Resumable 直送の complete が 3 本ほぼ同時に届き
+//   （フロントの executeUpload() 多重起動）、2 本が同時に「掃除 → INSERT」を走らせた結果、
+//   後着が UNIQUE(creative_id, version) 違反で 500 になった。cleanup → insert の間に
+//   別リクエストが割り込めるのが根本原因なので、クリエイティブ単位の in-process ロックで
+//   「掃除 → INSERT」を直列化する（Railway は単一インスタンスなのでプロセス内ロックで足りる）。
+//   直列化後は後着が先着の行を掃除して置き換える「後勝ち」になり、既存の取消→再アップ時の
+//   挙動（同 version の未提出行を掃除して差し替える）と一致する。
+//   万一ロックをすり抜けて UNIQUE 違反になった場合も、もう一度だけ掃除 → INSERT を試みる。
+const _creativeFileRegisterLocks = new Map(); // creativeId → 直前の処理の Promise（チェーン末尾）
+
+async function withCreativeFileRegisterLock(creativeId, fn) {
+  const key = String(creativeId);
+  const prev = _creativeFileRegisterLocks.get(key) || Promise.resolve();
+  const run = prev.catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  _creativeFileRegisterLocks.set(key, tail);
+  try {
+    return await run;
+  } finally {
+    if (_creativeFileRegisterLocks.get(key) === tail) _creativeFileRegisterLocks.delete(key);
+  }
+}
+
+// UNIQUE 違反判定は既存の isUniqueViolation（ファイル後方で const 定義。実行時にしか
+// 参照しないので TDZ に掛からない）を流用する。
+
+// 「同 version の未提出行を掃除 → INSERT」をロック内で行う（multer / Resumable 直送 共通）。
+// 戻り値は insertCreativeFileRow と同じ { fileRecord, error, willFaststart }。
+async function registerCreativeFileRow(params) {
+  const { creativeId, version } = params;
+  return withCreativeFileRegisterLock(creativeId, async () => {
+    await cleanupCreativeFilesForVersion(creativeId, version);
+    let result = await insertCreativeFileRow(params);
+    if (isUniqueViolation(result.error)) {
+      console.warn(`[creatives/upload] unique violation on insert (creative_id=${creativeId}, version=${version}) → cleanup して再試行`);
+      await cleanupCreativeFilesForVersion(creativeId, version);
+      result = await insertCreativeFileRow(params);
+    }
+    return result;
+  });
+}
+
 // ==================== クライアント ====================
 
 // クライアント一覧取得
@@ -12659,7 +12703,7 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   // creative_files テーブルに記録（共通ヘルパ insertCreativeFileRow。
   // mime_type / file_size をキャッシュしておくと /files/:fileId/stream で
   // 毎回 drive.files.get(fields:mimeType,size) を叩く必要がなくなる）
-  const { fileRecord, error: fErr, willFaststart } = await insertCreativeFileRow({
+  const { fileRecord, error: fErr, willFaststart } = await registerCreativeFileRow({
     creativeId,
     original_name: file.originalname,
     generated_name,
@@ -12848,10 +12892,10 @@ router.post('/creatives/:id/upload-session/complete', async (req, res) => {
       driveLog('warn', `resumable complete: Drive 後処理失敗（DB登録は継続）: ${e?.message || e}`);
     }
 
-    // 同 version の未提出行を掃除してから INSERT（multer 経路と同一）
-    await cleanupCreativeFilesForVersion(creativeId, version);
-
-    const { fileRecord, error: fErr, willFaststart } = await insertCreativeFileRow({
+    // 同 version の未提出行を掃除してから INSERT（multer 経路と同一）。
+    // 同一クリエイティブの complete が同時に複数届いても UNIQUE 違反で 500 にならないよう、
+    // 掃除 → INSERT はクリエイティブ単位のロック内で直列化する（registerCreativeFileRow）。
+    const { fileRecord, error: fErr, willFaststart } = await registerCreativeFileRow({
       creativeId,
       original_name,
       generated_name,
