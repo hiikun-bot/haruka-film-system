@@ -48336,6 +48336,12 @@ async function handleUploadFileDrop(event) {
 }
 
 async function processUploadFile(file, autoExecute = false) {
+  // アップロード中の再ドロップ／再選択は受け付けない（uploadFileData を差し替えると
+  // 進行中のアップロード完了時に新しいファイルが黙って捨てられる／二重アップロードになる）。
+  if (_cdUploadInFlight) {
+    showToast('アップロード中です。完了してから次のファイルを選んでください', 'warn');
+    return;
+  }
   const preview = document.getElementById('cd-upload-preview');
   const confirmBar = document.getElementById('cd-upload-confirm');
   const manualBtn = document.getElementById('cd-manual-upload-btn');
@@ -50421,7 +50427,24 @@ async function cdUploadResumable({ file, width, height, version, generated, prog
   return compData;
 }
 
+// 進行中の executeUpload() の Promise。多重起動ガードに使う。
+// 背景（2026-09-04 フロントエラー通知 fetch-5xx 500 /upload-session/complete）:
+//   ドロップ → 即アップロード中に「提出／次へ進める」ボタンや再ドロップから executeUpload() が
+//   もう一度呼ばれ、同じファイルの Resumable 直送が 3 本並走 → complete が同時に届いて
+//   サーバー側で UNIQUE(creative_id, version) 違反 500 になった（Drive には孤児ファイルも残る）。
+//   アップロード中は新しく開始せず、進行中の Promise を返して完了を待たせる。
+let _cdUploadInFlight = null;
+
 async function executeUpload() {
+  if (_cdUploadInFlight) {
+    showToast('アップロード中です。完了までお待ちください', 'warn');
+    return _cdUploadInFlight;
+  }
+  _cdUploadInFlight = _executeUploadInner().finally(() => { _cdUploadInFlight = null; });
+  return _cdUploadInFlight;
+}
+
+async function _executeUploadInner() {
   if (!uploadFileData || !currentCreativeDetail) return;
   const { file, width, height } = uploadFileData;
   const version   = parseInt(document.getElementById('cd-version-num').value) || 1;
