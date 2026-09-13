@@ -1,6 +1,6 @@
 ---
 adr: 039
-status: Proposed
+status: Accepted
 date: 2026-09-13
 tags: [material-square, gemini, ai-analysis, preview, storyboard, cost, guards, filename]
 related_tables: [video_file_organization_tests]
@@ -11,7 +11,7 @@ related_adrs: [018, 019, 020]
 
 # 039. 素材広場 AI 解析 v2 — 「1 コマしか見ていない」解析の是正と、件数上限から予算上限への切替
 
-- **Status**: Proposed（ユーザー判断待ち。費用に関わるため実装前に承諾を取る）
+- **Status**: Accepted（2026-09-14 ユーザー承諾「D1,2,3すべてすすめて」）
 - **Date**: 2026-09-13
 - **Proposed by**: Claude（調査依頼: 2026-09-13 髙橋聖）
 
@@ -181,3 +181,25 @@ Gemini API 公開単価（2026-09 時点、Vertex も同水準）:
 - 止まっている 4 本は、行を選択 → 「🤖 AI解析する」を 1 本ずつ押せば今日中に解析できる（admin の手動経路は日次上限を無視）。
 - または Railway の `DAILY_ANALYSIS_LIMIT` を引き上げる（現状単価 ≈ ¥2/回なので 30 でも上限 ¥60/日）。
 - 何もしなければ 翌 09:00 JST（UTC 日付境界）に枠が戻り、「未解析をまとめて解析」で 5 本まで流れる。
+
+## 実装メモ（2026-09-14）
+
+- 費用影響なし分: #1158（待機理由表示・JST 化）/ #1159 + #1160（撮影日 `media_created_at`）
+- D1/D2/D3: migration #1161（`analysis_proxy_*` / `analysis_*_tokens` / `analysis_cost_jpy` / `analysis_source`）+ コード PR
+- **D1 の実体**: プレビュー WebP は UI 用に据え置き。同じ ffmpeg セッションで
+  `<原本名>.analysis.mp4`（60コマ 1fps 480p H.264 無音）と `<原本名>.analysis.aac`（AAC mono 48kbps、最長 30 分）を作り、
+  プレビューと同じ Drive フォルダに置く。Gemini には 2 パーツ（video/mp4 + audio/aac）で渡し、
+  プロンプト `v4-proxy-video-2026-09-14` でコマ↔原本時刻の対応と「発話内容を名前付けの根拠にする」指示を与える。
+  合計 20MB を超える場合は音声を落として映像のみで解析（skip にしない）。
+- **旧行の扱い**: `analysis_proxy_video_drive_file_id` が無い行は従来どおり WebP（実質 1 コマ）で解析される。
+  v2 品質にしたい行は「プレビュー再生成」（POST /preview/:fileId）でプロキシが作られる（原本の再ダウンロードが要る）。
+- **D2 の実体**: `usageMetadata` の promptTokensDetails（AUDIO は音声単価）と candidates+thoughts（出力単価）から
+  `guards.estimateCostJpy()` で概算円を出し行に保存。`MONTHLY_ANALYSIS_BUDGET_JPY` が設定されていれば
+  月初（JST）からの合計で自動解析・一括解析を待機させる（手動「AI解析する」は止めない）。未設定なら従来の日次件数。
+  単価表は `guards.MODEL_PRICING_USD_PER_M`（未知モデルは Pro 単価で安全側）。`USD_JPY_RATE` 既定 150。
+- **D3 の実体**: `GEMINI_MODEL`（自動）と `GEMINI_MODEL_MANUAL`（手動「AI解析する」）を分離。
+  Vertex で実在確認済みのモデル ID: `gemini-3-flash-preview`（自動の既定に採用）/ `gemini-3.1-pro-preview`（手動）。
+  `gemini-3.1-flash-*` / `gemini-3-flash`（preview なし）は 2026-09-14 時点で 404。
+- 手動 `POST /analyze` は自動解析と同じ `triggerAutoAnalyzeIfEligible` に集約（重複 200 行を削除）。
+- 本番 env（Railway）: `MONTHLY_ANALYSIS_BUDGET_JPY=3000` / `GEMINI_MODEL=gemini-3-flash-preview` / `GEMINI_MODEL_MANUAL=gemini-3.1-pro-preview`。
+  `DAILY_ANALYSIS_LIMIT=5` は予算モード中は参照されない（残しておけば予算を外した時に従来動作へ戻る）。
