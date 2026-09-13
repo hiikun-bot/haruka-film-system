@@ -27,7 +27,7 @@ const geminiLib = require('../lib/video-organization/gemini');
 const heicLib = require('../lib/video-organization/heic');
 const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('../lib/faststart');
 const googleOAuth = require('../lib/google-oauth');
-const { triggerAutoAnalyzeIfEligible } = require('../lib/video-organization/auto-analyze');
+const { triggerAutoAnalyzeIfEligible, isAutoAnalyzeEnabled } = require('../lib/video-organization/auto-analyze');
 const autoApplyLib = require('../lib/video-organization/auto-apply');
 const { resolveProjectFolder, sanitizeFolderName } = require('../lib/video-organization/project-folder');
 
@@ -106,6 +106,36 @@ function getUploadFolderId() {
 // （アップロードと AI 解析適用の両方で同じ「クライアント > 案件」階層を ensure するため）。
 
 // ==================== 一覧 ====================
+// 「AI解析待ち」(waiting_approval) の行が、なぜ待っているかを一覧 API で返す（ADR 039 D2）。
+//   背景: 自動解析は日次上限・プレビュー未完成・自動解析OFF などで静かにスキップされ、
+//   理由がサーバーログにしか残らないため、ユーザーには「壊れている」ように見えていた
+//   （2026-09-13 IMG_7245〜7248 が日次 5 件到達で待機）。
+//   ここでは DB に列を足さず、一覧取得時点の状況から毎回導出する（枠が戻れば表示も自然に消える）。
+function buildWaitReason(item, { daily, autoEnabled, stopAll, maxRetry }) {
+  if (!item || item.status !== 'waiting_approval') return null;
+  if (stopAll) {
+    return { code: 'stop_all', short: '⏸ 緊急停止中', message: 'STOP_ALL=true のため AI 解析を停止しています' };
+  }
+  const isVideo = !item.media_kind || item.media_kind === 'video';
+  if (isVideo && (item.preview_status === 'pending' || item.preview_status === 'processing')) {
+    return { code: 'preview_processing', short: '🎞 プレビュー生成後に自動解析', message: 'プレビュー生成中です。完了すると自動で AI 解析が始まります' };
+  }
+  if ((item.attempt_count || 0) >= maxRetry) {
+    return { code: 'max_retry', short: `⚠ 再試行上限（${maxRetry}回）`, message: `再試行上限（${maxRetry}回）に達しています。原因を確認のうえ管理者に連絡してください` };
+  }
+  if (daily?.exceeded) {
+    return {
+      code: 'daily_limit',
+      short: `⏸ 本日の解析枠（${daily.limit}件）を使い切り`,
+      message: `本日の AI 解析枠（${daily.count}/${daily.limit}件）を使い切ったため待機中です。翌日 0:00（日本時間）に枠が戻り、「未解析をまとめて解析」で再開できます。急ぐ場合は行を選んで「🤖 AI解析する」を押すと個別に実行できます（管理者）`,
+    };
+  }
+  if (!autoEnabled) {
+    return { code: 'auto_disabled', short: '⏸ 自動解析OFF', message: '自動解析が無効のため待機中です。「未解析をまとめて解析」または「🤖 AI解析する」で実行してください' };
+  }
+  return { code: 'pending', short: '⏳ 自動解析の開始待ち', message: '自動解析の開始待ちです。しばらく経っても始まらない場合は「未解析をまとめて解析」で実行できます' };
+}
+
 router.get('/list', async (req, res) => {
   try {
     const { q, status, mediaKind, tag, clientId, projectId, folderId } = req.query || {};
@@ -159,7 +189,15 @@ router.get('/list', async (req, res) => {
 
     const { data, error } = await query;
     if (error) throw error;
-    res.json({ items: data || [], daily: await guards.checkDailyLimit() });
+    const daily = await guards.checkDailyLimit();
+    const ctx = {
+      daily,
+      autoEnabled: isAutoAnalyzeEnabled(),
+      stopAll: guards.isStopAll(),
+      maxRetry: guards.getMaxRetryCount(),
+    };
+    const items = (data || []).map(it => ({ ...it, wait_reason: buildWaitReason(it, ctx) }));
+    res.json({ items, daily });
   } catch (e) {
     console.error('[video-org] list error:', e);
     res.status(500).json({ error: e.message });
