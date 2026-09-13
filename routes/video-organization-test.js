@@ -111,7 +111,7 @@ function getUploadFolderId() {
 //   理由がサーバーログにしか残らないため、ユーザーには「壊れている」ように見えていた
 //   （2026-09-13 IMG_7245〜7248 が日次 5 件到達で待機）。
 //   ここでは DB に列を足さず、一覧取得時点の状況から毎回導出する（枠が戻れば表示も自然に消える）。
-function buildWaitReason(item, { daily, autoEnabled, stopAll, maxRetry }) {
+function buildWaitReason(item, { daily, budget, quotaMode, autoEnabled, stopAll, maxRetry }) {
   if (!item || item.status !== 'waiting_approval') return null;
   if (stopAll) {
     return { code: 'stop_all', short: '⏸ 緊急停止中', message: 'STOP_ALL=true のため AI 解析を停止しています' };
@@ -123,7 +123,14 @@ function buildWaitReason(item, { daily, autoEnabled, stopAll, maxRetry }) {
   if ((item.attempt_count || 0) >= maxRetry) {
     return { code: 'max_retry', short: `⚠ 再試行上限（${maxRetry}回）`, message: `再試行上限（${maxRetry}回）に達しています。原因を確認のうえ管理者に連絡してください` };
   }
-  if (daily?.exceeded) {
+  if (quotaMode === 'budget' && budget?.exceeded) {
+    return {
+      code: 'budget_exceeded',
+      short: `⏸ 今月のAI解析予算（¥${Math.round(budget.budget_jpy).toLocaleString()}）を使い切り`,
+      message: `今月の AI 解析予算（¥${Math.round(budget.spent_jpy).toLocaleString()} / ¥${Math.round(budget.budget_jpy).toLocaleString()}）を使い切ったため待機中です。来月 1 日（日本時間）に枠が戻ります。急ぐ場合は行を選んで「🤖 AI解析する」を押すと個別に実行できます（管理者）。予算は環境変数 MONTHLY_ANALYSIS_BUDGET_JPY で変更できます`,
+    };
+  }
+  if (quotaMode !== 'budget' && daily?.exceeded) {
     return {
       code: 'daily_limit',
       short: `⏸ 本日の解析枠（${daily.limit}件）を使い切り`,
@@ -175,7 +182,7 @@ router.get('/list', async (req, res) => {
       const ids = (projRows || []).map(p => p.id);
       if (ids.length === 0) {
         // 案件を持たないクライアント → 該当素材なし
-        return res.json({ items: [], daily: await guards.checkDailyLimit() });
+        { const quota = await guards.checkAnalysisQuota(); return res.json({ items: [], daily: quota.daily, quota }); }
       }
       query = query.in('project_id', ids);
     }
@@ -189,15 +196,17 @@ router.get('/list', async (req, res) => {
 
     const { data, error } = await query;
     if (error) throw error;
-    const daily = await guards.checkDailyLimit();
+    const quota = await guards.checkAnalysisQuota();
     const ctx = {
-      daily,
+      daily: quota.daily,
+      budget: quota.budget,
+      quotaMode: quota.mode,
       autoEnabled: isAutoAnalyzeEnabled(),
       stopAll: guards.isStopAll(),
       maxRetry: guards.getMaxRetryCount(),
     };
     const items = (data || []).map(it => ({ ...it, wait_reason: buildWaitReason(it, ctx) }));
-    res.json({ items, daily });
+    res.json({ items, daily: quota.daily, quota });
   } catch (e) {
     console.error('[video-org] list error:', e);
     res.status(500).json({ error: e.message });
@@ -602,6 +611,12 @@ router.post('/register', async (req, res) => {
 });
 
 // ==================== AI 解析（要承認）====================
+// ADR 039: 手動「🤖 AI解析する」。実解析は自動解析と同じ triggerAutoAnalyzeIfEligible に集約し、
+//   - 件数／予算ガードは通さない（ignoreQuota: 管理者の明示操作＝自分で制御できる。
+//     本ルーター全体が requireRole('admin') 配下）
+//   - モデルは GEMINI_MODEL_MANUAL（D3: 手動再解析だけ Pro 系）
+//   - approved_by に操作者、振り分けは manual-analyze として操作者の OAuth で実行
+//   の 3 点だけ自動と異なる。旧実装は 200 行の重複コードだった。
 router.post('/analyze', async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
@@ -610,201 +625,47 @@ router.post('/analyze', async (req, res) => {
     if (guards.isStopAll()) {
       return res.status(423).json({ error: 'STOP_ALL=true のため解析を停止しています' });
     }
-
     const { data: item, error: fetchError } = await supabase
       .from('video_file_organization_tests')
-      .select('*').eq('drive_file_id', fileId).maybeSingle();
+      .select('id, status')
+      .eq('drive_file_id', fileId)
+      .maybeSingle();
     if (fetchError) throw fetchError;
     if (!item) return res.status(404).json({ error: '先に register / upload が必要です' });
-
-    // ADR 018: skipped 状態のレコードも、WebP プレビュー経由で救済可能なので再解析を許可。
     if (!['waiting_approval', 'failed', 'skipped'].includes(item.status)) {
       return res.status(409).json({ error: `現在の status (${item.status}) からは解析できません` });
     }
 
-    // ADR 018: 解析ソース選定。preview_status='done' なら WebP（60枚ストーリーボード）を使う。
-    //   - 動画長制限が実質撤廃される（WebP は画像扱い）
-    //   - 20MB 制限にも通常通る（WebP ~3MB）
-    const useWebpPreview = !!(item.preview_status === 'done' && item.preview_drive_file_id);
-    const analyzeFileId = useWebpPreview ? item.preview_drive_file_id : fileId;
-    const sourceMimeType = useWebpPreview
-      ? (item.preview_mime_type || 'image/webp')
-      : item.mime_type;
-    const sourceMediaKind = useWebpPreview ? 'image' : (item.media_kind || 'video');
-
-    // 動画のみ長さガード（画像は対象外、WebP プレビュー使用時もスキップ）
-    const maxDuration = guards.getMaxDurationSeconds();
-    if (!useWebpPreview && item.media_kind === 'video' && item.video_duration_seconds && item.video_duration_seconds > maxDuration) {
-      await supabase.from('video_file_organization_tests')
-        .update({
-          status: 'skipped',
-          error_message: `動画長 ${item.video_duration_seconds}s > MAX_DURATION_SECONDS=${maxDuration}s（プレビューWebP未生成のため原本でも解析不可）`,
-          analysis_status: 'skipped',
-          analysis_progress_percent: null,
-        })
-        .eq('id', item.id);
-      return res.status(422).json({ error: `動画が長すぎます (${item.video_duration_seconds}s > ${maxDuration}s)。プレビュー生成後に再試行してください。` });
-    }
-
-    if ((item.attempt_count || 0) >= guards.getMaxRetryCount()) {
-      return res.status(429).json({ error: `MAX_RETRY_COUNT (${guards.getMaxRetryCount()}) に到達しています` });
-    }
-
-    // DAILY_ANALYSIS_LIMIT は「自動解析（auto-analyze）の暴走課金」を防ぐための安全弁。
-    // この手動 /analyze は本ルーター全体が requireRole('admin') 配下で、管理者が
-    // 1 クリック = 1 解析の明示操作として叩く経路（課金は操作量に比例＝自分で制御可能）。
-    // そのため手動経路では日次上限でブロックしない（管理者＝無制限）。
-    // 自動解析側（lib/video-organization/auto-analyze.js）は引き続き上限を尊重する。
-    // ※ count はログ用に取得のみ（exceeded でも return しない）。
-    const daily = await guards.checkDailyLimit();
-
-    await supabase.from('video_file_organization_tests')
-      .update({
-        status: 'processing',
-        attempt_count: (item.attempt_count || 0) + 1,
-        approved_by: req.user?.id || null,
-        approved_at: new Date().toISOString(),
-        // PR #695: AI 解析フェーズ進捗（手動 trigger でも更新）
-        analysis_status: 'processing',
-        analysis_progress_percent: 0,
-      })
-      .eq('id', item.id);
-
-    logCtx('analyze-start', {
-      at: new Date().toISOString(), by: req.user?.email,
-      fileId, fileName: item.original_filename, size: item.file_size,
-      duration: item.video_duration_seconds, kind: item.media_kind,
-      source: useWebpPreview ? 'preview-webp' : 'original',
-      sourceFileId: analyzeFileId,
-      sourceMimeType, sourceMediaKind,
-      model: guards.getModelName(), dry_run: guards.isDryRun(),
-      stop_all: guards.isStopAll(),
-      daily_count: daily.count, daily_limit: daily.limit,
+    const result = await triggerAutoAnalyzeIfEligible({
+      rowId: item.id,
+      ignoreFeatureFlag: true,
+      ignoreQuota: true,
+      modelName: guards.getManualModelName(),
+      approvedBy: req.user?.id || null,
+      applySource: 'manual-analyze',
+      applyUserId: req.user?.id || null,
     });
 
-    const buffer = await driveLib.downloadFileBuffer(analyzeFileId);
-    const MAX_INLINE_BYTES = 20 * 1024 * 1024;
-    if (buffer.length > MAX_INLINE_BYTES) {
-      const note = useWebpPreview
-        ? `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (preview webp が ${buffer.length} bytes)`
-        : `inline upload 上限 ${MAX_INLINE_BYTES} bytes 超過 (${buffer.length} bytes) — プレビューWebP未生成のため原本でも解析不可`;
-      await supabase.from('video_file_organization_tests')
-        .update({
-          status: 'skipped',
-          error_message: note,
-          analysis_status: 'skipped',
-          analysis_progress_percent: null,
-        })
-        .eq('id', item.id);
-      return res.status(422).json({ error: `ファイルが大きすぎます (${buffer.length} bytes > ${MAX_INLINE_BYTES} bytes)。プレビュー生成後に再試行してください。` });
+    if (result.skipped) {
+      const r = String(result.reason || '');
+      if (r === 'duration-exceeded' || r === 'inline-size-exceeded') {
+        return res.status(422).json({ error: '動画が長すぎる／大きすぎるため解析できません。プレビュー生成後に再試行してください', reason: r });
+      }
+      if (r === 'max-retry-exceeded') {
+        return res.status(429).json({ error: `MAX_RETRY_COUNT (${guards.getMaxRetryCount()}) に到達しています`, reason: r });
+      }
+      if (r.startsWith('bad-status')) return res.status(409).json({ error: r, reason: r });
+      return res.status(422).json({ error: `解析を開始できませんでした (${r})`, reason: r });
     }
-
-    // Gemini 呼び出し直前: 20%
-    try {
-      await supabase.from('video_file_organization_tests')
-        .update({ analysis_progress_percent: 20 })
-        .eq('id', item.id);
-    } catch (_) {}
-
-    let analysis;
-    try {
-      analysis = await geminiLib.analyzeMedia({
-        mediaBuffer: buffer,
-        mimeType: sourceMimeType,
-        mediaKind: sourceMediaKind,
-        originalFilename: item.original_filename,
-        // ADR 018: WebP プレビューを使うときはプロンプトを動画ストーリーボード用に切替
-        sourceVariant: useWebpPreview ? 'video-storyboard-webp' : null,
-        originalMediaKind: item.media_kind || 'video',
-      });
-    } catch (e) {
-      await supabase.from('video_file_organization_tests')
-        .update({
-          status: 'failed',
-          error_message: e.message,
-          processed_at: new Date().toISOString(),
-          analysis_status: 'failed',
-          analysis_progress_percent: null,
-        })
-        .eq('id', item.id);
-      logCtx('analyze-failed', { fileId, error: e.message });
-      return res.status(502).json({ error: `Gemini 呼び出し失敗: ${e.message}` });
+    if (!result.ok) {
+      const r = String(result.reason || '');
+      const msg = r === 'gemini-failed' ? 'Gemini 呼び出しに失敗しました'
+        : r === 'json-parse-failed' ? 'Gemini レスポンスが JSON ではありません'
+        : r === 'download-failed' ? 'Drive からのダウンロードに失敗しました'
+        : `解析に失敗しました (${r})`;
+      return res.status(502).json({ error: msg, reason: r });
     }
-
-    // Gemini 結果取得直後: 70%
-    try {
-      await supabase.from('video_file_organization_tests')
-        .update({ analysis_progress_percent: 70 })
-        .eq('id', item.id);
-    } catch (_) {}
-
-    logCtx('analyze-response', { fileId, model: analysis.model, jsonParsed: !!analysis.parsed });
-
-    if (!analysis.parsed) {
-      await supabase.from('video_file_organization_tests')
-        .update({
-          status: 'failed', model: analysis.model, prompt_version: analysis.promptVersion,
-          raw_response: { raw: analysis.raw },
-          error_message: 'Gemini レスポンスが JSON としてパースできませんでした',
-          processed_at: new Date().toISOString(),
-          analysis_status: 'failed',
-          analysis_progress_percent: null,
-        })
-        .eq('id', item.id);
-      return res.status(502).json({ error: 'Gemini レスポンスが JSON ではありません', raw: analysis.raw });
-    }
-
-    const p = analysis.parsed;
-    // tags: 配列で、各要素を文字列化し # 始まり保証
-    const tagsRaw = Array.isArray(p.tags) ? p.tags : [];
-    const tags = tagsRaw
-      .map(t => String(t || '').trim())
-      .filter(Boolean)
-      .map(t => t.startsWith('#') ? t : '#' + t)
-      .slice(0, 12);
-    // scenes: 配列で {time, description} だけ抽出
-    const scenesRaw = Array.isArray(p.scenes) ? p.scenes : [];
-    const scenes = scenesRaw.slice(0, 8).map(s => ({
-      time: String(s?.time || '').slice(0, 12),
-      description: String(s?.description || '').slice(0, 200),
-    })).filter(s => s.description);
-
-    const { data: updated, error: updateError } = await supabase
-      .from('video_file_organization_tests')
-      .update({
-        status: 'analysis_completed',
-        model: analysis.model,
-        prompt_version: analysis.promptVersion,
-        summary: String(p.summary || ''),
-        main_action: String(p.main_action || ''),
-        video_type: String(p.video_type || ''),
-        recommended_folder: String(p.recommended_folder || ''),
-        recommended_filename: String(p.recommended_filename || ''),
-        mood: String(p.mood || ''),
-        tags,
-        scenes,
-        confidence: Number.isFinite(Number(p.confidence)) ? Math.min(95, Math.round(Number(p.confidence))) : null,
-        needs_human_review: !!p.needs_human_review,
-        reason: String(p.reason || ''),
-        raw_response: analysis.parsed,
-        processed_at: new Date().toISOString(),
-        // PR #695: フェーズ2 完了を最終 UPDATE と同時にアトミックに書く
-        analysis_status: 'done',
-        analysis_progress_percent: null,
-      })
-      .eq('id', item.id).select().single();
-    if (updateError) throw updateError;
-
-    // 解析完了 → 自動振り分け（fire-and-forget）。needs_human_review なら applyForRow 内部で
-    // awaiting_review に倒す。手動 /analyze からも自動振り分けを連動させる。
-    autoApplyLib.applyForRow({
-      rowId: updated.id,
-      userId: req.user?.id,
-      actorUserId: req.user?.id,
-      source: 'manual-analyze',
-    }).catch(err => console.error('[video-org] auto-apply after manual analyze failed:', err?.message || err));
-
-    res.json({ item: updated });
+    res.json({ item: result.item, cost: result.cost || null });
   } catch (e) {
     console.error('[video-org] analyze error:', e);
     res.status(500).json({ error: e.message });
@@ -832,9 +693,14 @@ router.post('/analyze-pending-batch', requireRole('admin'), async (req, res) => 
       return res.status(423).json({ error: 'STOP_ALL=true のため解析を停止しています' });
     }
 
-    // 残り日次枠を算出（手動 /analyze と違い、ここは暴走防止のため上限を尊重する）
-    const daily = await guards.checkDailyLimit();
-    const remaining = Math.max(0, (daily.limit || 0) - (daily.count || 0));
+    // 残り枠を算出（手動 /analyze と違い、ここは暴走防止のため上限を尊重する）。
+    //   予算モード（MONTHLY_ANALYSIS_BUDGET_JPY）では「件数」の残りは無いので、予算内なら全件キックし、
+    //   1 件ごとの予算チェックは triggerAutoAnalyzeIfEligible 側で行う（超えた時点で以降が待機）。
+    const quota = await guards.checkAnalysisQuota();
+    const daily = quota.daily;
+    const remaining = quota.mode === 'budget'
+      ? (quota.exceeded ? 0 : Number.MAX_SAFE_INTEGER)
+      : Math.max(0, (daily.limit || 0) - (daily.count || 0));
 
     // 未解析（承認待ち）レコードを古い順に取得
     const { data: pending, error: fetchError } = await supabase
@@ -854,18 +720,23 @@ router.post('/analyze-pending-batch', requireRole('admin'), async (req, res) => 
         .catch(err => console.error('[video-org] batch analyze error', row.id, err?.message || err));
     }
 
+    const remainingOut = remaining === Number.MAX_SAFE_INTEGER ? null : remaining;
     logCtx('analyze-batch', {
       at: new Date().toISOString(), by: req.user?.email,
       totalWaiting, started: toRun.length,
-      daily_count: daily.count, daily_limit: daily.limit, remaining,
+      daily_count: daily.count, daily_limit: daily.limit,
+      quota_mode: quota.mode, spent_jpy: quota.budget.spent_jpy, budget_jpy: quota.budget.budget_jpy,
+      remaining: remainingOut,
     });
 
     res.json({
       started: toRun.length,
       totalWaiting,
-      remaining,
+      remaining: remainingOut,
       dailyLimit: daily.limit,
       dailyCount: daily.count,
+      quotaMode: quota.mode,
+      budget: quota.budget,
     });
   } catch (e) {
     console.error('[video-org] analyze-pending-batch error:', e);

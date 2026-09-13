@@ -8040,6 +8040,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 
           <h4>シーン概要</h4>
           <div class="ms-summary" id="ms-preview-summary">-</div>
+          <div id="ms-preview-analysis-meta" style="font-size:11px;color:var(--text-muted);margin-top:4px"></div>
 
           <h4>タグ</h4>
           <div id="ms-preview-tags">-</div>
@@ -54935,11 +54936,23 @@ async function msReloadList() {
     const visibleIds = new Set(msItemsCache.map(x => x.drive_file_id));
     msCheckedIds.forEach(id => { if (!visibleIds.has(id)) msCheckedIds.delete(id); });
     const daily = data.daily || {};
+    const quota = data.quota || null;
     if (counter) {
-      counter.textContent = `本日のAI解析: ${daily.count || 0} / ${daily.limit || 5}${daily.exceeded ? ' ⚠️ 枠を使い切りました（翌0:00 JSTに回復）' : ''}`;
-      counter.title = daily.exceeded
-        ? '自動解析と「未解析をまとめて解析」は翌日 0:00（日本時間）まで待機します。行を選んで「🤖 AI解析する」なら個別に実行できます'
-        : '日本時間の 0:00 に枠が回復します';
+      if (quota && quota.mode === 'budget') {
+        // ADR 039 D2: 月次予算モード（MONTHLY_ANALYSIS_BUDGET_JPY）
+        const b = quota.budget || {};
+        const spent = Math.round(Number(b.spent_jpy) || 0).toLocaleString();
+        const budget = Math.round(Number(b.budget_jpy) || 0).toLocaleString();
+        counter.textContent = `今月のAI解析: ¥${spent} / ¥${budget}（${b.count || 0}件）${b.exceeded ? ' ⚠️ 予算を使い切りました（来月1日に回復）' : ''}`;
+        counter.title = b.exceeded
+          ? '自動解析と「未解析をまとめて解析」は来月 1 日（日本時間）まで待機します。行を選んで「🤖 AI解析する」なら個別に実行できます。予算は環境変数 MONTHLY_ANALYSIS_BUDGET_JPY で変更できます'
+          : '1 解析ごとの概算費用（Gemini のトークン数 × 単価）を月初から合計しています';
+      } else {
+        counter.textContent = `本日のAI解析: ${daily.count || 0} / ${daily.limit || 5}${daily.exceeded ? ' ⚠️ 枠を使い切りました（翌0:00 JSTに回復）' : ''}`;
+        counter.title = daily.exceeded
+          ? '自動解析と「未解析をまとめて解析」は翌日 0:00（日本時間）まで待機します。行を選んで「🤖 AI解析する」なら個別に実行できます'
+          : '日本時間の 0:00 に枠が回復します';
+      }
     }
     msRenderActiveTags();
     if (msItemsCache.length === 0) {
@@ -55771,6 +55784,19 @@ function msSelectItem(fileId, scroll = true) {
   document.getElementById('ms-preview-meta').textContent =
     `${msKindIcon(item.media_kind)} ${msFmtSpec(item)} / ${item.status}`;
   document.getElementById('ms-preview-summary').textContent = item.summary || '（未解析）';
+  // ADR 039 D2: 解析メタ（モデル／入力種別／トークン／概算費用）。未解析なら空。
+  const metaEl = document.getElementById('ms-preview-analysis-meta');
+  if (metaEl) {
+    const srcLabel = ({
+      'proxy-video+audio': '映像60コマ＋音声', 'proxy-video': '映像60コマ', 'preview-webp': 'プレビューWebP（1コマ）', 'original': '原本',
+    })[item.analysis_source] || item.analysis_source || '';
+    const parts = [];
+    if (item.model) parts.push(`🤖 ${item.model}`);
+    if (srcLabel) parts.push(`入力: ${srcLabel}`);
+    if (item.analysis_total_tokens) parts.push(`${Number(item.analysis_total_tokens).toLocaleString()} tok`);
+    if (item.analysis_cost_jpy != null) parts.push(`≈ ¥${Number(item.analysis_cost_jpy).toFixed(1)}`);
+    metaEl.textContent = parts.join(' ／ ');
+  }
   const tagsEl = document.getElementById('ms-preview-tags');
   const tags = Array.isArray(item.tags) ? item.tags : [];
   tagsEl.innerHTML = tags.length ? tags.map(t => `<span class="ms-tag" onclick="msFilterByTag('${votEscape(t)}')">${votEscape(t)}</span>`).join('') : '<span style="color:var(--text-muted)">-</span>';
@@ -55878,6 +55904,9 @@ async function msAnalyzeAllPending() {
       const leftover = Math.max(0, totalWaiting - started);
       if (started === 0 && totalWaiting === 0) {
         showToast('AI解析待ちの素材はありません', 'info');
+      } else if (started === 0 && r?.quotaMode === 'budget') {
+        const b = r.budget || {};
+        showToast(`今月のAI解析予算（¥${Math.round(b.spent_jpy || 0).toLocaleString()} / ¥${Math.round(b.budget_jpy || 0).toLocaleString()}）を使い切っているため開始できませんでした（待機 ${totalWaiting} 件）。来月1日（日本時間）に枠が戻ります。急ぐ場合は行を選んで「🤖 AI解析する」で個別に実行できます`, 'info', 9000);
       } else if (started === 0) {
         showToast(`本日のAI解析枠（${r?.dailyLimit || '-'}件）を使い切っているため開始できませんでした（待機 ${totalWaiting} 件）。翌0:00（日本時間）に枠が戻ります。急ぐ場合は行を選んで「🤖 AI解析する」で個別に実行できます`, 'info', 9000);
       } else if (leftover > 0) {
