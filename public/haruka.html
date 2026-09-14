@@ -43607,8 +43607,11 @@ function fpKeyHandler(e) {
 }
 
 function fpClickPlayer(e) {
-  // コントロール内クリックは無視
-  if (e.target.closest('#fp-controls-bar')) return;
+  // コントロール内クリックは無視。
+  // 差分比較モードの同期コントロールバー(#fp-cmp-controls)は #fp-player の内側に描画されるため、
+  // ここで除外しないと「▶ ボタンで play → バブリングで fpTogglePlay → 即 pause」の二重処理になり、
+  // 再生ボタン／シークバー／ミュートが一切効かなくなる。
+  if (e.target.closest('#fp-controls-bar, #fp-cmp-controls')) return;
   fpTogglePlay();
 }
 
