@@ -28965,7 +28965,7 @@ function whRowHtml(e) {
       <select data-f="project_id" ${dis} style="${st};flex:1;min-width:0" onchange="whOnProjectChange(this)">${whProjectOptionsHtml(isNew ? whDefaultProjectId() : e.project_id, isNew ? '' : e.project?.name)}</select>
       <button type="button" class="btn-sm" style="font-size:11px;padding:3px 6px;flex-shrink:0" onclick="whOpenProjectHours(this)" title="この案件のみんなの作業時間（案件合計・メンバー別）">👥</button>
       </div>
-      ${!isNew && e.hourly_rate_applied ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">適用時給 ¥${Number(e.hourly_rate_applied).toLocaleString()}/h</div>` : ''}</td>
+      </td>
     <td style="padding:6px 8px"><input type="date" data-f="work_date" value="${v(isNew ? e?.work_date : e.work_date)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="start_time" value="${timeVal(isNew ? (e?.start_time || '') : e.start_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="end_time" value="${timeVal(isNew ? '' : e.end_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
