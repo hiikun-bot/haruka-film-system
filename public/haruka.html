@@ -17221,10 +17221,22 @@ async function saveTeam() {
   // 選択中メンバーは state(_tmSelectedIds) を真とする（ADR 014: 共通 MemberPicker）
   const member_ids = Array.from(_tmSelectedIds);
   if (!team_name) { showToast('チーム名は必須です', 'warn'); return; }
+  if (!team_code) { showToast('チームコードは必須です', 'warn'); return; }
+
+  // 保存前の重複チェック。一覧は現在のタブ（動画/静止画/秘書）の種別しか表示しないため、
+  // 別種別に同じコードのチームがあっても利用者からは見えない。サーバーに投げる前に
+  // どのチームが使っているかを添えて止める（サーバー側でも 23505 → 400 で二重に防いでいる）。
+  const dup = (Array.isArray(allTeams) ? allTeams : []).find(t =>
+    t && String(t.id) !== String(id || '') && String(t.team_code || '').trim().toUpperCase() === team_code);
+  if (dup) {
+    const typeLabel = dup.team_type === 'design' ? '静止画' : dup.team_type === 'secretary' ? '秘書' : '動画';
+    const state = dup.is_active === false ? '・無効化済み' : '';
+    showToast(`チームコード「${team_code}」は${typeLabel}チーム「${dup.team_name || ''}」で使用中です${state}`, 'warn');
+    return;
+  }
 
   if (id) {
     // 編集（PUT）
-    if (!team_code) { showToast('チームコードは必須です', 'warn'); return; }
     const res = await apiFetch(`${API}/teams/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_code,team_name,team_type,director_id,producer_id,member_ids}) });
     if (res.ok) { closeModal('modal-team'); await loadTeams(); await loadMembers(); }
     else { const e=await res.json(); showToast('エラー: '+ translateError(e?.error), 'error'); }
