@@ -10580,15 +10580,23 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         fileId     = latestFile?.id || null;
       }
 
-      // 同一 (creative_id, version_num, round_stage) の二重 INSERT を回避（連打対策）
+      // 同一 (creative_id, version_num, round_stage) の二重 INSERT を回避（連打対策）。
+      //   旧実装は「同キーの行が 1 つでもあれば永久にスキップ」だったため、
+      //   動画なし提出（snapshot は次ラウンド番号 = 例 v2）のあとに本物の v2 ファイルを提出すると
+      //   その提出の snapshot が一切残らず、往復履歴の編集UI・事後編集が効かなくなっていた。
+      //   連打対策として必要なのは「直近数十秒以内の同キー行」だけなので、時間窓で判定する。
+      const DOUBLE_SUBMIT_WINDOW_MS = 60 * 1000;
       const { data: existing } = await supabase
         .from('creative_version_history')
-        .select('id')
+        .select('id, created_at')
         .eq('creative_id', req.params.id)
         .eq('version_num', versionNum)
         .eq('round_stage', trans.stage)
+        .order('created_at', { ascending: false })
         .limit(1);
-      if (!existing || existing.length === 0) {
+      const lastSameKeyAt = existing && existing[0] && existing[0].created_at ? Date.parse(existing[0].created_at) : NaN;
+      const isDoubleSubmit = Number.isFinite(lastSameKeyAt) && (Date.now() - lastSameKeyAt) < DOUBLE_SUBMIT_WINDOW_MS;
+      if (!isDoubleSubmit) {
         // タイムスタンプ分離 (PR #446 v2 / ADR 011 補足 2026-05-09):
         //   ・editor_submitted_at   = いま再提出ボタンが押された時刻（= snapshot 確定時刻）
         //   ・director_commented_at = beforeRow.director_comment_updated_at
@@ -19756,7 +19764,9 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
       try {
         const { data: cfRows } = await supabase
           .from('creative_files')
-          .select('id, version, drive_url, drive_file_id, generated_name, created_at')
+          // 注意: creative_files に created_at 列は無い（uploaded_at）。存在しない列を select すると
+          //   クエリ全体がエラー → catch で握りつぶされ、全 submit ページの file が null になっていた。
+          .select('id, version, drive_url, drive_file_id, generated_name')
           .eq('creative_id', creativeId)
           .order('version', { ascending: true });
         (cfRows || []).forEach(f => {
@@ -19807,6 +19817,74 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
   //   from='クライアントチェック中' → to='クライアントチェック後修正' → client → editor (revise)
   const PRODUCTION_FROM = new Set(['未着手', '制作中（初稿提出前）', '台本制作', '素材・ナレ作成', '編集']);
 
+  // submit (編集者の提出メモ) 判定:
+  //   初稿提出: PRODUCTION_FROM → Dチェック / Pチェック / クライアントチェック中
+  //   再提出:   *_後修正 → 対応する _チェック
+  //   Wチェック（ADR 024）: 制作 → Wチェック（初回）/ Wチェック後修正 → Wチェック（再提出）
+  const resolveSubmitTarget = (from, to) => {
+    if ((PRODUCTION_FROM.has(from) || from === 'Wチェック後修正')            && to === 'Wチェック')             return 'wcheck';
+    if ((PRODUCTION_FROM.has(from) || from === 'Dチェック後修正')            && to === 'Dチェック')             return 'director';
+    if ((PRODUCTION_FROM.has(from) || from === 'Pチェック後修正')            && to === 'Pチェック')             return 'producer';
+    if ((PRODUCTION_FROM.has(from) || from === 'クライアントチェック後修正') && to === 'クライアントチェック中') return 'client';
+    return null;
+  };
+  // stage マッピング:  director → d_check / producer → p_check / wcheck → w_check / client → cl_check
+  const STAGE_OF_SUBMIT_TARGET = { director: 'd_check', producer: 'p_check', wcheck: 'w_check', client: 'cl_check' };
+
+  // submit transition ↔ creative_version_history 行の対応付け（バグ報告 #baed5d71: 編集UI から
+  // PATCH /versions/:id を呼ぶため、および事後編集された editor_comment を最終値として出すため）。
+  //
+  // 旧実装は「version_num == version_at_change && round_stage 一致」の **最初の行** を引いていたが、
+  //   ・動画なし提出の snapshot は version_num = 次ラウンド番号（例: v1 ファイルのまま提出 → snapshot は v2）
+  //   ・transition.version_at_change は creative_files の最大 version（同ケースで 1）
+  // と採番規則が食い違うため、後日ほんとうの v2 ファイルを提出すると、その transition が
+  // 過去の「動画なし v2 snapshot」を掴み、前回の提出メモ（＋動画なし表示）が最新ページに化けていた
+  // （2026-09-14 みこ提出メモ誤表示）。
+  //
+  // 新実装: snapshot と transition は同一 PUT 内で連続 INSERT される（実データでは 1〜2 秒差）ので、
+  //   pass 1: 同 stage で |created_at - changed_at| ≤ 60 秒 の (transition, snapshot) 候補を
+  //           時間差の小さい順に貪欲に確定（1 transition ↔ 1 snapshot）
+  //   pass 2: 時刻で引けなかった transition だけ、旧ロジック（version_num + stage）を未使用行に限って適用
+  // の 2 段で対応付ける。pass 1 を「時系列順に最寄りを取る」方式にすると、snapshot の無い古い
+  // transition が数分後の別提出の snapshot を横取りする（実データで確認）ため、全体最寄り順にしている。
+  const SNAPSHOT_MATCH_WINDOW_MS = 60 * 1000;
+  const historyByTransitionId = new Map();
+  {
+    const claimedHistoryIds = new Set();
+    const submitTransitions = transitions.filter(tr =>
+      tr && tr.id && tr.changed_at && resolveSubmitTarget(tr.from_status || '', tr.to_status || '')
+    );
+    const candidates = [];
+    for (const tr of submitTransitions) {
+      const stage = STAGE_OF_SUBMIT_TARGET[resolveSubmitTarget(tr.from_status || '', tr.to_status || '')];
+      const t = Date.parse(tr.changed_at);
+      if (!Number.isFinite(t)) continue;
+      for (const h of history) {
+        if (!h || !h.id || h.round_stage !== stage) continue;
+        const ht = Date.parse(h.created_at);
+        if (!Number.isFinite(ht)) continue;
+        const diff = Math.abs(ht - t);
+        if (diff <= SNAPSHOT_MATCH_WINDOW_MS) candidates.push({ tr, h, diff });
+      }
+    }
+    candidates.sort((a, b) => a.diff - b.diff);
+    for (const { tr, h } of candidates) {
+      if (historyByTransitionId.has(tr.id) || claimedHistoryIds.has(h.id)) continue;
+      claimedHistoryIds.add(h.id);
+      historyByTransitionId.set(tr.id, h);
+    }
+    for (const tr of submitTransitions) {
+      if (historyByTransitionId.has(tr.id) || tr.version_at_change == null) continue;
+      const stage = STAGE_OF_SUBMIT_TARGET[resolveSubmitTarget(tr.from_status || '', tr.to_status || '')];
+      const h = history.find(h =>
+        h && h.id && !claimedHistoryIds.has(h.id)
+        && h.round_stage === stage
+        && Number(h.version_num) === Number(tr.version_at_change)
+      );
+      if (h) { claimedHistoryIds.add(h.id); historyByTransitionId.set(tr.id, h); }
+    }
+  }
+
   const items = [];
 
   for (const tr of transitions) {
@@ -19815,35 +19893,10 @@ router.get('/creatives/:id/rounds', requireAuth, async (req, res) => {
     const to   = tr.to_status   || '';
 
     // --- submit (編集者の提出メモ) ---
-    // 初稿提出: PRODUCTION_FROM → Dチェック / Pチェック / クライアントチェック中
-    // 再提出: *_後修正 → 対応する _チェック
-    let submitTarget = null; // 'director'|'producer'|'client'|'wcheck'
-    // Wチェック（ADR 024）: 制作 → Wチェック（初回）/ Wチェック後修正 → Wチェック（再提出）
-    if (PRODUCTION_FROM.has(from) || from === 'Wチェック後修正') {
-      if (to === 'Wチェック') submitTarget = 'wcheck';
-    }
-    if (PRODUCTION_FROM.has(from) || from === 'Dチェック後修正') {
-      if (to === 'Dチェック') submitTarget = 'director';
-    }
-    if (PRODUCTION_FROM.has(from) || from === 'Pチェック後修正') {
-      if (to === 'Pチェック') submitTarget = 'producer';
-    }
-    if (PRODUCTION_FROM.has(from) || from === 'クライアントチェック後修正') {
-      if (to === 'クライアントチェック中') submitTarget = 'client';
-    }
+    const submitTarget = resolveSubmitTarget(from, to); // 'director'|'producer'|'client'|'wcheck'|null
     if (submitTarget) {
-      // 対応する creative_version_history 行を解決（バグ報告 #baed5d71: 編集UI から PATCH /versions/:id を呼ぶため）
-      //   stage マッピング:  director → d_check / producer → p_check / client → cl_check
-      const stageOfSubmit = submitTarget === 'director' ? 'd_check'
-                         : submitTarget === 'producer' ? 'p_check'
-                         : submitTarget === 'wcheck'   ? 'w_check'
-                         : 'cl_check';
-      let historyRow = null;
-      if (tr.version_at_change != null) {
-        historyRow = history.find(h =>
-          Number(h.version_num) === Number(tr.version_at_change) && h.round_stage === stageOfSubmit
-        ) || null;
-      }
+      const stageOfSubmit = STAGE_OF_SUBMIT_TARGET[submitTarget];
+      const historyRow = historyByTransitionId.get(tr.id) || null;
 
       // editor_comment 解決優先度:
       //   (a) tr.editor_comment_at_change
