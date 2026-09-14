@@ -18501,9 +18501,28 @@ router.get('/teams', async (req, res) => {
   }
 });
 
+// チームコード重複（teams_team_code_key 違反）時のユーザー向けメッセージ。
+// 一覧画面は現在のタブ（動画/静止画/秘書）の種別しか表示しないため、別種別に同じコードの
+// チームがあると利用者には見えない。どのチームが使っているかを添えて案内する。
+async function teamCodeInUseMessage(code, excludeId) {
+  let base = `チームコード「${code}」は既に使用されています`;
+  try {
+    let q = supabase.from('teams').select('id, team_name, team_type, is_active').eq('team_code', code).limit(1);
+    if (excludeId) q = q.neq('id', excludeId);
+    const { data } = await q.maybeSingle();
+    if (data) {
+      const typeLabel = data.team_type === 'design' ? '静止画' : data.team_type === 'secretary' ? '秘書' : '動画';
+      const state = data.is_active === false ? '・無効化済み' : '';
+      base += `（${typeLabel}チーム「${data.team_name || ''}」で使用中${state}）`;
+    }
+  } catch (_) { /* 補足情報の取得失敗は無視して基本メッセージのみ返す */ }
+  return base;
+}
+
 // チーム作成
 router.post('/teams', requireAuth, requirePermission('team.manage'), async (req, res) => {
-  const { team_code, team_name, team_type, director_id, producer_id } = req.body;
+  const { team_name, team_type, director_id, producer_id } = req.body;
+  const team_code = String(req.body.team_code ?? '').trim();
   if (!team_code || !team_name || !team_type) {
     return res.status(400).json({ error: 'コード・名前・種別は必須です' });
   }
@@ -18512,7 +18531,13 @@ router.post('/teams', requireAuth, requirePermission('team.manage'), async (req,
     .insert({ team_code, team_name, team_type, director_id: director_id || null, producer_id: producer_id || null })
     .select()
     .single();
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    // 一意制約違反（既存コード）は利用者の入力起因なので 400 で返す（500 だとフロントエラー自動通知が飛ぶ）
+    if (error.code === '23505') {
+      return res.status(400).json({ error: await teamCodeInUseMessage(team_code) });
+    }
+    return res.status(500).json({ error: error.message });
+  }
   invalidateByKey('teams:list');
   res.json(data);
 });
@@ -18540,7 +18565,7 @@ router.put('/teams/:id', requireAuth, requirePermission('team.manage'), async (r
     .single();
   if (error) {
     if (error.code === '23505') {
-      return res.status(400).json({ error: `チームコード「${updateData.team_code}」は既に使用されています` });
+      return res.status(400).json({ error: await teamCodeInUseMessage(updateData.team_code, req.params.id) });
     }
     return res.status(500).json({ error: error.message });
   }
