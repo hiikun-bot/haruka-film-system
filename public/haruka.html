@@ -28786,9 +28786,9 @@ function whProjectOptionsHtml(selectedId, fallbackName) {
   for (const p of list) {
     const sel = p.project_id === selectedId ? 'selected' : '';
     if (sel) found = true;
-    const rateSuffix = p.hourly_rate ? `（¥${Number(p.hourly_rate).toLocaleString()}/h）` : '';
+    // 時給（¥/h）は選択肢に出さない（画面共有・他人の目に単価が映る事故防止。ユーザー指示 2026-09-14）
     const clientPrefix = p.client_name ? `${p.client_name}／` : '';
-    opts.push(`<option value="${esc(p.project_id)}" ${sel}>${esc(clientPrefix)}${esc(p.name)}${rateSuffix}</option>`);
+    opts.push(`<option value="${esc(p.project_id)}" ${sel}>${esc(clientPrefix)}${esc(p.name)}</option>`);
   }
   // 絞り込み中に選択済みの時給なし案件があれば個別に足す（表示を失わない）
   if (!found && selectedId) {
