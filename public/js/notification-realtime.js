@@ -4,7 +4,11 @@
 // 設計参照: docs/notification/notification_API_SPEC.md 第6章
 //
 // 責務:
-//   ・Supabase JS（CDN: https://esm.sh/@supabase/supabase-js@2）を読み込んで anon key で接続
+//   ・Supabase JS（自オリジン配信: /js/vendor/supabase-js.umd.js）を読み込んで anon key で接続
+//     ※ 以前は https://esm.sh/@supabase/supabase-js@2 を動的 import していたが、
+//       iPhone Safari で別オリジン script 内の例外が「Script error.」に伏せられ原因不明のまま
+//       Slack 通知が繰り返し飛んだため、server.js から node_modules の UMD ビルドを配信する形に変更。
+//       同一オリジンなら例外に filename / lineno / stack が付き、バージョンも package.json で固定される。
 //   ・notification_logs テーブルの INSERT を user_id=eq.<自分のID> でフィルタ購読
 //   ・受信時に CustomEvent('notification:incoming', { detail: payload.new }) を発火
 //   ・接続が切れたら 5秒後に再接続 + 未読件数を再取得して整合性回復
@@ -47,13 +51,47 @@ async function fetchCurrentUserId() {
   return me?.id || null;
 }
 
-// Supabase JS を CDN から動的 import（ESM）
-async function loadSupabaseLib() {
+// Supabase JS（UMD ビルド）を自オリジンから <script> で読み込む
+// UMD は読み込み完了時に window.supabase（{ createClient, ... }）を定義する。
+// 同一オリジンの classic script なので、内部で起きた例外は window.onerror に
+// filename / lineno / stack 付きで届く（esm.sh 時代の「Script error.」を解消）。
+const SUPABASE_LIB_URL = '/js/vendor/supabase-js.umd.js';
+let supabaseLibPromise = null;
+
+function loadSupabaseLib() {
   // 既に読み込み済みならそれを返す
-  if (window.__supabaseJsLib) return window.__supabaseJsLib;
-  const mod = await import('https://esm.sh/@supabase/supabase-js@2');
-  window.__supabaseJsLib = mod;
-  return mod;
+  if (window.__supabaseJsLib) return Promise.resolve(window.__supabaseJsLib);
+  if (window.supabase?.createClient) {
+    window.__supabaseJsLib = window.supabase;
+    return Promise.resolve(window.__supabaseJsLib);
+  }
+  // 読み込み中の Promise を共有（再接続の subscribe() が重ねて呼んでも <script> を二重挿入しない）
+  if (supabaseLibPromise) return supabaseLibPromise;
+
+  supabaseLibPromise = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = SUPABASE_LIB_URL;
+    el.async = true;
+    el.dataset.vendor = 'supabase-js';
+    el.onload = () => {
+      if (window.supabase?.createClient) {
+        window.__supabaseJsLib = window.supabase;
+        try { window.__addBreadcrumb?.('vendor_script_loaded', 'supabase-js'); } catch (_) {}
+        resolve(window.__supabaseJsLib);
+      } else {
+        supabaseLibPromise = null;
+        reject(new Error('supabase-js UMD を読み込んだが window.supabase.createClient が見つかりません'));
+      }
+    };
+    el.onerror = () => {
+      supabaseLibPromise = null;
+      try { el.remove(); } catch (_) {}
+      // 失敗時は次の subscribe()（5秒後の再接続）で再挿入する
+      reject(new Error(`supabase-js の読み込みに失敗しました: ${SUPABASE_LIB_URL}`));
+    };
+    document.head.appendChild(el);
+  });
+  return supabaseLibPromise;
 }
 
 async function initClient() {
