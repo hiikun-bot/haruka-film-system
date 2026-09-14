@@ -363,6 +363,16 @@ app.use('/icon-180.png',      express.static(path.join(__dirname, 'public/icon-1
 // 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js・UMD形式）を
 // フロントにも同一実装で配信する（jest テスト済みロジックの二重実装を避けるため）
 app.use('/js/personal-goals.js', express.static(path.join(__dirname, 'utils/personal-goals.js')));
+// 📡 通知 Realtime 用 supabase-js（ブラウザ UMD ビルド）を自オリジンから配信する。
+// 以前は notification-realtime.js が https://esm.sh/@supabase/supabase-js@2 を動的 import していたが、
+//   ・iPhone Safari で別オリジン script 内の例外が「Script error.」に伏せられ原因を追えない（#haruka-error-report 4件）
+//   ・@2 がバージョン固定なしで、esm.sh 側の更新で挙動が勝手に変わる
+// の2点を解消するため、package.json で固定された node_modules のビルドをそのまま出す。
+// サーバー側 SDK と同一バージョンになるので、依存更新時にフロントだけ取り残されることもない。
+app.use('/js/vendor/supabase-js.umd.js', express.static(
+  path.join(__dirname, 'node_modules/@supabase/supabase-js/dist/umd/supabase.js'),
+  { maxAge: '1h' }
+));
 // haruka.html は認証後のみ配信（ミニファイ + 事前圧縮 + ETag/304 の最適化配信）
 app.get('/haruka.html', requireAuth, (req, res) => {
   harukaHtmlDelivery.serve(req, res);
