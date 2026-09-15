@@ -24813,6 +24813,189 @@ router.get('/my-stats', requireAuth, async (req, res) => {
   }
 });
 
+// ==================== 🎯 マイフォーカス（ホーム「いま、あなたにボールがあるもの」）====================
+//
+// ADR 040: ホームの先頭に「自分がいま動かす番のクリエイティブ」を出す。
+//
+// 本人専用データ。ADR 032（マイゴール）・ADR 036（マイ実績）と同じ原則で、
+//   - `requireAuth` のみ（permission key を作らない。見せる範囲を制御する対象＝他人の手番が存在しない）
+//   - 全クエリを `req.user.id` に固定。**user_id パラメータ・admin バイパス・X-View-As による
+//     他人参照は将来も追加しない**（VIEW AS でロールを切り替えても本人の手番が出続けるのは仕様）
+//   - 順位・メンバー間比較・他人の数値は出さない（ADR 033 と整合）
+//
+// 設計メモ:
+//   - ボール判定は getBallHolder() の user_ids[]（複数ホルダー対応）。ball_holder_id キャッシュ列は
+//     通知用の単数値（複数ホルダーの先頭しか入らない）ため使わない（ADR 033 と同じ）
+//   - 集計本体は utils/my-focus.js の純関数（DB非依存・jest で TZ=UTC / Asia/Tokyo 両方を通す）
+//   - 週の定義（今日〜今週日曜・JST・週=月〜日）は _todayStrJST() / _thisSundayStrJST() を再利用し、
+//     チーム状況・既存UIと一致させる
+//   - 候補CRは全件走査ではなく「自分に関係しうる3経路」だけを取る（/my-stats と同じ取り方）。
+//     PostgREST の既定 max rows（1000行）による silent 打ち切りを避けるため range でページングする
+//   - 新テーブル・migration 無し。既存列のみで成立する
+router.get('/dashboard/my-focus', requireAuth, async (req, res) => {
+  const { computeMyFocus } = require('../utils/my-focus');
+  const uid = req.user?.id; // ← 本人固定。req.query / X-View-As からユーザーを差し替える経路は作らない
+  if (!uid) return res.status(401).json({ error: '認証が必要です' });
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 0), 50);
+
+  // 表示と ball 判定に必要な最小列。users.avatar_url は base64 のため絶対に select しない（PR #940）
+  const CREATIVE_SELECT = `
+    id, file_name, status, final_deadline, draft_deadline, help_flag, project_id, team_id,
+    projects(id, name, director_id, producer_id, clients(id, name)),
+    creative_assignments(role, user_id, users(id, full_name, team_id))
+  `;
+  // 納品済みは手番が無いので最初から除外（ball_type 'done' を数えないためでもある）
+  const DELIVERED_STATUSES = '("納品","完納","納品済")';
+
+  const fetchAllRows = async (buildQuery) => {
+    const PAGE = 1000;
+    const all = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await buildQuery().range(offset, offset + PAGE - 1);
+      if (error) throw new Error(error.message);
+      all.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    return all;
+  };
+
+  try {
+    // ---- 1. 自分が代表ディレクターのチーム → そのメンバー集合 ----
+    // getBallHolder はチーム経由フォールバック（案件に director 未設定でも、編集者の
+    // チーム代表ディレクターがDチェックのボールを持つ）を行う。この経路のCRは自分の
+    // assignments にも projects.director_id にも出ないため、メンバー集合から引き当てる。
+    const myTeamsRes = await supabase
+      .from('teams').select('id, team_members(user_id)').eq('director_id', uid);
+    if (myTeamsRes.error) throw new Error(myTeamsRes.error.message);
+    const myTeamIds = (myTeamsRes.data || []).map(t => t.id);
+    const teamMemberIds = new Set();
+    for (const t of myTeamsRes.data || []) {
+      for (const tm of t.team_members || []) if (tm.user_id) teamMemberIds.add(tm.user_id);
+    }
+    // users.team_id 経由の所属も拾う（getBallHolder の directorByTeamId フォールバックに対応）
+    if (myTeamIds.length) {
+      const { data: us, error: uErr } = await supabase.from('users').select('id').in('team_id', myTeamIds);
+      if (uErr) throw new Error(uErr.message);
+      for (const u of us || []) if (u.id) teamMemberIds.add(u.id);
+    }
+
+    // ---- 2. 候補CRを3経路で取得（未納品のみ）----
+    //   a) creative_assignments に自分の行がある（role 問わず＝編集/デザイン/D/P/Wチェック全部）
+    //   b) 自分が案件の director_id / producer_id（assignment 無しの D/P を救う）
+    //   c) 自分が代表ディレクターのチームのメンバーが担当（チーム経由フォールバックの受け皿）
+    const [directedRes, producedRes] = await Promise.all([
+      supabase.from('projects').select('id').eq('director_id', uid),
+      supabase.from('projects').select('id').eq('producer_id', uid),
+    ]);
+    if (directedRes.error) throw new Error(directedRes.error.message);
+    if (producedRes.error) throw new Error(producedRes.error.message);
+    const leaderProjectIds = Array.from(new Set([
+      ...(directedRes.data || []).map(p => p.id),
+      ...(producedRes.data || []).map(p => p.id),
+    ]));
+    // チームメンバーが極端に多い環境で .in() が URL 長超過にならないよう上限を置く
+    // （超えた場合は経路 c を諦め、a/b だけで描画する＝出る件数が減るだけで壊れない）
+    const teamMemberIdList = Array.from(teamMemberIds).slice(0, 200);
+
+    const [assigned, leader, teamFallback] = await Promise.all([
+      fetchAllRows(() => supabase.from('creatives')
+        .select(`${CREATIVE_SELECT}, assignee_filter:creative_assignments!inner(user_id)`)
+        .eq('assignee_filter.user_id', uid)
+        .not('status', 'in', DELIVERED_STATUSES)
+        .order('id', { ascending: true })),
+      leaderProjectIds.length
+        ? fetchAllRows(() => supabase.from('creatives')
+            .select(CREATIVE_SELECT)
+            .in('project_id', leaderProjectIds)
+            .not('status', 'in', DELIVERED_STATUSES)
+            .order('id', { ascending: true }))
+        : Promise.resolve([]),
+      teamMemberIdList.length
+        ? fetchAllRows(() => supabase.from('creatives')
+            .select(`${CREATIVE_SELECT}, team_filter:creative_assignments!inner(user_id)`)
+            .in('team_filter.user_id', teamMemberIdList)
+            .not('status', 'in', DELIVERED_STATUSES)
+            .order('id', { ascending: true }))
+        : Promise.resolve([]),
+    ]);
+    const candidates = [...assigned, ...leader, ...teamFallback]; // 重複は computeMyFocus が id で排除する
+
+    // ---- 3. getBallHolder 用 Map 組み立て（/team-load・syncBallHolderId と同じ形）----
+    const { data: teamsRaw, error: tErr } = await supabase
+      .from('teams').select('id, director_id, director:director_id(full_name), team_members(user_id)');
+    if (tErr) throw new Error(tErr.message);
+    const directorByTeamId   = new Map();
+    const directorByUserId   = new Map();
+    const directorIdByTeamId = new Map();
+    const directorIdByUserId = new Map();
+    for (const t of teamsRaw || []) {
+      const name = t.director?.full_name || '';
+      if (t.director_id) {
+        directorByTeamId.set(t.id, name);
+        directorIdByTeamId.set(t.id, t.director_id);
+      }
+      for (const tm of t.team_members || []) {
+        if (tm.user_id && !directorByUserId.has(tm.user_id)) {
+          directorByUserId.set(tm.user_id, name);
+          directorIdByUserId.set(tm.user_id, t.director_id || null);
+        }
+      }
+    }
+    // 案件専用 D/P のフォールバック解決（assignment が無いとき projects.director_id / producer_id を使う）。
+    // creatives 横断の ID 集合を 1 回の IN にまとめる（N+1 回避・/team-load と同手法）
+    const projUserIds = Array.from(new Set(
+      candidates.flatMap(c => [c.projects?.director_id, c.projects?.producer_id]).filter(Boolean)
+    ));
+    const projUserById = new Map();
+    if (projUserIds.length) {
+      const { data: us, error: uErr } = await supabase.from('users').select('id, full_name').in('id', projUserIds);
+      if (uErr) throw new Error(uErr.message);
+      for (const u of us || []) projUserById.set(u.id, u);
+    }
+
+    // ---- 4. ボール保持者を解決して純関数の入力形に変換 ----
+    const creatives = candidates.map(c => {
+      const projectDirector = c.projects?.director_id ? (projUserById.get(c.projects.director_id) || null) : null;
+      const projectProducer = c.projects?.producer_id ? (projUserById.get(c.projects.producer_id) || null) : null;
+      const ball = getBallHolder(
+        c.status, c.creative_assignments,
+        directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
+        projectDirector, projectProducer
+      );
+      // 「関与」= assignments の担当者（role 問わず）＋ 案件の D/P。
+      // ADR 033 の「担当」より広いのは、D/P 自身の納期責任もホームに出すため（ADR 040）
+      const memberUserIds = new Set(
+        (c.creative_assignments || []).map(a => a.users?.id || a.user_id).filter(Boolean)
+      );
+      if (c.projects?.director_id) memberUserIds.add(c.projects.director_id);
+      if (c.projects?.producer_id) memberUserIds.add(c.projects.producer_id);
+      return {
+        id: c.id,
+        file_name: c.file_name,
+        status: c.status,
+        final_deadline: c.final_deadline,
+        draft_deadline: c.draft_deadline,
+        help_flag: c.help_flag,
+        project_id: c.project_id,
+        project_name: c.projects?.name || '',
+        client_name: c.projects?.clients?.name || '',
+        ball_type: ball?.type || 'unknown',
+        ball_user_ids: Array.isArray(ball?.user_ids) ? ball.user_ids : [],
+        member_user_ids: Array.from(memberUserIds),
+      };
+    });
+
+    // ---- 5. 純関数で集計（JST 固定）----
+    const todayStr = _todayStrJST();
+    const weekEndStr = _thisSundayStrJST();
+    const result = computeMyFocus({ creatives, userId: uid, todayStr, weekEndStr, limit });
+    res.json({ ...result, today: todayStr, week_end: weekEndStr });
+  } catch (e) {
+    console.error('[dashboard/my-focus]', e);
+    res.status(500).json({ error: e.message || 'マイフォーカスの取得に失敗しました' });
+  }
+});
+
 // ==================== 📊 チーム状況（チーム負荷ダッシュボード）====================
 //
 // ADR 033: メンバーごとの実務負荷（進行中CR数・持ちボール数・今週期限数・期限超過数）を

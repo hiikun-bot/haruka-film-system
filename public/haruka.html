@@ -4236,6 +4236,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
     </div>
   </div>
+  <!-- 🎯 マイフォーカス（本人専用・ADR 040）: いま自分にボールがあるクリエイティブ。
+       ホームの最上段＝「今日、自分が何をするか」を実績カードより先に出す（ADR 036 決定6 の配置を改訂）。
+       全ロール共通で loadDashboard() から renderMyFocusCard() が描画する。 -->
+  <div id="dash-my-focus"></div>
   <!-- 🏅 マイ実績（本人専用・ADR 036。editor/designer/director ダッシュで renderMyStatsCard() が描画。admin ダッシュには出さない） -->
   <div id="dash-my-stats"></div>
   <!-- 📝 契約・登録手続きバナー（ADR 035）: GET /contracts/me の banner が非 null のとき contract-wizard.js の renderContractBanner() が描画 -->
@@ -29309,6 +29313,12 @@ function loadDashboard() {
 
   // 自前 fetch を持つセクションはデータ系ロード（loadCreatives 等）の完了を待たずに即時表示する
   // （初回ロード体感改善: 最遅の loadCreatives を待っている間も連絡事項・誕生日・タスクが先に出る）
+  // ヒーローの数字は複数ソースが書き込むため、開き直し / VIEW AS 切替のたびに一度ローダーへ戻す
+  // （前ロールの「進行中案件」等が残らないようにする・ADR 015）
+  resetDashHeroStats();
+  // 🎯 マイフォーカス（全ロール共通・本人専用 ADR 040）: 自前 fetch なので init のデータ待ちをしない。
+  // ヒーローの「いま手元 / 期限超過 / 今週締切」もこの結果から setDashHeroStats() で入る。
+  renderMyFocusCard();
   // 全ロール共通: 全体連絡セクション
   loadAnnouncements();
   // 全ロール共通: 誕生日セクション
@@ -29344,6 +29354,155 @@ function loadDashboard() {
   } else {
     _whenInitLoaded(['creatives'], () => renderEditorDash(today));
   }
+}
+
+// ============================================================
+// ヒーロー統計ストア（#dash-hero-stats の描画を一本化）
+// ------------------------------------------------------------
+// ヒーローの数字は非同期の複数ソース（マイフォーカス / renderAdminDash）が書き込む。
+// それぞれが innerHTML を直接上書きすると、後着が先着の数字を消して片方しか出ない。
+// ここに部分更新を流し込み、描画順は renderDashHeroStats() が一元的に決める。
+// ============================================================
+let _dashHeroStats = {};
+
+// ダッシュボードを開き直す / VIEW AS を切り替えるたびに呼ぶ。
+// 前ロールの数字（admin の「進行中案件」等）が残らないよう、ローダー表示まで戻す。
+function resetDashHeroStats() {
+  _dashHeroStats = {};
+  const el = document.getElementById('dash-hero-stats');
+  if (!el) return;
+  el.innerHTML = `<div class="dash-hero-loader" id="dash-hero-loader" aria-live="polite">
+      <span class="dash-hero-loader-spin"></span>
+      <span>データ取得中<span class="dash-hero-loader-dots"></span></span>
+    </div>`;
+}
+
+function setDashHeroStats(partial) {
+  Object.assign(_dashHeroStats, partial || {});
+  renderDashHeroStats();
+}
+
+function renderDashHeroStats() {
+  const el = document.getElementById('dash-hero-stats');
+  if (!el) return;
+  const s = _dashHeroStats;
+  const cells = [];
+  // 行動系（全ロール共通・GET /dashboard/my-focus 由来）。「いま自分がどれだけ抱えているか」
+  if (s.balls != null)       cells.push({ val: s.balls, label: 'いま手元' });
+  if (s.overdue)             cells.push({ val: s.overdue, label: '期限超過', cls: 'sos' });
+  if (s.dueThisWeek != null) cells.push({ val: s.dueThisWeek, label: '今週締切' });
+  // 管理系（renderAdminDash 由来）。会社全体の数字なので行動系の右に並べる
+  if (s.activeProjects != null)  cells.push({ val: s.activeProjects, label: '進行中案件' });
+  if (s.periodCount != null)     cells.push({ val: s.periodCount, label: s.periodLabel || '本数' });
+  if (s.periodDelivered != null) cells.push({ val: s.periodDelivered, label: '納品済' });
+  if (s.sos)                     cells.push({ val: s.sos, label: 'SOS中', cls: 'sos' });
+
+  if (!cells.length) {
+    // どのソースも未着。失敗が確定しているときだけローダーを止める（通常は「データ取得中」のまま待つ）
+    if (s._focusFailed) el.innerHTML = `<div class="dash-hero-loader">数字を取得できませんでした</div>`;
+    return;
+  }
+  el.innerHTML = cells.map(c =>
+    `<div class="dash-hero-stat"><div class="dash-hero-stat-val ${c.cls || ''}">${c.val}</div><div class="dash-hero-stat-label">${c.label}</div></div>`
+  ).join('');
+}
+
+// ============================================================
+// 🎯 マイフォーカス（ホーム最上段「いま、あなたにボールがあるもの」）— ADR 040
+// ------------------------------------------------------------
+// GET /api/haruka/dashboard/my-focus は req.user 本人の手番しか返さない
+// （admin バイパス無し・VIEW AS でも本人のまま）。フロントにロール分岐は書かない。
+// 取得失敗時はカードを静かに省略しホームを壊さない（ADR 036 と同じ方針）。
+// 呼び出し元: loadDashboard()（全ロール共通）。
+// ============================================================
+let _myFocusSeq = 0;
+
+// ball_type → 「なぜ自分の手元にあるか」の一言。ステータスチップと併記して意味を補う。
+const MY_FOCUS_BALL_LABEL = {
+  editor: '制作', wcheck: 'Wチェック', director: 'Dチェック', producer: 'Pチェック',
+};
+
+async function renderMyFocusCard() {
+  const el = document.getElementById('dash-my-focus');
+  if (!el) return;
+  const seq = ++_myFocusSeq;
+  let d = null;
+  try {
+    const res = await apiFetch(`${API}/dashboard/my-focus?limit=5`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    d = await res.json();
+  } catch (e) {
+    console.warn('[my-focus] fetch failed（カードを省略）', e);
+    if (seq === _myFocusSeq) setDashHeroStats({ _focusFailed: true });
+    return;
+  }
+  if (seq !== _myFocusSeq) return; // VIEW AS 連打等で後発の描画が優先
+  if (!document.getElementById('page-dashboard')?.classList.contains('active')) return;
+
+  const c = d.counts || {};
+  setDashHeroStats({ balls: c.balls || 0, overdue: c.overdue || 0, dueThisWeek: c.due_this_week || 0 });
+  el.innerHTML = _myFocusCardHtml(d);
+  el.style.marginBottom = '14px';
+}
+
+// 「他 N 件を見る」→ クリエイティブ一覧へ。onclick 属性内で属性セレクタのクォートが衝突するため関数に逃がす。
+function goToCreativesFromFocus() {
+  showPage('creatives', document.querySelector('.nav-btn[data-page="creatives"]'));
+}
+
+function _myFocusCardHtml(d) {
+  const c = d.counts || {};
+  const items = d.items || [];
+  const title = `<div class="dash-section-title">🎯 いま、あなたにボールがあるもの
+      <span style="margin-left:auto;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0">${c.balls || 0}件</span>
+    </div>`;
+
+  if (!items.length) {
+    // 手番ゼロ＝止めている仕事が無い状態。「次にいつボールが来るか」は
+    // クライアント確認の終わり次第で予測できないため、待ちの件数だけを正直に出す。
+    const waiting = [];
+    if (c.client_wait) waiting.push(`クライアント確認待ち ${c.client_wait}件`);
+    if (c.due_this_week) waiting.push(`今週締切 ${c.due_this_week}件`);
+    return `<div class="dash-section">${title}
+      <div style="text-align:center;padding:18px 0">
+        <div style="font-size:30px;margin-bottom:8px">✨</div>
+        <div style="font-size:14px;font-weight:600;color:var(--em-dark)">手元にボールはありません</div>
+        ${waiting.length ? `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">${esc(waiting.join(' ／ '))}</div>` : ''}
+      </div>
+    </div>`;
+  }
+
+  const rows = items.map(it => {
+    const ballLabel = MY_FOCUS_BALL_LABEL[it.ball_type] || '';
+    return `
+    <div class="dash-alert-row" onclick="openCreativeDetail('${it.id}')" style="align-items:flex-start;cursor:pointer;padding:10px 0">
+      ${it.days_left === null
+        // 納期未設定は「余裕あり(dbadge-ok)」の配色だと安心に見えてしまうのでグレーで出す（設定漏れの可能性がある状態）
+        ? `<span class="dash-due-badge" style="background:#ECEFF1;color:#546E7A">納期未設定</span>`
+        : _dashBadge(it.days_left)}
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="status-chip ${statusClass(it.status)}" style="font-size:11px;flex-shrink:0">${esc(it.status || '—')}</span>
+          ${ballLabel ? `<span style="font-size:11px;color:var(--text-muted)">${esc(ballLabel)}のボール</span>` : ''}
+          ${it.help_flag ? `<span style="font-size:11px;color:#E24B4A;font-weight:600">🆘 SOS</span>` : ''}
+        </div>
+        ${it.project_name ? `<div style="font-size:13px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📁 ${esc(it.project_name)}</div>` : ''}
+        <div style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace" title="${esc(it.file_name || '')}">
+          ${it.client_name ? `${esc(it.client_name)} · ` : ''}${esc(it.file_name || '（名称未設定）')}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // 6件目以降はクリエイティブ一覧（自分の担当で絞った状態）に送る。ホームは上位5件に絞って
+  // 「まず何から」を見失わせない。
+  const more = d.has_more
+    ? `<div style="text-align:center;margin-top:10px">
+         <button class="btn-sm" onclick="goToCreativesFromFocus()" style="font-size:11px">他 ${(d.counts.balls || 0) - items.length} 件を見る →</button>
+       </div>`
+    : '';
+
+  return `<div class="dash-section">${title}${rows}${more}</div>`;
 }
 
 // ============================================================
@@ -31448,14 +31607,15 @@ async function renderAdminDash(today) {
   const weekly = inProg.filter(c => { const d=_dashDiff(c.final_deadline,today); return d!==null&&d>=0&&d<=7; });
   const sos = dashCreatives.filter(c => c.help_flag);
 
-  document.getElementById('dash-hero-stats').innerHTML = [
-    {val:active.length, label:'進行中案件'},
-    {val:filteredCreatives.length, label: filterMonth ? `${filterMonth}月 本数` : `${filterYear}年 本数`},
-    {val:filteredCreatives.filter(c=>c.status==='納品').length, label:'納品済'},
-    sos.length ? {val:sos.length, label:'SOS中', cls:'sos'} : null
-  ].filter(Boolean).map(s =>
-    `<div class="dash-hero-stat"><div class="dash-hero-stat-val ${s.cls||''}">${s.val}</div><div class="dash-hero-stat-label">${s.label}</div></div>`
-  ).join('');
+  // ヒーローは共通ストア経由で更新する（直接 innerHTML を書くと、非同期で先に届いた
+  // マイフォーカスの「いま手元 / 期限超過 / 今週締切」を消してしまう）
+  setDashHeroStats({
+    activeProjects: active.length,
+    periodCount: filteredCreatives.length,
+    periodLabel: filterMonth ? `${filterMonth}月 本数` : `${filterYear}年 本数`,
+    periodDelivered: filteredCreatives.filter(c => c.status === '納品').length,
+    sos: sos.length,
+  });
 
   // グラフエリア表示。dash-charts は admin 限定で表示される DOM のため、
   // 非 admin が dashboard select の onchange を踏んだ場合は null 参照で TypeError になる
@@ -31752,15 +31912,10 @@ function renderEditorDash(today) {
     return da - db;
   });
 
-  document.getElementById('dash-hero-stats').innerHTML = `
-    <div class="dash-hero-stat">
-      <div class="dash-hero-stat-val">${mine.length}</div>
-      <div class="dash-hero-stat-label">担当中</div>
-    </div>
-    <div class="dash-hero-stat">
-      <div class="dash-hero-stat-val">${mine.filter(c=>{const d=_dashDiff(c.final_deadline,today);return d!==null&&d<=3;}).length}</div>
-      <div class="dash-hero-stat-label">直近3日</div>
-    </div>`;
+  // ヒーローの数字は renderMyFocusCard()（GET /dashboard/my-focus）が
+  // 「いま手元 / 期限超過 / 今週締切」として入れる。ここでは書かない。
+  // 旧「担当中 / 直近3日」は allCreatives（limit=500・納品除外）由来で取りこぼしがあり、
+  // ボール基準の数字と二重に出ると意味が割れるため廃止した（ADR 040）。
 
   if (!mine.length) {
     document.getElementById('dash-content').innerHTML =
