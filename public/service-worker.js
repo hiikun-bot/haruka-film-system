@@ -1,4 +1,7 @@
-const CACHE_NAME = 'haruka-film-v2';
+// v3: chart.js を cdn.jsdelivr.net から自オリジン /js/vendor/chart.umd.js に切り替え（旧 CDN エントリを捨てる）。
+// /js/vendor/chart.umd.js は URL にバージョンを含まずキャッシュ優先で返すため、chart.js を更新するときは
+// package.json と一緒にこの CACHE_NAME も上げること（上げないと旧ビルドが SW キャッシュから返り続ける）。
+const CACHE_NAME = 'haruka-film-v3';
 
 // キャッシュするスタティックリソース（アプリシェル）
 // 注意: /haruka.html は認証必須ページのため SW キャッシュ対象から除外する
@@ -7,7 +10,7 @@ const STATIC_ASSETS = [
   '/HARUKA%20FILM%20%E3%83%AD%E3%82%B4.png',
   '/manifest.json',
   'https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Montserrat:wght@700;800;900&display=swap',
-  'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
+  '/js/vendor/chart.umd.js',
 ];
 
 // インストール: スタティックアセットをキャッシュ
@@ -34,8 +37,8 @@ self.addEventListener('fetch', event => {
 
   // API・外部リクエストはネットワークのみ（キャッシュしない）
   if (url.pathname.startsWith('/api/') || url.hostname !== self.location.hostname) {
-    // Chart.js と Google Fonts はキャッシュから返す
-    if (url.hostname === 'cdn.jsdelivr.net' || url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+    // Google Fonts はキャッシュから返す（chart.js は自オリジン配信になったので下の「その他」キャッシュ優先経路を通る）
+    if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
       event.respondWith(
         caches.match(event.request).then(cached => cached || fetch(event.request).then(res => {
           const clone = res.clone();

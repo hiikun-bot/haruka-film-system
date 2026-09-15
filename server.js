@@ -373,6 +373,15 @@ app.use('/js/vendor/supabase-js.umd.js', express.static(
   path.join(__dirname, 'node_modules/@supabase/supabase-js/dist/umd/supabase.js'),
   { maxAge: '1h' }
 ));
+// 📊 ダッシュボードのグラフ用 chart.js（UMD ビルド）も同じ方式で自オリジンから配信する。
+// 以前は haruka.html が https://cdn.jsdelivr.net/npm/chart.js@4.4.0/... を <script> で読んでいたが、
+// 広告ブロック／プライベート DNS 等で CDN ホストだけ遮断される端末があり（Android Chrome・#haruka-error-report
+// 2026-09-15 同一端末 2 件の resource.error）、その端末ではグラフが一切描けなかった。
+// バージョンは package.json の "chart.js"（exact 固定）で管理する。public/service-worker.js の CACHE_NAME も参照。
+app.use('/js/vendor/chart.umd.js', express.static(
+  path.join(__dirname, 'node_modules/chart.js/dist/chart.umd.js'),
+  { maxAge: '1h' }
+));
 // haruka.html は認証後のみ配信（ミニファイ + 事前圧縮 + ETag/304 の最適化配信）
 app.get('/haruka.html', requireAuth, (req, res) => {
   harukaHtmlDelivery.serve(req, res);
