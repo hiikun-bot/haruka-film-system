@@ -3029,3 +3029,23 @@ WHERE NOT EXISTS (SELECT 1 FROM contract_documents WHERE doc_type = 'rules_confi
 
 -- PostgREST のスキーマキャッシュをリロード
 NOTIFY pgrst, 'reload schema';
+
+-- ============================================================
+-- HTTP セッションストア（ADR 040 / migrations/2026-09-15_http_sessions.sql）
+-- express-session の保存先。Railway Volume 上の SQLite（sessions.db）から移行し、
+-- Volume を外してゼロダウンタイムデプロイにするための表。service_role のみ読み書き。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS http_sessions (
+  sid        text PRIMARY KEY,
+  sess       jsonb NOT NULL,
+  expired_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_http_sessions_expired_at ON http_sessions (expired_at);
+COMMENT ON TABLE http_sessions IS
+  'express-session のセッションストア（ADR 040）。Railway Volume の sessions.db から移行。service_role のみ読み書き';
+ALTER TABLE http_sessions ENABLE ROW LEVEL SECURITY;
+
+-- PostgREST のスキーマキャッシュをリロード
+NOTIFY pgrst, 'reload schema';
