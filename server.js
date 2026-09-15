@@ -30,10 +30,7 @@ const session    = require('express-session');
 const bcrypt     = require('bcryptjs');
 const { validateNewPassword } = require('./utils/password');
 const { v4: uuidv4 } = require('uuid');
-const SQLiteStore = require('connect-sqlite3')(session);
-const fs = require('fs');
-const SESSIONS_DIR = process.env.DATA_DIR || './data';
-if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+const { SupabaseSessionStore } = require('./lib/supabase-session-store');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -170,8 +167,15 @@ if (process.env.NODE_ENV === 'production' && !SESSION_SECRET) {
 // セッション寿命: 通常 7 日。admin ロール保有者は 24 時間（ログイン時に applySessionLifetime が決める。ADR 054 Stage E）
 const DEFAULT_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const ADMIN_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// セッションストアは Supabase の http_sessions テーブル（ADR 040）。
+// 以前は connect-sqlite3 で Railway Volume（/app/data/sessions.db）に置いていたが、Volume 付きサービスは
+// デプロイが「旧停止 → 新起動」の順次切替になり、デプロイのたびに約 13 秒の 502 が出ていた。
+// Supabase に移して Volume を外すことで healthcheck 経由の重なり切替（ゼロダウンタイム）にする。
+// 行の寿命（expired_at）はセッションごとの cookie.expires から決まるので、admin の 24 時間もそのまま効く。
+const sessionStore = new SupabaseSessionStore({ supabase, logger: console });
+sessionStore.cleanupExpired().catch((e) => console.warn('[session-store] 起動時の失効セッション掃除に失敗:', e.message));
 app.use(session({
-  store: new SQLiteStore({ db: 'sessions.db', dir: process.env.DATA_DIR || './data' }),
+  store: sessionStore,
   secret: require('./utils/google-login').getStateSecret(), // SESSION_SECRET（dev フォールバックは google-login.js の 1 箇所だけ）
   resave: false,
   saveUninitialized: false,
