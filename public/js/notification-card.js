@@ -30,8 +30,7 @@ const ICON_BY_TYPE = {
   creative_registered: '🎬',
   // 単価の承認待ち / 承認 / 差し戻し（ADR 037）
   pricing_approval: '💴',
-=======
-  // 🏆 作品ギャラリー: 自分の作品に 👏 拍手 / 💬 ひとことが付いた（制作担当向け・ADR 037）
+  // 🏆 作品ギャラリー: 自分の作品に 👏 拍手 / 💬 ひとことが付いた（制作担当向け・ADR 042）
   portfolio_reaction:  '👏',
   portfolio_comment:   '💬',
 };

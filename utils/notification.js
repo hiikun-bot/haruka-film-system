@@ -47,7 +47,7 @@ const TYPE_TO_SETTING_COL = {
   assignment:           'assignment_enabled',
   invoice:              'invoice_enabled',
   creative_registered:  'creative_registered_enabled',
-  // 🏆 作品ギャラリーの 👏 拍手 / 💬 ひとこと（ADR 037・migrations/2026-09-03_portfolio_reactions.sql）
+  // 🏆 作品ギャラリーの 👏 拍手 / 💬 ひとこと（ADR 042・migrations/2026-09-03_portfolio_reactions.sql）
   portfolio_reaction:   'portfolio_reaction_enabled',
   portfolio_comment:    'portfolio_comment_enabled',
 };

@@ -1,6 +1,6 @@
 -- 2026-09-03_portfolio_reactions.sql
 -- 作品ギャラリー（ポートフォリオ）の 👏 拍手（リアクション）と 💬 ひとこと
--- 設計: docs/design/decisions/037-portfolio-reactions.md
+-- 設計: docs/design/decisions/042-portfolio-reactions.md
 --
 -- 目的:
 --   納品作品のギャラリーは一方通行で、他のメンバーからの反応が付かなかった。

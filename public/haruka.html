@@ -8614,7 +8614,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   }
   .pf-lb-note-edit textarea:focus { outline: 2px solid #C7D2FE; border-color: #A5B4FC; }
 
-  /* 👏 拍手 / 💬 ひとこと（ADR 037）— カード下部のリアクション行 */
+  /* 👏 拍手 / 💬 ひとこと（ADR 042）— カード下部のリアクション行 */
   #page-portfolio .pf-react {
     display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 5px;
     cursor: default;   /* カード本体（ライトボックスを開く）とは別の操作面 */
@@ -25432,7 +25432,7 @@ async function pfToggleBest(idx) {
   }
 }
 
-// ==================== 👏 作品への拍手 と 💬 ひとこと（ADR 037） ====================
+// ==================== 👏 作品への拍手 と 💬 ひとこと（ADR 042） ====================
 //
 // リアクションはつぶやきと同じ 5 種（ReactionsUtils.REACTIONS = TWEET_REACTIONS）。トグル運用。
 // 一覧 API が creative ごとの reactions / my_reactions / comment_count を載せて返すので、

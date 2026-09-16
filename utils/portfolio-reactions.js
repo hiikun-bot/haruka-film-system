@@ -1,7 +1,7 @@
 // utils/portfolio-reactions.js
 // =====================================================
 // 作品ギャラリー（ポートフォリオ）の 👏 拍手 / 💬 ひとこと まわりの純関数。
-// 設計: docs/design/decisions/037-portfolio-reactions.md
+// 設計: docs/design/decisions/042-portfolio-reactions.md
 //
 //   - 一覧に載せる集計（reactions / my_reactions / comment_count）の組み立て
 //   - 通知の宛先（制作担当）の決定 — アクター本人は除外

@@ -23865,7 +23865,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const roleCodes = await getEffectiveRoleCodes(req);
     const userId = req.user?.id;
 
-    // 👏 拍手 / 💬 ひとこと の集計（ADR 037）。表示中の creative 集合でまとめて引く（N+1 禁止）
+    // 👏 拍手 / 💬 ひとこと の集計（ADR 042）。表示中の creative 集合でまとめて引く（N+1 禁止）
     const socialMap = await fetchPortfolioSocialMap(creativeIds, userId);
 
     // クレジット表示用のアバター（users.avatar_url は base64 なので select には含めず、
@@ -23995,7 +23995,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
           style_name:       style.name,
           style_overridden: style.overridden,
           can_edit_genre:   editable,   // 説明文の編集権限と同じ（担当者・案件のP/D・admin/秘書）
-          // 👏 拍手 / 💬 ひとこと（ADR 037）。creative 単位なので過去版カードにも同じ値が乗る
+          // 👏 拍手 / 💬 ひとこと（ADR 042）。creative 単位なので過去版カードにも同じ値が乗る
           reactions:        social.reactions,       // { good: n, heart: n, clap: n, smile: n, surprised: n }
           my_reactions:     social.my_reactions,    // 自分が押している種別
           reaction_total:   social.reaction_total,
@@ -24059,7 +24059,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
   }
 });
 
-// ==================== 🏆 作品への 👏 拍手 と 💬 ひとこと（ADR 037） ====================
+// ==================== 🏆 作品への 👏 拍手 と 💬 ひとこと（ADR 042） ====================
 //
 // つぶやきと同じ 5 種のリアクション（utils/reactions.js）と短いコメントを作品に付けられる。
 // テーブルは tweet_reactions / tweet_comments と統合せず専用（portfolio_reactions / portfolio_comments）。

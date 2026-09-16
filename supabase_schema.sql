@@ -2714,7 +2714,7 @@ CREATE INDEX IF NOT EXISTS idx_personal_tasks_user_status ON personal_tasks(user
 CREATE INDEX IF NOT EXISTS idx_personal_tasks_due_date    ON personal_tasks(due_date);
 
 
--- ==================== 🏆 作品ギャラリー: 👏 拍手 / 💬 ひとこと（ADR 037） ====================
+-- ==================== 🏆 作品ギャラリー: 👏 拍手 / 💬 ひとこと（ADR 042） ====================
 -- 詳細: migrations/2026-09-03_portfolio_reactions.sql
 -- tweets 系 / posts 系とは統合しない専用テーブル（philosophy 4 項・open-questions Q3）。
 -- reaction_type の許可値は utils/reactions.js が正（CHECK は付けない＝tweet_reactions と同じ流儀）。
