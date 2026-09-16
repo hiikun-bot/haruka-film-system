@@ -815,3 +815,32 @@
   color: #94a3b8;
 }
 
+
+/* ---------- 新着バー・フォーカス（ADR 041） ---------- */
+/* ページを開いている最中に他人の新着が来たとき、一覧の先頭に出すボタン。タップで再読込 */
+.tweets-new-bar {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid #3ECFCA;
+  border-radius: 10px;
+  background: #E6F9F8;
+  color: #1a6b68;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  animation: tweets-new-bar-in .2s ease;
+}
+.tweets-new-bar:hover { background: #d3f4f2; }
+@keyframes tweets-new-bar-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ホーム / 通知 / ?tweet= から飛んできた該当カードを一瞬ハイライト */
+.tweet-card.tweet-focus {
+  box-shadow: 0 0 0 3px rgba(62, 207, 202, 0.65);
+  transition: box-shadow .4s ease;
+}

@@ -146,6 +146,19 @@ async function subscribe() {
         },
         payload => emitIncoming(payload?.new)
       )
+      // つぶやき新着（ADR 041）: tweets の INSERT を全員が購読し、ナビ未読バッジ／ホームカードの更新契機にする。
+      // 本文は使わない（画面はサーバーから取り直す）。user_id は「自分の投稿か」の判定にだけ使う。
+      // tweets は RLS 無し・supabase_realtime publication 登録済み（2026-05-03 段階4 migration）。
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'tweets' },
+        payload => {
+          const row = payload?.new || {};
+          document.dispatchEvent(new CustomEvent('tweets:incoming', {
+            detail: { id: row.id, user_id: row.user_id, created_at: row.created_at },
+          }));
+        }
+      )
       .subscribe(status => {
         // status は SUBSCRIBED / CLOSED / CHANNEL_ERROR / TIMED_OUT
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
@@ -156,6 +169,8 @@ async function subscribe() {
           if (window.notificationBell?.refreshUnreadCount) {
             window.notificationBell.refreshUnreadCount();
           }
+          // つぶやき未読も同期（切断中の取りこぼし救済・ADR 041）
+          if (typeof window.refreshTweetsUnread === 'function') window.refreshTweetsUnread();
         }
       });
   } catch (e) {
