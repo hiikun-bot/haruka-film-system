@@ -30281,7 +30281,7 @@ function _myStatsCardHtml(s) {
     ${tile('今月納品', `${thisM}<small>本</small>`, `先月 ${lastM}本`)}
     ${tile('累計納品', `${total}<small>本</small>`, `初稿 ${firstDraft}本（今月）`)}
     ${tile('納期遵守', rate === null ? '<span style="font-size:18px">—</span>' : `${rate}<small>%</small>`, den > 0 ? `直近3ヶ月・${n(s.on_time_numerator)}/${den}本` : '直近3ヶ月（納期設定なし）')}
-    ${tile('今月の👍', `${likes}<small>個</small>`, 'ファイルへのいいね')}
+    ${tile('今月の👍👏', `${likes}<small>個</small>`, `ファイル ${n(s.likes_file_this_month)}・作品 ${n(s.likes_portfolio_this_month)}`)}
   </div>`;
 
   const body = isEmpty

@@ -106,7 +106,9 @@
    * マイ実績の集計。
    * @param {object} args
    * @param {Array}  args.creatives   自分のクリエイティブ（isCreativeOfUser で絞り込み済みでも、未絞り込みでも可。uid を渡せばここで絞る）
-   * @param {Array}  args.likes       当月候補の like 行 [{ user_id, created_at, creative_id }]（creative_id は creative_files 経由で解決済み）
+   * @param {Array}  args.likes       当月候補の like 行 [{ user_id, created_at, creative_id, source? }]
+   *                                  creative_id は creative_files 経由で解決済み。source は 'file'（creative_file_likes・既定）
+   *                                  または 'portfolio'（portfolio_reactions の 👏 拍手など・ADR 042）
    * @param {string} args.uid         本人の user id（自分の like を除外・creatives の絞り込みに使う）
    * @param {Date|string} [args.now]  基準時刻（省略時は現在）。JST 月を求めるのに使う
    * @returns {object} { month, delivered_this_month, delivered_last_month, delivered_total,
@@ -150,14 +152,18 @@
       }
     }
 
-    // 今月の👍: 自分の creative のファイルに「他人」が付けた当月分
+    // 今月の👍: 自分の creative のファイルに「他人」が付けた当月分（creative_file_likes）
+    //   ＋ 作品ギャラリーで自分の作品に「他人」が付けた当月分の拍手・リアクション（portfolio_reactions・ADR 042）
     let likesThisMonth = 0;
+    let likesFile = 0;
+    let likesPortfolio = 0;
     for (const l of (likes || [])) {
       if (!l) continue;
       if (uid && l.user_id === uid) continue;               // 自分の like は除外
       if (!myIds.has(l.creative_id)) continue;               // 自分の creative のみ
       if (jstYearMonth(l.created_at) !== thisYm) continue;   // 当月（JST）
       likesThisMonth += 1;
+      if (l.source === 'portfolio') likesPortfolio += 1; else likesFile += 1;
     }
 
     const stats = {
@@ -170,6 +176,8 @@
       on_time_denominator: onTimeDen,
       on_time_numerator: onTimeNum,
       likes_this_month: likesThisMonth,
+      likes_file_this_month: likesFile,
+      likes_portfolio_this_month: likesPortfolio,
     };
     stats.milestones = buildMilestones(stats);
     return stats;
