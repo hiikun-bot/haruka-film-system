@@ -29369,14 +29369,18 @@ function loadDashboard() {
 
   // 初回ロード中はプレースホルダを出す（既に何か描画済みなら触らない＝再表示時のチラつき防止）。
   // 注意: #dash-content は中に #dash-charts / #dash-text-content を静的に持つため上書きしない。
-  if (!window._initDataLoaded && window._initPromises) {
+  // プレースホルダは管理層だけに出す。作り手には「今日の納期」も dash-text-content も
+  // 描画されないため（ADR 040 追補）、出すと一瞬表示されてすぐ消えるチラつきになる。
+  const isManagerDash = ['admin','secretary','producer','producer_director','director'].includes(role);
+  if (!window._initDataLoaded && window._initPromises && isManagerDash) {
     const todayEl = document.getElementById('dash-today');
     if (todayEl && !todayEl.innerHTML.trim()) todayEl.innerHTML = _dashLoadingSection('📅 今日の納期');
     const txtEl = document.getElementById('dash-text-content');
     if (txtEl && !txtEl.innerHTML.trim()) txtEl.innerHTML = _dashLoadingSection('読み込み中');
   }
 
-  // 全ロール共通: 今日の納期セクション（allCreatives 依存 → creatives 完了後に追い描画）
+  // 今日の納期セクション（allCreatives 依存 → creatives 完了後に追い描画）。
+  // 中で管理層以外は非表示にする（ADR 040 追補）。
   _whenInitLoaded(['creatives'], () => renderTodayDeadlines(today));
 
   // 🏅 マイ実績: editor/designer/director ダッシュでだけ描画する（下の各 render 内で呼ぶ）。
@@ -29486,8 +29490,14 @@ async function renderMyFocusCard() {
 }
 
 // 「他 N 件を見る」→ クリエイティブ一覧へ。onclick 属性内で属性セレクタのクォートが衝突するため関数に逃がす。
+// マイフォーカスと同じ絞り込み（自分にボールがあるもの）で開く。ホームは上位5件しか出さないので、
+// 続きを同じ基準で見られる場所へ送る。
 function goToCreativesFromFocus() {
-  showPage('creatives', document.querySelector('.nav-btn[data-page="creatives"]'));
+  const navBtn = document.querySelector('.nav-btn[data-page="creatives"]')
+    || document.querySelector('.nav-drawer-btn[data-page="creatives"]');
+  showPage('creatives', navBtn);
+  const viewBtn = document.querySelector(`.ft[onclick="setView(this,'ball')"]`);
+  if (viewBtn && typeof setView === 'function') setView(viewBtn, 'ball');
 }
 
 function _myFocusCardHtml(d) {
@@ -29514,6 +29524,15 @@ function _myFocusCardHtml(d) {
 
   const rows = items.map(it => {
     const ballLabel = MY_FOCUS_BALL_LABEL[it.ball_type] || '';
+    // 制作中に毎回開く2つのリンク（旧「自分の担当（期限順）」カードから引き継ぎ・ADR 040 追補）。
+    // 行クリックの詳細モーダルに吸われないよう stopPropagation する。
+    const links = (it.sheet_url || it.regulation_url)
+      ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${
+          it.sheet_url ? `<a href="${esc(it.sheet_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;padding:3px 8px;border:0.5px solid var(--em);border-radius:5px;color:var(--em-dark);text-decoration:none;white-space:nowrap;background:#fff">📊 管理シート ↗</a>` : ''
+        }${
+          it.regulation_url ? `<a href="${esc(it.regulation_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;padding:3px 8px;border:0.5px solid var(--border);border-radius:5px;color:var(--text-muted);text-decoration:none;white-space:nowrap;background:#fff">📐 レギュ ↗</a>` : ''
+        }</div>`
+      : '';
     return `
     <div class="dash-alert-row" onclick="openCreativeDetail('${it.id}')" style="align-items:flex-start;cursor:pointer;padding:10px 0">
       ${it.days_left === null
@@ -29530,6 +29549,7 @@ function _myFocusCardHtml(d) {
         <div style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace" title="${esc(it.file_name || '')}">
           ${it.client_name ? `${esc(it.client_name)} · ` : ''}${esc(it.file_name || '（名称未設定）')}
         </div>
+        ${links}
       </div>
     </div>`;
   }).join('');
@@ -29613,13 +29633,19 @@ function _myStatsCardHtml(s) {
 function renderTodayDeadlines(today) {
   const el = document.getElementById('dash-today');
   if (!el) return;
-  const todayStr = today.toISOString().slice(0, 10);
+  // toISOString() は UTC 基準のため、JST 0:00〜8:59 に限らず JST 0:00 を渡した時点で常に前日になる
+  // （JST 2026-09-16 00:00 → '2026-09-15'）。「今日の納期」が毎日1日前を指していた。
+  const todayStr = today.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
   const role = effectiveRole();
   const isManager = ['admin','secretary','producer','producer_director','director'].includes(role);
 
-  const todayAll = allCreatives.filter(c => c.final_deadline === todayStr && c.status !== '納品');
-  const myToday  = todayAll.filter(c => c.creative_assignments?.some(a => a.users?.id === currentUser?.id));
-  const items    = isManager ? todayAll : myToday;
+  // 作り手（editor/designer）には出さない。自分の今日の納期は 🎯 マイフォーカス（ADR 040）が
+  // 手番として最上段に出しており、同じCRがホーム内で二重に並んでいた（ADR 040 追補・2026-09-16）。
+  // 管理層には「全社の今日の納期」として残す（自分の手番とは役割が違う俯瞰の情報）。
+  if (!isManager) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.style.display = '';
+
+  const items = allCreatives.filter(c => c.final_deadline === todayStr && c.status !== '納品');
 
   if (!items.length) {
     el.innerHTML = `<div class="dash-section" style="border-left:4px solid var(--em-dark)">
@@ -31967,9 +31993,33 @@ function _destroyChart(id) {
   if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; }
 }
 
+// 今日（JST）の 'YYYY-MM-DD'。サーバー側 _todayStrJST() と同じ式。
+// 端末のローカル TZ に依存せず、日本時間の「今日」で判定する。
+function _jstTodayStr() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+}
+
+// 'YYYY-MM-DD' 同士の日数差（to - from）。両端を UTC 0:00 として解釈するので TZ に依存しない。
+// utils/my-focus.js の diffDays() と同じ式（ホームの日数表示をサーバー算出分と一致させる）。
+function _jstDiffDays(fromStr, toStr) {
+  const a = Date.parse(`${String(fromStr).slice(0, 10)}T00:00:00Z`);
+  const b = Date.parse(`${String(toStr).slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  return Math.round((b - a) / 86400000);
+}
+
+// 納期までの残り日数。負なら超過、0 は今日。
+// 旧実装 `Math.ceil((new Date(dateStr) - today) / 86400000)` は
+// `new Date('YYYY-MM-DD')` を UTC 0:00 と解釈する一方 today はローカル(JST) 0:00 だったため、
+// 差が +9時間ぶんずれて全体が +1 日ずれていた（今日締切が「あと1日」、昨日超過が「今日」と表示）。
+// 日付文字列同士の比較に変えて解消する（ADR 040 追補）。
 function _dashDiff(dateStr, today) {
   if (!dateStr) return null;
-  return Math.ceil((new Date(dateStr) - today) / (1000*60*60*24));
+  // 第2引数は呼び出し互換のため受け取る。基準日は常に JST の日付文字列で扱う。
+  const todayStr = (today instanceof Date)
+    ? today.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+    : _jstTodayStr();
+  return _jstDiffDays(todayStr, dateStr);
 }
 
 function _dashBadge(diff) {
@@ -32212,7 +32262,6 @@ async function renderAdminDash(today) {
   // ヒーロー統計
   const active = allProjects.filter(p => !p.is_hidden && p.status !== '完了');
   const inProg = dashCreatives.filter(c => c.status !== '納品');
-  const weekly = inProg.filter(c => { const d=_dashDiff(c.final_deadline,today); return d!==null&&d>=0&&d<=7; });
   const sos = dashCreatives.filter(c => c.help_flag);
 
   // ヒーローは共通ストア経由で更新する（直接 innerHTML を書くと、非同期で先に届いた
@@ -32508,64 +32557,28 @@ function renderDirectorDash(today) {
 }
 
 function renderEditorDash(today) {
-  // 🏅 マイ実績（本人専用・ADR 036）: 挨拶ヒーロー直下に非同期で描画（下の同期描画をブロックしない）
+  // 🏅 マイ実績（本人専用・ADR 036）: 挨拶ヒーロー直下に非同期で描画
   renderMyStatsCard();
-  const mine = allCreatives.filter(c =>
-    c.creative_assignments?.some(a =>
-      a.users?.email === currentUser?.email || a.users?.id === currentUser?.id
-    ) && c.status !== '納品'
-  ).sort((a,b) => {
-    const da = a.final_deadline ? new Date(a.final_deadline) : new Date('9999-12-31');
-    const db = b.final_deadline ? new Date(b.final_deadline) : new Date('9999-12-31');
-    return da - db;
-  });
 
-  // ヒーローの数字は renderMyFocusCard()（GET /dashboard/my-focus）が
-  // 「いま手元 / 期限超過 / 今週締切」として入れる。ここでは書かない。
-  // 旧「担当中 / 直近3日」は allCreatives（limit=500・納品除外）由来で取りこぼしがあり、
-  // ボール基準の数字と二重に出ると意味が割れるため廃止した（ADR 040）。
-
-  if (!mine.length) {
-    document.getElementById('dash-content').innerHTML =
-      `<div class="dash-section" style="text-align:center;padding:48px">
-        <div style="font-size:36px;margin-bottom:12px">✅</div>
-        <div style="font-size:16px;font-weight:600;color:var(--em-dark)">現在担当中の案件はありません</div>
-      </div>`;
-    return;
-  }
-
-  const cards = mine.map(c => {
-    const diff = _dashDiff(c.final_deadline, today);
-    const cls  = diff===null?'':diff<0?'d-over':diff<=3?'d-warn':'';
-    const num  = diff===null?'—':Math.abs(diff).toString();
-    const unit = diff===null?'':diff<0?'日超過':diff===0?'今日が期限':'日後';
-    const sheetUrl = c.projects?.sheet_url || '';
-    const regUrl   = c.projects?.regulation_url || '';
-    const linksHtml = (sheetUrl || regUrl)
-      ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${
-          sheetUrl ? `<a href="${esc(sheetUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;padding:3px 8px;border:0.5px solid var(--em);border-radius:5px;color:var(--em-dark);text-decoration:none;white-space:nowrap;background:#fff">📊 管理シート ↗</a>` : ''
-        }${
-          regUrl ? `<a href="${esc(regUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;padding:3px 8px;border:0.5px solid var(--border);border-radius:5px;color:var(--text-muted);text-decoration:none;white-space:nowrap;background:#fff">📐 レギュ ↗</a>` : ''
-        }</div>`
-      : '';
-    return `<div class="deadline-card">
-      <div style="text-align:center;min-width:64px">
-        <div class="deadline-num ${cls}">${num}</div>
-        <div class="deadline-unit">${unit}</div>
-      </div>
-      <div class="deadline-info">
-        <div class="deadline-name">${c.file_name}</div>
-        <div class="deadline-meta">${c.projects?.clients?.name||''}${c.projects?.name?' / '+c.projects.name:''}</div>
-        <div style="margin-top:6px"><span class="status-chip ${statusClass(c.status)}">${c.status}</span></div>
-        ${linksHtml}
-      </div>
-    </div>`;
-  }).join('');
-
-  document.getElementById('dash-content').innerHTML =
-    `<div class="dash-section"><div class="dash-section-title">📋 自分の担当（期限順）</div>${cards}</div>`;
+  // 「📋 自分の担当（期限順）」は廃止した（ADR 040 追補・2026-09-16）。
+  // 🎯 マイフォーカスと同じクリエイティブを全件並べ直す二重表示になっており、
+  // 「他N件を見る」を押さなくても下にスクロールすれば全部ある、という構造的な重複だった。
+  // 手元の手番＝マイフォーカス、全件＝クリエイティブ一覧の「自分のボール」ビューに一本化する。
+  // ヒーローの数字も renderMyFocusCard() が入れるため、ここでは書かない。
+  //
+  // 注: 旧実装は #dash-content を innerHTML で丸ごと上書きしており、その中の静的な
+  //     #dash-charts / #dash-text-content / #dash-forecast-content ごと消していた。
+  //     このため VIEW AS で editor → admin に切り替えると #dash-charts が存在せず
+  //     renderAdminDash が早期 return してグラフが出なくなっていた（PR #332 のログにある
+  //     null 参照もこれが原因）。子要素は壊さず、中身だけを空にする。
+  const charts = document.getElementById('dash-charts');
+  if (charts) charts.style.display = 'none';
+  ['revenue', 'creative-status', 'project-status', 'monthly'].forEach(id => _destroyChart(id));
+  const txt = document.getElementById('dash-text-content');
+  if (txt) txt.innerHTML = '';
+  const forecast = document.getElementById('dash-forecast-content');
+  if (forecast) forecast.innerHTML = '';
 }
-
 
 async function loadInvoices() {
   await Promise.all([loadMyInvoices(), hasPermission('invoice.all_view') ? loadAdminInvoices() : Promise.resolve()]);

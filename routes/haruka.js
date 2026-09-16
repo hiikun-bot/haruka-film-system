@@ -25013,7 +25013,7 @@ router.get('/dashboard/my-focus', requireAuth, async (req, res) => {
   // 表示と ball 判定に必要な最小列。users.avatar_url は base64 のため絶対に select しない（PR #940）
   const CREATIVE_SELECT = `
     id, file_name, status, final_deadline, draft_deadline, help_flag, project_id, team_id,
-    projects(id, name, director_id, producer_id, clients(id, name)),
+    projects(id, name, director_id, producer_id, sheet_url, regulation_url, clients(id, name)),
     creative_assignments(role, user_id, users(id, full_name, team_id))
   `;
   // 納品済みは手番が無いので最初から除外（ball_type 'done' を数えないためでもある）
@@ -25151,6 +25151,10 @@ router.get('/dashboard/my-focus', requireAuth, async (req, res) => {
         project_id: c.project_id,
         project_name: c.projects?.name || '',
         client_name: c.projects?.clients?.name || '',
+        // 制作中に毎回開く2つのリンク。旧「自分の担当（期限順）」カードにあった導線を
+        // マイフォーカスへ引き継ぐ（ADR 040 追補）
+        sheet_url: c.projects?.sheet_url || '',
+        regulation_url: c.projects?.regulation_url || '',
         ball_type: ball?.type || 'unknown',
         ball_user_ids: Array.isArray(ball?.user_ids) ? ball.user_ids : [],
         member_user_ids: Array.from(memberUserIds),
