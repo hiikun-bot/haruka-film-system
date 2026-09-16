@@ -14,7 +14,7 @@ const { createSheetWithData, overwriteFirstSheet, getServiceAccountEmail, extrac
 const { resolveSerialDigits, normalizeColumnLetter, columnLetterToIndex, parseSerialCells } = require('../utils/serial-sheet');
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
-const { createNotification, extractMentions } = require('../utils/notification');
+const { createNotification, extractMentions, loadMentionDirectory } = require('../utils/notification');
 const { resolveUnreadSince } = require('../utils/tweets-unread');
 const { renderFilename } = require('../utils/filename');
 const {
@@ -16735,6 +16735,34 @@ async function serveTweetImage(req, res, pos) {
   return sendTweetImageDataUrl(res, data.image_data);
 }
 
+// 「@」メンション補完の候補（在籍メンバー全員の id / 名前 / アバター）
+//   GET /api/tweets/mention-candidates
+//   /members は member.list 権限が無いロールだと自分1件しか返さないため、
+//   つぶやき用に権限に依らず全員（is_active !== false）を返す軽量エンドポイントを用意する。
+//   機微情報は含めない。avatar_url は avatar 参照キャッシュから配信 URL を注入（base64 は載せない）。
+router.get('/tweets/mention-candidates', requireAuth, async (req, res) => {
+  try {
+    const [users, avatarMap] = await Promise.all([
+      loadMentionDirectory(),
+      getAvatarRefMap(supabase).catch(e => {
+        console.warn('[tweets] mention-candidates: avatar 参照キャッシュ取得失敗 → avatar_url は null:', e.message);
+        return new Map();
+      }),
+    ]);
+    const list = users.map(u => {
+      const row = { id: u.id, full_name: u.full_name || '', nickname: u.nickname || '', avatar_url: null };
+      applyAvatarRef(row, avatarMap);
+      return row;
+    });
+    list.sort((a, b) => String(a.full_name).localeCompare(String(b.full_name), 'ja'));
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json(list);
+  } catch (e) {
+    console.error('[tweets] mention-candidates 失敗:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/tweets/:id/image', requireAuth, (req, res) => serveTweetImage(req, res, 0));
 router.get('/tweets/:id/image/:pos', requireAuth, (req, res) =>
   serveTweetImage(req, res, Number(req.params.pos)));
@@ -16848,7 +16876,8 @@ router.patch('/tweets/:id', requireAuth, async (req, res) => {
   const { data, error } = await supabase.from('tweets')
     .update({ body, mentioned_user_ids: newMentionedIds, edited_at: new Date().toISOString() })
     .eq('id', req.params.id)
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count')
+    // image_data（base64・最大500KB）は本文編集のレスポンスに不要なので返さない（一覧 API と同形）
+    .select('id, user_id, body, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count')
     .single();
   if (error) return res.status(500).json({ error: error.message });
 

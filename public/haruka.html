@@ -2501,6 +2501,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <script src="/js/confirm-dialog.js"></script>
 <!-- 共通: ユーザー名表示ヘルパー（システム標準）— 全画面でこのヘルパー経由で名前を表示。インラインJSより先に読み込む -->
 <script src="/js/name-display.js"></script>
+<script src="/js/mention-resolve.js"></script>
 <!-- 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js を server.js が配信）。インラインJSが参照するため defer なし -->
 <script src="/js/personal-goals.js"></script>
 </head>
@@ -3274,6 +3275,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div class="form-group" style="margin-bottom:8px">
       <label class="form-label">一言 <span style="color:#C0392B">*</span> <span id="tw-body-counter" style="font-weight:400;font-size:11px;color:var(--text-muted);margin-left:6px">0 / 280</span></label>
       <textarea class="form-input" id="tw-body" rows="4" maxlength="280" placeholder="例) 今日の現場、夕日がエモかった" style="resize:vertical;font-family:inherit" oninput="updateTweetCounter()"></textarea>
+      <div class="tw-mention-hint">「@」に続けて名前を打つとメンバー候補が出ます。選ぶと相手に通知が届きます</div>
     </div>
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">投稿は 90 日後に自動で非表示になります</div>
     <div class="modal-footer">
@@ -30269,6 +30271,7 @@ function openTweetCompose() {
   document.getElementById('tw-image-input').value = '';
   renderTweetImagePreview();
   updateTweetCounter();
+  TwMention.attach(document.getElementById('tw-body')); // 「@」メンション補完
   openModal('modal-tweet-compose');
 }
 
@@ -30544,6 +30547,7 @@ function startEditTweet(id) {
   const ta = document.getElementById(`tw-edit-textarea-${id}`);
   const counter = document.getElementById(`tw-edit-counter-${id}`);
   if (ta) {
+    TwMention.attach(ta); // 「@」メンション補完
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
     ta.addEventListener('input', () => {
@@ -30557,7 +30561,7 @@ function cancelEditTweet(id) {
   if (!bodyEl) return;
   const original = bodyEl.dataset.originalBody || '';
   bodyEl.dataset.editing = '';
-  bodyEl.textContent = original;
+  bodyEl.innerHTML = _twFormatBody(original);
 }
 
 async function saveEditTweet(id) {
@@ -30567,7 +30571,8 @@ async function saveEditTweet(id) {
   const body = ta.value.trim();
   if (!body) { showToast('本文を入力してください', 'warn'); return; }
   if (body.length > 280) { showToast('本文は 280 字以内にしてください', 'warn'); return; }
-  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }
+  if (saveBtn) { if (saveBtn.disabled) return; saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }
+  TwMention.close();
   try {
     const res = await apiFetch(`${API}/tweets/${id}`, {
       method: 'PATCH',
@@ -30579,10 +30584,25 @@ async function saveEditTweet(id) {
       showToast('エラー: ' + (e.error || '更新失敗'), 'error');
       return;
     }
+    const updated = await res.json().catch(() => null);
     showToast('更新しました', 'success');
-    if (typeof loadTweetsPage === 'function') loadTweetsPage();
+    // 更新後の本文を該当カードに即時反映する（一覧全体の再fetchに頼らない＝スクロール位置と
+    // 開いているコメント欄を保つ。再fetchが失敗して古い本文が残る事故も防ぐ）。
+    // 一覧にカードが無いときだけ従来どおり再読込。
+    const t = _twPageList.find(x => x.id === id);
+    let reflected = false;
+    if (t) {
+      t.body = (updated && typeof updated.body === 'string') ? updated.body : body;
+      t.edited_at = (updated && updated.edited_at) || new Date().toISOString();
+      if (updated && Array.isArray(updated.mentioned_user_ids)) t.mentioned_user_ids = updated.mentioned_user_ids;
+      reflected = _twReplaceCardDom(t);
+    }
+    if (!reflected && typeof loadTweetsPage === 'function') loadTweetsPage();
+  } catch (e) {
+    console.warn('[tweets-page] edit save failed', e);
+    showToast('通信エラー: 更新できませんでした。もう一度お試しください', 'error');
   } finally {
-    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
+    if (saveBtn && saveBtn.isConnected) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
   }
 }
 
@@ -30934,7 +30954,8 @@ async function loadTweetsPage() {
 
   let list = [];
   try {
-    const res = await apiFetch(url);
+    // メンション候補（本文の @ハイライト・「@」補完用）は一覧と並列で先読み。失敗しても一覧は出す
+    const [res] = await Promise.all([apiFetch(url), _twLoadMentionUsers()]);
     if (res.ok) list = await res.json();
     else {
       el.innerHTML = '<div class="tweets-empty">読み込みに失敗しました</div>';
@@ -31006,16 +31027,25 @@ function _twApplyReactionLocal(tweetId, type, action) {
   t.reaction_counts = counts;
   t.reaction_users = reactionUsers;
 
-  const card = document.querySelector(`article.tweet-card[data-tweet-id="${tweetId}"]`);
-  if (!card) return true;
+  _twReplaceCardDom(t);
+  return true;
+}
+
+// 該当カードだけを最新の t で描き直す（一覧全体を再fetchしない）。
+// 開いているコメント欄は DOM ノードごと引き継ぐ（再フェッチで読み込み中をチラつかせない。
+// innerHTML のコピーだと入力欄に付けたイベントリスナー（「@」補完など）が失われるので要素を移す）。
+// 戻り値: true=差し替えた / false=一覧にカードが無い
+function _twReplaceCardDom(t) {
+  if (!t || !t.id) return false;
+  const card = document.querySelector(`article.tweet-card[data-tweet-id="${t.id}"]`);
+  if (!card) return false;
   const wrap = document.createElement('div');
   wrap.innerHTML = renderTweetCard(t);
   const newCard = wrap.firstElementChild;
-  if (!newCard) return true;
-  // 開いているコメント欄の中身は引き継ぐ（再フェッチで読み込み中チラつかせない）
+  if (!newCard) return false;
   const oldComments = card.querySelector('.tweet-comments-wrap');
   const newComments = newCard.querySelector('.tweet-comments-wrap');
-  if (oldComments && newComments) newComments.innerHTML = oldComments.innerHTML;
+  if (oldComments && newComments) newComments.replaceWith(oldComments);
   card.replaceWith(newCard);
   return true;
 }
@@ -31056,6 +31086,198 @@ function _twPrependTweetLocal(created) {
   else el.appendChild(node);
   return true;
 }
+
+// ==================== 「@」メンション（候補キャッシュ / 本文ハイライト / 入力補完） ====================
+//
+// 「@」に続けて文字を打つとメンバー候補をポップアップし、選ぶと「@ニックネーム 」を挿入する。
+// 候補の絞り込み・本文のハイライト・サーバー側の通知先解決は、すべて同じ
+// utils/mention-resolve.js（/js/mention-resolve.js で配信・window.MentionResolve）のロジックを使う。
+// → 画面で「メンションとして光っている名前」= 「通知が届く相手」が常に一致する。
+let _twMentionUsers = null;          // [{ id, full_name, nickname, avatar_url }]
+let _twMentionUsersPromise = null;
+async function _twLoadMentionUsers() {
+  if (_twMentionUsers) return _twMentionUsers;
+  if (_twMentionUsersPromise) return _twMentionUsersPromise;
+  _twMentionUsersPromise = apiFetch(`${API}/tweets/mention-candidates`)
+    .then(r => (r.ok ? r.json() : []))
+    .then(list => { _twMentionUsers = Array.isArray(list) ? list : []; return _twMentionUsers; })
+    .catch(e => { console.warn('[tweets] mention candidates load failed', e); return _twMentionUsers || []; })
+    .finally(() => { _twMentionUsersPromise = null; });
+  return _twMentionUsersPromise;
+}
+
+// 本文を HTML 化（エスケープ + 解決できたメンションを .tw-mention でハイライト）。
+// 候補が未ロード / 解決ライブラリ未読込のときは従来どおりのエスケープ表示。
+function _twFormatBody(body) {
+  const text = String(body ?? '');
+  const MR = window.MentionResolve;
+  if (!MR || !_twMentionUsers || !_twMentionUsers.length || !/[@＠]/.test(text)) return esc(text);
+  let spans = [];
+  try { spans = MR.resolveMentions(text, _twMentionUsers); } catch (_) { return esc(text); }
+  if (!spans.length) return esc(text);
+  let out = '';
+  let pos = 0;
+  for (const sp of spans) {
+    out += esc(text.slice(pos, sp.start));
+    const names = (sp.users || []).map(u => NameDisplay.full(u)).join(' / ');
+    out += `<span class="tw-mention" title="${esc(names)}">${esc(text.slice(sp.start, sp.end))}</span>`;
+    pos = sp.end;
+  }
+  out += esc(text.slice(pos));
+  return out;
+}
+
+const TwMention = (() => {
+  let popup = null;
+  let activeTa = null;   // 候補を出している textarea
+  let items = [];        // 表示中の候補
+  let activeIdx = 0;
+  let atPos = -1;        // 「@」の位置（value 内オフセット）
+  let blurTimer = null;
+
+  function ensurePopup() {
+    if (popup) return popup;
+    popup = document.createElement('div');
+    popup.id = 'tw-mention-popup';
+    popup.className = 'tw-mention-popup';
+    popup.hidden = true;
+    popup.setAttribute('role', 'listbox');
+    // mousedown で textarea の blur を防ぐ（blur → close が click より先に走って選べなくなるのを避ける）
+    popup.addEventListener('mousedown', e => e.preventDefault());
+    popup.addEventListener('click', e => {
+      const btn = e.target.closest('[data-idx]');
+      if (!btn) return;
+      select(Number(btn.dataset.idx));
+    });
+    document.body.appendChild(popup);
+    window.addEventListener('scroll', () => { if (isOpen()) position(); }, true);
+    window.addEventListener('resize', () => { if (isOpen()) position(); });
+    return popup;
+  }
+
+  function isOpen() { return !!popup && !popup.hidden; }
+  function close() {
+    if (popup) popup.hidden = true;
+    items = []; activeIdx = 0; atPos = -1; activeTa = null;
+  }
+
+  // caret 直前の「@query」を探す。補完対象でなければ null
+  function context(ta) {
+    const caret = ta.selectionStart ?? ta.value.length;
+    const before = ta.value.slice(0, caret);
+    const at = Math.max(before.lastIndexOf('@'), before.lastIndexOf('＠'));
+    if (at < 0) return null;
+    const query = before.slice(at + 1);
+    if (query.length > 20) return null;
+    if (/[\s@＠]/u.test(query)) return null;              // 空白・別の @ を含んだら入力済みとみなす
+    const prev = at > 0 ? before[at - 1] : '';
+    if (prev && /[A-Za-z0-9._-]/.test(prev)) return null; // メールアドレス風（a@b）は対象外
+    return { at, query };
+  }
+
+  // textarea の直下（入らなければ直上）に固定配置
+  function position() {
+    if (!activeTa || !popup) return;
+    const r = activeTa.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const width = Math.min(Math.max(r.width, 220), 360, vw - 16);
+    const left = Math.min(Math.max(8, r.left), vw - width - 8);
+    popup.style.width = width + 'px';
+    popup.style.left = left + 'px';
+    popup.style.maxHeight = '';
+    const ph = popup.offsetHeight;
+    const spaceBelow = vh - r.bottom - 8;
+    const spaceAbove = r.top - 8;
+    if (spaceBelow >= Math.min(ph, 160) || spaceBelow >= spaceAbove) {
+      popup.style.top = (r.bottom + 4) + 'px';
+      popup.style.maxHeight = Math.max(120, Math.min(240, spaceBelow)) + 'px';
+    } else {
+      const h = Math.max(120, Math.min(240, spaceAbove));
+      popup.style.maxHeight = h + 'px';
+      popup.style.top = Math.max(8, r.top - Math.min(ph, h) - 4) + 'px';
+    }
+  }
+
+  function render() {
+    const p = ensurePopup();
+    if (!items.length) { close(); return; }
+    p.innerHTML = items.map((u, i) => {
+      const av = u.avatar_url
+        ? `<img class="tw-mention-av" src="${esc(u.avatar_url)}" alt="" loading="lazy" decoding="async">`
+        : `<span class="tw-mention-av">${esc((u.nickname || u.full_name || '?').charAt(0))}</span>`;
+      const short = NameDisplay.short(u);
+      const sub = (u.nickname && u.full_name && u.nickname !== u.full_name)
+        ? `<span class="tw-mention-sub">${esc(u.full_name)}</span>` : '';
+      return `<button type="button" class="tw-mention-item${i === activeIdx ? ' active' : ''}" data-idx="${i}" role="option" aria-selected="${i === activeIdx}">${av}<span class="tw-mention-name">@${esc(short)}</span>${sub}</button>`;
+    }).join('');
+    p.hidden = false;
+    position();
+    const act = p.querySelector('.tw-mention-item.active');
+    if (act && act.scrollIntoView) act.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function update(ta) {
+    const ctx = context(ta);
+    if (!ctx) { if (activeTa === ta) close(); return; }
+    const users = _twMentionUsers || await _twLoadMentionUsers();
+    // 候補取得を待つ間に状況が変わっていたら破棄
+    if (document.activeElement !== ta) return;
+    const ctx2 = context(ta);
+    if (!ctx2) { if (activeTa === ta) close(); return; }
+    const MR = window.MentionResolve;
+    const meId = currentUser?.id;
+    const pool = (users || []).filter(u => u.id !== meId); // 自分は候補から外す（自分宛て通知は飛ばない）
+    items = MR ? MR.filterMentionCandidates(pool, ctx2.query, 8) : [];
+    activeTa = ta; atPos = ctx2.at; activeIdx = 0;
+    render();
+  }
+
+  // 候補を確定: 「@query」を「@ニックネーム 」に置き換える
+  function select(idx) {
+    const u = items[idx];
+    const ta = activeTa;
+    if (!u || !ta) { close(); return; }
+    const short = NameDisplay.short(u);
+    const caret = ta.selectionStart ?? ta.value.length;
+    const before = ta.value.slice(0, atPos);
+    const after = ta.value.slice(caret);
+    const inserted = `@${short} `;
+    ta.value = before + inserted + after;
+    const pos = before.length + inserted.length;
+    close();
+    ta.focus();
+    try { ta.setSelectionRange(pos, pos); } catch (_) {}
+    ta.dispatchEvent(new Event('input', { bubbles: true })); // 文字数カウンタ・自動高さを更新
+  }
+
+  function attach(ta) {
+    if (!ta || ta.dataset.twMention === '1') return;
+    ta.dataset.twMention = '1';
+    _twLoadMentionUsers(); // 候補を先読み
+    ta.addEventListener('input', () => { update(ta); });
+    ta.addEventListener('click', () => { if (isOpen() && activeTa === ta) update(ta); });
+    ta.addEventListener('keydown', e => {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (!isOpen() || activeTa !== ta) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault(); activeIdx = (activeIdx + 1) % items.length; render();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault(); activeIdx = (activeIdx - 1 + items.length) % items.length; render();
+      } else if ((e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault(); e.stopImmediatePropagation(); select(activeIdx);
+      } else if (e.key === 'Escape') {
+        e.preventDefault(); e.stopImmediatePropagation(); close();
+      }
+    });
+    ta.addEventListener('blur', () => {
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => { if (activeTa === ta) close(); }, 150);
+    });
+    ta.addEventListener('focus', () => { clearTimeout(blurTimer); });
+  }
+
+  return { attach, close, isOpen };
+})();
 
 function renderTweetCard(t) {
   const u = t.users || {};
@@ -31164,7 +31386,7 @@ function renderTweetCard(t) {
       ${deleteBtn}
     </div>
     ${imageHtml}
-    <div class="tweet-body" id="tw-body-${t.id}" data-original-body="${esc(t.body)}">${esc(t.body)}</div>
+    <div class="tweet-body" id="tw-body-${t.id}" data-original-body="${esc(t.body)}">${_twFormatBody(t.body)}</div>
     <div class="tweet-footer">
       <div class="tweet-reaction-summary">${summaryPills}</div>
       ${addReactionWrap}
@@ -31279,7 +31501,7 @@ function _twRenderCommentRow(tweetId, c, opts = {}) {
         <span>${_twTimeAgo(c.created_at)}</span>
         ${actionsWrap}
       </div>
-      <div class="tw-comment-body" data-original-body="${esc(c.body)}">${esc(c.body)}</div>
+      <div class="tw-comment-body" data-original-body="${esc(c.body)}">${_twFormatBody(c.body)}</div>
       ${pending ? '' : _twRenderCommentReactions(tweetId, c)}
     </div>
   </div>`;
@@ -31419,13 +31641,14 @@ async function loadTweetCommentsPage(tweetId) {
       ${rows || '<div class="tw-comment-empty">まだコメントはありません</div>'}
       <div class="tw-comment-form">
         <textarea id="tw-page-comment-input-${tweetId}" maxlength="500" rows="1"
-          placeholder="コメントを入力（500字、@名前 でメンション・Cmd/Ctrl+Enterで送信）"
+          placeholder="コメントを入力（500字・「@」で名前を選ぶとメンション・Cmd/Ctrl+Enterで送信）"
           oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px'"
           onkeydown="if(event.isComposing||event.keyCode===229)return;if(event.key==='Enter' && (event.metaKey||event.ctrlKey)){event.preventDefault();submitTweetCommentPage('${tweetId}')}"></textarea>
         <button onclick="submitTweetCommentPage('${tweetId}')">送信</button>
       </div>
     </div>
   `;
+  TwMention.attach(document.getElementById(`tw-page-comment-input-${tweetId}`)); // 「@」メンション補完
 }
 
 // 楽観的更新: コメント数バッジを該当ツイートのカード DOM だけ更新する。
@@ -31581,23 +31804,29 @@ function editTweetCommentPage(tweetId, commentId) {
   bodyEl.style.display = 'none';
   const form = document.createElement('div');
   form.className = 'tw-comment-edit-form';
-  form.style.cssText = 'display:flex;gap:6px;margin-top:4px;align-items:flex-start';
+  // 見た目は tweets-page.css（スマホでは textarea を全幅・ボタンを下段に落とす）
   form.innerHTML = `
-    <textarea class="tw-comment-edit-input" maxlength="500" rows="2" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5;resize:vertical;min-height:38px"></textarea>
-    <button class="tw-comment-edit-save" style="padding:6px 12px;background:var(--primary);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px">保存</button>
-    <button class="tw-comment-edit-cancel" style="padding:6px 10px;background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px">キャンセル</button>
+    <textarea class="tw-comment-edit-input" maxlength="500" rows="2"></textarea>
+    <div class="tw-comment-edit-actions">
+      <button type="button" class="tw-comment-edit-save">保存</button>
+      <button type="button" class="tw-comment-edit-cancel">キャンセル</button>
+    </div>
   `;
   bodyEl.parentNode.appendChild(form);
   const input = form.querySelector('.tw-comment-edit-input');
+  const saveBtn = form.querySelector('.tw-comment-edit-save');
   input.value = original;
+  // 「@」メンション補完（候補表示中の Enter / Escape を補完側で先取りするため、他のキー処理より先に登録）
+  TwMention.attach(input);
   // 既存改行に合わせて初期高さを伸ばす
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 200) + 'px';
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
-  const cancel = () => { form.remove(); bodyEl.style.display = ''; };
+  const cancel = () => { TwMention.close(); form.remove(); bodyEl.style.display = ''; };
+  const doSave = () => saveTweetCommentEditPage(tweetId, commentId, input.value, { saveBtn });
   form.querySelector('.tw-comment-edit-cancel').addEventListener('click', cancel);
-  form.querySelector('.tw-comment-edit-save').addEventListener('click', () => saveTweetCommentEditPage(tweetId, commentId, input.value));
+  saveBtn.addEventListener('click', doSave);
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
@@ -31606,29 +31835,54 @@ function editTweetCommentPage(tweetId, commentId) {
     // IME 変換確定の Enter で誤って保存されないように、変換中は無視する
     if (e.isComposing || e.keyCode === 229) return;
     // 改行は Enter、保存は Cmd/Ctrl+Enter
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveTweetCommentEditPage(tweetId, commentId, input.value); }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doSave(); }
     else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   });
 }
 
-async function saveTweetCommentEditPage(tweetId, commentId, body) {
+// 返信コメントの本文更新。
+//   ui.saveBtn を渡すと保存中は二重送信を防ぎ、完了後に戻す。
+//   成功時は PUT のレスポンスでその行だけ差し替える（コメント欄全体の再fetchに頼らない。
+//   スマホの不安定な回線で再fetchが失敗して古い本文が残る事故を防ぐ）。差し替えできない時だけ再読込。
+async function saveTweetCommentEditPage(tweetId, commentId, body, ui = {}) {
   const trimmed = (body || '').trim();
   if (!trimmed) { showToast('コメントを入力してください', 'warn'); return; }
   if (trimmed.length > 500) { showToast('500字以内にしてください', 'warn'); return; }
-  const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body: trimmed }),
-  });
-  if (res.ok) {
+  const saveBtn = ui.saveBtn || null;
+  if (saveBtn) { if (saveBtn.disabled) return; saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }
+  TwMention.close();
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: trimmed }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '更新失敗'), 'error');
+      return;
+    }
+    const updated = await res.json().catch(() => null);
     showToast('更新しました', 'success');
+    const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
+    const row = wrap && wrap.querySelector(`.tw-comment[data-comment-id="${commentId}"]`);
+    if (row && updated && updated.id) {
+      // PUT のレスポンスに無い項目（返信リアクションの集計など）は行キャッシュから引き継ぐ
+      const prev = (typeof _twCommentCache !== 'undefined' && _twCommentCache.get(commentId)) || {};
+      const merged = { ...prev, ...updated };
+      const holder = document.createElement('div');
+      holder.innerHTML = _twRenderCommentRow(tweetId, merged);
+      const fresh = holder.firstElementChild;
+      if (fresh) { row.replaceWith(fresh); return; }
+    }
     await loadTweetCommentsPage(tweetId);
-  } else {
-    const e = await res.json().catch(() => ({}));
-    showToast('エラー: ' + (e.error || '更新失敗'), 'error');
+  } catch (e) {
+    console.warn('[tweets-page] comment edit failed', e);
+    showToast('通信エラー: 更新できませんでした。もう一度お試しください', 'error');
+  } finally {
+    if (saveBtn && saveBtn.isConnected) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
   }
 }
-
 
 // ダッシュボード: 誕生日一覧
 async function loadDashboardBirthdays() {
