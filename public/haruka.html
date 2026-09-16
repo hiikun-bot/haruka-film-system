@@ -48,6 +48,10 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .nav-btn{font-size:13px;color:rgba(255,255,255,0.92);padding:5px 11px;border-radius:6px;cursor:pointer;border:none;background:transparent;text-shadow:0 1px 3px rgba(0,0,0,0.35);white-space:nowrap;transition:background .15s,color .15s}
 .nav-btn.active{background:rgba(255,255,255,0.24);color:#fff;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
 .nav-btn:hover{background:rgba(255,255,255,0.16);color:#fff}
+/* ナビ「つぶやき」の未読バッジ（ADR 041）: 最終閲覧以降の他人の投稿数。0 件は hidden */
+.nav-unread-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;margin-left:5px;border-radius:9px;background:#EF4444;color:#fff;font-size:10.5px;font-weight:700;line-height:1;text-shadow:none;vertical-align:middle;box-shadow:0 0 0 1.5px rgba(255,255,255,.85)}
+.nav-unread-badge[hidden]{display:none}
+.nav-drawer-btn .nav-unread-badge{margin-left:auto}
 .header-right{display:flex;align-items:center;gap:8px;z-index:1;flex-shrink:0}
 .header-user{display:flex;align-items:center;gap:8px}
 .user-av{width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.22);border:1px solid rgba(255,255,255,0.55);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.4);overflow:hidden;cursor:pointer;flex-shrink:0}
@@ -1389,6 +1393,25 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .dash-grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}
 .dash-section{background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:20px}
 .dash-section-title{font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:6px}
+/* 💭 みんなのつぶやき（ホーム最上段・ADR 041）。最新 3 件＋新着チップ。割り込み通知の代わり */
+.dash-tweets-card{border-left:4px solid #3ECFCA}
+.dash-tweets-card .dash-section-title{margin-bottom:4px;flex-wrap:wrap}
+.dash-tweets-unread{font-size:10px;font-weight:700;color:#fff;background:#EF4444;border-radius:9px;padding:2px 7px;letter-spacing:0;text-transform:none;white-space:nowrap}
+.dash-tweets-unread[hidden]{display:none}
+.dash-tweets-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+.dash-tweets-actions .btn-sm{font-size:11px;padding:4px 10px;letter-spacing:0;text-transform:none}
+.dash-tweets-item{display:flex;gap:10px;align-items:flex-start;padding:10px 6px;margin:0 -6px;border-bottom:0.5px solid var(--border-light);cursor:pointer;border-radius:8px;transition:background .15s}
+.dash-tweets-item:last-of-type{border-bottom:none}
+.dash-tweets-item:hover{background:var(--em-pale)}
+.dash-tweets-av{width:32px;height:32px;border-radius:50%;flex-shrink:0;object-fit:cover;background:#E6F9F8;color:#2BA8A4;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+.dash-tweets-main{flex:1;min-width:0}
+.dash-tweets-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--text-muted)}
+.dash-tweets-name{font-size:12.5px;font-weight:600;color:var(--text)}
+.dash-tweets-new{font-size:9px;font-weight:800;color:#EF4444;letter-spacing:.06em}
+.dash-tweets-body{font-size:13px;color:var(--text);line-height:1.5;margin-top:2px;white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dash-tweets-item.is-new .dash-tweets-body{font-weight:500}
+.dash-tweets-counts{font-size:11px;color:var(--text-muted);margin-top:3px;display:flex;gap:10px}
+.dash-tweets-empty{text-align:center;padding:14px 0 6px;font-size:13px;color:var(--text-muted)}
 /* 🏅 マイ実績（本人専用カード・ADR 036） */
 .my-stats-card{margin-bottom:14px;border-left:4px solid var(--em)}
 .my-stats-card .dash-section-title{justify-content:space-between;margin-bottom:12px}
@@ -4063,7 +4086,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
     <button class="nav-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">学び広場</button>
-    <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
+    <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
     <!-- 📝 契約・登録手続き: 本人の依頼・契約のみ（requireAuth・全ロール）。ADR 035 -->
     <button class="nav-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
@@ -4195,7 +4218,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
     <button class="nav-drawer-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
-    <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
+    <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
     <button class="nav-drawer-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
     <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
@@ -4240,6 +4263,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
        ホームの最上段＝「今日、自分が何をするか」を実績カードより先に出す（ADR 036 決定6 の配置を改訂）。
        全ロール共通で loadDashboard() から renderMyFocusCard() が描画する。 -->
   <div id="dash-my-focus"></div>
+  <!-- 💭 みんなのつぶやき（全ロール共通・ADR 041）: 最新 3 件＋新着チップ。loadDashboard() の renderDashTweetsCard() が描画。
+       ポップアップで割り込む代わりに「ホームを開いたら仲間の気配がある」場所として、マイフォーカスの直下に置く。 -->
+  <div id="dash-tweets"></div>
   <!-- 🏅 マイ実績（本人専用・ADR 036。editor/designer/director ダッシュで renderMyStatsCard() が描画。admin ダッシュには出さない） -->
   <div id="dash-my-stats"></div>
   <!-- 📝 契約・登録手続きバナー（ADR 035）: GET /contracts/me の banner が非 null のとき contract-wizard.js の renderContractBanner() が描画 -->
@@ -10857,6 +10883,15 @@ async function applyDeepLinkOnLoad() {
         // 権限で非表示のナビなら開かない（applyRoleBasedUI 適用後の inline display で判定）
         if (navBtn && navBtn.style.display !== 'none' && typeof showPage === 'function') showPage('contract-admin', navBtn);
       } catch (e) { console.warn('[deepLink page]', e); }
+      return;
+    }
+
+    // ?tweet=<id> : メンション通知（Slack / Chatwork / メール）からつぶやきページの該当カードへ（ADR 041）。
+    // notification-card.js は haruka.html 内では openTweetsPage() を直接呼ぶので、ここは外部リンク経由のみ通る。
+    const tweetParam = params.get('tweet');
+    if (tweetParam) {
+      stripQueryParam('tweet');
+      try { openTweetsPage(tweetParam); } catch (e) { console.warn('[deepLink tweet]', e); }
       return;
     }
 
@@ -24366,7 +24401,8 @@ function showPage(name, btn) {
   if(name==='analytics') initAnalyticsPage();
   if(name==='team-load') loadTeamLoadPage();
   if(name==='payout') loadPayoutPage();
-  if(name==='tweets')   loadTweetsPage();
+  // 読み込み完了を focusTweetOnPage()（ホーム／通知／?tweet= からの該当カードへのスクロール）が待てるよう Promise を公開
+  if(name==='tweets')   window._twPageLoadPromise = loadTweetsPage();
   if(name==='portfolio') loadPortfolioPage();
   if(name==='work-hours') loadWorkHoursPage();
   if(name==='bulk-deliver') loadBulkDeliverPage();
@@ -29319,13 +29355,15 @@ function loadDashboard() {
   // 🎯 マイフォーカス（全ロール共通・本人専用 ADR 040）: 自前 fetch なので init のデータ待ちをしない。
   // ヒーローの「いま手元 / 期限超過 / 今週締切」もこの結果から setDashHeroStats() で入る。
   renderMyFocusCard();
+  // 💭 みんなのつぶやき（全ロール共通・ADR 041）: 自前 fetch（limit=3）。マイフォーカスの直下。
+  renderDashTweetsCard();
   // 全ロール共通: 全体連絡セクション
   loadAnnouncements();
   // 全ロール共通: 誕生日セクション
   loadDashboardBirthdays();
   // 全ロール共通: 📝 契約・登録手続きバナー（本人宛の依頼があるときだけ表示。ADR 035）
   if (typeof renderContractBanner === 'function') renderContractBanner();
-  // つぶやきは独立タブ（#page-tweets）に集約（PR #209）。ダッシュボード内表示は廃止。
+  // つぶやき本体は独立タブ（#page-tweets・PR #209）。ホームには最新 3 件だけを renderDashTweetsCard() で出す（ADR 041）。
 
   // 初回ロード中はプレースホルダを出す（既に何か描画済みなら触らない＝再表示時のチラつき防止）。
   // 注意: #dash-content は中に #dash-charts / #dash-text-content を静的に持つため上書きしない。
@@ -30470,6 +30508,8 @@ async function submitTweet() {
     // 挿入できない場合（一覧未ロード等）のみ従来どおり再読込。
     const prepended = (typeof _twPrependTweetLocal === 'function') && _twPrependTweetLocal(created);
     if (!prepended && typeof loadTweetsPage === 'function') loadTweetsPage();
+    // ホームの「💭 みんなのつぶやき」から投稿した場合はカードも取り直す（ADR 041）
+    if (document.getElementById('page-dashboard')?.classList.contains('active')) renderDashTweetsCard();
   } finally {
     btn.disabled = false; btn.textContent = '投稿する';
   }
@@ -30598,6 +30638,192 @@ function _twIsStaffRole(role) {
   return role === 'admin' || role === 'secretary';
 }
 
+// ============================================================
+// 💭 つぶやきの「気づき」— ナビ未読バッジ ＋ ホーム「みんなのつぶやき」カード（ADR 041）
+// ------------------------------------------------------------
+// 方針: 割り込まない。ポップアップ／トーストは出さず、
+//   1) ナビ「つぶやき」に最終閲覧以降の他人の投稿数（赤バッジ）
+//   2) ホーム最上段（マイフォーカス直下）に最新 3 件＋「新着 N 件」チップ
+// で「開いたら仲間の気配がある」状態を作る。
+// ・最終閲覧時刻はこの端末の localStorage（サーバーは保存しない＝migration 不要）。
+//   端末が変わると 24 時間前起点で数え直す（utils/tweets-unread.js の既定）。
+// ・新着検知は notification-realtime.js が tweets の INSERT を購読して発火する
+//   CustomEvent 'tweets:incoming'。Realtime が切れている間は visibilitychange と 10 分間隔で補う。
+// ・ロール分岐なし（全員が同じつぶやきを見る）。VIEW AS でも表示は変わらない。
+// ============================================================
+const TWEETS_SEEN_LS_KEY = 'hfs_tweets_seen_at';
+const DASH_TWEETS_LIMIT = 3;
+let _twUnreadCount = 0;
+let _dashTweetsSeq = 0;
+
+function getTweetsSeenAt() {
+  try {
+    const v = localStorage.getItem(TWEETS_SEEN_LS_KEY);
+    if (v && Number.isFinite(Date.parse(v))) return v;
+  } catch (_) {}
+  return null;
+}
+
+function markTweetsSeen() {
+  try { localStorage.setItem(TWEETS_SEEN_LS_KEY, new Date().toISOString()); } catch (_) {}
+  setTweetsUnreadBadge(0);
+}
+
+// ナビ（PC / ドロワー）のバッジとホームカードの「新着 N 件」チップを同じ数で同期する
+function setTweetsUnreadBadge(n) {
+  _twUnreadCount = Math.max(0, Number(n) || 0);
+  const text = _twUnreadCount > 99 ? '99+' : String(_twUnreadCount);
+  document.querySelectorAll('.nav-unread-badge[data-for="tweets"]').forEach(b => {
+    b.hidden = _twUnreadCount === 0;
+    b.textContent = text;
+  });
+  const chip = document.getElementById('dash-tweets-unread');
+  if (chip) {
+    chip.hidden = _twUnreadCount === 0;
+    chip.textContent = `新着 ${text}件`;
+  }
+}
+
+async function refreshTweetsUnread() {
+  if (!currentUser?.id) return;
+  const since = getTweetsSeenAt();
+  const url = since
+    ? `${API}/tweets/unread-count?since=${encodeURIComponent(since)}`
+    : `${API}/tweets/unread-count`;
+  try {
+    const res = await apiFetch(url);
+    if (!res.ok) return;
+    const d = await res.json();
+    setTweetsUnreadBadge(d?.count);
+  } catch (e) { console.warn('[tweets-unread] fetch failed', e); }
+}
+
+// つぶやきページを開き、tweetId があれば該当カードまでスクロールして一瞬ハイライトする。
+// 呼び出し元: ホームカード / 通知パネル（notification-card.js）/ ?tweet=<id> 深リンク
+function openTweetsPage(tweetId) {
+  const navBtn = document.querySelector('.nav-btn[data-page="tweets"]')
+              || document.querySelector('.nav-drawer-btn[data-page="tweets"]');
+  showPage('tweets', navBtn || null);
+  if (tweetId) focusTweetOnPage(tweetId);
+}
+
+async function focusTweetOnPage(tweetId) {
+  if (!tweetId) return;
+  try { await window._twPageLoadPromise; } catch (_) {}
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(String(tweetId)) : String(tweetId).replace(/[^0-9a-zA-Z-]/g, '');
+  const card = document.querySelector(`article.tweet-card[data-tweet-id="${sel}"]`);
+  if (!card) return; // ロールフィルターで非表示・期限切れ等。ページは開いているので静かに終える
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.add('tweet-focus');
+  setTimeout(() => card.classList.remove('tweet-focus'), 2500);
+}
+
+// つぶやきページを開いている最中に他人の新着が来たら、一覧を勝手に入れ替えず
+// 先頭に「N 件あります」バーを出す（入力中の返信を消さないため）。タップで再読込。
+function _twShowNewBar() {
+  const el = document.getElementById('tweets-list');
+  if (!el || el.querySelector('.tweets-loading')) return;
+  let bar = el.querySelector('.tweets-new-bar');
+  if (!bar) {
+    bar = document.createElement('button');
+    bar.type = 'button';
+    bar.className = 'tweets-new-bar';
+    bar.dataset.n = '0';
+    bar.onclick = () => { window._twPageLoadPromise = loadTweetsPage(); };
+    el.prepend(bar);
+  }
+  const n = Number(bar.dataset.n || 0) + 1;
+  bar.dataset.n = String(n);
+  bar.textContent = `🆕 新しいつぶやきが ${n} 件あります — タップして表示`;
+}
+
+// ---- ホーム「💭 みんなのつぶやき」カード ----
+async function renderDashTweetsCard() {
+  const el = document.getElementById('dash-tweets');
+  if (!el) return;
+  const seq = ++_dashTweetsSeq;
+  let list = [];
+  try {
+    const res = await apiFetch(`${API}/tweets?order=recent&limit=${DASH_TWEETS_LIMIT}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    list = await res.json();
+  } catch (e) {
+    console.warn('[dash-tweets] fetch failed（カードを省略）', e);
+    return;
+  }
+  if (seq !== _dashTweetsSeq) return; // 連続呼び出しは後発優先
+  if (!document.getElementById('page-dashboard')?.classList.contains('active')) return;
+  el.innerHTML = _dashTweetsCardHtml(Array.isArray(list) ? list : []);
+  el.style.marginBottom = '14px';
+  setTweetsUnreadBadge(_twUnreadCount); // 描画し直したチップに現在の件数を入れる
+}
+
+function _dashTweetsCardHtml(list) {
+  const title = `<div class="dash-section-title">💭 みんなのつぶやき
+      <span id="dash-tweets-unread" class="dash-tweets-unread" hidden></span>
+      <span class="dash-tweets-actions">
+        <button class="btn-sm" onclick="openTweetCompose()" title="つぶやきを投稿">＋ つぶやく</button>
+        <button class="btn-sm" onclick="openTweetsPage()">すべて見る →</button>
+      </span>
+    </div>`;
+  if (!list.length) {
+    return `<div class="dash-section dash-tweets-card">${title}
+      <div class="dash-tweets-empty">まだつぶやきはありません。最初のひとことをどうぞ ✨</div>
+    </div>`;
+  }
+  const seenAt = getTweetsSeenAt();
+  const seenMs = seenAt ? Date.parse(seenAt) : (Date.now() - 24 * 60 * 60 * 1000);
+  const myId = currentUser?.id;
+  const rows = list.map(t => {
+    const u = t.users || {};
+    const av = u.avatar_url
+      ? `<img class="dash-tweets-av" src="${esc(u.avatar_url)}" alt="" loading="lazy" decoding="async">`
+      : `<span class="dash-tweets-av">${esc((u.full_name || '?').charAt(0))}</span>`;
+    const roleInfo = _twRoleBadgeMap[u.role];
+    const roleBadge = roleInfo ? `<span class="tweet-role-badge ${roleInfo.cls}">${esc(roleInfo.label)}</span>` : '';
+    const isNew = t.user_id !== myId && Date.parse(t.created_at) > seenMs;
+    const counts = [];
+    if (t.image_count) counts.push(`📷 ${t.image_count}`);
+    if (t.reaction_count) counts.push(`👍 ${t.reaction_count}`);
+    if (t.comment_count) counts.push(`💬 ${t.comment_count}`);
+    return `<div class="dash-tweets-item ${isNew ? 'is-new' : ''}" onclick="openTweetsPage('${esc(t.id)}')" role="link" tabindex="0" onkeydown="if(event.key==='Enter')openTweetsPage('${esc(t.id)}')">
+      ${av}
+      <div class="dash-tweets-main">
+        <div class="dash-tweets-meta">
+          <span class="dash-tweets-name" title="${esc(NameDisplay.tooltip(u))}">${esc(u.id ? NameDisplay.short(u) : '不明')}</span>
+          ${roleBadge}
+          <span>${_twTimeAgo(t.created_at)}</span>
+          ${isNew ? '<span class="dash-tweets-new">NEW</span>' : ''}
+        </div>
+        <div class="dash-tweets-body">${esc(t.body)}</div>
+        ${counts.length ? `<div class="dash-tweets-counts">${counts.map(c => `<span>${c}</span>`).join('')}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="dash-section dash-tweets-card">${title}${rows}</div>`;
+}
+
+// ---- 新着の受信・再同期 ----
+// notification-realtime.js が tweets INSERT を受けて発火。detail = { id, user_id, created_at }
+document.addEventListener('tweets:incoming', (e) => {
+  const row = e?.detail || {};
+  const onDashboard = document.getElementById('page-dashboard')?.classList.contains('active');
+  const onTweets    = document.getElementById('page-tweets')?.classList.contains('active');
+  if (row.user_id && currentUser?.id && row.user_id === currentUser.id) {
+    // 自分の投稿（別タブ・別端末から）: 未読には数えない。ホームのカードだけ最新化
+    if (onDashboard) renderDashTweetsCard();
+    return;
+  }
+  refreshTweetsUnread();
+  if (onDashboard) renderDashTweetsCard();
+  if (onTweets && _twPageState.tab === 'all') _twShowNewBar();
+});
+document.addEventListener('notification:authReady', () => { refreshTweetsUnread(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshTweetsUnread();
+});
+setInterval(() => { if (document.visibilityState === 'visible') refreshTweetsUnread(); }, 10 * 60 * 1000);
+
 function switchTweetsTab(tab) {
   if (tab !== 'all' && tab !== 'mine') return;
   _twPageState.tab = tab;
@@ -30719,6 +30945,10 @@ async function loadTweetsPage() {
     el.innerHTML = '<div class="tweets-empty">読み込みに失敗しました</div>';
     return;
   }
+
+  // 「みんなのつぶやき」タブを読み込めた＝読んだ扱いにして未読バッジを消す（ADR 041）。
+  // mine タブは他人の新着を見ていないので触らない。
+  if (_twPageState.tab === 'all') markTweetsSeen();
 
   // 念のためフロント側でも staff_only / roles フィルター（API 未対応時のフォールバック）
   if (_twPageState.tab !== 'mine' && _twPageState.roleGroups && _twPageState.roleGroups.size > 0) {

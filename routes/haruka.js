@@ -15,6 +15,7 @@ const { resolveSerialDigits, normalizeColumnLetter, columnLetterToIndex, parseSe
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
 const { createNotification, extractMentions } = require('../utils/notification');
+const { resolveUnreadSince } = require('../utils/tweets-unread');
 const { renderFilename } = require('../utils/filename');
 const {
   getUserRoleCodes,
@@ -16568,6 +16569,12 @@ async function enrichTweetList(list, currentUserId) {
 router.get('/tweets', requireAuth, async (req, res) => {
   const mine = req.query.mine === '1' || req.query.mine === 'true';
   const staffOnly = req.query.staff_only === '1' || req.query.staff_only === 'true';
+  // limit（1〜200・既定 200）/ order=recent（ピン留め優先をやめ created_at 降順のみ）
+  //   ホームの「💭 みんなのつぶやき」カード（ADR 041）が limit=3&order=recent で使う。
+  //   ピン留めを優先すると 3 枠が常にピンで埋まり「いま何が起きているか」が見えないため。
+  const limitRaw = parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 200;
+  const recentOnly = req.query.order === 'recent';
   // roles=admin,secretary,producer,producer_director,director,editor,designer
   //   フロントの roleGroups → users.role 値の集合（producer_director を含む）
   //   後方互換: staff_only=1 は roles=admin,secretary に変換
@@ -16659,7 +16666,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     });
     // hardcoded slice(0, 50) → 200 に拡張（2026-05-08）
     // ページネーション UI が無く、active tweet 総数 > 50 の状況で 51件目以降が silent に消えていた
-    list = list.slice(0, 200);
+    list = list.slice(0, limit);
 
     if (!list.length) return res.json([]);
     return res.json(await enrichTweetList(list, req.user.id));
@@ -16668,13 +16675,32 @@ router.get('/tweets', requireAuth, async (req, res) => {
   // 通常の一覧
   // hardcoded .limit(50) → 200 に拡張（2026-05-08）
   // ページネーション UI が無く、active tweet 総数 > 50 で 51件目以降が永遠に見えない silent miss だった
+  if (!recentOnly) q = q.order('is_pinned', { ascending: false });
   const { data: list, error } = await q
-    .order('is_pinned', { ascending: false })
     .order('created_at', { ascending: false })
-    .limit(200);
+    .limit(limit);
   if (error) return res.status(500).json({ error: error.message });
   if (!list || list.length === 0) return res.json([]);
   res.json(await enrichTweetList(list, req.user.id));
+});
+
+// つぶやきの未読件数（ナビ「つぶやき」の赤バッジ用・ADR 041）
+//   GET /tweets/unread-count?since=<ISO>
+//   ・since はブラウザが localStorage に持つ「最終閲覧時刻」。サーバーは保存しない（migration 不要）。
+//   ・since の正規化（欠落→24h前 / 30日超→30日前 / 未来→now）は utils/tweets-unread.js。
+//   ・自分の投稿は数えない（自分で書いたものは「未読」ではない）。
+//   ・期限切れ（expires_at 超過・ピン留め除く）は一覧に出ないので数えない。
+//   ・HEAD + count:'exact' で行本体は引かない。idx_tweets_active(created_at DESC) が効く。
+router.get('/tweets/unread-count', requireAuth, async (req, res) => {
+  const since = resolveUnreadSince(req.query.since);
+  const { count, error } = await supabase
+    .from('tweets')
+    .select('id', { count: 'exact', head: true })
+    .gt('created_at', since.toISOString())
+    .neq('user_id', req.user.id)
+    .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ count: count || 0, since: since.toISOString() });
 });
 
 // つぶやき画像をバイナリ配信。一覧 API は image_count だけ返し、本体はこのエンドポイントから
