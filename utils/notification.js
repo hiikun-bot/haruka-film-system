@@ -357,56 +357,37 @@ async function createBulkNotifications(notifications, options = {}) {
   }
 }
 
-/**
- * 投稿本文（つぶやき / コメント）から `@名前` 表記のメンションを抽出して
- * users テーブルから user_id を解決する。
- *
- * 仕様:
- *   ・正規表現は /@([\p{L}\p{N}_]+)/gu — 全角OK / アンダースコア許容
- *   ・名前部分は半角/全角スペース・改行・文末で区切られる
- *   ・大文字小文字無視（lower で比較）
- *   ・nickname または full_name と完全一致で照合（nickname優先）
- *   ・重複排除して string[] (UUID) を返す
- *   ・0件マッチ時 / 解決失敗時は空配列
- *
- * @param {string} body  投稿本文
- * @returns {Promise<string[]>} ユニークな user_id 配列
- */
+// ---------- メンション解決 ----------
+// 本文中の「@名前」を users に解決して user_id 配列を返す。
+// 照合ロジック本体は utils/mention-resolve.js（フロントの「@」補完・ハイライトと共有）。
+//   ・前方一致・最長一致（「@たごんお疲れ様」→ たごん / 「@川崎 かおり」→ 川崎 かおり）
+//   ・nickname / full_name / 姓のみ、全角半角・大文字小文字は無視
+// 名簿（id, full_name, nickname）は 60 秒キャッシュして投稿の度に users を引かない。
+const { extractMentionIds } = require('./mention-resolve');
+const MENTION_DIR_TTL_MS = 60 * 1000;
+let _mentionDirCache = { at: 0, users: [] };
+
+async function loadMentionDirectory({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && _mentionDirCache.users.length && (now - _mentionDirCache.at) < MENTION_DIR_TTL_MS) {
+    return _mentionDirCache.users;
+  }
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, full_name, nickname, is_active');
+  if (error) throw error;
+  // 退会者（is_active=false）は対象外。null は在籍扱い（旧データ）
+  const users = (data || []).filter(u => u && u.is_active !== false);
+  _mentionDirCache = { at: now, users };
+  return users;
+}
+
 async function extractMentions(body) {
   if (!body || typeof body !== 'string') return [];
-
-  const matches = body.match(/@([\p{L}\p{N}_]+)/gu);
-  if (!matches || matches.length === 0) return [];
-
-  // 先頭の @ を除いて重複排除
-  const names = Array.from(new Set(
-    matches.map(m => m.replace(/^@/, '').trim()).filter(Boolean)
-  ));
-  if (names.length === 0) return [];
-
-  // users から nickname / full_name を取得して名前→id マップを作る
-  // （IN 句を投げる前に重複排除済み。10名くらい想定なので一括で全件取らない）
+  if (!/[@＠]/.test(body)) return [];
   try {
-    const { data: users } = await supabase
-      .from('users')
-      .select('id, full_name, nickname')
-      .or(
-        // nickname / full_name どちらかが候補名と一致
-        names.flatMap(n => [`nickname.eq.${n}`, `full_name.eq.${n}`]).join(',')
-      );
-    if (!users || users.length === 0) return [];
-
-    // 大文字小文字無視で照合: 名前 → user_id
-    const lowerNames = new Set(names.map(n => n.toLowerCase()));
-    const resolved = new Set();
-    for (const u of users) {
-      const nick = (u.nickname || '').toLowerCase();
-      const full = (u.full_name || '').toLowerCase();
-      if ((nick && lowerNames.has(nick)) || (full && lowerNames.has(full))) {
-        resolved.add(u.id);
-      }
-    }
-    return Array.from(resolved);
+    const users = await loadMentionDirectory();
+    return extractMentionIds(body, users);
   } catch (e) {
     console.error('[notification] extractMentions 失敗:', e.message);
     return [];
@@ -415,6 +396,7 @@ async function extractMentions(body) {
 
 module.exports = {
   createNotification,
+  loadMentionDirectory,
   createBulkNotifications,
   extractMentions,
   nextActiveSlot,

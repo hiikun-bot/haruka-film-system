@@ -363,6 +363,9 @@ app.use('/icon-180.png',      express.static(path.join(__dirname, 'public/icon-1
 // 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js・UMD形式）を
 // フロントにも同一実装で配信する（jest テスト済みロジックの二重実装を避けるため）
 app.use('/js/personal-goals.js', express.static(path.join(__dirname, 'utils/personal-goals.js')));
+// 💭 つぶやきの「@メンション」解決（utils/mention-resolve.js・UMD形式）を
+//   フロントの「@」補完・本文ハイライトと共有する（サーバーの通知先解決と同じロジック）
+app.use('/js/mention-resolve.js', express.static(path.join(__dirname, 'utils/mention-resolve.js')));
 // 📡 通知 Realtime 用 supabase-js（ブラウザ UMD ビルド）を自オリジンから配信する。
 // 以前は notification-realtime.js が https://esm.sh/@supabase/supabase-js@2 を動的 import していたが、
 //   ・iPhone Safari で別オリジン script 内の例外が「Script error.」に伏せられ原因を追えない（#haruka-error-report 4件）
