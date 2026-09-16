@@ -26,6 +26,8 @@ const cr = (over = {}) => ({
   project_id: over.project_id || 'p1',
   project_name: over.project_name || '案件A',
   client_name: over.client_name || 'クライアントA',
+  sheet_url: over.sheet_url ?? null,
+  regulation_url: over.regulation_url ?? null,
   ball_type: over.ball_type || 'editor',
   ball_user_ids: over.ball_user_ids || [],
   member_user_ids: over.member_user_ids || [],
@@ -191,5 +193,14 @@ describe('computeMyFocus — 重複排除・並び順・limit', () => {
   test('表示用フィールド（案件名・クライアント名・SOS）をそのまま返す', () => {
     const r = run([cr({ id: 'x', project_name: '秋LP', client_name: 'JTG', help_flag: true, ball_user_ids: [ME] })]);
     expect(r.items[0]).toMatchObject({ project_name: '秋LP', client_name: 'JTG', help_flag: true });
+  });
+
+  test('管理シート・レギュレーションのURLを通す（未設定は空文字）', () => {
+    const r = run([
+      cr({ id: 'a', file_name: 'a.mp4', sheet_url: 'https://docs.google.com/s/1', regulation_url: 'https://example.com/reg', ball_user_ids: [ME] }),
+      cr({ id: 'b', file_name: 'b.mp4', ball_user_ids: [ME] }),
+    ], 0);
+    expect(r.items[0]).toMatchObject({ sheet_url: 'https://docs.google.com/s/1', regulation_url: 'https://example.com/reg' });
+    expect(r.items[1]).toMatchObject({ sheet_url: '', regulation_url: '' });
   });
 });

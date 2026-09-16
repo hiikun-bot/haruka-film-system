@@ -80,6 +80,8 @@ function computeMyFocus({ creatives = [], userId, todayStr, weekEndStr, limit = 
       project_id: c.project_id || null,
       project_name: c.project_name || '',
       client_name: c.client_name || '',
+      sheet_url: c.sheet_url || '',
+      regulation_url: c.regulation_url || '',
       ball_type: c.ball_type || 'unknown',
       // 負なら超過日数、0 は今日、正なら残り日数。納期未設定は null
       days_left: dl ? diffDays(todayStr, dl) : null,
