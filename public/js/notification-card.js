@@ -1,5 +1,4 @@
-// =============================================================
-// notification-card.js — Phase 1 段階2 通知カード描画
+// ======================================================// notification-card.js — Phase 1 段階2 通知カード描画
 //
 // 設計参照: docs/notification/notification_UI_SPEC.md 第4章「通知カードのバリエーション」
 //
@@ -31,6 +30,9 @@ const ICON_BY_TYPE = {
   creative_registered: '🎬',
   // 単価の承認待ち / 承認 / 差し戻し（ADR 037）
   pricing_approval: '💴',
+  // 🏆 作品ギャラリー: 自分の作品に 👏 拍手 / 💬 ひとことが付いた（制作担当向け・ADR 042）
+  portfolio_reaction:  '👏',
+  portfolio_comment:   '💬',
 };
 
 // HTMLエスケープ — ユーザー入力を安全に埋め込むための関数
@@ -256,6 +258,24 @@ async function activateCard(cardEl, options = {}) {
         return;
       } catch (e) {
         console.warn('[notification-card] showPage(tweets) 失敗', e);
+      }
+    }
+    window.location.href = linkUrl;
+    return;
+  }
+
+  // 作品ギャラリー通知: /haruka.html?portfolio=<creative_id> 形式。
+  // haruka.html 内なら pfOpenByCreativeId() で作品タブに切り替えて該当作品を開く（リロード不要）。
+  // 無ければ通常遷移（applyDeepLinkOnLoad が ?portfolio= を処理する）。
+  const portfolioMatch = /^\/haruka\.html\?portfolio=([^&#]+)/.exec(linkUrl);
+  if (portfolioMatch) {
+    document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
+    if (typeof window.pfOpenByCreativeId === 'function') {
+      try {
+        window.pfOpenByCreativeId(decodeURIComponent(portfolioMatch[1]));
+        return;
+      } catch (e) {
+        console.warn('[notification-card] pfOpenByCreativeId 失敗', e);
       }
     }
     window.location.href = linkUrl;
