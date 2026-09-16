@@ -4267,6 +4267,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
        ホームの最上段＝「今日、自分が何をするか」を実績カードより先に出す（ADR 036 決定6 の配置を改訂）。
        全ロール共通で loadDashboard() から renderMyFocusCard() が描画する。 -->
   <div id="dash-my-focus"></div>
+  <!-- 👥 自チームで気になるもの（ADR 042）: 自分が案件 D/P・チーム代表ディレクターの範囲で
+       SOS / 期限超過 / 今週締切 の CR を出す。renderMyFocusCard() が同じ API レスポンスから描画。
+       ADR 033 に配慮し、人単位の集計・順位は出さない（CR 単位のみ）。 -->
+  <div id="dash-team-focus"></div>
   <!-- 💭 みんなのつぶやき（全ロール共通・ADR 041）: 最新 3 件＋新着チップ。loadDashboard() の renderDashTweetsCard() が描画。
        ポップアップで割り込む代わりに「ホームを開いたら仲間の気配がある」場所として、マイフォーカスの直下に置く。 -->
   <div id="dash-tweets"></div>
@@ -30033,13 +30037,20 @@ function loadDashboard() {
 
   // 初回ロード中はプレースホルダを出す（既に何か描画済みなら触らない＝再表示時のチラつき防止）。
   // 注意: #dash-content は中に #dash-charts / #dash-text-content を静的に持つため上書きしない。
+  // 年月フィルタはグラフ・予実の絞り込み用。それらを出さないロール
+  // （作り手＝ADR 040 追補、ディレクター＝ADR 042）には出さない。
+  const showsCharts = ['admin','secretary','producer','producer_director'].includes(role);
+  const filterEl = document.getElementById('dash-filter');
+  if (filterEl) filterEl.style.display = showsCharts ? 'flex' : 'none';
+
   // プレースホルダは管理層だけに出す。作り手には「今日の納期」も dash-text-content も
   // 描画されないため（ADR 040 追補）、出すと一瞬表示されてすぐ消えるチラつきになる。
   const isManagerDash = ['admin','secretary','producer','producer_director','director'].includes(role);
   if (!window._initDataLoaded && window._initPromises && isManagerDash) {
     const todayEl = document.getElementById('dash-today');
     if (todayEl && !todayEl.innerHTML.trim()) todayEl.innerHTML = _dashLoadingSection('📅 今日の納期');
-    const txtEl = document.getElementById('dash-text-content');
+    // dash-text-content（納期アラート）を描くのはグラフを出すロールだけ（ディレクターは ADR 042 で対象外）
+    const txtEl = showsCharts ? document.getElementById('dash-text-content') : null;
     if (txtEl && !txtEl.innerHTML.trim()) txtEl.innerHTML = _dashLoadingSection('読み込み中');
   }
 
@@ -30144,7 +30155,11 @@ async function renderMyFocusCard() {
     d = await res.json();
   } catch (e) {
     console.warn('[my-focus] fetch failed（カードを省略）', e);
-    if (seq === _myFocusSeq) setDashHeroStats({ _focusFailed: true });
+    if (seq === _myFocusSeq) {
+      setDashHeroStats({ _focusFailed: true });
+      const teamEl = document.getElementById('dash-team-focus');
+      if (teamEl) teamEl.innerHTML = '';
+    }
     return;
   }
   if (seq !== _myFocusSeq) return; // VIEW AS 連打等で後発の描画が優先
@@ -30154,6 +30169,85 @@ async function renderMyFocusCard() {
   setDashHeroStats({ balls: c.balls || 0, overdue: c.overdue || 0, dueThisWeek: c.due_this_week || 0 });
   el.innerHTML = _myFocusCardHtml(d);
   el.style.marginBottom = '14px';
+
+  // 👥 自チームで気になるもの（ADR 042）。enabled はサーバー判定（自分が案件 D/P か
+  // チーム代表ディレクターか）なので、フロントにロール分岐は書かない。
+  const teamEl = document.getElementById('dash-team-focus');
+  if (teamEl) {
+    if (d.team?.enabled) {
+      teamEl.innerHTML = _teamFocusCardHtml(d.team);
+      teamEl.style.marginBottom = '14px';
+    } else {
+      teamEl.innerHTML = '';
+      teamEl.style.marginBottom = '';
+    }
+  }
+}
+
+// 「気になる理由」のバッジ。SOS は納期に関係なく最優先で目に入るようにする。
+function _teamFocusReasonBadge(it) {
+  if (it.reason === 'sos') return `<span class="dash-due-badge" style="background:#FDECEA;color:#C0392B">🆘 SOS</span>`;
+  return it.days_left === null
+    ? `<span class="dash-due-badge" style="background:#ECEFF1;color:#546E7A">納期未設定</span>`
+    : _dashBadge(it.days_left);
+}
+
+// 👥 自チームカードから一覧へ。ここに出るのは「自分にボールが無い」CR なので
+// 「自分のボール」ビューでは 0 件になる。最も近い「自分の案件」ビュー（自分が案件の D/P）で開く。
+// チーム代表ディレクター経由のCRは一覧側に同等のビューが無いため完全一致はしない。
+function goToCreativesFromTeamFocus() {
+  const navBtn = document.querySelector('.nav-btn[data-page="creatives"]')
+    || document.querySelector('.nav-drawer-btn[data-page="creatives"]');
+  showPage('creatives', navBtn);
+  const viewBtn = document.querySelector(`.ft[onclick="setView(this,'mine')"]`);
+  if (viewBtn && typeof setView === 'function') setView(viewBtn, 'mine');
+}
+
+function _teamFocusCardHtml(t) {
+  const c = t.counts || {};
+  const items = t.items || [];
+  const summary = [
+    c.sos ? `🆘 SOS ${c.sos}件` : '',
+    c.overdue ? `期限超過 ${c.overdue}件` : '',
+    c.due_this_week ? `今週締切 ${c.due_this_week}件` : '',
+  ].filter(Boolean).join(' ／ ');
+  const title = `<div class="dash-section-title">👥 自チームで気になるもの
+      ${summary ? `<span style="margin-left:auto;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0">${esc(summary)}</span>` : ''}
+    </div>`;
+
+  if (!items.length) {
+    return `<div class="dash-section">${title}
+      <div style="text-align:center;font-size:13px;color:var(--text-muted);padding:12px 0">気になるものはありません ✓</div>
+    </div>`;
+  }
+
+  const rows = items.map(it => {
+    // 「いま誰で止まっているか」。users が解決できたときだけ NameDisplay で整形する（表記の共通標準）
+    const holder = it.ball_holder_user
+      ? NameDisplay.full(it.ball_holder_user)
+      : (it.ball_holder_label || '');
+    return `
+    <div class="dash-alert-row" onclick="openCreativeDetail('${it.id}')" style="align-items:flex-start;cursor:pointer;padding:10px 0">
+      ${_teamFocusReasonBadge(it)}
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="status-chip ${statusClass(it.status)}" style="font-size:11px;flex-shrink:0">${esc(it.status || '—')}</span>
+          ${holder ? `<span style="font-size:11px;color:var(--text-muted)">👤 ${esc(holder)} で停止中</span>` : ''}
+        </div>
+        ${it.project_name ? `<div style="font-size:13px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📁 ${esc(it.project_name)}</div>` : ''}
+        <div style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace" title="${esc(it.file_name || '')}">
+          ${it.client_name ? `${esc(it.client_name)} · ` : ''}${esc(it.file_name || '（名称未設定）')}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const more = t.has_more
+    ? `<div style="text-align:center;margin-top:10px">
+         <button class="btn-sm" onclick="goToCreativesFromTeamFocus()" style="font-size:11px">クリエイティブ一覧で見る →</button>
+       </div>`
+    : '';
+  return `<div class="dash-section">${title}${rows}${more}</div>`;
 }
 
 // 「他 N 件を見る」→ クリエイティブ一覧へ。onclick 属性内で属性セレクタのクォートが衝突するため関数に逃がす。
@@ -33365,10 +33459,25 @@ async function renderAdminDash(today) {
 }
 
 function renderDirectorDash(today) {
-  // ディレクターは自チームに絞ったアラート＋全体俯瞰
-  renderAdminDash(today);
-  // 🏅 マイ実績（本人専用・ADR 036）。renderAdminDash 側には置かない（admin 単独ロールには出さない）
+  // 🏅 マイ実績（本人専用・ADR 036）
   renderMyStatsCard();
+
+  // ADR 042: ディレクターのホームから会社全体のグラフ・予実を外した。
+  // 以前は renderAdminDash() をそのまま呼んでおり、「自チームに絞ったアラート」という
+  // コメントとは裏腹に全社の売上予実・ステータス構成比・全社の納期アラートが出ていた。
+  // ディレクターに必要なのは「自分の手番」と「自チームで止まっているもの」なので、
+  //   🎯 マイフォーカス（全ロール共通・ADR 040）
+  //   👥 自チームで気になるもの（renderMyFocusCard が同じレスポンスから描画）
+  // の2枚で構成する。ステータス構成比や売上を見たいときは分析タブ（analytics.view）へ。
+  //
+  // 注: #dash-content の静的な子要素は壊さず中身だけを空にする（ADR 040 追補と同じ理由）。
+  const charts = document.getElementById('dash-charts');
+  if (charts) charts.style.display = 'none';
+  ['revenue', 'creative-status', 'project-status', 'monthly'].forEach(id => _destroyChart(id));
+  const txt = document.getElementById('dash-text-content');
+  if (txt) txt.innerHTML = '';
+  const forecast = document.getElementById('dash-forecast-content');
+  if (forecast) forecast.innerHTML = '';
 }
 
 function renderEditorDash(today) {

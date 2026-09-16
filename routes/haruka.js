@@ -25944,7 +25944,7 @@ router.get('/my-stats', requireAuth, async (req, res) => {
 //     PostgREST の既定 max rows（1000行）による silent 打ち切りを避けるため range でページングする
 //   - 新テーブル・migration 無し。既存列のみで成立する
 router.get('/dashboard/my-focus', requireAuth, async (req, res) => {
-  const { computeMyFocus } = require('../utils/my-focus');
+  const { computeMyFocus, computeTeamFocus } = require('../utils/my-focus');
   const uid = req.user?.id; // ← 本人固定。req.query / X-View-As からユーザーを差し替える経路は作らない
   if (!uid) return res.status(401).json({ error: '認証が必要です' });
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 0), 50);
@@ -25953,7 +25953,7 @@ router.get('/dashboard/my-focus', requireAuth, async (req, res) => {
   const CREATIVE_SELECT = `
     id, file_name, status, final_deadline, draft_deadline, help_flag, project_id, team_id,
     projects(id, name, director_id, producer_id, sheet_url, regulation_url, clients(id, name)),
-    creative_assignments(role, user_id, users(id, full_name, team_id))
+    creative_assignments(role, user_id, users(id, full_name, nickname, team_id))
   `;
   // 納品済みは手番が無いので最初から除外（ball_type 'done' を数えないためでもある）
   const DELIVERED_STATUSES = '("納品","完納","納品済")';
@@ -26030,6 +26030,12 @@ router.get('/dashboard/my-focus', requireAuth, async (req, res) => {
         : Promise.resolve([]),
     ]);
     const candidates = [...assigned, ...leader, ...teamFallback]; // 重複は computeMyFocus が id で排除する
+    // 自チーム範囲 = 経路 b（自分が案件の D/P）∪ 経路 c（自分が代表ディレクターのチーム）。
+    // 経路 a（自分の assignments）は「自分の作業」なので自チームカードの対象にしない。
+    const teamScopeIds = new Set([...leader, ...teamFallback].map(c => c.id));
+    // CR が 0 件でもカード自体は出して「気になるものはありません ✓」を表示したいので、
+    // 件数ではなく「自分が案件 D/P か、チーム代表ディレクターか」で有効/無効を決める
+    const teamScopeEnabled = leaderProjectIds.length > 0 || teamMemberIdList.length > 0;
 
     // ---- 3. getBallHolder 用 Map 組み立て（/team-load・syncBallHolderId と同じ形）----
     const { data: teamsRaw, error: tErr } = await supabase
@@ -26097,6 +26103,13 @@ router.get('/dashboard/my-focus', requireAuth, async (req, res) => {
         ball_type: ball?.type || 'unknown',
         ball_user_ids: Array.isArray(ball?.user_ids) ? ball.user_ids : [],
         member_user_ids: Array.from(memberUserIds),
+        in_team_scope: teamScopeIds.has(c.id),
+        // 「いま誰で止まっているか」。users を解決できないボール（クライアント・未アサイン）は
+        // ラベルだけ返し、フロントは user がある場合のみ NameDisplay で整形する
+        ball_holder_user: ball?.holder_user
+          ? { id: ball.holder_user.id, full_name: ball.holder_user.full_name || '', nickname: ball.holder_user.nickname || '' }
+          : null,
+        ball_holder_label: ball?.holder_user ? '' : (ball?.holder || ''),
       };
     });
 
@@ -26104,7 +26117,11 @@ router.get('/dashboard/my-focus', requireAuth, async (req, res) => {
     const todayStr = _todayStrJST();
     const weekEndStr = _thisSundayStrJST();
     const result = computeMyFocus({ creatives, userId: uid, todayStr, weekEndStr, limit });
-    res.json({ ...result, today: todayStr, week_end: weekEndStr });
+    // 👥 自チームで気になるCR（ADR 042）。人単位の集計・順位は返さない（ADR 033 の線を越えない）
+    const team = teamScopeEnabled
+      ? { enabled: true, ...computeTeamFocus({ creatives, userId: uid, todayStr, weekEndStr, limit }) }
+      : { enabled: false, counts: { sos: 0, overdue: 0, due_this_week: 0 }, items: [], has_more: false };
+    res.json({ ...result, team, today: todayStr, week_end: weekEndStr });
   } catch (e) {
     console.error('[dashboard/my-focus]', e);
     res.status(500).json({ error: e.message || 'マイフォーカスの取得に失敗しました' });
