@@ -234,11 +234,21 @@ async function activateCard(cardEl, options = {}) {
   }
 
   // つぶやき通知: /haruka.html?tweet=<id> 形式。
-  // haruka.html 内なら showPage('tweets') でタブだけ切り替える（リロード不要）。
-  // showPage が無い（ログイン画面等）の場合は通常遷移にフォールバック。
+  // haruka.html 内なら openTweetsPage(id) でタブ切替＋該当カードへスクロール（ADR 041・リロード不要）。
+  // 旧環境（openTweetsPage 未定義）は showPage('tweets') でタブだけ切り替える。
+  // どちらも無い（ログイン画面等）の場合は通常遷移にフォールバック。
   if (/^\/haruka\.html\?tweet=/.test(linkUrl)) {
     document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
-    if (typeof window.showPage === 'function') {
+    const m = /[?&]tweet=([^&#]+)/.exec(linkUrl);
+    const tweetId = m ? decodeURIComponent(m[1]) : null;
+    if (typeof window.openTweetsPage === 'function') {
+      try {
+        window.openTweetsPage(tweetId);
+        return;
+      } catch (e) {
+        console.warn('[notification-card] openTweetsPage 失敗', e);
+      }
+    } else if (typeof window.showPage === 'function') {
       try {
         window.showPage('tweets');
         return;

@@ -14,7 +14,8 @@ const { createSheetWithData, overwriteFirstSheet, getServiceAccountEmail, extrac
 const { resolveSerialDigits, normalizeColumnLetter, columnLetterToIndex, parseSerialCells } = require('../utils/serial-sheet');
 const { generateFaststart, isVideoCandidate: faststartIsVideoCandidate, isEnabled: faststartIsEnabled } = require('../lib/faststart');
 const { shareForClientReview } = require('../lib/drive-share');
-const { createNotification, extractMentions } = require('../utils/notification');
+const { createNotification, extractMentions, loadMentionDirectory } = require('../utils/notification');
+const { resolveUnreadSince } = require('../utils/tweets-unread');
 const { renderFilename } = require('../utils/filename');
 const {
   getUserRoleCodes,
@@ -16568,6 +16569,12 @@ async function enrichTweetList(list, currentUserId) {
 router.get('/tweets', requireAuth, async (req, res) => {
   const mine = req.query.mine === '1' || req.query.mine === 'true';
   const staffOnly = req.query.staff_only === '1' || req.query.staff_only === 'true';
+  // limit（1〜200・既定 200）/ order=recent（ピン留め優先をやめ created_at 降順のみ）
+  //   ホームの「💭 みんなのつぶやき」カード（ADR 041）が limit=3&order=recent で使う。
+  //   ピン留めを優先すると 3 枠が常にピンで埋まり「いま何が起きているか」が見えないため。
+  const limitRaw = parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 200;
+  const recentOnly = req.query.order === 'recent';
   // roles=admin,secretary,producer,producer_director,director,editor,designer
   //   フロントの roleGroups → users.role 値の集合（producer_director を含む）
   //   後方互換: staff_only=1 は roles=admin,secretary に変換
@@ -16659,7 +16666,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     });
     // hardcoded slice(0, 50) → 200 に拡張（2026-05-08）
     // ページネーション UI が無く、active tweet 総数 > 50 の状況で 51件目以降が silent に消えていた
-    list = list.slice(0, 200);
+    list = list.slice(0, limit);
 
     if (!list.length) return res.json([]);
     return res.json(await enrichTweetList(list, req.user.id));
@@ -16668,13 +16675,32 @@ router.get('/tweets', requireAuth, async (req, res) => {
   // 通常の一覧
   // hardcoded .limit(50) → 200 に拡張（2026-05-08）
   // ページネーション UI が無く、active tweet 総数 > 50 で 51件目以降が永遠に見えない silent miss だった
+  if (!recentOnly) q = q.order('is_pinned', { ascending: false });
   const { data: list, error } = await q
-    .order('is_pinned', { ascending: false })
     .order('created_at', { ascending: false })
-    .limit(200);
+    .limit(limit);
   if (error) return res.status(500).json({ error: error.message });
   if (!list || list.length === 0) return res.json([]);
   res.json(await enrichTweetList(list, req.user.id));
+});
+
+// つぶやきの未読件数（ナビ「つぶやき」の赤バッジ用・ADR 041）
+//   GET /tweets/unread-count?since=<ISO>
+//   ・since はブラウザが localStorage に持つ「最終閲覧時刻」。サーバーは保存しない（migration 不要）。
+//   ・since の正規化（欠落→24h前 / 30日超→30日前 / 未来→now）は utils/tweets-unread.js。
+//   ・自分の投稿は数えない（自分で書いたものは「未読」ではない）。
+//   ・期限切れ（expires_at 超過・ピン留め除く）は一覧に出ないので数えない。
+//   ・HEAD + count:'exact' で行本体は引かない。idx_tweets_active(created_at DESC) が効く。
+router.get('/tweets/unread-count', requireAuth, async (req, res) => {
+  const since = resolveUnreadSince(req.query.since);
+  const { count, error } = await supabase
+    .from('tweets')
+    .select('id', { count: 'exact', head: true })
+    .gt('created_at', since.toISOString())
+    .neq('user_id', req.user.id)
+    .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ count: count || 0, since: since.toISOString() });
 });
 
 // つぶやき画像をバイナリ配信。一覧 API は image_count だけ返し、本体はこのエンドポイントから
@@ -16708,6 +16734,34 @@ async function serveTweetImage(req, res, pos) {
   if (error || !data || !data.image_data) return res.status(404).end();
   return sendTweetImageDataUrl(res, data.image_data);
 }
+
+// 「@」メンション補完の候補（在籍メンバー全員の id / 名前 / アバター）
+//   GET /api/tweets/mention-candidates
+//   /members は member.list 権限が無いロールだと自分1件しか返さないため、
+//   つぶやき用に権限に依らず全員（is_active !== false）を返す軽量エンドポイントを用意する。
+//   機微情報は含めない。avatar_url は avatar 参照キャッシュから配信 URL を注入（base64 は載せない）。
+router.get('/tweets/mention-candidates', requireAuth, async (req, res) => {
+  try {
+    const [users, avatarMap] = await Promise.all([
+      loadMentionDirectory(),
+      getAvatarRefMap(supabase).catch(e => {
+        console.warn('[tweets] mention-candidates: avatar 参照キャッシュ取得失敗 → avatar_url は null:', e.message);
+        return new Map();
+      }),
+    ]);
+    const list = users.map(u => {
+      const row = { id: u.id, full_name: u.full_name || '', nickname: u.nickname || '', avatar_url: null };
+      applyAvatarRef(row, avatarMap);
+      return row;
+    });
+    list.sort((a, b) => String(a.full_name).localeCompare(String(b.full_name), 'ja'));
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json(list);
+  } catch (e) {
+    console.error('[tweets] mention-candidates 失敗:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 router.get('/tweets/:id/image', requireAuth, (req, res) => serveTweetImage(req, res, 0));
 router.get('/tweets/:id/image/:pos', requireAuth, (req, res) =>
@@ -16822,7 +16876,8 @@ router.patch('/tweets/:id', requireAuth, async (req, res) => {
   const { data, error } = await supabase.from('tweets')
     .update({ body, mentioned_user_ids: newMentionedIds, edited_at: new Date().toISOString() })
     .eq('id', req.params.id)
-    .select('id, user_id, body, image_data, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count')
+    // image_data（base64・最大500KB）は本文編集のレスポンスに不要なので返さない（一覧 API と同形）
+    .select('id, user_id, body, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count')
     .single();
   if (error) return res.status(500).json({ error: error.message });
 
@@ -16991,7 +17046,124 @@ router.get('/tweets/:id/comments', requireAuth, async (req, res) => {
     .is('deleted_at', null)
     .order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  res.json(await enrichTweetCommentList(data || [], req.params.id, req.user.id));
+});
+
+// 返信一覧に「返信へのリアクション」集計を付与する（バグ報告 #4a8b4046）。
+//   tweet_comment_reactions は tweet_id を非正規化して持つので、コメント ID 集合を
+//   .in() で渡さず（URL 長超過回避）そのつぶやき配下を 1 クエリで引く。
+//   返す形は本体の enrichTweetList と同じ（reaction_counts / reaction_users / my_reactions）で、
+//   フロントは同じピル描画ロジックを流用できる。
+//   テーブル未作成など取得失敗時は、返信一覧自体は壊さずリアクション空で返す。
+async function enrichTweetCommentList(comments, tweetId, currentUserId) {
+  if (!comments || comments.length === 0) return [];
+  const empty = () => comments.map(c => ({ ...c, reaction_counts: {}, reaction_users: {}, my_reactions: [] }));
+  const { data: rows, error } = await supabase.from('tweet_comment_reactions')
+    .select('comment_id, user_id, reaction_type, users!user_id(id, full_name, nickname)')
+    .eq('tweet_id', tweetId);
+  if (error) {
+    console.error('[tweets] comment reactions 取得失敗:', error.message);
+    return empty();
+  }
+  const countByComment = new Map(); // comment_id -> { good: n, ... }
+  const usersByComment = new Map(); // comment_id -> { good: [{id,full_name,nickname}], ... }
+  const myByComment = new Map();    // comment_id -> Set<reaction_type>
+  (rows || []).forEach(r => {
+    if (!countByComment.has(r.comment_id)) countByComment.set(r.comment_id, {});
+    const cm = countByComment.get(r.comment_id);
+    cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
+    if (r.users) {
+      if (!usersByComment.has(r.comment_id)) usersByComment.set(r.comment_id, {});
+      const um = usersByComment.get(r.comment_id);
+      (um[r.reaction_type] = um[r.reaction_type] || []).push(r.users);
+    }
+    if (r.user_id === currentUserId) {
+      if (!myByComment.has(r.comment_id)) myByComment.set(r.comment_id, new Set());
+      myByComment.get(r.comment_id).add(r.reaction_type);
+    }
+  });
+  return comments.map(c => ({
+    ...c,
+    reaction_counts: countByComment.get(c.id) || {},
+    reaction_users: usersByComment.get(c.id) || {},
+    my_reactions: Array.from(myByComment.get(c.id) || []),
+  }));
+}
+
+// ==================== 返信へのリアクション（バグ報告 #4a8b4046） ====================
+
+// 返信リアクション追加
+//   POST /api/tweets/:id/comments/:commentId/reactions  body: { reaction_type }
+//   本体の POST /tweets/:id/reactions と同じ挙動（重複は 409、返信者が他人なら post_reaction 通知）。
+router.post('/tweets/:id/comments/:commentId/reactions', requireAuth, async (req, res) => {
+  const tweetId = req.params.id;
+  const commentId = req.params.commentId;
+  const reactionType = String(req.body?.reaction_type || '').trim();
+  if (!TWEET_REACTION_TYPES.includes(reactionType)) {
+    return res.status(400).json({ error: 'リアクション種別が不正です' });
+  }
+
+  // 返信の存在（同じつぶやき配下・未削除）と返信者を確認（通知発火用）
+  const { data: c, error: cErr } = await supabase.from('tweet_comments')
+    .select('id, tweet_id, user_id, body, deleted_at')
+    .eq('id', commentId).eq('tweet_id', tweetId).maybeSingle();
+  if (cErr) return res.status(500).json({ error: cErr.message });
+  if (!c || c.deleted_at) return res.status(404).json({ error: 'コメントが見つかりません' });
+
+  const { data, error } = await supabase.from('tweet_comment_reactions')
+    .insert({ comment_id: commentId, tweet_id: tweetId, user_id: req.user.id, reaction_type: reactionType })
+    .select('id, reaction_type')
+    .single();
+  if (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'すでにこのリアクションを押しています' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+
+  // 返信者が自分以外なら post_reaction 通知（本体と同じ type なので通知設定・24h 集約もそのまま効く）
+  if (c.user_id !== req.user.id) {
+    const senderName = req.user.nickname || req.user.full_name || '誰か';
+    const reactionEmoji = {
+      good: '👍', heart: '❤️', clap: '👏', smile: '😊', surprised: '😳',
+    }[reactionType] || '✨';
+    const excerpt = (c.body || '').length > 50
+      ? c.body.slice(0, 50) + '…'
+      : (c.body || '');
+    createNotification({
+      userId: c.user_id,
+      type: 'post_reaction',
+      title: `${senderName}さんがあなたの返信に ${reactionEmoji} リアクションしました`,
+      body: excerpt,
+      linkUrl: `/haruka.html?tweet=${tweetId}`,
+      meta: {
+        tweet_id: tweetId,
+        comment_id: commentId,
+        reaction_type: reactionType,
+        sender_name: senderName,
+      },
+      senderId: req.user.id,
+    }).catch(e => console.error('[tweets] comment reaction 通知失敗:', e.message));
+  }
+
+  res.json({ ok: true, id: data.id, reaction_type: data.reaction_type });
+});
+
+// 返信リアクション取消
+//   DELETE /api/tweets/:id/comments/:commentId/reactions/:type
+router.delete('/tweets/:id/comments/:commentId/reactions/:type', requireAuth, async (req, res) => {
+  const reactionType = String(req.params.type || '');
+  if (!TWEET_REACTION_TYPES.includes(reactionType)) {
+    return res.status(400).json({ error: 'リアクション種別が不正です' });
+  }
+  const { error } = await supabase.from('tweet_comment_reactions')
+    .delete()
+    .eq('comment_id', req.params.commentId)
+    .eq('tweet_id', req.params.id)
+    .eq('user_id', req.user.id)
+    .eq('reaction_type', reactionType);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // コメント投稿
@@ -17073,7 +17245,7 @@ router.post('/tweets/:id/comments', requireAuth, async (req, res) => {
   const { data: u } = await supabase.from('users')
     .select('id, full_name, avatar_url, role').eq('id', req.user.id).maybeSingle();
 
-  res.json({ ...comment, users: u || null });
+  res.json({ ...comment, users: u || null, reaction_counts: {}, reaction_users: {}, my_reactions: [] });
 });
 
 // コメント編集（本人のみ）
@@ -24810,6 +24982,189 @@ router.get('/my-stats', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('[my-stats]', e);
     res.status(500).json({ error: e.message || 'マイ実績の集計に失敗しました' });
+  }
+});
+
+// ==================== 🎯 マイフォーカス（ホーム「いま、あなたにボールがあるもの」）====================
+//
+// ADR 040: ホームの先頭に「自分がいま動かす番のクリエイティブ」を出す。
+//
+// 本人専用データ。ADR 032（マイゴール）・ADR 036（マイ実績）と同じ原則で、
+//   - `requireAuth` のみ（permission key を作らない。見せる範囲を制御する対象＝他人の手番が存在しない）
+//   - 全クエリを `req.user.id` に固定。**user_id パラメータ・admin バイパス・X-View-As による
+//     他人参照は将来も追加しない**（VIEW AS でロールを切り替えても本人の手番が出続けるのは仕様）
+//   - 順位・メンバー間比較・他人の数値は出さない（ADR 033 と整合）
+//
+// 設計メモ:
+//   - ボール判定は getBallHolder() の user_ids[]（複数ホルダー対応）。ball_holder_id キャッシュ列は
+//     通知用の単数値（複数ホルダーの先頭しか入らない）ため使わない（ADR 033 と同じ）
+//   - 集計本体は utils/my-focus.js の純関数（DB非依存・jest で TZ=UTC / Asia/Tokyo 両方を通す）
+//   - 週の定義（今日〜今週日曜・JST・週=月〜日）は _todayStrJST() / _thisSundayStrJST() を再利用し、
+//     チーム状況・既存UIと一致させる
+//   - 候補CRは全件走査ではなく「自分に関係しうる3経路」だけを取る（/my-stats と同じ取り方）。
+//     PostgREST の既定 max rows（1000行）による silent 打ち切りを避けるため range でページングする
+//   - 新テーブル・migration 無し。既存列のみで成立する
+router.get('/dashboard/my-focus', requireAuth, async (req, res) => {
+  const { computeMyFocus } = require('../utils/my-focus');
+  const uid = req.user?.id; // ← 本人固定。req.query / X-View-As からユーザーを差し替える経路は作らない
+  if (!uid) return res.status(401).json({ error: '認証が必要です' });
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 0), 50);
+
+  // 表示と ball 判定に必要な最小列。users.avatar_url は base64 のため絶対に select しない（PR #940）
+  const CREATIVE_SELECT = `
+    id, file_name, status, final_deadline, draft_deadline, help_flag, project_id, team_id,
+    projects(id, name, director_id, producer_id, clients(id, name)),
+    creative_assignments(role, user_id, users(id, full_name, team_id))
+  `;
+  // 納品済みは手番が無いので最初から除外（ball_type 'done' を数えないためでもある）
+  const DELIVERED_STATUSES = '("納品","完納","納品済")';
+
+  const fetchAllRows = async (buildQuery) => {
+    const PAGE = 1000;
+    const all = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await buildQuery().range(offset, offset + PAGE - 1);
+      if (error) throw new Error(error.message);
+      all.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    return all;
+  };
+
+  try {
+    // ---- 1. 自分が代表ディレクターのチーム → そのメンバー集合 ----
+    // getBallHolder はチーム経由フォールバック（案件に director 未設定でも、編集者の
+    // チーム代表ディレクターがDチェックのボールを持つ）を行う。この経路のCRは自分の
+    // assignments にも projects.director_id にも出ないため、メンバー集合から引き当てる。
+    const myTeamsRes = await supabase
+      .from('teams').select('id, team_members(user_id)').eq('director_id', uid);
+    if (myTeamsRes.error) throw new Error(myTeamsRes.error.message);
+    const myTeamIds = (myTeamsRes.data || []).map(t => t.id);
+    const teamMemberIds = new Set();
+    for (const t of myTeamsRes.data || []) {
+      for (const tm of t.team_members || []) if (tm.user_id) teamMemberIds.add(tm.user_id);
+    }
+    // users.team_id 経由の所属も拾う（getBallHolder の directorByTeamId フォールバックに対応）
+    if (myTeamIds.length) {
+      const { data: us, error: uErr } = await supabase.from('users').select('id').in('team_id', myTeamIds);
+      if (uErr) throw new Error(uErr.message);
+      for (const u of us || []) if (u.id) teamMemberIds.add(u.id);
+    }
+
+    // ---- 2. 候補CRを3経路で取得（未納品のみ）----
+    //   a) creative_assignments に自分の行がある（role 問わず＝編集/デザイン/D/P/Wチェック全部）
+    //   b) 自分が案件の director_id / producer_id（assignment 無しの D/P を救う）
+    //   c) 自分が代表ディレクターのチームのメンバーが担当（チーム経由フォールバックの受け皿）
+    const [directedRes, producedRes] = await Promise.all([
+      supabase.from('projects').select('id').eq('director_id', uid),
+      supabase.from('projects').select('id').eq('producer_id', uid),
+    ]);
+    if (directedRes.error) throw new Error(directedRes.error.message);
+    if (producedRes.error) throw new Error(producedRes.error.message);
+    const leaderProjectIds = Array.from(new Set([
+      ...(directedRes.data || []).map(p => p.id),
+      ...(producedRes.data || []).map(p => p.id),
+    ]));
+    // チームメンバーが極端に多い環境で .in() が URL 長超過にならないよう上限を置く
+    // （超えた場合は経路 c を諦め、a/b だけで描画する＝出る件数が減るだけで壊れない）
+    const teamMemberIdList = Array.from(teamMemberIds).slice(0, 200);
+
+    const [assigned, leader, teamFallback] = await Promise.all([
+      fetchAllRows(() => supabase.from('creatives')
+        .select(`${CREATIVE_SELECT}, assignee_filter:creative_assignments!inner(user_id)`)
+        .eq('assignee_filter.user_id', uid)
+        .not('status', 'in', DELIVERED_STATUSES)
+        .order('id', { ascending: true })),
+      leaderProjectIds.length
+        ? fetchAllRows(() => supabase.from('creatives')
+            .select(CREATIVE_SELECT)
+            .in('project_id', leaderProjectIds)
+            .not('status', 'in', DELIVERED_STATUSES)
+            .order('id', { ascending: true }))
+        : Promise.resolve([]),
+      teamMemberIdList.length
+        ? fetchAllRows(() => supabase.from('creatives')
+            .select(`${CREATIVE_SELECT}, team_filter:creative_assignments!inner(user_id)`)
+            .in('team_filter.user_id', teamMemberIdList)
+            .not('status', 'in', DELIVERED_STATUSES)
+            .order('id', { ascending: true }))
+        : Promise.resolve([]),
+    ]);
+    const candidates = [...assigned, ...leader, ...teamFallback]; // 重複は computeMyFocus が id で排除する
+
+    // ---- 3. getBallHolder 用 Map 組み立て（/team-load・syncBallHolderId と同じ形）----
+    const { data: teamsRaw, error: tErr } = await supabase
+      .from('teams').select('id, director_id, director:director_id(full_name), team_members(user_id)');
+    if (tErr) throw new Error(tErr.message);
+    const directorByTeamId   = new Map();
+    const directorByUserId   = new Map();
+    const directorIdByTeamId = new Map();
+    const directorIdByUserId = new Map();
+    for (const t of teamsRaw || []) {
+      const name = t.director?.full_name || '';
+      if (t.director_id) {
+        directorByTeamId.set(t.id, name);
+        directorIdByTeamId.set(t.id, t.director_id);
+      }
+      for (const tm of t.team_members || []) {
+        if (tm.user_id && !directorByUserId.has(tm.user_id)) {
+          directorByUserId.set(tm.user_id, name);
+          directorIdByUserId.set(tm.user_id, t.director_id || null);
+        }
+      }
+    }
+    // 案件専用 D/P のフォールバック解決（assignment が無いとき projects.director_id / producer_id を使う）。
+    // creatives 横断の ID 集合を 1 回の IN にまとめる（N+1 回避・/team-load と同手法）
+    const projUserIds = Array.from(new Set(
+      candidates.flatMap(c => [c.projects?.director_id, c.projects?.producer_id]).filter(Boolean)
+    ));
+    const projUserById = new Map();
+    if (projUserIds.length) {
+      const { data: us, error: uErr } = await supabase.from('users').select('id, full_name').in('id', projUserIds);
+      if (uErr) throw new Error(uErr.message);
+      for (const u of us || []) projUserById.set(u.id, u);
+    }
+
+    // ---- 4. ボール保持者を解決して純関数の入力形に変換 ----
+    const creatives = candidates.map(c => {
+      const projectDirector = c.projects?.director_id ? (projUserById.get(c.projects.director_id) || null) : null;
+      const projectProducer = c.projects?.producer_id ? (projUserById.get(c.projects.producer_id) || null) : null;
+      const ball = getBallHolder(
+        c.status, c.creative_assignments,
+        directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
+        projectDirector, projectProducer
+      );
+      // 「関与」= assignments の担当者（role 問わず）＋ 案件の D/P。
+      // ADR 033 の「担当」より広いのは、D/P 自身の納期責任もホームに出すため（ADR 040）
+      const memberUserIds = new Set(
+        (c.creative_assignments || []).map(a => a.users?.id || a.user_id).filter(Boolean)
+      );
+      if (c.projects?.director_id) memberUserIds.add(c.projects.director_id);
+      if (c.projects?.producer_id) memberUserIds.add(c.projects.producer_id);
+      return {
+        id: c.id,
+        file_name: c.file_name,
+        status: c.status,
+        final_deadline: c.final_deadline,
+        draft_deadline: c.draft_deadline,
+        help_flag: c.help_flag,
+        project_id: c.project_id,
+        project_name: c.projects?.name || '',
+        client_name: c.projects?.clients?.name || '',
+        ball_type: ball?.type || 'unknown',
+        ball_user_ids: Array.isArray(ball?.user_ids) ? ball.user_ids : [],
+        member_user_ids: Array.from(memberUserIds),
+      };
+    });
+
+    // ---- 5. 純関数で集計（JST 固定）----
+    const todayStr = _todayStrJST();
+    const weekEndStr = _thisSundayStrJST();
+    const result = computeMyFocus({ creatives, userId: uid, todayStr, weekEndStr, limit });
+    res.json({ ...result, today: todayStr, week_end: weekEndStr });
+  } catch (e) {
+    console.error('[dashboard/my-focus]', e);
+    res.status(500).json({ error: e.message || 'マイフォーカスの取得に失敗しました' });
   }
 });
 

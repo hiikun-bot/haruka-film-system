@@ -48,6 +48,10 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .nav-btn{font-size:13px;color:rgba(255,255,255,0.92);padding:5px 11px;border-radius:6px;cursor:pointer;border:none;background:transparent;text-shadow:0 1px 3px rgba(0,0,0,0.35);white-space:nowrap;transition:background .15s,color .15s}
 .nav-btn.active{background:rgba(255,255,255,0.24);color:#fff;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
 .nav-btn:hover{background:rgba(255,255,255,0.16);color:#fff}
+/* ナビ「つぶやき」の未読バッジ（ADR 041）: 最終閲覧以降の他人の投稿数。0 件は hidden */
+.nav-unread-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;margin-left:5px;border-radius:9px;background:#EF4444;color:#fff;font-size:10.5px;font-weight:700;line-height:1;text-shadow:none;vertical-align:middle;box-shadow:0 0 0 1.5px rgba(255,255,255,.85)}
+.nav-unread-badge[hidden]{display:none}
+.nav-drawer-btn .nav-unread-badge{margin-left:auto}
 .header-right{display:flex;align-items:center;gap:8px;z-index:1;flex-shrink:0}
 .header-user{display:flex;align-items:center;gap:8px}
 .user-av{width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.22);border:1px solid rgba(255,255,255,0.55);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.4);overflow:hidden;cursor:pointer;flex-shrink:0}
@@ -1389,6 +1393,25 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .dash-grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}
 .dash-section{background:var(--white);border:0.5px solid var(--border);border-radius:12px;padding:20px}
 .dash-section-title{font-size:12px;font-weight:600;color:var(--em-dark);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:6px}
+/* 💭 みんなのつぶやき（ホーム最上段・ADR 041）。最新 3 件＋新着チップ。割り込み通知の代わり */
+.dash-tweets-card{border-left:4px solid #3ECFCA}
+.dash-tweets-card .dash-section-title{margin-bottom:4px;flex-wrap:wrap}
+.dash-tweets-unread{font-size:10px;font-weight:700;color:#fff;background:#EF4444;border-radius:9px;padding:2px 7px;letter-spacing:0;text-transform:none;white-space:nowrap}
+.dash-tweets-unread[hidden]{display:none}
+.dash-tweets-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+.dash-tweets-actions .btn-sm{font-size:11px;padding:4px 10px;letter-spacing:0;text-transform:none}
+.dash-tweets-item{display:flex;gap:10px;align-items:flex-start;padding:10px 6px;margin:0 -6px;border-bottom:0.5px solid var(--border-light);cursor:pointer;border-radius:8px;transition:background .15s}
+.dash-tweets-item:last-of-type{border-bottom:none}
+.dash-tweets-item:hover{background:var(--em-pale)}
+.dash-tweets-av{width:32px;height:32px;border-radius:50%;flex-shrink:0;object-fit:cover;background:#E6F9F8;color:#2BA8A4;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+.dash-tweets-main{flex:1;min-width:0}
+.dash-tweets-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--text-muted)}
+.dash-tweets-name{font-size:12.5px;font-weight:600;color:var(--text)}
+.dash-tweets-new{font-size:9px;font-weight:800;color:#EF4444;letter-spacing:.06em}
+.dash-tweets-body{font-size:13px;color:var(--text);line-height:1.5;margin-top:2px;white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dash-tweets-item.is-new .dash-tweets-body{font-weight:500}
+.dash-tweets-counts{font-size:11px;color:var(--text-muted);margin-top:3px;display:flex;gap:10px}
+.dash-tweets-empty{text-align:center;padding:14px 0 6px;font-size:13px;color:var(--text-muted)}
 /* 🏅 マイ実績（本人専用カード・ADR 036） */
 .my-stats-card{margin-bottom:14px;border-left:4px solid var(--em)}
 .my-stats-card .dash-section-title{justify-content:space-between;margin-bottom:12px}
@@ -2478,6 +2501,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <script src="/js/confirm-dialog.js"></script>
 <!-- 共通: ユーザー名表示ヘルパー（システム標準）— 全画面でこのヘルパー経由で名前を表示。インラインJSより先に読み込む -->
 <script src="/js/name-display.js"></script>
+<script src="/js/mention-resolve.js"></script>
 <!-- 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js を server.js が配信）。インラインJSが参照するため defer なし -->
 <script src="/js/personal-goals.js"></script>
 </head>
@@ -3251,6 +3275,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div class="form-group" style="margin-bottom:8px">
       <label class="form-label">一言 <span style="color:#C0392B">*</span> <span id="tw-body-counter" style="font-weight:400;font-size:11px;color:var(--text-muted);margin-left:6px">0 / 280</span></label>
       <textarea class="form-input" id="tw-body" rows="4" maxlength="280" placeholder="例) 今日の現場、夕日がエモかった" style="resize:vertical;font-family:inherit" oninput="updateTweetCounter()"></textarea>
+      <div class="tw-mention-hint">「@」に続けて名前を打つとメンバー候補が出ます。選ぶと相手に通知が届きます</div>
     </div>
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">投稿は 90 日後に自動で非表示になります</div>
     <div class="modal-footer">
@@ -4063,7 +4088,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
     <button class="nav-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">学び広場</button>
-    <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき</button>
+    <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
     <!-- 📝 契約・登録手続き: 本人の依頼・契約のみ（requireAuth・全ロール）。ADR 035 -->
     <button class="nav-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
@@ -4195,7 +4220,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
     <button class="nav-drawer-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
-    <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき</button>
+    <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
     <button class="nav-drawer-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
     <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
@@ -4236,6 +4261,13 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
     </div>
   </div>
+  <!-- 🎯 マイフォーカス（本人専用・ADR 040）: いま自分にボールがあるクリエイティブ。
+       ホームの最上段＝「今日、自分が何をするか」を実績カードより先に出す（ADR 036 決定6 の配置を改訂）。
+       全ロール共通で loadDashboard() から renderMyFocusCard() が描画する。 -->
+  <div id="dash-my-focus"></div>
+  <!-- 💭 みんなのつぶやき（全ロール共通・ADR 041）: 最新 3 件＋新着チップ。loadDashboard() の renderDashTweetsCard() が描画。
+       ポップアップで割り込む代わりに「ホームを開いたら仲間の気配がある」場所として、マイフォーカスの直下に置く。 -->
+  <div id="dash-tweets"></div>
   <!-- 🏅 マイ実績（本人専用・ADR 036。editor/designer/director ダッシュで renderMyStatsCard() が描画。admin ダッシュには出さない） -->
   <div id="dash-my-stats"></div>
   <!-- 📝 契約・登録手続きバナー（ADR 035）: GET /contracts/me の banner が非 null のとき contract-wizard.js の renderContractBanner() が描画 -->
@@ -10853,6 +10885,15 @@ async function applyDeepLinkOnLoad() {
         // 権限で非表示のナビなら開かない（applyRoleBasedUI 適用後の inline display で判定）
         if (navBtn && navBtn.style.display !== 'none' && typeof showPage === 'function') showPage('contract-admin', navBtn);
       } catch (e) { console.warn('[deepLink page]', e); }
+      return;
+    }
+
+    // ?tweet=<id> : メンション通知（Slack / Chatwork / メール）からつぶやきページの該当カードへ（ADR 041）。
+    // notification-card.js は haruka.html 内では openTweetsPage() を直接呼ぶので、ここは外部リンク経由のみ通る。
+    const tweetParam = params.get('tweet');
+    if (tweetParam) {
+      stripQueryParam('tweet');
+      try { openTweetsPage(tweetParam); } catch (e) { console.warn('[deepLink tweet]', e); }
       return;
     }
 
@@ -24362,7 +24403,8 @@ function showPage(name, btn) {
   if(name==='analytics') initAnalyticsPage();
   if(name==='team-load') loadTeamLoadPage();
   if(name==='payout') loadPayoutPage();
-  if(name==='tweets')   loadTweetsPage();
+  // 読み込み完了を focusTweetOnPage()（ホーム／通知／?tweet= からの該当カードへのスクロール）が待てるよう Promise を公開
+  if(name==='tweets')   window._twPageLoadPromise = loadTweetsPage();
   if(name==='portfolio') loadPortfolioPage();
   if(name==='work-hours') loadWorkHoursPage();
   if(name==='bulk-deliver') loadBulkDeliverPage();
@@ -29309,13 +29351,21 @@ function loadDashboard() {
 
   // 自前 fetch を持つセクションはデータ系ロード（loadCreatives 等）の完了を待たずに即時表示する
   // （初回ロード体感改善: 最遅の loadCreatives を待っている間も連絡事項・誕生日・タスクが先に出る）
+  // ヒーローの数字は複数ソースが書き込むため、開き直し / VIEW AS 切替のたびに一度ローダーへ戻す
+  // （前ロールの「進行中案件」等が残らないようにする・ADR 015）
+  resetDashHeroStats();
+  // 🎯 マイフォーカス（全ロール共通・本人専用 ADR 040）: 自前 fetch なので init のデータ待ちをしない。
+  // ヒーローの「いま手元 / 期限超過 / 今週締切」もこの結果から setDashHeroStats() で入る。
+  renderMyFocusCard();
+  // 💭 みんなのつぶやき（全ロール共通・ADR 041）: 自前 fetch（limit=3）。マイフォーカスの直下。
+  renderDashTweetsCard();
   // 全ロール共通: 全体連絡セクション
   loadAnnouncements();
   // 全ロール共通: 誕生日セクション
   loadDashboardBirthdays();
   // 全ロール共通: 📝 契約・登録手続きバナー（本人宛の依頼があるときだけ表示。ADR 035）
   if (typeof renderContractBanner === 'function') renderContractBanner();
-  // つぶやきは独立タブ（#page-tweets）に集約（PR #209）。ダッシュボード内表示は廃止。
+  // つぶやき本体は独立タブ（#page-tweets・PR #209）。ホームには最新 3 件だけを renderDashTweetsCard() で出す（ADR 041）。
 
   // 初回ロード中はプレースホルダを出す（既に何か描画済みなら触らない＝再表示時のチラつき防止）。
   // 注意: #dash-content は中に #dash-charts / #dash-text-content を静的に持つため上書きしない。
@@ -29344,6 +29394,155 @@ function loadDashboard() {
   } else {
     _whenInitLoaded(['creatives'], () => renderEditorDash(today));
   }
+}
+
+// ============================================================
+// ヒーロー統計ストア（#dash-hero-stats の描画を一本化）
+// ------------------------------------------------------------
+// ヒーローの数字は非同期の複数ソース（マイフォーカス / renderAdminDash）が書き込む。
+// それぞれが innerHTML を直接上書きすると、後着が先着の数字を消して片方しか出ない。
+// ここに部分更新を流し込み、描画順は renderDashHeroStats() が一元的に決める。
+// ============================================================
+let _dashHeroStats = {};
+
+// ダッシュボードを開き直す / VIEW AS を切り替えるたびに呼ぶ。
+// 前ロールの数字（admin の「進行中案件」等）が残らないよう、ローダー表示まで戻す。
+function resetDashHeroStats() {
+  _dashHeroStats = {};
+  const el = document.getElementById('dash-hero-stats');
+  if (!el) return;
+  el.innerHTML = `<div class="dash-hero-loader" id="dash-hero-loader" aria-live="polite">
+      <span class="dash-hero-loader-spin"></span>
+      <span>データ取得中<span class="dash-hero-loader-dots"></span></span>
+    </div>`;
+}
+
+function setDashHeroStats(partial) {
+  Object.assign(_dashHeroStats, partial || {});
+  renderDashHeroStats();
+}
+
+function renderDashHeroStats() {
+  const el = document.getElementById('dash-hero-stats');
+  if (!el) return;
+  const s = _dashHeroStats;
+  const cells = [];
+  // 行動系（全ロール共通・GET /dashboard/my-focus 由来）。「いま自分がどれだけ抱えているか」
+  if (s.balls != null)       cells.push({ val: s.balls, label: 'いま手元' });
+  if (s.overdue)             cells.push({ val: s.overdue, label: '期限超過', cls: 'sos' });
+  if (s.dueThisWeek != null) cells.push({ val: s.dueThisWeek, label: '今週締切' });
+  // 管理系（renderAdminDash 由来）。会社全体の数字なので行動系の右に並べる
+  if (s.activeProjects != null)  cells.push({ val: s.activeProjects, label: '進行中案件' });
+  if (s.periodCount != null)     cells.push({ val: s.periodCount, label: s.periodLabel || '本数' });
+  if (s.periodDelivered != null) cells.push({ val: s.periodDelivered, label: '納品済' });
+  if (s.sos)                     cells.push({ val: s.sos, label: 'SOS中', cls: 'sos' });
+
+  if (!cells.length) {
+    // どのソースも未着。失敗が確定しているときだけローダーを止める（通常は「データ取得中」のまま待つ）
+    if (s._focusFailed) el.innerHTML = `<div class="dash-hero-loader">数字を取得できませんでした</div>`;
+    return;
+  }
+  el.innerHTML = cells.map(c =>
+    `<div class="dash-hero-stat"><div class="dash-hero-stat-val ${c.cls || ''}">${c.val}</div><div class="dash-hero-stat-label">${c.label}</div></div>`
+  ).join('');
+}
+
+// ============================================================
+// 🎯 マイフォーカス（ホーム最上段「いま、あなたにボールがあるもの」）— ADR 040
+// ------------------------------------------------------------
+// GET /api/haruka/dashboard/my-focus は req.user 本人の手番しか返さない
+// （admin バイパス無し・VIEW AS でも本人のまま）。フロントにロール分岐は書かない。
+// 取得失敗時はカードを静かに省略しホームを壊さない（ADR 036 と同じ方針）。
+// 呼び出し元: loadDashboard()（全ロール共通）。
+// ============================================================
+let _myFocusSeq = 0;
+
+// ball_type → 「なぜ自分の手元にあるか」の一言。ステータスチップと併記して意味を補う。
+const MY_FOCUS_BALL_LABEL = {
+  editor: '制作', wcheck: 'Wチェック', director: 'Dチェック', producer: 'Pチェック',
+};
+
+async function renderMyFocusCard() {
+  const el = document.getElementById('dash-my-focus');
+  if (!el) return;
+  const seq = ++_myFocusSeq;
+  let d = null;
+  try {
+    const res = await apiFetch(`${API}/dashboard/my-focus?limit=5`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    d = await res.json();
+  } catch (e) {
+    console.warn('[my-focus] fetch failed（カードを省略）', e);
+    if (seq === _myFocusSeq) setDashHeroStats({ _focusFailed: true });
+    return;
+  }
+  if (seq !== _myFocusSeq) return; // VIEW AS 連打等で後発の描画が優先
+  if (!document.getElementById('page-dashboard')?.classList.contains('active')) return;
+
+  const c = d.counts || {};
+  setDashHeroStats({ balls: c.balls || 0, overdue: c.overdue || 0, dueThisWeek: c.due_this_week || 0 });
+  el.innerHTML = _myFocusCardHtml(d);
+  el.style.marginBottom = '14px';
+}
+
+// 「他 N 件を見る」→ クリエイティブ一覧へ。onclick 属性内で属性セレクタのクォートが衝突するため関数に逃がす。
+function goToCreativesFromFocus() {
+  showPage('creatives', document.querySelector('.nav-btn[data-page="creatives"]'));
+}
+
+function _myFocusCardHtml(d) {
+  const c = d.counts || {};
+  const items = d.items || [];
+  const title = `<div class="dash-section-title">🎯 いま、あなたにボールがあるもの
+      <span style="margin-left:auto;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0">${c.balls || 0}件</span>
+    </div>`;
+
+  if (!items.length) {
+    // 手番ゼロ＝止めている仕事が無い状態。「次にいつボールが来るか」は
+    // クライアント確認の終わり次第で予測できないため、待ちの件数だけを正直に出す。
+    const waiting = [];
+    if (c.client_wait) waiting.push(`クライアント確認待ち ${c.client_wait}件`);
+    if (c.due_this_week) waiting.push(`今週締切 ${c.due_this_week}件`);
+    return `<div class="dash-section">${title}
+      <div style="text-align:center;padding:18px 0">
+        <div style="font-size:30px;margin-bottom:8px">✨</div>
+        <div style="font-size:14px;font-weight:600;color:var(--em-dark)">手元にボールはありません</div>
+        ${waiting.length ? `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">${esc(waiting.join(' ／ '))}</div>` : ''}
+      </div>
+    </div>`;
+  }
+
+  const rows = items.map(it => {
+    const ballLabel = MY_FOCUS_BALL_LABEL[it.ball_type] || '';
+    return `
+    <div class="dash-alert-row" onclick="openCreativeDetail('${it.id}')" style="align-items:flex-start;cursor:pointer;padding:10px 0">
+      ${it.days_left === null
+        // 納期未設定は「余裕あり(dbadge-ok)」の配色だと安心に見えてしまうのでグレーで出す（設定漏れの可能性がある状態）
+        ? `<span class="dash-due-badge" style="background:#ECEFF1;color:#546E7A">納期未設定</span>`
+        : _dashBadge(it.days_left)}
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="status-chip ${statusClass(it.status)}" style="font-size:11px;flex-shrink:0">${esc(it.status || '—')}</span>
+          ${ballLabel ? `<span style="font-size:11px;color:var(--text-muted)">${esc(ballLabel)}のボール</span>` : ''}
+          ${it.help_flag ? `<span style="font-size:11px;color:#E24B4A;font-weight:600">🆘 SOS</span>` : ''}
+        </div>
+        ${it.project_name ? `<div style="font-size:13px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📁 ${esc(it.project_name)}</div>` : ''}
+        <div style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace" title="${esc(it.file_name || '')}">
+          ${it.client_name ? `${esc(it.client_name)} · ` : ''}${esc(it.file_name || '（名称未設定）')}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // 6件目以降はクリエイティブ一覧（自分の担当で絞った状態）に送る。ホームは上位5件に絞って
+  // 「まず何から」を見失わせない。
+  const more = d.has_more
+    ? `<div style="text-align:center;margin-top:10px">
+         <button class="btn-sm" onclick="goToCreativesFromFocus()" style="font-size:11px">他 ${(d.counts.balls || 0) - items.length} 件を見る →</button>
+       </div>`
+    : '';
+
+  return `<div class="dash-section">${title}${rows}${more}</div>`;
 }
 
 // ============================================================
@@ -30072,6 +30271,7 @@ function openTweetCompose() {
   document.getElementById('tw-image-input').value = '';
   renderTweetImagePreview();
   updateTweetCounter();
+  TwMention.attach(document.getElementById('tw-body')); // 「@」メンション補完
   openModal('modal-tweet-compose');
 }
 
@@ -30311,6 +30511,8 @@ async function submitTweet() {
     // 挿入できない場合（一覧未ロード等）のみ従来どおり再読込。
     const prepended = (typeof _twPrependTweetLocal === 'function') && _twPrependTweetLocal(created);
     if (!prepended && typeof loadTweetsPage === 'function') loadTweetsPage();
+    // ホームの「💭 みんなのつぶやき」から投稿した場合はカードも取り直す（ADR 041）
+    if (document.getElementById('page-dashboard')?.classList.contains('active')) renderDashTweetsCard();
   } finally {
     btn.disabled = false; btn.textContent = '投稿する';
   }
@@ -30345,6 +30547,7 @@ function startEditTweet(id) {
   const ta = document.getElementById(`tw-edit-textarea-${id}`);
   const counter = document.getElementById(`tw-edit-counter-${id}`);
   if (ta) {
+    TwMention.attach(ta); // 「@」メンション補完
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
     ta.addEventListener('input', () => {
@@ -30358,7 +30561,7 @@ function cancelEditTweet(id) {
   if (!bodyEl) return;
   const original = bodyEl.dataset.originalBody || '';
   bodyEl.dataset.editing = '';
-  bodyEl.textContent = original;
+  bodyEl.innerHTML = _twFormatBody(original);
 }
 
 async function saveEditTweet(id) {
@@ -30368,7 +30571,8 @@ async function saveEditTweet(id) {
   const body = ta.value.trim();
   if (!body) { showToast('本文を入力してください', 'warn'); return; }
   if (body.length > 280) { showToast('本文は 280 字以内にしてください', 'warn'); return; }
-  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }
+  if (saveBtn) { if (saveBtn.disabled) return; saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }
+  TwMention.close();
   try {
     const res = await apiFetch(`${API}/tweets/${id}`, {
       method: 'PATCH',
@@ -30380,10 +30584,25 @@ async function saveEditTweet(id) {
       showToast('エラー: ' + (e.error || '更新失敗'), 'error');
       return;
     }
+    const updated = await res.json().catch(() => null);
     showToast('更新しました', 'success');
-    if (typeof loadTweetsPage === 'function') loadTweetsPage();
+    // 更新後の本文を該当カードに即時反映する（一覧全体の再fetchに頼らない＝スクロール位置と
+    // 開いているコメント欄を保つ。再fetchが失敗して古い本文が残る事故も防ぐ）。
+    // 一覧にカードが無いときだけ従来どおり再読込。
+    const t = _twPageList.find(x => x.id === id);
+    let reflected = false;
+    if (t) {
+      t.body = (updated && typeof updated.body === 'string') ? updated.body : body;
+      t.edited_at = (updated && updated.edited_at) || new Date().toISOString();
+      if (updated && Array.isArray(updated.mentioned_user_ids)) t.mentioned_user_ids = updated.mentioned_user_ids;
+      reflected = _twReplaceCardDom(t);
+    }
+    if (!reflected && typeof loadTweetsPage === 'function') loadTweetsPage();
+  } catch (e) {
+    console.warn('[tweets-page] edit save failed', e);
+    showToast('通信エラー: 更新できませんでした。もう一度お試しください', 'error');
   } finally {
-    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
+    if (saveBtn && saveBtn.isConnected) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
   }
 }
 
@@ -30405,6 +30624,9 @@ const _twPageState = {
   roleGroups: new Set(),
 };
 const _twPageOpenComments = new Set();
+// 返信（コメント）の最新データ（id → comment）。返信リアクションの楽観的更新で使う。
+// 返信一覧は _twPageList に載らず fetch のたびに描画するだけなので、行単位の状態をここに持つ。
+const _twCommentCache = new Map();
 // 直近の API レスポンス（カード単位の差分再描画 / 楽観的更新で参照）
 let _twPageList = [];
 const _TW_FILTER_LS_KEY = 'haruka.tweets.roleFilters.v1';
@@ -30435,6 +30657,192 @@ const _twRoleBadgeMap = {
 function _twIsStaffRole(role) {
   return role === 'admin' || role === 'secretary';
 }
+
+// ============================================================
+// 💭 つぶやきの「気づき」— ナビ未読バッジ ＋ ホーム「みんなのつぶやき」カード（ADR 041）
+// ------------------------------------------------------------
+// 方針: 割り込まない。ポップアップ／トーストは出さず、
+//   1) ナビ「つぶやき」に最終閲覧以降の他人の投稿数（赤バッジ）
+//   2) ホーム最上段（マイフォーカス直下）に最新 3 件＋「新着 N 件」チップ
+// で「開いたら仲間の気配がある」状態を作る。
+// ・最終閲覧時刻はこの端末の localStorage（サーバーは保存しない＝migration 不要）。
+//   端末が変わると 24 時間前起点で数え直す（utils/tweets-unread.js の既定）。
+// ・新着検知は notification-realtime.js が tweets の INSERT を購読して発火する
+//   CustomEvent 'tweets:incoming'。Realtime が切れている間は visibilitychange と 10 分間隔で補う。
+// ・ロール分岐なし（全員が同じつぶやきを見る）。VIEW AS でも表示は変わらない。
+// ============================================================
+const TWEETS_SEEN_LS_KEY = 'hfs_tweets_seen_at';
+const DASH_TWEETS_LIMIT = 3;
+let _twUnreadCount = 0;
+let _dashTweetsSeq = 0;
+
+function getTweetsSeenAt() {
+  try {
+    const v = localStorage.getItem(TWEETS_SEEN_LS_KEY);
+    if (v && Number.isFinite(Date.parse(v))) return v;
+  } catch (_) {}
+  return null;
+}
+
+function markTweetsSeen() {
+  try { localStorage.setItem(TWEETS_SEEN_LS_KEY, new Date().toISOString()); } catch (_) {}
+  setTweetsUnreadBadge(0);
+}
+
+// ナビ（PC / ドロワー）のバッジとホームカードの「新着 N 件」チップを同じ数で同期する
+function setTweetsUnreadBadge(n) {
+  _twUnreadCount = Math.max(0, Number(n) || 0);
+  const text = _twUnreadCount > 99 ? '99+' : String(_twUnreadCount);
+  document.querySelectorAll('.nav-unread-badge[data-for="tweets"]').forEach(b => {
+    b.hidden = _twUnreadCount === 0;
+    b.textContent = text;
+  });
+  const chip = document.getElementById('dash-tweets-unread');
+  if (chip) {
+    chip.hidden = _twUnreadCount === 0;
+    chip.textContent = `新着 ${text}件`;
+  }
+}
+
+async function refreshTweetsUnread() {
+  if (!currentUser?.id) return;
+  const since = getTweetsSeenAt();
+  const url = since
+    ? `${API}/tweets/unread-count?since=${encodeURIComponent(since)}`
+    : `${API}/tweets/unread-count`;
+  try {
+    const res = await apiFetch(url);
+    if (!res.ok) return;
+    const d = await res.json();
+    setTweetsUnreadBadge(d?.count);
+  } catch (e) { console.warn('[tweets-unread] fetch failed', e); }
+}
+
+// つぶやきページを開き、tweetId があれば該当カードまでスクロールして一瞬ハイライトする。
+// 呼び出し元: ホームカード / 通知パネル（notification-card.js）/ ?tweet=<id> 深リンク
+function openTweetsPage(tweetId) {
+  const navBtn = document.querySelector('.nav-btn[data-page="tweets"]')
+              || document.querySelector('.nav-drawer-btn[data-page="tweets"]');
+  showPage('tweets', navBtn || null);
+  if (tweetId) focusTweetOnPage(tweetId);
+}
+
+async function focusTweetOnPage(tweetId) {
+  if (!tweetId) return;
+  try { await window._twPageLoadPromise; } catch (_) {}
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(String(tweetId)) : String(tweetId).replace(/[^0-9a-zA-Z-]/g, '');
+  const card = document.querySelector(`article.tweet-card[data-tweet-id="${sel}"]`);
+  if (!card) return; // ロールフィルターで非表示・期限切れ等。ページは開いているので静かに終える
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.add('tweet-focus');
+  setTimeout(() => card.classList.remove('tweet-focus'), 2500);
+}
+
+// つぶやきページを開いている最中に他人の新着が来たら、一覧を勝手に入れ替えず
+// 先頭に「N 件あります」バーを出す（入力中の返信を消さないため）。タップで再読込。
+function _twShowNewBar() {
+  const el = document.getElementById('tweets-list');
+  if (!el || el.querySelector('.tweets-loading')) return;
+  let bar = el.querySelector('.tweets-new-bar');
+  if (!bar) {
+    bar = document.createElement('button');
+    bar.type = 'button';
+    bar.className = 'tweets-new-bar';
+    bar.dataset.n = '0';
+    bar.onclick = () => { window._twPageLoadPromise = loadTweetsPage(); };
+    el.prepend(bar);
+  }
+  const n = Number(bar.dataset.n || 0) + 1;
+  bar.dataset.n = String(n);
+  bar.textContent = `🆕 新しいつぶやきが ${n} 件あります — タップして表示`;
+}
+
+// ---- ホーム「💭 みんなのつぶやき」カード ----
+async function renderDashTweetsCard() {
+  const el = document.getElementById('dash-tweets');
+  if (!el) return;
+  const seq = ++_dashTweetsSeq;
+  let list = [];
+  try {
+    const res = await apiFetch(`${API}/tweets?order=recent&limit=${DASH_TWEETS_LIMIT}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    list = await res.json();
+  } catch (e) {
+    console.warn('[dash-tweets] fetch failed（カードを省略）', e);
+    return;
+  }
+  if (seq !== _dashTweetsSeq) return; // 連続呼び出しは後発優先
+  if (!document.getElementById('page-dashboard')?.classList.contains('active')) return;
+  el.innerHTML = _dashTweetsCardHtml(Array.isArray(list) ? list : []);
+  el.style.marginBottom = '14px';
+  setTweetsUnreadBadge(_twUnreadCount); // 描画し直したチップに現在の件数を入れる
+}
+
+function _dashTweetsCardHtml(list) {
+  const title = `<div class="dash-section-title">💭 みんなのつぶやき
+      <span id="dash-tweets-unread" class="dash-tweets-unread" hidden></span>
+      <span class="dash-tweets-actions">
+        <button class="btn-sm" onclick="openTweetCompose()" title="つぶやきを投稿">＋ つぶやく</button>
+        <button class="btn-sm" onclick="openTweetsPage()">すべて見る →</button>
+      </span>
+    </div>`;
+  if (!list.length) {
+    return `<div class="dash-section dash-tweets-card">${title}
+      <div class="dash-tweets-empty">まだつぶやきはありません。最初のひとことをどうぞ ✨</div>
+    </div>`;
+  }
+  const seenAt = getTweetsSeenAt();
+  const seenMs = seenAt ? Date.parse(seenAt) : (Date.now() - 24 * 60 * 60 * 1000);
+  const myId = currentUser?.id;
+  const rows = list.map(t => {
+    const u = t.users || {};
+    const av = u.avatar_url
+      ? `<img class="dash-tweets-av" src="${esc(u.avatar_url)}" alt="" loading="lazy" decoding="async">`
+      : `<span class="dash-tweets-av">${esc((u.full_name || '?').charAt(0))}</span>`;
+    const roleInfo = _twRoleBadgeMap[u.role];
+    const roleBadge = roleInfo ? `<span class="tweet-role-badge ${roleInfo.cls}">${esc(roleInfo.label)}</span>` : '';
+    const isNew = t.user_id !== myId && Date.parse(t.created_at) > seenMs;
+    const counts = [];
+    if (t.image_count) counts.push(`📷 ${t.image_count}`);
+    if (t.reaction_count) counts.push(`👍 ${t.reaction_count}`);
+    if (t.comment_count) counts.push(`💬 ${t.comment_count}`);
+    return `<div class="dash-tweets-item ${isNew ? 'is-new' : ''}" onclick="openTweetsPage('${esc(t.id)}')" role="link" tabindex="0" onkeydown="if(event.key==='Enter')openTweetsPage('${esc(t.id)}')">
+      ${av}
+      <div class="dash-tweets-main">
+        <div class="dash-tweets-meta">
+          <span class="dash-tweets-name" title="${esc(NameDisplay.tooltip(u))}">${esc(u.id ? NameDisplay.short(u) : '不明')}</span>
+          ${roleBadge}
+          <span>${_twTimeAgo(t.created_at)}</span>
+          ${isNew ? '<span class="dash-tweets-new">NEW</span>' : ''}
+        </div>
+        <div class="dash-tweets-body">${esc(t.body)}</div>
+        ${counts.length ? `<div class="dash-tweets-counts">${counts.map(c => `<span>${c}</span>`).join('')}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="dash-section dash-tweets-card">${title}${rows}</div>`;
+}
+
+// ---- 新着の受信・再同期 ----
+// notification-realtime.js が tweets INSERT を受けて発火。detail = { id, user_id, created_at }
+document.addEventListener('tweets:incoming', (e) => {
+  const row = e?.detail || {};
+  const onDashboard = document.getElementById('page-dashboard')?.classList.contains('active');
+  const onTweets    = document.getElementById('page-tweets')?.classList.contains('active');
+  if (row.user_id && currentUser?.id && row.user_id === currentUser.id) {
+    // 自分の投稿（別タブ・別端末から）: 未読には数えない。ホームのカードだけ最新化
+    if (onDashboard) renderDashTweetsCard();
+    return;
+  }
+  refreshTweetsUnread();
+  if (onDashboard) renderDashTweetsCard();
+  if (onTweets && _twPageState.tab === 'all') _twShowNewBar();
+});
+document.addEventListener('notification:authReady', () => { refreshTweetsUnread(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshTweetsUnread();
+});
+setInterval(() => { if (document.visibilityState === 'visible') refreshTweetsUnread(); }, 10 * 60 * 1000);
 
 function switchTweetsTab(tab) {
   if (tab !== 'all' && tab !== 'mine') return;
@@ -30546,7 +30954,8 @@ async function loadTweetsPage() {
 
   let list = [];
   try {
-    const res = await apiFetch(url);
+    // メンション候補（本文の @ハイライト・「@」補完用）は一覧と並列で先読み。失敗しても一覧は出す
+    const [res] = await Promise.all([apiFetch(url), _twLoadMentionUsers()]);
     if (res.ok) list = await res.json();
     else {
       el.innerHTML = '<div class="tweets-empty">読み込みに失敗しました</div>';
@@ -30557,6 +30966,10 @@ async function loadTweetsPage() {
     el.innerHTML = '<div class="tweets-empty">読み込みに失敗しました</div>';
     return;
   }
+
+  // 「みんなのつぶやき」タブを読み込めた＝読んだ扱いにして未読バッジを消す（ADR 041）。
+  // mine タブは他人の新着を見ていないので触らない。
+  if (_twPageState.tab === 'all') markTweetsSeen();
 
   // 念のためフロント側でも staff_only / roles フィルター（API 未対応時のフォールバック）
   if (_twPageState.tab !== 'mine' && _twPageState.roleGroups && _twPageState.roleGroups.size > 0) {
@@ -30614,16 +31027,25 @@ function _twApplyReactionLocal(tweetId, type, action) {
   t.reaction_counts = counts;
   t.reaction_users = reactionUsers;
 
-  const card = document.querySelector(`article.tweet-card[data-tweet-id="${tweetId}"]`);
-  if (!card) return true;
+  _twReplaceCardDom(t);
+  return true;
+}
+
+// 該当カードだけを最新の t で描き直す（一覧全体を再fetchしない）。
+// 開いているコメント欄は DOM ノードごと引き継ぐ（再フェッチで読み込み中をチラつかせない。
+// innerHTML のコピーだと入力欄に付けたイベントリスナー（「@」補完など）が失われるので要素を移す）。
+// 戻り値: true=差し替えた / false=一覧にカードが無い
+function _twReplaceCardDom(t) {
+  if (!t || !t.id) return false;
+  const card = document.querySelector(`article.tweet-card[data-tweet-id="${t.id}"]`);
+  if (!card) return false;
   const wrap = document.createElement('div');
   wrap.innerHTML = renderTweetCard(t);
   const newCard = wrap.firstElementChild;
-  if (!newCard) return true;
-  // 開いているコメント欄の中身は引き継ぐ（再フェッチで読み込み中チラつかせない）
+  if (!newCard) return false;
   const oldComments = card.querySelector('.tweet-comments-wrap');
   const newComments = newCard.querySelector('.tweet-comments-wrap');
-  if (oldComments && newComments) newComments.innerHTML = oldComments.innerHTML;
+  if (oldComments && newComments) newComments.replaceWith(oldComments);
   card.replaceWith(newCard);
   return true;
 }
@@ -30664,6 +31086,198 @@ function _twPrependTweetLocal(created) {
   else el.appendChild(node);
   return true;
 }
+
+// ==================== 「@」メンション（候補キャッシュ / 本文ハイライト / 入力補完） ====================
+//
+// 「@」に続けて文字を打つとメンバー候補をポップアップし、選ぶと「@ニックネーム 」を挿入する。
+// 候補の絞り込み・本文のハイライト・サーバー側の通知先解決は、すべて同じ
+// utils/mention-resolve.js（/js/mention-resolve.js で配信・window.MentionResolve）のロジックを使う。
+// → 画面で「メンションとして光っている名前」= 「通知が届く相手」が常に一致する。
+let _twMentionUsers = null;          // [{ id, full_name, nickname, avatar_url }]
+let _twMentionUsersPromise = null;
+async function _twLoadMentionUsers() {
+  if (_twMentionUsers) return _twMentionUsers;
+  if (_twMentionUsersPromise) return _twMentionUsersPromise;
+  _twMentionUsersPromise = apiFetch(`${API}/tweets/mention-candidates`)
+    .then(r => (r.ok ? r.json() : []))
+    .then(list => { _twMentionUsers = Array.isArray(list) ? list : []; return _twMentionUsers; })
+    .catch(e => { console.warn('[tweets] mention candidates load failed', e); return _twMentionUsers || []; })
+    .finally(() => { _twMentionUsersPromise = null; });
+  return _twMentionUsersPromise;
+}
+
+// 本文を HTML 化（エスケープ + 解決できたメンションを .tw-mention でハイライト）。
+// 候補が未ロード / 解決ライブラリ未読込のときは従来どおりのエスケープ表示。
+function _twFormatBody(body) {
+  const text = String(body ?? '');
+  const MR = window.MentionResolve;
+  if (!MR || !_twMentionUsers || !_twMentionUsers.length || !/[@＠]/.test(text)) return esc(text);
+  let spans = [];
+  try { spans = MR.resolveMentions(text, _twMentionUsers); } catch (_) { return esc(text); }
+  if (!spans.length) return esc(text);
+  let out = '';
+  let pos = 0;
+  for (const sp of spans) {
+    out += esc(text.slice(pos, sp.start));
+    const names = (sp.users || []).map(u => NameDisplay.full(u)).join(' / ');
+    out += `<span class="tw-mention" title="${esc(names)}">${esc(text.slice(sp.start, sp.end))}</span>`;
+    pos = sp.end;
+  }
+  out += esc(text.slice(pos));
+  return out;
+}
+
+const TwMention = (() => {
+  let popup = null;
+  let activeTa = null;   // 候補を出している textarea
+  let items = [];        // 表示中の候補
+  let activeIdx = 0;
+  let atPos = -1;        // 「@」の位置（value 内オフセット）
+  let blurTimer = null;
+
+  function ensurePopup() {
+    if (popup) return popup;
+    popup = document.createElement('div');
+    popup.id = 'tw-mention-popup';
+    popup.className = 'tw-mention-popup';
+    popup.hidden = true;
+    popup.setAttribute('role', 'listbox');
+    // mousedown で textarea の blur を防ぐ（blur → close が click より先に走って選べなくなるのを避ける）
+    popup.addEventListener('mousedown', e => e.preventDefault());
+    popup.addEventListener('click', e => {
+      const btn = e.target.closest('[data-idx]');
+      if (!btn) return;
+      select(Number(btn.dataset.idx));
+    });
+    document.body.appendChild(popup);
+    window.addEventListener('scroll', () => { if (isOpen()) position(); }, true);
+    window.addEventListener('resize', () => { if (isOpen()) position(); });
+    return popup;
+  }
+
+  function isOpen() { return !!popup && !popup.hidden; }
+  function close() {
+    if (popup) popup.hidden = true;
+    items = []; activeIdx = 0; atPos = -1; activeTa = null;
+  }
+
+  // caret 直前の「@query」を探す。補完対象でなければ null
+  function context(ta) {
+    const caret = ta.selectionStart ?? ta.value.length;
+    const before = ta.value.slice(0, caret);
+    const at = Math.max(before.lastIndexOf('@'), before.lastIndexOf('＠'));
+    if (at < 0) return null;
+    const query = before.slice(at + 1);
+    if (query.length > 20) return null;
+    if (/[\s@＠]/u.test(query)) return null;              // 空白・別の @ を含んだら入力済みとみなす
+    const prev = at > 0 ? before[at - 1] : '';
+    if (prev && /[A-Za-z0-9._-]/.test(prev)) return null; // メールアドレス風（a@b）は対象外
+    return { at, query };
+  }
+
+  // textarea の直下（入らなければ直上）に固定配置
+  function position() {
+    if (!activeTa || !popup) return;
+    const r = activeTa.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const width = Math.min(Math.max(r.width, 220), 360, vw - 16);
+    const left = Math.min(Math.max(8, r.left), vw - width - 8);
+    popup.style.width = width + 'px';
+    popup.style.left = left + 'px';
+    popup.style.maxHeight = '';
+    const ph = popup.offsetHeight;
+    const spaceBelow = vh - r.bottom - 8;
+    const spaceAbove = r.top - 8;
+    if (spaceBelow >= Math.min(ph, 160) || spaceBelow >= spaceAbove) {
+      popup.style.top = (r.bottom + 4) + 'px';
+      popup.style.maxHeight = Math.max(120, Math.min(240, spaceBelow)) + 'px';
+    } else {
+      const h = Math.max(120, Math.min(240, spaceAbove));
+      popup.style.maxHeight = h + 'px';
+      popup.style.top = Math.max(8, r.top - Math.min(ph, h) - 4) + 'px';
+    }
+  }
+
+  function render() {
+    const p = ensurePopup();
+    if (!items.length) { close(); return; }
+    p.innerHTML = items.map((u, i) => {
+      const av = u.avatar_url
+        ? `<img class="tw-mention-av" src="${esc(u.avatar_url)}" alt="" loading="lazy" decoding="async">`
+        : `<span class="tw-mention-av">${esc((u.nickname || u.full_name || '?').charAt(0))}</span>`;
+      const short = NameDisplay.short(u);
+      const sub = (u.nickname && u.full_name && u.nickname !== u.full_name)
+        ? `<span class="tw-mention-sub">${esc(u.full_name)}</span>` : '';
+      return `<button type="button" class="tw-mention-item${i === activeIdx ? ' active' : ''}" data-idx="${i}" role="option" aria-selected="${i === activeIdx}">${av}<span class="tw-mention-name">@${esc(short)}</span>${sub}</button>`;
+    }).join('');
+    p.hidden = false;
+    position();
+    const act = p.querySelector('.tw-mention-item.active');
+    if (act && act.scrollIntoView) act.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function update(ta) {
+    const ctx = context(ta);
+    if (!ctx) { if (activeTa === ta) close(); return; }
+    const users = _twMentionUsers || await _twLoadMentionUsers();
+    // 候補取得を待つ間に状況が変わっていたら破棄
+    if (document.activeElement !== ta) return;
+    const ctx2 = context(ta);
+    if (!ctx2) { if (activeTa === ta) close(); return; }
+    const MR = window.MentionResolve;
+    const meId = currentUser?.id;
+    const pool = (users || []).filter(u => u.id !== meId); // 自分は候補から外す（自分宛て通知は飛ばない）
+    items = MR ? MR.filterMentionCandidates(pool, ctx2.query, 8) : [];
+    activeTa = ta; atPos = ctx2.at; activeIdx = 0;
+    render();
+  }
+
+  // 候補を確定: 「@query」を「@ニックネーム 」に置き換える
+  function select(idx) {
+    const u = items[idx];
+    const ta = activeTa;
+    if (!u || !ta) { close(); return; }
+    const short = NameDisplay.short(u);
+    const caret = ta.selectionStart ?? ta.value.length;
+    const before = ta.value.slice(0, atPos);
+    const after = ta.value.slice(caret);
+    const inserted = `@${short} `;
+    ta.value = before + inserted + after;
+    const pos = before.length + inserted.length;
+    close();
+    ta.focus();
+    try { ta.setSelectionRange(pos, pos); } catch (_) {}
+    ta.dispatchEvent(new Event('input', { bubbles: true })); // 文字数カウンタ・自動高さを更新
+  }
+
+  function attach(ta) {
+    if (!ta || ta.dataset.twMention === '1') return;
+    ta.dataset.twMention = '1';
+    _twLoadMentionUsers(); // 候補を先読み
+    ta.addEventListener('input', () => { update(ta); });
+    ta.addEventListener('click', () => { if (isOpen() && activeTa === ta) update(ta); });
+    ta.addEventListener('keydown', e => {
+      if (e.isComposing || e.keyCode === 229) return;
+      if (!isOpen() || activeTa !== ta) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault(); activeIdx = (activeIdx + 1) % items.length; render();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault(); activeIdx = (activeIdx - 1 + items.length) % items.length; render();
+      } else if ((e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault(); e.stopImmediatePropagation(); select(activeIdx);
+      } else if (e.key === 'Escape') {
+        e.preventDefault(); e.stopImmediatePropagation(); close();
+      }
+    });
+    ta.addEventListener('blur', () => {
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => { if (activeTa === ta) close(); }, 150);
+    });
+    ta.addEventListener('focus', () => { clearTimeout(blurTimer); });
+  }
+
+  return { attach, close, isOpen };
+})();
 
 function renderTweetCard(t) {
   const u = t.users || {};
@@ -30772,7 +31386,7 @@ function renderTweetCard(t) {
       ${deleteBtn}
     </div>
     ${imageHtml}
-    <div class="tweet-body" id="tw-body-${t.id}" data-original-body="${esc(t.body)}">${esc(t.body)}</div>
+    <div class="tweet-body" id="tw-body-${t.id}" data-original-body="${esc(t.body)}">${_twFormatBody(t.body)}</div>
     <div class="tweet-footer">
       <div class="tweet-reaction-summary">${summaryPills}</div>
       ${addReactionWrap}
@@ -30783,13 +31397,15 @@ function renderTweetCard(t) {
 }
 
 // リアクション追加ピッカーの開閉
-function toggleTweetReactionPicker(ev, tweetId) {
+//   pickerId 省略時はつぶやき本体のピッカー。返信側は `tw-page-cpicker-<commentId>` を渡す。
+function toggleTweetReactionPicker(ev, tweetId, pickerId) {
   if (ev) { ev.stopPropagation(); }
+  const targetId = pickerId || `tw-page-picker-${tweetId}`;
   // 他のピッカーを閉じる
   document.querySelectorAll('.tweet-reaction-picker.open').forEach(p => {
-    if (p.id !== `tw-page-picker-${tweetId}`) p.classList.remove('open');
+    if (p.id !== targetId) p.classList.remove('open');
   });
-  const picker = document.getElementById(`tw-page-picker-${tweetId}`);
+  const picker = document.getElementById(targetId);
   if (picker) picker.classList.toggle('open');
 }
 // 外側クリックでピッカーを閉じる
@@ -30857,6 +31473,7 @@ async function openTweetCommentsFromCard(tweetId) {
 // opts.pending=true のとき: 楽観的仮表示用（半透明・編集/削除ボタンなし。確定後に置換される）
 function _twRenderCommentRow(tweetId, c, opts = {}) {
   const pending = !!opts.pending;
+  if (!pending && c && c.id) _twCommentCache.set(c.id, c);
   const myId = currentUser?.id;
   const canMod = _twCanModerate();
   const u = c.users || {};
@@ -30884,9 +31501,127 @@ function _twRenderCommentRow(tweetId, c, opts = {}) {
         <span>${_twTimeAgo(c.created_at)}</span>
         ${actionsWrap}
       </div>
-      <div class="tw-comment-body" data-original-body="${esc(c.body)}">${esc(c.body)}</div>
+      <div class="tw-comment-body" data-original-body="${esc(c.body)}">${_twFormatBody(c.body)}</div>
+      ${pending ? '' : _twRenderCommentReactions(tweetId, c)}
     </div>
   </div>`;
+}
+
+// 返信1件分のリアクション行（押された種別のピル + ➕ピッカー）。
+// つぶやき本体（renderTweetCard）と同じ見た目・同じデータ形（reaction_counts / reaction_users /
+// my_reactions）を小サイズで描画する。楽観的更新ではこの部分だけ差し替える。
+// バグ報告 #4a8b4046「つぶやきの返信に対するリアクション機能」
+function _twRenderCommentReactions(tweetId, c) {
+  const myReactions = new Set(c.my_reactions || []);
+  const counts = c.reaction_counts || {};
+  const reactionUsers = c.reaction_users || {};
+  const pills = TWEET_REACTIONS
+    .filter(r => (counts[r.type] || 0) > 0 || myReactions.has(r.type))
+    .map(r => {
+      const active = myReactions.has(r.type);
+      const n = counts[r.type] || 0;
+      const handler = active
+        ? `removeTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`
+        : `addTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`;
+      const who = reactionUsers[r.type] || [];
+      const whoPop = who.length
+        ? `<span class="tweet-reaction-who" aria-hidden="true">
+            <span class="tweet-reaction-who-head">${r.emoji} ${esc(r.label)}</span>
+            ${who.map(u => `<span class="tweet-reaction-who-name">${esc(NameDisplay.full(u))}</span>`).join('')}
+          </span>`
+        : '';
+      return `<button class="tweet-reaction-pill sm ${active ? 'active' : ''}" onclick="${handler}" title="${esc(r.label)}">
+        <span class="emoji">${r.emoji}</span>${n > 0 ? `<span class="count">${n}</span>` : ''}${whoPop}
+      </button>`;
+    }).join('');
+  const pickerBtns = TWEET_REACTIONS.map(r => {
+    const active = myReactions.has(r.type);
+    const handler = active
+      ? `removeTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`
+      : `addTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`;
+    return `<button onclick="${handler}" title="${esc(r.label)}">${r.emoji}</button>`;
+  }).join('');
+  return `<div class="tw-comment-reactions">
+    ${pills}
+    <span class="tweet-reaction-add-wrap" style="position:relative;display:inline-block">
+      <button class="tweet-reaction-add sm" onclick="toggleTweetReactionPicker(event,'${tweetId}','tw-page-cpicker-${c.id}')" title="リアクションを追加">➕</button>
+      <span id="tw-page-cpicker-${c.id}" class="tweet-reaction-picker">${pickerBtns}</span>
+    </span>
+  </div>`;
+}
+
+// 返信リアクションの楽観的更新: キャッシュを更新し、該当行の .tw-comment-reactions だけ差し替える。
+// 戻り値 false = 反映不要（既に同じ状態＝連打）。呼び出し側はその場合 API を投げない。
+function _twApplyCommentReactionLocal(tweetId, commentId, type, action) {
+  const c = _twCommentCache.get(commentId);
+  if (!c) return false;
+  const my = new Set(c.my_reactions || []);
+  const counts = { ...(c.reaction_counts || {}) };
+  const reactionUsers = { ...(c.reaction_users || {}) };
+  const meId = currentUser?.id;
+  const meUser = { id: meId, full_name: currentUser?.full_name, nickname: currentUser?.nickname };
+  if (action === 'add') {
+    if (my.has(type)) return false;
+    my.add(type);
+    counts[type] = (counts[type] || 0) + 1;
+    if (meId) reactionUsers[type] = [...(reactionUsers[type] || []).filter(u => u.id !== meId), meUser];
+  } else {
+    if (!my.has(type)) return false;
+    my.delete(type);
+    counts[type] = Math.max(0, (counts[type] || 0) - 1);
+    if (meId) reactionUsers[type] = (reactionUsers[type] || []).filter(u => u.id !== meId);
+  }
+  c.my_reactions = Array.from(my);
+  c.reaction_counts = counts;
+  c.reaction_users = reactionUsers;
+
+  const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
+  const row = wrap && wrap.querySelector(`.tw-comment[data-comment-id="${commentId}"]`);
+  const box = row && row.querySelector('.tw-comment-reactions');
+  if (box) {
+    const holder = document.createElement('div');
+    holder.innerHTML = _twRenderCommentReactions(tweetId, c);
+    const next = holder.firstElementChild;
+    if (next) box.replaceWith(next);
+  }
+  return true;
+}
+
+async function addTweetCommentReaction(tweetId, commentId, type) {
+  // 本体の addTweetReactionFromCard と同じ流れ: 即時反映 → API → 失敗時 revert。
+  if (!_twApplyCommentReactionLocal(tweetId, commentId, type, 'add')) return;
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}/reactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reaction_type: type }),
+    });
+    if (!res.ok && res.status !== 409) { // 409 = サーバー側で既に付与済み
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '失敗'), 'error');
+      _twApplyCommentReactionLocal(tweetId, commentId, type, 'remove'); // revert
+    }
+  } catch (e) {
+    console.warn('[tweets-page] comment reaction add failed', e);
+    showToast('通信エラー', 'error');
+    _twApplyCommentReactionLocal(tweetId, commentId, type, 'remove'); // revert
+  }
+}
+
+async function removeTweetCommentReaction(tweetId, commentId, type) {
+  if (!_twApplyCommentReactionLocal(tweetId, commentId, type, 'remove')) return;
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}/reactions/${type}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '失敗'), 'error');
+      _twApplyCommentReactionLocal(tweetId, commentId, type, 'add'); // revert
+    }
+  } catch (e) {
+    console.warn('[tweets-page] comment reaction remove failed', e);
+    showToast('通信エラー', 'error');
+    _twApplyCommentReactionLocal(tweetId, commentId, type, 'add'); // revert
+  }
 }
 
 async function loadTweetCommentsPage(tweetId) {
@@ -30906,13 +31641,14 @@ async function loadTweetCommentsPage(tweetId) {
       ${rows || '<div class="tw-comment-empty">まだコメントはありません</div>'}
       <div class="tw-comment-form">
         <textarea id="tw-page-comment-input-${tweetId}" maxlength="500" rows="1"
-          placeholder="コメントを入力（500字、@名前 でメンション・Cmd/Ctrl+Enterで送信）"
+          placeholder="コメントを入力（500字・「@」で名前を選ぶとメンション・Cmd/Ctrl+Enterで送信）"
           oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px'"
           onkeydown="if(event.isComposing||event.keyCode===229)return;if(event.key==='Enter' && (event.metaKey||event.ctrlKey)){event.preventDefault();submitTweetCommentPage('${tweetId}')}"></textarea>
         <button onclick="submitTweetCommentPage('${tweetId}')">送信</button>
       </div>
     </div>
   `;
+  TwMention.attach(document.getElementById(`tw-page-comment-input-${tweetId}`)); // 「@」メンション補完
 }
 
 // 楽観的更新: コメント数バッジを該当ツイートのカード DOM だけ更新する。
@@ -31068,23 +31804,29 @@ function editTweetCommentPage(tweetId, commentId) {
   bodyEl.style.display = 'none';
   const form = document.createElement('div');
   form.className = 'tw-comment-edit-form';
-  form.style.cssText = 'display:flex;gap:6px;margin-top:4px;align-items:flex-start';
+  // 見た目は tweets-page.css（スマホでは textarea を全幅・ボタンを下段に落とす）
   form.innerHTML = `
-    <textarea class="tw-comment-edit-input" maxlength="500" rows="2" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5;resize:vertical;min-height:38px"></textarea>
-    <button class="tw-comment-edit-save" style="padding:6px 12px;background:var(--primary);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px">保存</button>
-    <button class="tw-comment-edit-cancel" style="padding:6px 10px;background:transparent;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px">キャンセル</button>
+    <textarea class="tw-comment-edit-input" maxlength="500" rows="2"></textarea>
+    <div class="tw-comment-edit-actions">
+      <button type="button" class="tw-comment-edit-save">保存</button>
+      <button type="button" class="tw-comment-edit-cancel">キャンセル</button>
+    </div>
   `;
   bodyEl.parentNode.appendChild(form);
   const input = form.querySelector('.tw-comment-edit-input');
+  const saveBtn = form.querySelector('.tw-comment-edit-save');
   input.value = original;
+  // 「@」メンション補完（候補表示中の Enter / Escape を補完側で先取りするため、他のキー処理より先に登録）
+  TwMention.attach(input);
   // 既存改行に合わせて初期高さを伸ばす
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 200) + 'px';
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
-  const cancel = () => { form.remove(); bodyEl.style.display = ''; };
+  const cancel = () => { TwMention.close(); form.remove(); bodyEl.style.display = ''; };
+  const doSave = () => saveTweetCommentEditPage(tweetId, commentId, input.value, { saveBtn });
   form.querySelector('.tw-comment-edit-cancel').addEventListener('click', cancel);
-  form.querySelector('.tw-comment-edit-save').addEventListener('click', () => saveTweetCommentEditPage(tweetId, commentId, input.value));
+  saveBtn.addEventListener('click', doSave);
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
@@ -31093,29 +31835,54 @@ function editTweetCommentPage(tweetId, commentId) {
     // IME 変換確定の Enter で誤って保存されないように、変換中は無視する
     if (e.isComposing || e.keyCode === 229) return;
     // 改行は Enter、保存は Cmd/Ctrl+Enter
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveTweetCommentEditPage(tweetId, commentId, input.value); }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doSave(); }
     else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   });
 }
 
-async function saveTweetCommentEditPage(tweetId, commentId, body) {
+// 返信コメントの本文更新。
+//   ui.saveBtn を渡すと保存中は二重送信を防ぎ、完了後に戻す。
+//   成功時は PUT のレスポンスでその行だけ差し替える（コメント欄全体の再fetchに頼らない。
+//   スマホの不安定な回線で再fetchが失敗して古い本文が残る事故を防ぐ）。差し替えできない時だけ再読込。
+async function saveTweetCommentEditPage(tweetId, commentId, body, ui = {}) {
   const trimmed = (body || '').trim();
   if (!trimmed) { showToast('コメントを入力してください', 'warn'); return; }
   if (trimmed.length > 500) { showToast('500字以内にしてください', 'warn'); return; }
-  const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body: trimmed }),
-  });
-  if (res.ok) {
+  const saveBtn = ui.saveBtn || null;
+  if (saveBtn) { if (saveBtn.disabled) return; saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }
+  TwMention.close();
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: trimmed }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '更新失敗'), 'error');
+      return;
+    }
+    const updated = await res.json().catch(() => null);
     showToast('更新しました', 'success');
+    const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
+    const row = wrap && wrap.querySelector(`.tw-comment[data-comment-id="${commentId}"]`);
+    if (row && updated && updated.id) {
+      // PUT のレスポンスに無い項目（返信リアクションの集計など）は行キャッシュから引き継ぐ
+      const prev = (typeof _twCommentCache !== 'undefined' && _twCommentCache.get(commentId)) || {};
+      const merged = { ...prev, ...updated };
+      const holder = document.createElement('div');
+      holder.innerHTML = _twRenderCommentRow(tweetId, merged);
+      const fresh = holder.firstElementChild;
+      if (fresh) { row.replaceWith(fresh); return; }
+    }
     await loadTweetCommentsPage(tweetId);
-  } else {
-    const e = await res.json().catch(() => ({}));
-    showToast('エラー: ' + (e.error || '更新失敗'), 'error');
+  } catch (e) {
+    console.warn('[tweets-page] comment edit failed', e);
+    showToast('通信エラー: 更新できませんでした。もう一度お試しください', 'error');
+  } finally {
+    if (saveBtn && saveBtn.isConnected) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
   }
 }
-
 
 // ダッシュボード: 誕生日一覧
 async function loadDashboardBirthdays() {
@@ -31448,14 +32215,15 @@ async function renderAdminDash(today) {
   const weekly = inProg.filter(c => { const d=_dashDiff(c.final_deadline,today); return d!==null&&d>=0&&d<=7; });
   const sos = dashCreatives.filter(c => c.help_flag);
 
-  document.getElementById('dash-hero-stats').innerHTML = [
-    {val:active.length, label:'進行中案件'},
-    {val:filteredCreatives.length, label: filterMonth ? `${filterMonth}月 本数` : `${filterYear}年 本数`},
-    {val:filteredCreatives.filter(c=>c.status==='納品').length, label:'納品済'},
-    sos.length ? {val:sos.length, label:'SOS中', cls:'sos'} : null
-  ].filter(Boolean).map(s =>
-    `<div class="dash-hero-stat"><div class="dash-hero-stat-val ${s.cls||''}">${s.val}</div><div class="dash-hero-stat-label">${s.label}</div></div>`
-  ).join('');
+  // ヒーローは共通ストア経由で更新する（直接 innerHTML を書くと、非同期で先に届いた
+  // マイフォーカスの「いま手元 / 期限超過 / 今週締切」を消してしまう）
+  setDashHeroStats({
+    activeProjects: active.length,
+    periodCount: filteredCreatives.length,
+    periodLabel: filterMonth ? `${filterMonth}月 本数` : `${filterYear}年 本数`,
+    periodDelivered: filteredCreatives.filter(c => c.status === '納品').length,
+    sos: sos.length,
+  });
 
   // グラフエリア表示。dash-charts は admin 限定で表示される DOM のため、
   // 非 admin が dashboard select の onchange を踏んだ場合は null 参照で TypeError になる
@@ -31752,15 +32520,10 @@ function renderEditorDash(today) {
     return da - db;
   });
 
-  document.getElementById('dash-hero-stats').innerHTML = `
-    <div class="dash-hero-stat">
-      <div class="dash-hero-stat-val">${mine.length}</div>
-      <div class="dash-hero-stat-label">担当中</div>
-    </div>
-    <div class="dash-hero-stat">
-      <div class="dash-hero-stat-val">${mine.filter(c=>{const d=_dashDiff(c.final_deadline,today);return d!==null&&d<=3;}).length}</div>
-      <div class="dash-hero-stat-label">直近3日</div>
-    </div>`;
+  // ヒーローの数字は renderMyFocusCard()（GET /dashboard/my-focus）が
+  // 「いま手元 / 期限超過 / 今週締切」として入れる。ここでは書かない。
+  // 旧「担当中 / 直近3日」は allCreatives（limit=500・納品除外）由来で取りこぼしがあり、
+  // ボール基準の数字と二重に出ると意味が割れるため廃止した（ADR 040）。
 
   if (!mine.length) {
     document.getElementById('dash-content').innerHTML =

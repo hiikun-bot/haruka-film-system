@@ -707,6 +707,42 @@
   color: #DC2626;
 }
 
+/* 返信へのリアクション行（バグ報告 #4a8b4046）
+   つぶやき本体のピル/ピッカーを小サイズ(.sm)で流用する */
+.tweet-comments-wrap .tw-comment-reactions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.tweet-reaction-pill.sm {
+  padding: 2px 8px;
+  font-size: 11px;
+  gap: 3px;
+}
+
+.tweet-reaction-pill.sm .emoji {
+  font-size: 12px;
+}
+
+.tweet-reaction-pill.sm .count {
+  font-size: 11px;
+}
+
+.tweet-reaction-add.sm {
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.6;
+  opacity: 0.55;
+}
+
+.tweet-comments-wrap .tw-comment:hover .tweet-reaction-add.sm,
+.tweet-reaction-add.sm:hover {
+  opacity: 1;
+}
+
 /* ---------- FAB （右下投稿ボタン） ---------- */
 /* 右下には全画面共通の 🐛不具合報告FAB（haruka.html #error-report-fab: right:16px / bottom:16px / 48px角）が
    常駐するため、その真上に積む（bottom = 16 + 48 + 16）。同じ高さに置くと重なって虫が押せなくなる。 */
@@ -815,3 +851,196 @@
   color: #94a3b8;
 }
 
+
+/* ---------- 新着バー・フォーカス（ADR 041） ---------- */
+/* ページを開いている最中に他人の新着が来たとき、一覧の先頭に出すボタン。タップで再読込 */
+.tweets-new-bar {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid #3ECFCA;
+  border-radius: 10px;
+  background: #E6F9F8;
+  color: #1a6b68;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  animation: tweets-new-bar-in .2s ease;
+}
+.tweets-new-bar:hover { background: #d3f4f2; }
+@keyframes tweets-new-bar-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ホーム / 通知 / ?tweet= から飛んできた該当カードを一瞬ハイライト */
+.tweet-card.tweet-focus {
+  box-shadow: 0 0 0 3px rgba(62, 207, 202, 0.65);
+  transition: box-shadow .4s ease;
+}
+
+/* ==================== @メンション（本文ハイライト / 入力補完ポップアップ） ==================== */
+/* 本文中で解決できたメンション（= 通知が届く相手）を強調する。誰に届くかは title で確認できる */
+.tw-mention {
+  color: #1F8F8B;
+  font-weight: 700;
+  background: rgba(62, 207, 202, 0.14);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.tw-mention-hint {
+  font-size: 11px;
+  color: #9CA3AF;
+  margin-top: 4px;
+}
+/* 候補ポップアップ（body 直下に固定配置。モーダル z-index:200 より前面） */
+.tw-mention-popup {
+  position: fixed;
+  z-index: 100000;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  overflow-y: auto;
+  padding: 4px;
+  box-sizing: border-box;
+  -webkit-overflow-scrolling: touch;
+}
+.tw-mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  font-size: 14px;
+  color: #111827;
+  box-sizing: border-box;
+}
+.tw-mention-item.active,
+.tw-mention-item:hover {
+  background: #E6F9F8;
+}
+.tw-mention-av {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+  background: #E6F9F8;
+  color: #2BA8A4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+.tw-mention-name {
+  font-weight: 700;
+  color: #1F8F8B;
+  white-space: nowrap;
+}
+.tw-mention-sub {
+  font-size: 12px;
+  color: #6B7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ==================== 返信コメントの編集フォーム ==================== */
+.tw-comment-edit-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.tw-comment-edit-input {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 38px;
+  background: #FFFFFF;
+  box-sizing: border-box;
+}
+.tw-comment-edit-input:focus {
+  outline: none;
+  border-color: #3ECFCA;
+}
+.tw-comment-edit-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.tw-comment-edit-save {
+  padding: 6px 12px;
+  background: #3ECFCA;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.tw-comment-edit-save:hover { background: #2BA8A4; }
+.tw-comment-edit-save:disabled { opacity: 0.6; cursor: default; }
+.tw-comment-edit-cancel {
+  padding: 6px 10px;
+  background: transparent;
+  color: #6B7280;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+@media (max-width: 768px) {
+  /* iOS Safari は 16px 未満の入力欄にフォーカスすると画面が自動ズームし、
+     横に並ぶ「保存」ボタンが画面外に出て押せない／押したつもりで反映されない原因になる。
+     スマホでは編集・返信の入力欄を 16px 固定にし、ボタンは入力欄の下段に落として大きめにする。 */
+  .tw-edit-textarea,
+  .tw-comment-edit-input,
+  .tweet-comments-wrap .tw-comment-form textarea,
+  #modal-tweet-compose #tw-body {
+    font-size: 16px;
+  }
+  .tw-comment-edit-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .tw-comment-edit-form .tw-comment-edit-input {
+    width: 100%;
+    flex-basis: auto;
+  }
+  .tw-comment-edit-actions {
+    justify-content: flex-end;
+  }
+  .tw-comment-edit-save,
+  .tw-comment-edit-cancel {
+    padding: 9px 16px;
+    font-size: 14px;
+  }
+  .tw-edit-actions .btn,
+  .tw-edit-actions .btn-primary {
+    padding: 9px 14px;
+    font-size: 14px;
+  }
+  .tw-mention-item {
+    padding: 10px 12px;
+    font-size: 15px;
+  }
+}
