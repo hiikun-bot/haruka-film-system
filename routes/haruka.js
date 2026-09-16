@@ -25818,7 +25818,8 @@ router.delete('/personal-kpis/:id', requireAuth, async (req, res) => {
 //    - on_time_rate_3m: 直近3ヶ月に納品したもののうち final_deadline ありを分母、
 //      delivered_at の JST 日付 <= final_deadline を分子（/analytics/delivery-quality と同じ判定式）
 //    - likes_this_month: creative_file_likes → creative_files → creatives で自分の creative のファイルに
-//      他人が付けた当月分（自分の like は除外）
+//      他人が付けた当月分（自分の like は除外）＋ portfolio_reactions（作品ギャラリーの 👏 拍手など・ADR 042）で
+//      自分の作品に他人が付けた当月分。内訳は likes_file_this_month / likes_portfolio_this_month
 // パフォーマンス: N+1 禁止。creatives は「担当 / 案件D・P / スナップショットD」の3経路を range ページングで
 //    一括取得（PostgREST の 1000 行打ち切り対策）。likes は当月分を creative_files!inner の embed で 1 経路取得し
 //    JS 側で自分の creative に絞る（大量 ID の .in() は URL 長超過で fetch failed になるため使わない・PR #919）。
@@ -25913,7 +25914,25 @@ router.get('/my-stats', requireAuth, async (req, res) => {
         user_id: r.user_id,
         created_at: r.created_at,
         creative_id: r.creative_files?.creative_id || null,
+        source: 'file',
       }));
+
+      // 作品ギャラリーの 👏 拍手 / ❤️ 等（portfolio_reactions・ADR 042）。creative_id 直持ちなので embed 不要。
+      // テーブル未適用環境（migration 前）でも マイ実績 全体を落とさないよう、失敗時はファイル👍のみで続行する
+      try {
+        const prRows = await fetchAllRows(() => supabase
+          .from('portfolio_reactions')
+          .select('id, user_id, created_at, creative_id')
+          .neq('user_id', uid)
+          .gte('created_at', startIso)
+          .lt('created_at', endIso)
+          .order('id', { ascending: true }));
+        for (const r of prRows) {
+          likes.push({ user_id: r.user_id, created_at: r.created_at, creative_id: r.creative_id, source: 'portfolio' });
+        }
+      } catch (e) {
+        console.warn('[my-stats] portfolio_reactions の取得に失敗（ファイル👍のみで続行）:', e?.message || e);
+      }
     }
 
     // ---- 3. 純関数で集計（JST 固定）----

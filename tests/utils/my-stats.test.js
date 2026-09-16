@@ -136,6 +136,24 @@ describe('computeMyStats（集計）', () => {
     ];
     const s = computeMyStats({ creatives, likes, uid: ME, now: NOW });
     expect(s.likes_this_month).toBe(2);
+    expect(s.likes_file_this_month).toBe(2);
+    expect(s.likes_portfolio_this_month).toBe(0);
+  });
+
+  test('今月の👍👏: 作品ギャラリーの拍手（source=portfolio）も合算し内訳を返す（ADR 042）', () => {
+    const creatives = [mineCreative({ id: 'c-1' })];
+    const likes = [
+      { creative_id: 'c-1', user_id: OTHER, created_at: '2026-09-02T00:00:00.000Z' },                       // file ○
+      { creative_id: 'c-1', user_id: OTHER, created_at: '2026-09-03T00:00:00.000Z', source: 'portfolio' },  // portfolio ○
+      { creative_id: 'c-1', user_id: 'u-3', created_at: '2026-09-04T00:00:00.000Z', source: 'portfolio' },  // portfolio ○
+      { creative_id: 'c-1', user_id: ME, created_at: '2026-09-04T00:00:00.000Z', source: 'portfolio' },     // × 自分
+      { creative_id: 'c-1', user_id: OTHER, created_at: '2026-08-10T00:00:00.000Z', source: 'portfolio' },  // × 先月
+      { creative_id: 'c-x', user_id: OTHER, created_at: '2026-09-04T00:00:00.000Z', source: 'portfolio' },  // × 他人の作品
+    ];
+    const s = computeMyStats({ creatives, likes, uid: ME, now: NOW });
+    expect(s.likes_this_month).toBe(3);
+    expect(s.likes_file_this_month).toBe(1);
+    expect(s.likes_portfolio_this_month).toBe(2);
   });
 
   test('全部ゼロ（新人）でも例外にならず 0 / null / 空配列', () => {

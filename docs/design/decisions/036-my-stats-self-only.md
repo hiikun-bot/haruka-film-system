@@ -28,7 +28,7 @@
    | 今月納品 / 先月納品 / 累計納品 | `creatives.delivered_at` の JST 月（ADR 026）。累計は `delivered_at IS NOT NULL` の本数 |
    | 今月初稿 | `first_draft_submitted_at` の JST 月（ADR 034）。案件の `billing_timing` によらず「初稿を出した本数」として出す |
    | 納期遵守率（直近3ヶ月） | 当月を含む直近3 JST 月に納品したもののうち `final_deadline` 設定ありを分母、`delivered_at` の JST 日付 `<= final_deadline` を分子（`/analytics/delivery-quality` と同じ判定式）。分母 0 は null（画面は「—」） |
-   | 今月の👍 | `creative_file_likes → creative_files → creatives` で、自分の creative のファイルに**他人**が付けた当月分。自分の like は除外 |
+   | 今月の👍👏 | `creative_file_likes → creative_files → creatives` で、自分の creative のファイルに**他人**が付けた当月分 ＋ `portfolio_reactions`（作品ギャラリーの 👏 拍手など・ADR 042）で自分の作品に**他人**が付けた当月分。自分の分は除外。内訳（ファイル／作品）も返す（2026-09-16 追記） |
    | マイルストーン | サーバー算出・最大2件。優先順: 累計 10/30/50/100/300/500/1000 本を今月跨いだ「🎉 累計N本達成！」→ 次の節目まで10本以内「🎯 あとK本！」→ 直近3ヶ月遵守100%かつ分母≥3 → 今月納品が先月超え |
    時刻は `toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })` で JST 化し、`new Date('Y-M-D')` / `getMonth()` 等のサーバーローカル依存は使わない。jest で `TZ=UTC` / `TZ=Asia/Tokyo` の両方を通す。
 6. **配置と表示。**
