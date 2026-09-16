@@ -1,5 +1,6 @@
 // utils/reactions.js
 // リアクション（👍 / ❤️ / 👏 / 😊 / 😳）の種類の定義。
+// 作品ギャラリー向けの言い回し（PORTFOLIO_REACTIONS）もここで持つ（種別・絵文字は共通）。
 //
 // つぶやき（tweet_reactions）と作品ギャラリー（portfolio_reactions）で同じ 5 種を使う。
 // 以前はサーバー（routes/haruka.js の TWEET_REACTION_TYPES）とフロント（haruka.html の
@@ -33,5 +34,33 @@
     return REACTION_TYPES.includes(String(type || ''));
   }
 
-  return { REACTIONS, REACTION_TYPES, REACTION_EMOJI, REACTION_LABEL, isReactionType };
+  // ---- 作品ギャラリー用の言い回し（ADR 042 追補 2026-09-17）----
+  // 種別・絵文字・DB の値はつぶやきと同じ 5 種のまま、ボタンに出す言葉だけ
+  // 「作品を褒める言葉」に置き換える。「いいね/ハート」のような絵文字の名前ではなく、
+  // 押した瞬間に「何を伝えたか」が分かる短い一言にする（押す理由を作る）。
+  //   👏 clap      → ナイス！     …一番押しやすい万能の褒め言葉（ワンクリックの主ボタン）
+  //   ❤️ heart     → 好き         …好みに刺さった
+  //   👍 good      → 参考になる   …自分の制作に活かしたい（お世辞でなく実利があると押しやすい）
+  //   😊 smile     → ほっこり     …見ていて気持ちがいい・和む
+  //   😳 surprised → すごい…！    …驚き・レベルの高さ
+  const PORTFOLIO_LABEL = {
+    clap:      'ナイス！',
+    heart:     '好き',
+    good:      '参考になる',
+    smile:     'ほっこり',
+    surprised: 'すごい…！',
+  };
+  // 作品ギャラリーでの表示順（主ボタンの 👏 を先頭に）
+  const PORTFOLIO_REACTION_ORDER = ['clap', 'heart', 'good', 'smile', 'surprised'];
+  const PORTFOLIO_REACTIONS = PORTFOLIO_REACTION_ORDER.map(t => {
+    const base = REACTIONS.find(r => r.type === t);
+    return { type: t, emoji: base.emoji, label: PORTFOLIO_LABEL[t] };
+  });
+  // ワンクリックで押せる主リアクション
+  const PORTFOLIO_PRIMARY = 'clap';
+
+  return {
+    REACTIONS, REACTION_TYPES, REACTION_EMOJI, REACTION_LABEL, isReactionType,
+    PORTFOLIO_REACTIONS, PORTFOLIO_LABEL, PORTFOLIO_PRIMARY,
+  };
 });

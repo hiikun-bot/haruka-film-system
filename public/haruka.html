@@ -8622,41 +8622,100 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   }
   .pf-lb-note-edit textarea:focus { outline: 2px solid #C7D2FE; border-color: #A5B4FC; }
 
-  /* 👏 拍手 / 💬 ひとこと（ADR 042）— カード下部のリアクション行 */
+  /* 👏 拍手 / 💬 ひとこと（ADR 042・追補 2026-09-17）— カード下部のリアクション行
+     主ボタン「👏 ナイス！」はワンクリックで押せる（ピッカーを開かせない）。
+     他の 4 種（❤️ 好き / 👍 参考になる / 😊 ほっこり / 😳 すごい…！）は「＋」から言葉つきで選ぶ。
+     押された種別だけ小ピルで並ぶ。言い回しの定義は utils/reactions.js の PORTFOLIO_REACTIONS。 */
   #page-portfolio .pf-react {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 5px;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 7px;
     cursor: default;   /* カード本体（ライトボックスを開く）とは別の操作面 */
   }
+  .pf-rx-main {
+    position: relative; display: inline-flex; align-items: center; gap: 5px; border: 1.5px solid #3ECFCA;
+    background: #E6F9F8; color: #1F8F8B; border-radius: 999px; padding: 5px 12px 5px 10px;
+    font-size: 13px; font-weight: 700; line-height: 1.3; cursor: pointer; min-height: 32px; font-family: inherit;
+    transition: background .12s, color .12s, transform .12s, box-shadow .12s;
+  }
+  .pf-rx-main .pf-rx-emoji { font-size: 17px; line-height: 1; }
+  .pf-rx-main .pf-rx-n { font-size: 12.5px; font-weight: 800; opacity: .9; margin-left: 1px; }
+  .pf-rx-main:hover { background: #D3F4F2; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(62,207,202,.3); }
+  .pf-rx-main:active { transform: scale(.96); }
+  .pf-rx-main.on { background: #2BB8B4; border-color: #2BB8B4; color: #fff; }
+  .pf-rx-main.on:hover { background: #249E9B; }
   .pf-rx {
-    display: inline-flex; align-items: center; gap: 3px; border: 1px solid transparent;
-    background: #F3F4F6; color: #374151; border-radius: 999px; padding: 2px 7px;
-    font-size: 11px; line-height: 1.4; cursor: pointer; transition: background .12s, border-color .12s;
+    position: relative; display: inline-flex; align-items: center; gap: 4px; border: 1px solid transparent;
+    background: #F3F4F6; color: #374151; border-radius: 999px; padding: 4px 9px;
+    font-size: 12px; line-height: 1.3; cursor: pointer; min-height: 28px; font-family: inherit;
+    transition: background .12s, border-color .12s, transform .12s;
   }
   .pf-rx:hover { background: #E5E7EB; }
-  .pf-rx.on { background: #E6F9F8; border-color: #3ECFCA; color: #2BA8A4; font-weight: 700; }
-  .pf-rx .pf-rx-emoji { font-size: 12.5px; line-height: 1; }
-  .pf-rx .pf-rx-n { font-weight: 700; font-size: 11px; }
+  .pf-rx:active { transform: scale(.96); }
+  .pf-rx.on { background: #E6F9F8; border-color: #3ECFCA; color: #1F8F8B; font-weight: 700; }
+  .pf-rx .pf-rx-emoji { font-size: 15px; line-height: 1; }
+  .pf-rx .pf-rx-n { font-weight: 700; font-size: 12px; }
   .pf-rx-add-wrap { position: relative; display: inline-block; }
   .pf-rx-add {
-    background: transparent; border: 1px dashed #D1D5DB; border-radius: 999px; padding: 2px 7px;
-    font-size: 11px; line-height: 1.4; color: #6B7280; cursor: pointer; transition: background .12s, color .12s;
+    background: #fff; border: 1.5px dashed #CBD5E1; border-radius: 999px; width: 32px; height: 32px;
+    font-size: 17px; line-height: 1; color: #64748B; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0;
+    transition: background .12s, color .12s, border-color .12s;
   }
-  .pf-rx-add:hover { background: #F9FAFB; color: #2BA8A4; border-color: #3ECFCA; }
+  .pf-rx-add:hover, .pf-rx-add.open { background: #F0FDFC; color: #1F8F8B; border-color: #3ECFCA; border-style: solid; }
+  /* ＋ で開くピッカー：絵文字＋言葉で「何を伝えるか」を選ばせる（絵文字だけの横並びより迷わない） */
   .pf-rx-picker {
-    position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; display: none; gap: 2px;
-    background: #fff; border: 1px solid #E5E7EB; border-radius: 999px; padding: 3px 6px;
-    box-shadow: 0 4px 12px rgba(0,0,0,.1);
+    position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 30; display: none; flex-direction: column; gap: 2px;
+    background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.14); min-width: 160px;
   }
-  .pf-rx-picker.open { display: inline-flex; }
+  .pf-rx-picker.open { display: flex; }
   .pf-rx-picker button {
-    background: transparent; border: 0; cursor: pointer; font-size: 17px; width: 30px; height: 30px;
-    border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-    transition: background .12s, transform .12s;
+    background: transparent; border: 0; cursor: pointer; font-size: 13px; font-weight: 600; color: #1f2328;
+    border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 7px 8px; text-align: left; font-family: inherit;
+    white-space: nowrap; transition: background .12s, transform .12s;
   }
-  .pf-rx-picker button:hover { background: #E6F9F8; transform: scale(1.15); }
+  .pf-rx-picker button .pf-rx-emoji { font-size: 19px; line-height: 1; width: 24px; text-align: center; }
+  .pf-rx-picker button:hover { background: #E6F9F8; transform: translateX(2px); }
   .pf-rx-picker button.on { background: #E6F9F8; box-shadow: inset 0 0 0 1.5px #3ECFCA; }
+  .pf-rx-picker button.on::after { content: '✓'; margin-left: auto; padding-left: 10px; color: #1F8F8B; font-weight: 800; }
   .pf-rx-cm { margin-left: auto; }
   .pf-rx-cm.open { background: #EEF2FF; border-color: #C7D2FE; color: #3730A3; }
+  /* 押した瞬間の手応え：ボタンがポンと弾み、絵文字が浮かんで消える（ナビの「ポヨン」と同じ思想） */
+  @keyframes pf-pop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
+  @keyframes pf-float {
+    0%   { opacity: 1; transform: translate(-50%, 0) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -36px) scale(1.6); }
+  }
+  .pf-pop { animation: pf-pop .35s cubic-bezier(.34,1.56,.64,1); }
+  .pf-float { position: absolute; left: 50%; top: -6px; pointer-events: none; font-size: 18px; line-height: 1; z-index: 40; animation: pf-float .75s ease-out forwards; }
+  @media (prefers-reduced-motion: reduce) { .pf-pop { animation: none; } .pf-float { display: none; } }
+  /* 🔗 共有（ライトボックス右カラム）：作品を「良い」という形で仲間に広める入口 */
+  .pf-lb-share-wrap { position: relative; margin-left: auto; }
+  .pf-lb-share {
+    border: 1px solid #E5E7EB; background: #fff; color: #374151; border-radius: 999px;
+    padding: 9px 14px; font-size: 13px; font-weight: 700; cursor: pointer; min-height: 40px; font-family: inherit;
+    transition: background .12s, border-color .12s;
+  }
+  .pf-lb-share:hover, .pf-lb-share.open { background: #F9FAFB; border-color: #CBD5E1; }
+  .pf-share-menu {
+    position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; display: none; flex-direction: column; gap: 2px;
+    background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 6px; min-width: 260px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.14);
+  }
+  .pf-share-menu.open { display: flex; }
+  .pf-share-menu button {
+    background: transparent; border: 0; cursor: pointer; border-radius: 8px; padding: 8px 10px; text-align: left;
+    display: flex; align-items: flex-start; gap: 10px; font-family: inherit; color: #1f2328; transition: background .12s;
+  }
+  .pf-share-menu button:hover { background: #F3F4F6; }
+  .pf-share-menu button .pf-share-ic { font-size: 18px; line-height: 1.2; width: 22px; text-align: center; flex-shrink: 0; }
+  .pf-share-menu button b { display: block; font-size: 13px; font-weight: 700; }
+  .pf-share-menu button small { display: block; font-size: 11px; color: var(--text-muted); margin-top: 1px; line-height: 1.4; }
+  /* つぶやき本文に貼られた作品リンクは「🏆 作品を見る」チップにしてその場で開く */
+  .tw-pf-link {
+    display: inline-flex; align-items: center; gap: 4px; background: #FFF7E0; border: 1px solid #F5D682; color: #8A6100 !important;
+    border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 700; text-decoration: none !important; word-break: normal !important;
+  }
+  .tw-pf-link:hover { background: #FDEFC2; }
   /* ひとこと（💬 N をクリックで展開） */
   .pf-comments {
     margin-top: 6px; background: #fff; border: 0.5px solid var(--border); border-radius: 8px;
@@ -8683,11 +8742,18 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     padding: 5px 11px; cursor: pointer; flex-shrink: 0;
   }
   .pf-cm-form button:disabled { opacity: .5; cursor: default; }
-  /* ライトボックス右カラム側は白カード上なので少し大きめに */
-  .pf-lb-card .pf-react { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
-  .pf-lb-card .pf-rx { font-size: 12.5px; padding: 4px 10px; }
-  .pf-lb-card .pf-rx .pf-rx-emoji { font-size: 14px; }
-  .pf-lb-card .pf-rx-add { font-size: 12.5px; padding: 4px 10px; }
+  /* ライトボックス右カラム：幅があるので 5 種すべてを言葉つきで常時出す（ピッカー不要）。
+     主ボタンは指でも迷わず押せる 46px 高、その右に 🔗 共有。 */
+  .pf-lb-card .pf-react { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .pf-lb-card .pf-rx-main { font-size: 16px; padding: 9px 20px 9px 16px; min-height: 46px; gap: 8px; }
+  .pf-lb-card .pf-rx-main .pf-rx-emoji { font-size: 24px; }
+  .pf-lb-card .pf-rx-main .pf-rx-n { font-size: 15px; }
+  .pf-lb-card .pf-lb-react-sub { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+  .pf-lb-card .pf-rx { font-size: 13px; padding: 6px 12px; min-height: 34px; gap: 5px; }
+  .pf-lb-card .pf-rx .pf-rx-emoji { font-size: 17px; }
+  .pf-lb-card .pf-rx.off { color: #6B7280; background: #F9FAFB; border-color: #E5E7EB; }
+  .pf-lb-card .pf-rx.off:hover { background: #F3F4F6; color: #374151; }
+  .pf-lb-card .pf-lb-nudge { width: 100%; font-size: 12.5px; color: #1F8F8B; margin-top: 2px; }
   .pf-lb-card .pf-comments { border: 0; padding: 0; margin-top: 0; font-size: 13px; }
   .pf-lb-card .pf-cm-form input { font-size: 13px; padding: 7px 12px; }
   .pf-lb-card .pf-cm-form button { font-size: 12.5px; padding: 7px 14px; }
@@ -8702,10 +8768,16 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     #page-portfolio .pf-group-meta { margin-left: 0; }
     .pf-lb-card { padding: 20px 18px; }
     .pf-lb-card h3 { font-size: 18px; }
-    /* 130px 幅のカードでは行が折り返す。ピルを詰めて 2 行以内に収める */
-    #page-portfolio .pf-react { gap: 3px; }
-    .pf-rx, .pf-rx-add { padding: 2px 5px; font-size: 10.5px; }
-    .pf-rx-picker button { width: 34px; height: 34px; font-size: 19px; }   /* 指で押せる大きさ */
+    /* 130px 幅のカードでは行が折り返す。主ボタンは指で押せる高さを保ちつつ横幅を詰める */
+    #page-portfolio .pf-react { gap: 4px; }
+    .pf-rx-main { font-size: 12.5px; padding: 5px 10px 5px 8px; min-height: 34px; }
+    .pf-rx-main .pf-rx-emoji { font-size: 16px; }
+    .pf-rx { padding: 3px 7px; font-size: 11px; min-height: 26px; }
+    .pf-rx-add { width: 34px; height: 34px; }
+    .pf-rx-picker button { padding: 9px 8px; font-size: 14px; }   /* 指で押せる高さ */
+    .pf-lb-card .pf-rx-main { font-size: 15px; min-height: 44px; }
+    .pf-lb-share-wrap { margin-left: 0; }
+    .pf-share-menu { right: auto; left: 0; }
     .pf-cm-form { flex-direction: column; }
     .pf-cm-form button { align-self: flex-end; }
   }
@@ -25453,52 +25525,217 @@ const pfCommentsCache = new Map();     // creative_id → コメント配列（n
 let pfPendingOpenCreative = null;      // ?portfolio=<creative_id> で開きたい作品
 let pfPendingOpenRetried = false;      // 条件を「全員」に広げて探し直したか
 
+// 作品ギャラリー用の言い回し（utils/reactions.js の PORTFOLIO_REACTIONS。種別・絵文字はつぶやきと同じ 5 種）
+//   👏 ナイス！（主ボタン・ワンクリック）/ ❤️ 好き / 👍 参考になる / 😊 ほっこり / 😳 すごい…！
+const PF_REACTIONS = (window.ReactionsUtils && ReactionsUtils.PORTFOLIO_REACTIONS) || TWEET_REACTIONS;
+const PF_PRIMARY_TYPE = (window.ReactionsUtils && ReactionsUtils.PORTFOLIO_PRIMARY) || 'clap';
+
 // リアクション行。ctx は 'card'（カード下部）| 'lb'（ライトボックス右カラム）
+//   card: [👏 ナイス！ 3] [＋] …… [💬 2]  ＋ 押された他種別の小ピル（折り返し）
+//   lb:   [👏 ナイス！ 3] ……………… [🔗 共有]
+//         [❤️ 好き 1] [👍 参考になる] [😊 ほっこり] [😳 すごい…！]   ← 全種を言葉つきで常時表示
+//         まだ拍手はありません。最初の拍手をどうぞ 👏            ← 0 件のときだけ
 function pfReactRowHtml(item, idx, ctx) {
   const cid = item.creative_id;
   if (!cid) return '';
   const counts = item.reactions || {};
   const mine = new Set(item.my_reactions || []);
   const key = `${ctx}-${idx}`;
-  // 押された種別だけピルで出す（つぶやきと同じ）。自分が押したものは強調
-  const pills = TWEET_REACTIONS
-    .filter(r => (counts[r.type] || 0) > 0 || mine.has(r.type))
-    .map(r => `<button type="button" class="pf-rx${mine.has(r.type) ? ' on' : ''}" title="${esc(r.label)}${mine.has(r.type) ? '（もう一度押すと外れる）' : ''}"
+  const n = t => counts[t] || 0;
+  const primary = PF_REACTIONS.find(r => r.type === PF_PRIMARY_TYPE) || PF_REACTIONS[0];
+  const others = PF_REACTIONS.filter(r => r.type !== primary.type);
+  const total = PF_REACTIONS.reduce((a, r) => a + n(r.type), 0);
+  const mainOn = mine.has(primary.type);
+  const mainBtn = `<button type="button" class="pf-rx-main${mainOn ? ' on' : ''}" data-rt="${primary.type}" aria-pressed="${mainOn}"
+      title="${mainOn ? '送りました（もう一度押すと取り消せます）' : `ワンクリックで「${esc(primary.label)}」を送る`}"
+      onclick="event.stopPropagation();pfToggleReaction(${idx}, '${primary.type}')">
+      <span class="pf-rx-emoji">${primary.emoji}</span><span class="pf-rx-label">${esc(primary.label)}</span>${n(primary.type) > 0 ? `<span class="pf-rx-n">${n(primary.type)}</span>` : ''}
+    </button>`;
+
+  if (ctx === 'lb') {
+    const chips = others.map(r => {
+      const on = mine.has(r.type);
+      const cls = on ? ' on' : (n(r.type) > 0 ? '' : ' off');
+      return `<button type="button" class="pf-rx${cls}" data-rt="${r.type}" aria-pressed="${on}"
+          title="${on ? 'もう一度押すと取り消せます' : `「${esc(r.label)}」を送る`}"
+          onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}')">
+          <span class="pf-rx-emoji">${r.emoji}</span><span class="pf-rx-label">${esc(r.label)}</span>${n(r.type) > 0 ? `<span class="pf-rx-n">${n(r.type)}</span>` : ''}
+        </button>`;
+    }).join('');
+    const nudge = total === 0
+      ? `<div class="pf-lb-nudge">まだ拍手はありません。最初の拍手をどうぞ 👏</div>` : '';
+    return `
+    <div class="pf-react" data-cid="${esc(cid)}" data-idx="${idx}" data-ctx="lb" onclick="event.stopPropagation()">
+      ${mainBtn}
+      ${pfShareBtnHtml(idx)}
+      <div class="pf-lb-react-sub">${chips}</div>
+      ${nudge}
+    </div>`;
+  }
+
+  // card: 押された種別だけ小ピル（絵文字＋件数）。自分が押したものは強調
+  const pills = others
+    .filter(r => n(r.type) > 0 || mine.has(r.type))
+    .map(r => `<button type="button" class="pf-rx${mine.has(r.type) ? ' on' : ''}" data-rt="${r.type}" title="${esc(r.label)}${mine.has(r.type) ? '（もう一度押すと外れる）' : ''}"
         onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}')">
-        <span class="pf-rx-emoji">${r.emoji}</span>${(counts[r.type] || 0) > 0 ? `<span class="pf-rx-n">${counts[r.type]}</span>` : ''}
+        <span class="pf-rx-emoji">${r.emoji}</span>${n(r.type) > 0 ? `<span class="pf-rx-n">${n(r.type)}</span>` : ''}
       </button>`).join('');
-  const pickerBtns = TWEET_REACTIONS.map(r =>
+  const pickerBtns = PF_REACTIONS.map(r =>
     `<button type="button" class="${mine.has(r.type) ? 'on' : ''}" title="${esc(r.label)}"
-       onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}')">${r.emoji}</button>`).join('');
+       onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}')"><span class="pf-rx-emoji">${r.emoji}</span>${esc(r.label)}</button>`).join('');
   const cmCount = item.comment_count || 0;
   const cmOpen = pfOpenComments.has(cid);
-  // ライトボックスではひとことを常に開いて見せるので 💬 ボタンは出さない
-  const cmBtn = ctx === 'lb' ? '' :
-    `<button type="button" class="pf-rx pf-rx-cm${cmOpen ? ' open' : ''}" title="ひとこと${cmCount ? `（${cmCount}件）` : ''}"
+  const cmBtn = `<button type="button" class="pf-rx pf-rx-cm${cmOpen ? ' open' : ''}" title="ひとこと${cmCount ? `（${cmCount}件）` : ''}"
        aria-expanded="${cmOpen}" onclick="event.stopPropagation();pfToggleComments(${idx})">
        <span class="pf-rx-emoji">💬</span>${cmCount > 0 ? `<span class="pf-rx-n">${cmCount}</span>` : ''}
      </button>`;
   return `
     <div class="pf-react" data-cid="${esc(cid)}" data-idx="${idx}" data-ctx="${ctx}" onclick="event.stopPropagation()">
-      ${pills}
+      ${mainBtn}
       <span class="pf-rx-add-wrap">
-        <button type="button" class="pf-rx-add" title="拍手・リアクションを付ける" onclick="pfTogglePicker(event, '${key}')">👏＋</button>
+        <button type="button" class="pf-rx-add" title="他のリアクションを付ける（好き・参考になる・ほっこり・すごい）" aria-label="他のリアクション" onclick="pfTogglePicker(event, '${key}')">＋</button>
         <span class="pf-rx-picker" id="pf-rxp-${key}">${pickerBtns}</span>
       </span>
       ${cmBtn}
+      ${pills}
     </div>`;
+}
+
+// 押した手応え：同じ作品の該当ボタン（カード・ライトボックス両方）をポンと弾ませ、絵文字を浮かせる
+function pfAnimateReaction(creativeId, type) {
+  const emoji = (PF_REACTIONS.find(r => r.type === type) || {}).emoji || '👏';
+  document.querySelectorAll(`.pf-react[data-cid="${CSS.escape(creativeId)}"] [data-rt="${type}"]`).forEach(btn => {
+    btn.classList.remove('pf-pop'); void btn.offsetWidth; btn.classList.add('pf-pop');
+    const f = document.createElement('span');
+    f.className = 'pf-float'; f.textContent = emoji;
+    btn.appendChild(f);
+    setTimeout(() => f.remove(), 800);
+  });
 }
 
 function pfTogglePicker(ev, key) {
   if (ev) ev.stopPropagation();
   document.querySelectorAll('.pf-rx-picker.open').forEach(p => { if (p.id !== `pf-rxp-${key}`) p.classList.remove('open'); });
-  document.getElementById(`pf-rxp-${key}`)?.classList.toggle('open');
+  document.querySelectorAll('.pf-rx-add.open').forEach(b => b.classList.remove('open'));
+  const picker = document.getElementById(`pf-rxp-${key}`);
+  if (!picker) return;
+  const open = picker.classList.toggle('open');
+  picker.previousElementSibling?.classList.toggle('open', open);
 }
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.pf-rx-add-wrap')) {
     document.querySelectorAll('.pf-rx-picker.open').forEach(p => p.classList.remove('open'));
+    document.querySelectorAll('.pf-rx-add.open').forEach(b => b.classList.remove('open'));
   }
+  if (!e.target.closest('.pf-lb-share-wrap')) pfCloseShareMenu();
 });
+
+// ==================== 🔗 共有（この作品が良い、を仲間に広める） ====================
+//
+// ライトボックス右カラムの「🔗 共有」。
+//   💭 つぶやきで紹介する … 本文（👏 ナイス！＋作品名＋制作担当への @メンション＋作品リンク）と
+//                          サムネイルをセットした投稿モーダルを開く。投稿すると制作担当にメンション通知が届き、
+//                          つぶやきを見た全員が「🏆 作品を見る」からその作品に飛べる（褒めが連鎖する入口）
+//   🔗 リンクをコピー     … /haruka.html?portfolio=<creative_id>（ベル通知と同じディープリンク）
+//   📤 他のアプリで共有   … navigator.share が使える端末（スマホ）だけ
+function pfShareBtnHtml(idx) {
+  const native = (typeof navigator !== 'undefined' && typeof navigator.share === 'function')
+    ? `<button type="button" onclick="pfShareNative(${idx})"><span class="pf-share-ic">📤</span><span><b>他のアプリで共有</b><small>LINE・メール等の共有シートを開きます</small></span></button>`
+    : '';
+  return `<span class="pf-lb-share-wrap">
+      <button type="button" class="pf-lb-share" id="pf-lb-share-btn" aria-haspopup="true" aria-expanded="false" title="この作品を仲間に広める" onclick="pfToggleShareMenu(event)">🔗 共有</button>
+      <div class="pf-share-menu" id="pf-share-menu" role="menu">
+        <button type="button" onclick="pfShareViaTweet(${idx})"><span class="pf-share-ic">💭</span><span><b>つぶやきで紹介する</b><small>「ナイス！」の一言と作品リンクをセットして投稿画面を開きます</small></span></button>
+        <button type="button" onclick="pfShareCopyLink(${idx})"><span class="pf-share-ic">🔗</span><span><b>リンクをコピー</b><small>Slack・Chatwork に貼れる作品のURL</small></span></button>
+        ${native}
+      </div>
+    </span>`;
+}
+function pfToggleShareMenu(ev) {
+  if (ev) ev.stopPropagation();
+  const menu = document.getElementById('pf-share-menu');
+  const btn = document.getElementById('pf-lb-share-btn');
+  if (!menu) return;
+  const open = menu.classList.toggle('open');
+  if (btn) { btn.classList.toggle('open', open); btn.setAttribute('aria-expanded', String(open)); }
+}
+function pfCloseShareMenu() {
+  document.getElementById('pf-share-menu')?.classList.remove('open');
+  const btn = document.getElementById('pf-lb-share-btn');
+  if (btn) { btn.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }
+}
+function pfShareUrl(item) {
+  return `${location.origin}${location.pathname}?portfolio=${encodeURIComponent(item.creative_id)}`;
+}
+// つぶやき本文用の短い作品名（ファイル名は長いので 40 字で切る）
+function pfShareTitle(item) {
+  const name = String(item.file_name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
+  return name.length > 40 ? name.slice(0, 40) + '…' : name;
+}
+// 制作担当（editor / designer / director_as_editor / director）への @メンション。自分は除く
+function pfShareMentions(item) {
+  const MAKER = new Set(['editor', 'designer', 'director_as_editor', 'director']);
+  const seen = new Set();
+  const out = [];
+  for (const a of (item.assignees || [])) {
+    if (!a || !MAKER.has(a.role)) continue;
+    if (currentUser && a.user_id && a.user_id === currentUser.id) continue;
+    if (currentUser && a.id && a.id === currentUser.id) continue;
+    const name = String(a.nickname || a.full_name || '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(`@${name}`);
+  }
+  return out;
+}
+async function pfShareCopyLink(idx) {
+  const item = pfItems[idx];
+  if (!item?.creative_id) return;
+  pfCloseShareMenu();
+  const url = pfShareUrl(item);
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('作品のリンクをコピーしました', 'success');
+  } catch (e) {
+    try { window.prompt('この URL をコピーして共有してください', url); } catch (_) {}
+    showToast('クリップボード API が使えないため URL を表示しました', 'info');
+  }
+}
+async function pfShareNative(idx) {
+  const item = pfItems[idx];
+  if (!item?.creative_id) return;
+  pfCloseShareMenu();
+  const url = pfShareUrl(item);
+  try {
+    await navigator.share({ title: pfShareTitle(item), text: `👏 この作品、ナイス！「${pfShareTitle(item)}」`, url });
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;   // ユーザーが共有シートを閉じただけ
+    pfShareCopyLink(idx);
+  }
+}
+function pfShareViaTweet(idx) {
+  const item = pfItems[idx];
+  if (!item?.creative_id) return;
+  pfCloseShareMenu();
+  const mentions = pfShareMentions(item);
+  const proj = [item.client_name, item.project_name].filter(Boolean).join(' / ');
+  const lines = ['👏 この作品、ナイス！', `「${pfShareTitle(item)}」${proj ? `（${proj}）` : ''}`];
+  if (mentions.length) lines.push(`${mentions.join(' ')} さん、お疲れさまです！`);
+  lines.push('', pfShareUrl(item));
+  let body = lines.join('\n');
+  if (body.length > 280) {
+    // 280 字制限（submitTweet と同じ）に収める：案件名 → メンション の順に落とす
+    body = ['👏 この作品、ナイス！', `「${pfShareTitle(item)}」`, ...(mentions.length ? [`${mentions.join(' ')} さん`] : []), '', pfShareUrl(item)].join('\n');
+    if (body.length > 280) body = ['👏 この作品、ナイス！', `「${pfShareTitle(item)}」`, '', pfShareUrl(item)].join('\n');
+  }
+  // 投稿モーダル（z-index 200）はライトボックス（1200）の下に隠れるので、先に閉じる
+  pfCloseLightbox();
+  openTweetCompose({
+    body,
+    imageUrl: item.file_id ? `/api/haruka/portfolio/thumbnail/${encodeURIComponent(item.file_id)}` : null,
+    focusStart: true,
+  });
+}
 
 // 同じ creative の全カード（過去版が並んでいる場合）に値を配る
 function pfApplySocial(creativeId, patch) {
@@ -25536,6 +25773,8 @@ async function pfToggleReaction(idx, type) {
   pfApplySocial(cid, next);
   pfRefreshReactDom(cid);
   document.querySelectorAll('.pf-rx-picker.open').forEach(p => p.classList.remove('open'));
+  document.querySelectorAll('.pf-rx-add.open').forEach(b => b.classList.remove('open'));
+  if (!had) pfAnimateReaction(cid, type);   // 付けたときだけ（外すときは静かに）
   try {
     const res = await apiFetch(`/api/haruka/portfolio/${cid}/reactions`, {
       method: 'POST',
@@ -31204,14 +31443,40 @@ const TWEET_REACTIONS = (window.ReactionsUtils && ReactionsUtils.REACTIONS) || [
 
 const TWEET_IMAGE_PLACEHOLDER = '写真を選択 / ドラッグ&ドロップ / 貼り付け / タップで撮影（任意・4枚まで）';
 
-function openTweetCompose() {
+// preset（任意）: { body, imageUrl, focusStart }
+//   作品ギャラリーの「🔗 共有 → 💭 つぶやきで紹介する」から、本文とサムネイルをセットして開く。
+//   imageUrl は同一オリジンの画像 URL（作品サムネ）。取得→通常の画像処理（リサイズ・4枚上限）に流す。
+function openTweetCompose(preset) {
   _twImages = [];
-  document.getElementById('tw-body').value = '';
+  const ta = document.getElementById('tw-body');
+  ta.value = (preset && preset.body) ? String(preset.body) : '';
   document.getElementById('tw-image-input').value = '';
   renderTweetImagePreview();
   updateTweetCounter();
-  TwMention.attach(document.getElementById('tw-body')); // 「@」メンション補完
+  TwMention.attach(ta); // 「@」メンション補完
   openModal('modal-tweet-compose');
+  if (preset && preset.body) {
+    // 先頭にカーソルを置く（一言を書き足すのは先頭が自然）
+    setTimeout(() => { try { ta.focus(); if (preset.focusStart) ta.setSelectionRange(0, 0); } catch (_) {} }, 50);
+  }
+  if (preset && preset.imageUrl) twAttachImageFromUrl(preset.imageUrl);
+}
+
+// 同一オリジンの画像 URL を取ってきて投稿画像に載せる（失敗しても本文だけで投稿できるので静かに諦める）
+async function twAttachImageFromUrl(url) {
+  const status = document.getElementById('tw-image-status');
+  if (status) status.textContent = 'サムネイルを取り込み中…';
+  try {
+    const res = await apiFetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    if (!blob.type || !blob.type.startsWith('image/')) throw new Error('not image');
+    const ext = blob.type.includes('png') ? 'png' : (blob.type.includes('webp') ? 'webp' : 'jpg');
+    await processTweetImageFile(new File([blob], `share.${ext}`, { type: blob.type }));
+  } catch (e) {
+    console.warn('[tweet] サムネイル取り込み失敗:', e && e.message);
+    if (status) status.textContent = '';
+  }
 }
 
 // 投稿モーダルのサムネイルグリッドを描画（0枚=プレースホルダ / 1〜4枚=サムネ + ＋タイル）
@@ -32047,22 +32312,36 @@ async function _twLoadMentionUsers() {
 
 // 本文を HTML 化（エスケープ + 解決できたメンションを .tw-mention でハイライト）。
 // 候補が未ロード / 解決ライブラリ未読込のときは従来どおりのエスケープ表示。
+// つぶやき本文のプレーン部分を HTML 化（エスケープ → URL リンク化）。
+// 自アプリの作品リンク（/haruka.html?portfolio=<creative_id>）は「🏆 作品を見る」チップにして、
+// ページ遷移せずその場でライトボックスを開く（作品ギャラリーの「🔗 共有 → つぶやきで紹介」の受け口）。
+function _twLinkifyPlain(text) {
+  if (typeof linkifyText !== 'function') return esc(text);
+  let html = linkifyText(text);
+  const base = `${location.origin}${location.pathname}?portfolio=`;
+  return html.replace(/<a href="([^"]+)"[^>]*>[^<]*<\/a>/g, (m, href) => {
+    if (!href.startsWith(base)) return m;
+    const id = (href.slice(base.length).match(/^[0-9a-zA-Z-]+/) || [])[0];
+    if (!id) return m;
+    return `<a href="${href}" class="tw-pf-link" title="作品ギャラリーで開く" onclick="event.preventDefault();event.stopPropagation();pfOpenByCreativeId('${id}')">🏆 作品を見る</a>`;
+  });
+}
 function _twFormatBody(body) {
   const text = String(body ?? '');
   const MR = window.MentionResolve;
-  if (!MR || !_twMentionUsers || !_twMentionUsers.length || !/[@＠]/.test(text)) return esc(text);
+  if (!MR || !_twMentionUsers || !_twMentionUsers.length || !/[@＠]/.test(text)) return _twLinkifyPlain(text);
   let spans = [];
-  try { spans = MR.resolveMentions(text, _twMentionUsers); } catch (_) { return esc(text); }
-  if (!spans.length) return esc(text);
+  try { spans = MR.resolveMentions(text, _twMentionUsers); } catch (_) { return _twLinkifyPlain(text); }
+  if (!spans.length) return _twLinkifyPlain(text);
   let out = '';
   let pos = 0;
   for (const sp of spans) {
-    out += esc(text.slice(pos, sp.start));
+    out += _twLinkifyPlain(text.slice(pos, sp.start));
     const names = (sp.users || []).map(u => NameDisplay.full(u)).join(' / ');
     out += `<span class="tw-mention" title="${esc(names)}">${esc(text.slice(sp.start, sp.end))}</span>`;
     pos = sp.end;
   }
-  out += esc(text.slice(pos));
+  out += _twLinkifyPlain(text.slice(pos));
   return out;
 }
 
