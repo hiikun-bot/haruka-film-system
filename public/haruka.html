@@ -45,9 +45,13 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .logo-line{display:none}
 .logo-sub{font-family:'Noto Sans JP',sans-serif;font-size:9px;font-weight:400;color:rgba(255,255,255,0.78);letter-spacing:0.06em;text-shadow:0 1px 4px rgba(0,0,0,0.25);white-space:nowrap;line-height:1}
 .header-nav{display:flex;gap:1px;z-index:1;flex:1;justify-content:center;flex-wrap:nowrap}
-.nav-btn{font-size:13px;color:rgba(255,255,255,0.92);padding:5px 11px;border-radius:6px;cursor:pointer;border:none;background:transparent;text-shadow:0 1px 3px rgba(0,0,0,0.35);white-space:nowrap;transition:background .15s,color .15s}
+.nav-btn{font-size:13px;color:rgba(255,255,255,0.92);padding:5px 11px;border-radius:6px;cursor:pointer;border:none;background:transparent;text-shadow:0 1px 3px rgba(0,0,0,0.35);white-space:nowrap;transition:background .15s,color .15s,transform .3s cubic-bezier(.34,1.56,.64,1);transform-origin:50% 85%}
 .nav-btn.active{background:rgba(255,255,255,0.24);color:#fff;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
-.nav-btn:hover{background:rgba(255,255,255,0.16);color:#fff}
+.nav-btn:hover{background:rgba(255,255,255,0.16);color:#fff;transform:translateY(-2px) scale(1.05);animation:nav-boing .5s cubic-bezier(.22,1,.36,1) both}
+.nav-btn:active{animation:none;transform:translateY(0) scale(.94);transition-duration:.08s}
+/* ナビのホバー時に「ポヨン」と跳ねる（縦に潰れて横に伸びる→反動で縦に伸びる→落ち着く） */
+@keyframes nav-boing{0%{transform:translateY(0) scale(1)}30%{transform:translateY(-4px) scale(1.12,.9)}55%{transform:translateY(-1px) scale(.96,1.08)}75%{transform:translateY(-3px) scale(1.04,.98)}100%{transform:translateY(-2px) scale(1.05)}}
+@media (prefers-reduced-motion:reduce){.nav-btn,.nav-btn:hover,.nav-btn:active{animation:none;transform:none;transition:background .15s,color .15s}}
 /* ナビ「つぶやき」の未読バッジ（ADR 041）: 最終閲覧以降の他人の投稿数。0 件は hidden */
 .nav-unread-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;margin-left:5px;border-radius:9px;background:#EF4444;color:#fff;font-size:10.5px;font-weight:700;line-height:1;text-shadow:none;vertical-align:middle;box-shadow:0 0 0 1.5px rgba(255,255,255,.85)}
 .nav-unread-badge[hidden]{display:none}
