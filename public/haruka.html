@@ -30564,6 +30564,9 @@ const _twPageState = {
   roleGroups: new Set(),
 };
 const _twPageOpenComments = new Set();
+// 返信（コメント）の最新データ（id → comment）。返信リアクションの楽観的更新で使う。
+// 返信一覧は _twPageList に載らず fetch のたびに描画するだけなので、行単位の状態をここに持つ。
+const _twCommentCache = new Map();
 // 直近の API レスポンス（カード単位の差分再描画 / 楽観的更新で参照）
 let _twPageList = [];
 const _TW_FILTER_LS_KEY = 'haruka.tweets.roleFilters.v1';
@@ -30942,13 +30945,15 @@ function renderTweetCard(t) {
 }
 
 // リアクション追加ピッカーの開閉
-function toggleTweetReactionPicker(ev, tweetId) {
+//   pickerId 省略時はつぶやき本体のピッカー。返信側は `tw-page-cpicker-<commentId>` を渡す。
+function toggleTweetReactionPicker(ev, tweetId, pickerId) {
   if (ev) { ev.stopPropagation(); }
+  const targetId = pickerId || `tw-page-picker-${tweetId}`;
   // 他のピッカーを閉じる
   document.querySelectorAll('.tweet-reaction-picker.open').forEach(p => {
-    if (p.id !== `tw-page-picker-${tweetId}`) p.classList.remove('open');
+    if (p.id !== targetId) p.classList.remove('open');
   });
-  const picker = document.getElementById(`tw-page-picker-${tweetId}`);
+  const picker = document.getElementById(targetId);
   if (picker) picker.classList.toggle('open');
 }
 // 外側クリックでピッカーを閉じる
@@ -31016,6 +31021,7 @@ async function openTweetCommentsFromCard(tweetId) {
 // opts.pending=true のとき: 楽観的仮表示用（半透明・編集/削除ボタンなし。確定後に置換される）
 function _twRenderCommentRow(tweetId, c, opts = {}) {
   const pending = !!opts.pending;
+  if (!pending && c && c.id) _twCommentCache.set(c.id, c);
   const myId = currentUser?.id;
   const canMod = _twCanModerate();
   const u = c.users || {};
@@ -31044,8 +31050,126 @@ function _twRenderCommentRow(tweetId, c, opts = {}) {
         ${actionsWrap}
       </div>
       <div class="tw-comment-body" data-original-body="${esc(c.body)}">${esc(c.body)}</div>
+      ${pending ? '' : _twRenderCommentReactions(tweetId, c)}
     </div>
   </div>`;
+}
+
+// 返信1件分のリアクション行（押された種別のピル + ➕ピッカー）。
+// つぶやき本体（renderTweetCard）と同じ見た目・同じデータ形（reaction_counts / reaction_users /
+// my_reactions）を小サイズで描画する。楽観的更新ではこの部分だけ差し替える。
+// バグ報告 #4a8b4046「つぶやきの返信に対するリアクション機能」
+function _twRenderCommentReactions(tweetId, c) {
+  const myReactions = new Set(c.my_reactions || []);
+  const counts = c.reaction_counts || {};
+  const reactionUsers = c.reaction_users || {};
+  const pills = TWEET_REACTIONS
+    .filter(r => (counts[r.type] || 0) > 0 || myReactions.has(r.type))
+    .map(r => {
+      const active = myReactions.has(r.type);
+      const n = counts[r.type] || 0;
+      const handler = active
+        ? `removeTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`
+        : `addTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`;
+      const who = reactionUsers[r.type] || [];
+      const whoPop = who.length
+        ? `<span class="tweet-reaction-who" aria-hidden="true">
+            <span class="tweet-reaction-who-head">${r.emoji} ${esc(r.label)}</span>
+            ${who.map(u => `<span class="tweet-reaction-who-name">${esc(NameDisplay.full(u))}</span>`).join('')}
+          </span>`
+        : '';
+      return `<button class="tweet-reaction-pill sm ${active ? 'active' : ''}" onclick="${handler}" title="${esc(r.label)}">
+        <span class="emoji">${r.emoji}</span>${n > 0 ? `<span class="count">${n}</span>` : ''}${whoPop}
+      </button>`;
+    }).join('');
+  const pickerBtns = TWEET_REACTIONS.map(r => {
+    const active = myReactions.has(r.type);
+    const handler = active
+      ? `removeTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`
+      : `addTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`;
+    return `<button onclick="${handler}" title="${esc(r.label)}">${r.emoji}</button>`;
+  }).join('');
+  return `<div class="tw-comment-reactions">
+    ${pills}
+    <span class="tweet-reaction-add-wrap" style="position:relative;display:inline-block">
+      <button class="tweet-reaction-add sm" onclick="toggleTweetReactionPicker(event,'${tweetId}','tw-page-cpicker-${c.id}')" title="リアクションを追加">➕</button>
+      <span id="tw-page-cpicker-${c.id}" class="tweet-reaction-picker">${pickerBtns}</span>
+    </span>
+  </div>`;
+}
+
+// 返信リアクションの楽観的更新: キャッシュを更新し、該当行の .tw-comment-reactions だけ差し替える。
+// 戻り値 false = 反映不要（既に同じ状態＝連打）。呼び出し側はその場合 API を投げない。
+function _twApplyCommentReactionLocal(tweetId, commentId, type, action) {
+  const c = _twCommentCache.get(commentId);
+  if (!c) return false;
+  const my = new Set(c.my_reactions || []);
+  const counts = { ...(c.reaction_counts || {}) };
+  const reactionUsers = { ...(c.reaction_users || {}) };
+  const meId = currentUser?.id;
+  const meUser = { id: meId, full_name: currentUser?.full_name, nickname: currentUser?.nickname };
+  if (action === 'add') {
+    if (my.has(type)) return false;
+    my.add(type);
+    counts[type] = (counts[type] || 0) + 1;
+    if (meId) reactionUsers[type] = [...(reactionUsers[type] || []).filter(u => u.id !== meId), meUser];
+  } else {
+    if (!my.has(type)) return false;
+    my.delete(type);
+    counts[type] = Math.max(0, (counts[type] || 0) - 1);
+    if (meId) reactionUsers[type] = (reactionUsers[type] || []).filter(u => u.id !== meId);
+  }
+  c.my_reactions = Array.from(my);
+  c.reaction_counts = counts;
+  c.reaction_users = reactionUsers;
+
+  const wrap = document.getElementById(`tw-page-comments-${tweetId}`);
+  const row = wrap && wrap.querySelector(`.tw-comment[data-comment-id="${commentId}"]`);
+  const box = row && row.querySelector('.tw-comment-reactions');
+  if (box) {
+    const holder = document.createElement('div');
+    holder.innerHTML = _twRenderCommentReactions(tweetId, c);
+    const next = holder.firstElementChild;
+    if (next) box.replaceWith(next);
+  }
+  return true;
+}
+
+async function addTweetCommentReaction(tweetId, commentId, type) {
+  // 本体の addTweetReactionFromCard と同じ流れ: 即時反映 → API → 失敗時 revert。
+  if (!_twApplyCommentReactionLocal(tweetId, commentId, type, 'add')) return;
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}/reactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reaction_type: type }),
+    });
+    if (!res.ok && res.status !== 409) { // 409 = サーバー側で既に付与済み
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '失敗'), 'error');
+      _twApplyCommentReactionLocal(tweetId, commentId, type, 'remove'); // revert
+    }
+  } catch (e) {
+    console.warn('[tweets-page] comment reaction add failed', e);
+    showToast('通信エラー', 'error');
+    _twApplyCommentReactionLocal(tweetId, commentId, type, 'remove'); // revert
+  }
+}
+
+async function removeTweetCommentReaction(tweetId, commentId, type) {
+  if (!_twApplyCommentReactionLocal(tweetId, commentId, type, 'remove')) return;
+  try {
+    const res = await apiFetch(`${API}/tweets/${tweetId}/comments/${commentId}/reactions/${type}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('エラー: ' + (e.error || '失敗'), 'error');
+      _twApplyCommentReactionLocal(tweetId, commentId, type, 'add'); // revert
+    }
+  } catch (e) {
+    console.warn('[tweets-page] comment reaction remove failed', e);
+    showToast('通信エラー', 'error');
+    _twApplyCommentReactionLocal(tweetId, commentId, type, 'add'); // revert
+  }
 }
 
 async function loadTweetCommentsPage(tweetId) {
