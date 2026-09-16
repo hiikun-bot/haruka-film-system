@@ -1110,6 +1110,9 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   ('admin','project.create_edit',true),('secretary','project.create_edit',true),('producer','project.create_edit',true),('producer_director','project.create_edit',true),
   -- 案件・クライアントの新規作成のみ（単価・既存編集は含まない）。director にも開放（migration 2026-08-26_project_create_permission.sql）
   ('admin','project.create',true),('secretary','project.create',true),('producer','project.create',true),('producer_director','project.create',true),('director','project.create',true),
+  -- ADR 037: 成果物グループ・単価の編集を director にも開放。承認（確定）は admin のみ（migration 2026-09-03_line_pricing_approval.sql）
+  ('admin','project.pricing_edit',true),('secretary','project.pricing_edit',true),('producer','project.pricing_edit',true),('producer_director','project.pricing_edit',true),('director','project.pricing_edit',true),
+  ('admin','project.pricing_approve',true),
   ('admin','project.unit_price_view',true),('producer','project.unit_price_view',true),('producer_director','project.unit_price_view',true),
   ('admin','project.fee_view',true),('secretary','project.fee_view',true),
   -- クライアント単価（client_unit_price）の閲覧・編集。
@@ -2261,9 +2264,17 @@ CREATE TABLE IF NOT EXISTS project_estimate_lines (
   -- ADR 005: draft|estimated|contracted|in_progress|delivered|cancelled|rejected
   status             TEXT NOT NULL DEFAULT 'draft',
   status_changed_at  TIMESTAMPTZ,
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- ADR 037: 単価の承認状態。承認権限を持たない人の作成/変更は pending（値は有効なまま）
+  pricing_approval      TEXT NOT NULL DEFAULT 'approved' CHECK (pricing_approval IN ('approved', 'pending')),
+  pricing_requested_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+  pricing_requested_at  TIMESTAMPTZ,
+  pricing_prev_snapshot JSONB,
+  pricing_approved_by   UUID REFERENCES users(id) ON DELETE SET NULL,
+  pricing_approved_at   TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_pel_project  ON project_estimate_lines(project_id);
+CREATE INDEX IF NOT EXISTS idx_pel_pricing_pending ON project_estimate_lines (pricing_requested_at DESC) WHERE pricing_approval = 'pending';
 CREATE INDEX IF NOT EXISTS idx_pel_status   ON project_estimate_lines(status);
 CREATE INDEX IF NOT EXISTS idx_pel_category ON project_estimate_lines(category_id);
 ALTER TABLE project_estimate_lines ENABLE ROW LEVEL SECURITY;
