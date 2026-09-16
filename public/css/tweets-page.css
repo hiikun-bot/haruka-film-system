@@ -707,6 +707,42 @@
   color: #DC2626;
 }
 
+/* 返信へのリアクション行（バグ報告 #4a8b4046）
+   つぶやき本体のピル/ピッカーを小サイズ(.sm)で流用する */
+.tweet-comments-wrap .tw-comment-reactions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.tweet-reaction-pill.sm {
+  padding: 2px 8px;
+  font-size: 11px;
+  gap: 3px;
+}
+
+.tweet-reaction-pill.sm .emoji {
+  font-size: 12px;
+}
+
+.tweet-reaction-pill.sm .count {
+  font-size: 11px;
+}
+
+.tweet-reaction-add.sm {
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.6;
+  opacity: 0.55;
+}
+
+.tweet-comments-wrap .tw-comment:hover .tweet-reaction-add.sm,
+.tweet-reaction-add.sm:hover {
+  opacity: 1;
+}
+
 /* ---------- FAB （右下投稿ボタン） ---------- */
 /* 右下には全画面共通の 🐛不具合報告FAB（haruka.html #error-report-fab: right:16px / bottom:16px / 48px角）が
    常駐するため、その真上に積む（bottom = 16 + 48 + 16）。同じ高さに置くと重なって虫が押せなくなる。 */

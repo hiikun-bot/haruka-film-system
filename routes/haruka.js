@@ -16991,7 +16991,124 @@ router.get('/tweets/:id/comments', requireAuth, async (req, res) => {
     .is('deleted_at', null)
     .order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  res.json(await enrichTweetCommentList(data || [], req.params.id, req.user.id));
+});
+
+// 返信一覧に「返信へのリアクション」集計を付与する（バグ報告 #4a8b4046）。
+//   tweet_comment_reactions は tweet_id を非正規化して持つので、コメント ID 集合を
+//   .in() で渡さず（URL 長超過回避）そのつぶやき配下を 1 クエリで引く。
+//   返す形は本体の enrichTweetList と同じ（reaction_counts / reaction_users / my_reactions）で、
+//   フロントは同じピル描画ロジックを流用できる。
+//   テーブル未作成など取得失敗時は、返信一覧自体は壊さずリアクション空で返す。
+async function enrichTweetCommentList(comments, tweetId, currentUserId) {
+  if (!comments || comments.length === 0) return [];
+  const empty = () => comments.map(c => ({ ...c, reaction_counts: {}, reaction_users: {}, my_reactions: [] }));
+  const { data: rows, error } = await supabase.from('tweet_comment_reactions')
+    .select('comment_id, user_id, reaction_type, users!user_id(id, full_name, nickname)')
+    .eq('tweet_id', tweetId);
+  if (error) {
+    console.error('[tweets] comment reactions 取得失敗:', error.message);
+    return empty();
+  }
+  const countByComment = new Map(); // comment_id -> { good: n, ... }
+  const usersByComment = new Map(); // comment_id -> { good: [{id,full_name,nickname}], ... }
+  const myByComment = new Map();    // comment_id -> Set<reaction_type>
+  (rows || []).forEach(r => {
+    if (!countByComment.has(r.comment_id)) countByComment.set(r.comment_id, {});
+    const cm = countByComment.get(r.comment_id);
+    cm[r.reaction_type] = (cm[r.reaction_type] || 0) + 1;
+    if (r.users) {
+      if (!usersByComment.has(r.comment_id)) usersByComment.set(r.comment_id, {});
+      const um = usersByComment.get(r.comment_id);
+      (um[r.reaction_type] = um[r.reaction_type] || []).push(r.users);
+    }
+    if (r.user_id === currentUserId) {
+      if (!myByComment.has(r.comment_id)) myByComment.set(r.comment_id, new Set());
+      myByComment.get(r.comment_id).add(r.reaction_type);
+    }
+  });
+  return comments.map(c => ({
+    ...c,
+    reaction_counts: countByComment.get(c.id) || {},
+    reaction_users: usersByComment.get(c.id) || {},
+    my_reactions: Array.from(myByComment.get(c.id) || []),
+  }));
+}
+
+// ==================== 返信へのリアクション（バグ報告 #4a8b4046） ====================
+
+// 返信リアクション追加
+//   POST /api/tweets/:id/comments/:commentId/reactions  body: { reaction_type }
+//   本体の POST /tweets/:id/reactions と同じ挙動（重複は 409、返信者が他人なら post_reaction 通知）。
+router.post('/tweets/:id/comments/:commentId/reactions', requireAuth, async (req, res) => {
+  const tweetId = req.params.id;
+  const commentId = req.params.commentId;
+  const reactionType = String(req.body?.reaction_type || '').trim();
+  if (!TWEET_REACTION_TYPES.includes(reactionType)) {
+    return res.status(400).json({ error: 'リアクション種別が不正です' });
+  }
+
+  // 返信の存在（同じつぶやき配下・未削除）と返信者を確認（通知発火用）
+  const { data: c, error: cErr } = await supabase.from('tweet_comments')
+    .select('id, tweet_id, user_id, body, deleted_at')
+    .eq('id', commentId).eq('tweet_id', tweetId).maybeSingle();
+  if (cErr) return res.status(500).json({ error: cErr.message });
+  if (!c || c.deleted_at) return res.status(404).json({ error: 'コメントが見つかりません' });
+
+  const { data, error } = await supabase.from('tweet_comment_reactions')
+    .insert({ comment_id: commentId, tweet_id: tweetId, user_id: req.user.id, reaction_type: reactionType })
+    .select('id, reaction_type')
+    .single();
+  if (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'すでにこのリアクションを押しています' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+
+  // 返信者が自分以外なら post_reaction 通知（本体と同じ type なので通知設定・24h 集約もそのまま効く）
+  if (c.user_id !== req.user.id) {
+    const senderName = req.user.nickname || req.user.full_name || '誰か';
+    const reactionEmoji = {
+      good: '👍', heart: '❤️', clap: '👏', smile: '😊', surprised: '😳',
+    }[reactionType] || '✨';
+    const excerpt = (c.body || '').length > 50
+      ? c.body.slice(0, 50) + '…'
+      : (c.body || '');
+    createNotification({
+      userId: c.user_id,
+      type: 'post_reaction',
+      title: `${senderName}さんがあなたの返信に ${reactionEmoji} リアクションしました`,
+      body: excerpt,
+      linkUrl: `/haruka.html?tweet=${tweetId}`,
+      meta: {
+        tweet_id: tweetId,
+        comment_id: commentId,
+        reaction_type: reactionType,
+        sender_name: senderName,
+      },
+      senderId: req.user.id,
+    }).catch(e => console.error('[tweets] comment reaction 通知失敗:', e.message));
+  }
+
+  res.json({ ok: true, id: data.id, reaction_type: data.reaction_type });
+});
+
+// 返信リアクション取消
+//   DELETE /api/tweets/:id/comments/:commentId/reactions/:type
+router.delete('/tweets/:id/comments/:commentId/reactions/:type', requireAuth, async (req, res) => {
+  const reactionType = String(req.params.type || '');
+  if (!TWEET_REACTION_TYPES.includes(reactionType)) {
+    return res.status(400).json({ error: 'リアクション種別が不正です' });
+  }
+  const { error } = await supabase.from('tweet_comment_reactions')
+    .delete()
+    .eq('comment_id', req.params.commentId)
+    .eq('tweet_id', req.params.id)
+    .eq('user_id', req.user.id)
+    .eq('reaction_type', reactionType);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // コメント投稿
@@ -17073,7 +17190,7 @@ router.post('/tweets/:id/comments', requireAuth, async (req, res) => {
   const { data: u } = await supabase.from('users')
     .select('id, full_name, avatar_url, role').eq('id', req.user.id).maybeSingle();
 
-  res.json({ ...comment, users: u || null });
+  res.json({ ...comment, users: u || null, reaction_counts: {}, reaction_users: {}, my_reactions: [] });
 });
 
 // コメント編集（本人のみ）
