@@ -102,4 +102,76 @@ function computeMyFocus({ creatives = [], userId, todayStr, weekEndStr, limit = 
   return { counts, items: capped, has_more: items.length > capped.length };
 }
 
-module.exports = { CLIENT_BALL_TYPE, diffDays, computeMyFocus };
+/**
+ * 自チーム（自分が案件の D/P、または自分が代表ディレクターのチーム）で「気になる」CR を集計する。
+ *
+ * ADR 033（チーム状況）はメンバー同士の比較・詮索を避けるため人単位の負荷集計を
+ * admin＋プロデューサー層に限定しており、director 単独には見せない。
+ * ここはその線を越えないよう **人単位の集計・順位・負荷スコアを一切返さず、CR 単位のリストだけ**を返す
+ * （「誰が何件抱えているか」ではなく「どの制作物が止まっているか」を見る画面・ADR 042）。
+ *
+ * 「気になる」= SOS が立っている / 納期を過ぎている / 今週が納期、のいずれか。
+ * 自分にボールがあるものは 🎯 マイフォーカスに出ているのでここからは除外する（ホーム内の重複防止）。
+ *
+ * @param {Object} args computeMyFocus と同じ creatives 配列（各要素に in_team_scope / ball_holder_user 等が付く）
+ * @returns {{counts: Object, items: Array, has_more: boolean}}
+ */
+function computeTeamFocus({ creatives = [], userId, todayStr, weekEndStr, limit = 5 } = {}) {
+  const counts = { sos: 0, overdue: 0, due_this_week: 0 };
+  const items = [];
+  if (!userId) return { counts, items, has_more: false };
+
+  const seen = new Set();
+  for (const c of creatives || []) {
+    if (!c || !c.id || seen.has(c.id)) continue;
+    seen.add(c.id);
+    if (!c.in_team_scope) continue;
+    // 自分の手番のものはマイフォーカス側に出ている
+    if (Array.isArray(c.ball_user_ids) && c.ball_user_ids.includes(userId)) continue;
+
+    const dl = _isDateStr(c.final_deadline) ? c.final_deadline.slice(0, 10) : null;
+    const isSos = !!c.help_flag;
+    const isOverdue = !!(dl && dl < todayStr);
+    const isDueThisWeek = !!(dl && dl >= todayStr && dl <= weekEndStr);
+    if (isSos) counts.sos++;
+    if (isOverdue) counts.overdue++;
+    if (isDueThisWeek) counts.due_this_week++;
+    // 落ち着いているCRは出さない（件数も出さない）。画面は「手を打つ必要があるもの」だけに絞る
+    if (!isSos && !isOverdue && !isDueThisWeek) continue;
+
+    items.push({
+      id: c.id,
+      file_name: c.file_name || '',
+      status: c.status || '',
+      final_deadline: dl,
+      days_left: dl ? diffDays(todayStr, dl) : null,
+      help_flag: isSos,
+      project_id: c.project_id || null,
+      project_name: c.project_name || '',
+      client_name: c.client_name || '',
+      ball_type: c.ball_type || 'unknown',
+      // 「いま誰で止まっているか」。user が解決できないボール（クライアント等）は label だけ返す
+      ball_holder_user: c.ball_holder_user || null,
+      ball_holder_label: c.ball_holder_label || '',
+      reason: isSos ? 'sos' : (isOverdue ? 'overdue' : 'due'),
+    });
+  }
+
+  // SOS → 期限超過（古い順）→ 今週締切（近い順）。同着はファイル名で安定させる。
+  const rank = { sos: 0, overdue: 1, due: 2 };
+  items.sort((a, b) => {
+    const r = (rank[a.reason] ?? 9) - (rank[b.reason] ?? 9);
+    if (r) return r;
+    if (a.final_deadline && b.final_deadline) {
+      if (a.final_deadline !== b.final_deadline) return a.final_deadline < b.final_deadline ? -1 : 1;
+    } else if (a.final_deadline || b.final_deadline) {
+      return a.final_deadline ? -1 : 1;
+    }
+    return String(a.file_name).localeCompare(String(b.file_name), 'ja');
+  });
+
+  const capped = limit > 0 ? items.slice(0, limit) : items;
+  return { counts, items: capped, has_more: items.length > capped.length };
+}
+
+module.exports = { CLIENT_BALL_TYPE, diffDays, computeMyFocus, computeTeamFocus };

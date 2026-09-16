@@ -31,6 +31,8 @@ const cr = (over = {}) => ({
   ball_type: over.ball_type || 'editor',
   ball_user_ids: over.ball_user_ids || [],
   member_user_ids: over.member_user_ids || [],
+  ball_holder_user: over.ball_holder_user ?? null,
+  ball_holder_label: over.ball_holder_label ?? '',
 });
 
 const run = (creatives, limit = 5) =>
@@ -202,5 +204,86 @@ describe('computeMyFocus — 重複排除・並び順・limit', () => {
     ], 0);
     expect(r.items[0]).toMatchObject({ sheet_url: 'https://docs.google.com/s/1', regulation_url: 'https://example.com/reg' });
     expect(r.items[1]).toMatchObject({ sheet_url: '', regulation_url: '' });
+  });
+});
+
+// ── computeTeamFocus（自チームで「気になる」CR・ADR 042）──────────────────────
+// 人単位の集計・順位は返さない（ADR 033 の線を越えない）ことが設計上の要点。
+const { computeTeamFocus } = require('../../utils/my-focus');
+
+const tcr = (over = {}) => ({ ...cr(over), in_team_scope: over.in_team_scope !== false });
+const runTeam = (creatives, limit = 5) =>
+  computeTeamFocus({ creatives, userId: ME, todayStr: TODAY, weekEndStr: WEEK_END, limit });
+
+describe('computeTeamFocus — 対象の絞り込み', () => {
+  test('in_team_scope でないCRは無視する', () => {
+    const r = runTeam([tcr({ id: 'out', in_team_scope: false, final_deadline: '2026-09-01' })]);
+    expect(r.counts).toEqual({ sos: 0, overdue: 0, due_this_week: 0 });
+    expect(r.items).toHaveLength(0);
+  });
+
+  test('自分にボールがあるCRは除外する（マイフォーカスと二重に出さない）', () => {
+    const r = runTeam([tcr({ id: 'mine', final_deadline: '2026-09-01', ball_user_ids: [ME] })]);
+    expect(r.items).toHaveLength(0);
+    expect(r.counts.overdue).toBe(0);
+  });
+
+  test('他人にボールがあるCRは対象になる', () => {
+    const r = runTeam([tcr({ id: 'other', final_deadline: '2026-09-01', ball_user_ids: [OTHER] })]);
+    expect(r.items.map(i => i.id)).toEqual(['other']);
+    expect(r.counts.overdue).toBe(1);
+  });
+
+  test('落ち着いているCR（SOSなし・超過なし・今週でない）は items にも counts にも出さない', () => {
+    const r = runTeam([tcr({ id: 'calm', final_deadline: '2026-10-31', ball_user_ids: [OTHER] })]);
+    expect(r.items).toHaveLength(0);
+    expect(r.counts).toEqual({ sos: 0, overdue: 0, due_this_week: 0 });
+  });
+
+  test('クライアント確認待ちでも超過していれば拾う（ボールが外でも納期は生きている）', () => {
+    const r = runTeam([tcr({ id: 'cw', status: 'クライアントチェック中', ball_type: CLIENT_BALL_TYPE,
+      ball_user_ids: [], final_deadline: '2026-09-01' })]);
+    expect(r.items.map(i => i.id)).toEqual(['cw']);
+    expect(r.counts.overdue).toBe(1);
+  });
+});
+
+describe('computeTeamFocus — 並び順と理由', () => {
+  test('SOS → 超過（古い順）→ 今週締切（近い順）', () => {
+    const r = runTeam([
+      tcr({ id: 'due', final_deadline: '2026-09-18', ball_user_ids: [OTHER] }),
+      tcr({ id: 'over_new', final_deadline: '2026-09-14', ball_user_ids: [OTHER] }),
+      tcr({ id: 'sos', final_deadline: '2026-10-31', help_flag: true, ball_user_ids: [OTHER] }),
+      tcr({ id: 'over_old', final_deadline: '2026-09-01', ball_user_ids: [OTHER] }),
+    ], 0);
+    expect(r.items.map(i => i.id)).toEqual(['sos', 'over_old', 'over_new', 'due']);
+    expect(r.items.map(i => i.reason)).toEqual(['sos', 'overdue', 'overdue', 'due']);
+  });
+
+  test('SOS は納期が先でも最優先で拾う', () => {
+    const r = runTeam([tcr({ id: 's', final_deadline: null, help_flag: true, ball_user_ids: [OTHER] })], 0);
+    expect(r.items.map(i => i.reason)).toEqual(['sos']);
+    expect(r.counts.sos).toBe(1);
+  });
+
+  test('ボール保持者の表示用フィールドを通す', () => {
+    const r = runTeam([tcr({ id: 'x', final_deadline: '2026-09-01', ball_user_ids: [OTHER],
+      ball_holder_user: { id: OTHER, full_name: '山田 太郎', nickname: 'たろ' }, ball_holder_label: '' })]);
+    expect(r.items[0].ball_holder_user).toMatchObject({ full_name: '山田 太郎', nickname: 'たろ' });
+  });
+
+  test('limit と has_more、重複排除', () => {
+    const list = ['1','2','3','4','5','6'].map(n =>
+      tcr({ id: `t${n}`, final_deadline: `2026-09-0${n}`, ball_user_ids: [OTHER] }));
+    const r = runTeam([...list, ...list], 5);
+    expect(r.items).toHaveLength(5);
+    expect(r.has_more).toBe(true);
+    expect(r.counts.overdue).toBe(6);
+  });
+
+  test('空・null 入力でも落ちない', () => {
+    expect(runTeam([]).items).toEqual([]);
+    expect(computeTeamFocus().items).toEqual([]);
+    expect(computeTeamFocus({ creatives: null, userId: ME, todayStr: TODAY, weekEndStr: WEEK_END }).items).toEqual([]);
   });
 });
