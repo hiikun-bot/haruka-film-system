@@ -31693,7 +31693,8 @@ document.addEventListener('paste', async (e) => {
 });
 
 async function submitTweet() {
-  const body = document.getElementById('tw-body').value.trim();
+  // 改行は LF に揃えてから数える（サーバー側 normalizeTweetBody と同じ基準。FormData 送信時の CRLF 化はサーバーで吸収）
+  const body = document.getElementById('tw-body').value.replace(/\r\n?/g, '\n').trim();
   if (!body) { showToast('本文を入力してください', 'warn'); return; }
   if (body.length > 280) { showToast('本文は 280 字以内にしてください', 'warn'); return; }
   const btn = document.getElementById('tw-submit-btn');
@@ -31772,7 +31773,7 @@ async function saveEditTweet(id) {
   const ta = document.getElementById(`tw-edit-textarea-${id}`);
   const saveBtn = document.getElementById(`tw-edit-save-${id}`);
   if (!ta) return;
-  const body = ta.value.trim();
+  const body = ta.value.replace(/\r\n?/g, '\n').trim();
   if (!body) { showToast('本文を入力してください', 'warn'); return; }
   if (body.length > 280) { showToast('本文は 280 字以内にしてください', 'warn'); return; }
   if (saveBtn) { if (saveBtn.disabled) return; saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }

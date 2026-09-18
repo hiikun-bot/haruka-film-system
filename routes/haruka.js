@@ -17173,6 +17173,8 @@ const TWEET_BODY_MAX = 280;
 const TWEET_COMMENT_MAX = 500;
 // リアクション 5 種の定義は utils/reactions.js が正（フロントも /js/reactions.js で同じ定義を読む）
 const { REACTION_TYPES: TWEET_REACTION_TYPES, REACTION_EMOJI } = require('../utils/reactions');
+// 本文の改行正規化（multipart 送信で CRLF 化された本文を LF に戻して数える。バグ報告 7374bea4）
+const { normalizeTweetBody } = require('../utils/tweet-body');
 
 // 一覧で取得する列。image_data（base64 data URL・最大 500KB）はここに含めない。
 //   一覧に base64 を載せると 200 件で数 MB になり、転送・JSON パース・<img> デコードが
@@ -17461,7 +17463,9 @@ router.post('/tweets', requireAuth,
     ...((req.files && req.files.images) || []),
     ...((req.files && req.files.image)  || []),
   ].slice(0, TWEET_IMAGE_MAX_COUNT);
-  const body = String(req.body?.body || '').trim();
+  // FormData(multipart) 送信ではブラウザが改行を CRLF にして送るため、そのまま数えると
+  // 改行 1 つにつき 1 文字多くなり、画面で 280 字以内でも 400 になっていた → LF に戻してから判定
+  const body = normalizeTweetBody(req.body?.body);
   if (!body) return res.status(400).json({ error: '本文を入力してください' });
   if (body.length > TWEET_BODY_MAX) {
     return res.status(400).json({ error: `本文は ${TWEET_BODY_MAX} 字以内にしてください` });
@@ -17537,7 +17541,7 @@ router.post('/tweets', requireAuth,
 //   メンションは抽出し直して mentioned_user_ids を更新するが、
 //   再投稿の度にスパム通知が飛ばないよう、編集時は新規メンション分のみ通知する。
 router.patch('/tweets/:id', requireAuth, async (req, res) => {
-  const body = String(req.body?.body || '').trim();
+  const body = normalizeTweetBody(req.body?.body);
   if (!body) return res.status(400).json({ error: '本文を入力してください' });
   if (body.length > TWEET_BODY_MAX) {
     return res.status(400).json({ error: `本文は ${TWEET_BODY_MAX} 字以内にしてください` });
