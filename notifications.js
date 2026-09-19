@@ -316,6 +316,80 @@ async function sendChatworkRoom(roomId, text, opts={}) {
   }
 }
 
+// =============== バグ報告の新規登録 → 管理者の Chatwork マイチャットへ一報 ===============
+// 背景: バグ報告が上がってから管理者がシステムを開いて気付くまでにタイムラグがあった。
+// 送信先の決め方:
+//   1. env BUG_REPORT_NOTIFY_CHATWORK_ROOM_ID があればそのルーム
+//   2. 無ければ CHATWORK_API_TOKEN 名義人の「マイチャット」（GET /v2/rooms の type='my'）を自動検出
+// 失敗しても報告の保存には影響させない（呼び出し側は fire-and-forget）。
+let _chatworkMyRoomCache = null; // { token, roomId }
+
+async function resolveChatworkMyRoomId(token) {
+  if (!token) return null;
+  if (_chatworkMyRoomCache && _chatworkMyRoomCache.token === token) return _chatworkMyRoomCache.roomId;
+  try {
+    const res = await axios.get('https://api.chatwork.com/v2/rooms', {
+      headers: { 'X-ChatWorkToken': token },
+      timeout: 10000,
+      validateStatus: () => true,
+    });
+    if (res.status !== 200 || !Array.isArray(res.data)) {
+      console.warn(`[notif/chatwork] my-room lookup failed: HTTP ${res.status}`);
+      return null;
+    }
+    const my = res.data.find(r => r && r.type === 'my');
+    const roomId = my ? String(my.room_id) : null;
+    if (roomId) _chatworkMyRoomCache = { token, roomId };
+    return roomId;
+  } catch (e) {
+    console.warn('[notif/chatwork] my-room lookup failed:', e.message);
+    return null;
+  }
+}
+
+const BUG_REPORT_SEVERITY_LABEL = { low: '🟢 低', normal: '🟡 通常', high: '🔴 高', critical: '🚨 致命的' };
+
+// Chatwork 本文（純関数・テスト対象）
+//   report:   bug_reports の insert 結果行
+//   reporter: 報告者 user（匿名なら null）
+function _formatBugReportCreatedText({ report, reporter }) {
+  const r = report || {};
+  const isDup = !!r.duplicate_of_id || r.status === 'duplicate';
+  const sev = BUG_REPORT_SEVERITY_LABEL[r.severity] || r.severity || '-';
+  const urgent = r.is_urgent ? ' ／ 🚨 至急' : '';
+  const reporterLabel = r.is_anonymous
+    ? '匿名'
+    : (reporter?.nickname
+        ? `${reporter.nickname}（${reporter.full_name || ''}）`
+        : (reporter?.full_name || '不明'));
+  const desc = String(r.description || '').replace(/\r\n/g, '\n').trim();
+  const descShort = desc.length > 200 ? `${desc.slice(0, 200)}…` : desc;
+  const url = buildAppUrl(`haruka.html?bug-report=${encodeURIComponent(r.id || '')}`);
+
+  const lines = [];
+  lines.push(`タイトル: ${r.title || '(無題)'}`);
+  lines.push(`重要度: ${sev}${urgent}`);
+  lines.push(`報告者: ${reporterLabel}`);
+  if (r.screen_label) lines.push(`画面: ${r.screen_label}`);
+  if (descShort) lines.push(`詳細: ${descShort}`);
+  if (isDup) lines.push('※「これと同じです」として既存の報告に紐付けて登録されました');
+  if (url) lines.push(`確認: ${url}`);
+  const heading = isDup ? '🐛 バグ報告（同件）が届きました' : '🐛 新しいバグ報告が届きました';
+  return `[info][title]${heading}[/title]${lines.join('\n')}[/info]`;
+}
+
+async function notifyBugReportCreated({ report, reporter }) {
+  const token = process.env.CHATWORK_API_TOKEN;
+  if (!token) return { ok: false, reason: 'no_token' };
+  const explicitRoom = String(process.env.BUG_REPORT_NOTIFY_CHATWORK_ROOM_ID || '').trim();
+  const roomId = explicitRoom || await resolveChatworkMyRoomId(token);
+  if (!roomId) return { ok: false, reason: 'no_room' };
+  const text = _formatBugReportCreatedText({ report, reporter });
+  const result = await sendChatworkRoom(roomId, text, { token });
+  if (!result.ok) console.warn(`[notif/bug-report] Chatwork 一報の送信に失敗 room=${roomId} reason=${result.reason}`);
+  return result;
+}
+
 // Chatwork 投稿失敗時の管理者向けメッセージを組み立てる（バグ報告 #f03ba5cd）。
 // 案件ルームへの投稿失敗・代替送信の結果を1行で要約し、notifyAutoError 経由で
 // Slack エラーチャンネルに流す。純関数としてテスト可能にするため分離。
@@ -376,13 +450,18 @@ async function loadUser(userId) {
 // チャットワーク/Slack の通知から該当クリエイティブに飛べないという声が複数。
 // Railway は `RAILWAY_PUBLIC_DOMAIN` を自動で env に入れてくれるので、
 // APP_URL を明示設定し忘れていてもフォールバックで URL を確実に含める。
+function buildAppUrl(pathWithQuery) {
+  const path = String(pathWithQuery || '').replace(/^\//, '');
+  const explicit = (process.env.APP_URL || '').replace(/\/$/, '');
+  if (explicit) return `${explicit}/${path}`;
+  const railwayDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  if (railwayDomain) return `https://${railwayDomain}/${path}`;
+  return null;
+}
+
 function buildCreativeUrl(creativeId) {
   if (!creativeId) return null;
-  const explicit = (process.env.APP_URL || '').replace(/\/$/, '');
-  if (explicit) return `${explicit}/haruka.html?creative=${creativeId}`;
-  const railwayDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
-  if (railwayDomain) return `https://${railwayDomain}/haruka.html?creative=${creativeId}`;
-  return null;
+  return buildAppUrl(`haruka.html?creative=${creativeId}`);
 }
 
 // Slack 用: ファイル名をクリッカブルなリンクに変換
@@ -1543,6 +1622,11 @@ module.exports = {
   // テスト・他モジュールから再利用可能にするためエクスポート
   buildCreativeNotifBody,
   buildCreativeUrl,
+  buildAppUrl,
+  // バグ報告の新規登録 → 管理者 Chatwork マイチャットへ一報
+  notifyBugReportCreated,
+  resolveChatworkMyRoomId,
+  _formatBugReportCreatedText,   // テスト用
   // 自動エラー通知（PR ?: routes と server.js の両方から呼ぶ）
   notifyAutoError,
   _formatAutoErrorText,         // テスト用
