@@ -23312,8 +23312,20 @@ router.post('/bug-reports', requireAuth, express.json({ limit: '10mb' }), async 
       .from('bug_reports').insert(insertRow).select().single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
+
+    // 管理者の Chatwork マイチャットへ一報（レスポンス後・失敗しても保存には影響させない）
+    // 報告が上がってから管理者が気付くまでのタイムラグ対策。
+    try {
+      const notif = require('../notifications');
+      notif.notifyBugReportCreated({
+        report: data,
+        reporter: payload.is_anonymous ? null : (req.user || null),
+      }).catch(e => console.warn('[bug-report notify失敗（登録は成功扱い）]', e.message));
+    } catch (e) {
+      console.warn('[bug-report notify失敗（登録は成功扱い）]', e.message);
+    }
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    if (!res.headersSent) res.status(500).json({ error: e.message });
   }
 });
 
