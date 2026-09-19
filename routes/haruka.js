@@ -1188,7 +1188,9 @@ router.post('/projects', requireAuth, requireAnyPermission('project.create_edit'
     wcheck_required, // ADR 024: 案件単位のWチェック要否（静止画のみ・初期あり）
     billing_timing,  // ADR 034: 計上タイミング（on_delivery=既定 / on_first_draft）
     // ADR 008 Phase 4 / ADR 038: 連番カスタマイズ（起点・桁数・採番元・連動シート）
-    next_filename_serial, serial_digits
+    next_filename_serial, serial_digits,
+    // ADR 042 追補: 🎬 新着納品ショーケースに出さない（機密案件向け）
+    showcase_hidden
   } = req.body;
   if (!client_id || !name) return res.status(400).json({ error: 'クライアントと案件名は必須です' });
   // ADR 038: 連番の採番元・連動シート
@@ -1232,6 +1234,8 @@ router.post('/projects', requireAuth, requireAnyPermission('project.create_edit'
   // ADR 024: Wチェック要否（案件単位）。boolean のときのみ反映、未指定は NULL=カテゴリ既定継承。
   if (typeof wcheck_required === 'boolean') insertPayload.wcheck_required = wcheck_required;
   // ADR 034: 計上タイミング。明示時のみ反映（未指定は DB default 'on_delivery'）。
+  // ADR 042 追補: 明示されたときだけ入れる（列未適用環境ではフォールバックで外す）
+  if (typeof showcase_hidden === 'boolean') insertPayload.showcase_hidden = showcase_hidden;
   if (billing_timing === 'on_delivery' || billing_timing === 'on_first_draft') {
     insertPayload.billing_timing = billing_timing;
   }
@@ -1328,6 +1332,12 @@ router.post('/projects', requireAuth, requireAnyPermission('project.create_edit'
     const retry7 = await supabase.from('projects').insert(fallback7).select().single();
     data = retry7.data; error = retry7.error;
   }
+  // ADR 042 追補 migration 未適用環境のフォールバック（projects.showcase_hidden 列が無い）
+  if (error && /showcase_hidden/i.test(error.message || '')) {
+    const { showcase_hidden: _o9, ...fallback9s } = insertPayload;
+    const retry9s = await supabase.from('projects').insert(fallback9s).select().single();
+    data = retry9s.data; error = retry9s.error;
+  }
   if (error) return res.status(500).json({ error: error.message });
   // タグ保存（delete-all → insert）。本番テーブル未適用時は silent skip。
   if (data?.id) {
@@ -1360,7 +1370,9 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     // ADR 024: 案件単位のWチェック要否
     wcheck_required,
     // ADR 034: 計上タイミング（on_delivery=既定 / on_first_draft）
-    billing_timing
+    billing_timing,
+    // ADR 042 追補: 🎬 新着納品ショーケースに出さない（機密案件向け）
+    showcase_hidden
   } = req.body;
   // ADR 010 Phase 1b: 工程表セクションだけが値を送る部分更新（schedule 列のみ）
   // のときは name/status を強制 NULL 化してしまわないよう、最小 UPDATE で済ませる
@@ -1463,6 +1475,8 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     }
     updateData.billing_timing = billing_timing;
   }
+  // ADR 042 追補: 明示されたときだけ反映（部分更新で巻き込み消失しないように）
+  if (showcase_hidden !== undefined) updateData.showcase_hidden = !!showcase_hidden;
   // ADR 008 Phase 1: クリエイティブ管理シート同期先 URL（明示時のみ反映）
   if (creatives_export_sheet_url !== undefined) {
     updateData.creatives_export_sheet_url = creatives_export_sheet_url || null;
@@ -1570,6 +1584,12 @@ router.put('/projects/:id', requireAuth, requirePermission('project.create_edit'
     const { next_filename_serial: _o5a, serial_digits: _o5b, ...fallback5 } = updateData;
     const retry5 = await supabase.from('projects').update(fallback5).eq('id', req.params.id).select().single();
     data = retry5.data; error = retry5.error;
+  }
+  // ADR 042 追補 migration 未適用ガード（projects.showcase_hidden 列が無い）
+  if (error && /showcase_hidden/i.test(error.message || '') && updateData.showcase_hidden !== undefined) {
+    const { showcase_hidden: _o9, ...fallback9s } = updateData;
+    const retry9s = await supabase.from('projects').update(fallback9s).eq('id', req.params.id).select().single();
+    data = retry9s.data; error = retry9s.error;
   }
   // ADR 024 migration 未適用ガード（projects.wcheck_required 列が無い）
   if (error && /wcheck_required/i.test(error.message || '') && updateData.wcheck_required !== undefined) {
@@ -23821,6 +23841,52 @@ async function getPortfolioSizeAspectMap() {
   });
 }
 
+// 納品物ファイルを creative 単位でまとめて引く（.in() は PORTFOLIO_ID_CHUNK ずつ分割・#919）。
+// GET /portfolio と GET /showcase の共通部品。creative_id → files[] の Map を返す。
+async function fetchPortfolioFilesByCreative(creativeIds) {
+  const filesByCreative = new Map();
+  for (let i = 0; i < (creativeIds || []).length; i += PORTFOLIO_ID_CHUNK) {
+    const chunk = creativeIds.slice(i, i + PORTFOLIO_ID_CHUNK);
+    const { data: files, error } = await supabase
+      .from('creative_files')
+      .select('id, creative_id, drive_file_id, version, mime_type, uploaded_at, media_width, media_height, media_meta_checked_at')
+      .in('creative_id', chunk)
+      .not('drive_file_id', 'is', null);
+    if (error) throw new Error(error.message);
+    for (const f of (files || [])) {
+      if (!filesByCreative.has(f.creative_id)) filesByCreative.set(f.creative_id, []);
+      filesByCreative.get(f.creative_id).push(f);
+    }
+  }
+  return filesByCreative;
+}
+
+// 版が新しい順（同版なら uploaded_at が新しい順）。先頭＝最新版
+function sortPortfolioFilesLatestFirst(files) {
+  return (files || []).slice().sort((a, b) => {
+    const dv = (b.version || 0) - (a.version || 0);
+    if (dv !== 0) return dv;
+    return String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || ''));
+  });
+}
+
+// 縦横比の解決: 実ファイルの寸法（Drive 実寸キャッシュ）→ サイズ区分マスター → null。
+// 2026-07-23 ユーザー判断で「実寸優先」。マスターの区分は申告値でしかなく、実物とズレることがあるため。
+function resolvePortfolioAspect(creative, file, sizeAspectMap) {
+  const cacheAspect = (file?.media_width && file?.media_height)
+    ? { w: file.media_width, h: file.media_height }
+    : null;
+  const masterAspect = creative?.creative_size
+    ? (sizeAspectMap[String(creative.creative_size)] || parsePortfolioAspect(creative.creative_size))
+    : null;
+  const aspect = cacheAspect || masterAspect;
+  return {
+    aspect,
+    source: cacheAspect ? 'drive' : (masterAspect ? 'master' : null),
+    orientation: portfolioOrientation(aspect?.w, aspect?.h),
+  };
+}
+
 // 説明文を編集できるか（実効ロールで判定 — ADR 015）。
 //   - admin / secretary: 全作品
 //   - producer / director: 自分が担当（assignment）または案件の director / producer
@@ -23903,22 +23969,9 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
     (creatives || []).forEach(c => { delete c.ca_filter; });
 
-    // 納品物ファイルを分割取得（.in() の URL 長超過回避）
+    // 納品物ファイルを分割取得（.in() の URL 長超過回避）。/showcase と共通の部品
     const creativeIds = (creatives || []).map(c => c.id);
-    const filesByCreative = new Map();
-    for (let i = 0; i < creativeIds.length; i += PORTFOLIO_ID_CHUNK) {
-      const chunk = creativeIds.slice(i, i + PORTFOLIO_ID_CHUNK);
-      const { data: files, error: fErr } = await supabase
-        .from('creative_files')
-        .select('id, creative_id, drive_file_id, version, mime_type, uploaded_at, media_width, media_height, media_meta_checked_at')
-        .in('creative_id', chunk)
-        .not('drive_file_id', 'is', null);
-      if (fErr) return res.status(500).json({ error: fErr.message });
-      for (const f of (files || [])) {
-        if (!filesByCreative.has(f.creative_id)) filesByCreative.set(f.creative_id, []);
-        filesByCreative.get(f.creative_id).push(f);
-      }
-    }
+    const filesByCreative = await fetchPortfolioFilesByCreative(creativeIds);
 
     const sizeAspectMap = await getPortfolioSizeAspectMap();
     const genreInfo = await getPortfolioGenreMap();
@@ -23958,11 +24011,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
     const items = [];
     let noFileCount = 0;   // ファイル未登録だった納品物の件数（非表示にしても件数は返す）
     for (const c of (creatives || [])) {
-      const all = (filesByCreative.get(c.id) || []).slice().sort((a, b) => {
-        const dv = (b.version || 0) - (a.version || 0);
-        if (dv !== 0) return dv;
-        return String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || ''));
-      });
+      const all = sortPortfolioFilesLatestFirst(filesByCreative.get(c.id));
       // ファイル未登録の納品物（納品物が Drive にアップされず、スプレッドシート等の
       // 外部リンクだけで納品されたケース。本番では納品済みの約1/4がこれに該当）は
       // 見せる絵が無く真っ黒なカードになるため、既定ではギャラリーから外す。
@@ -23972,9 +24021,6 @@ router.get('/portfolio', requireAuth, async (req, res) => {
       if (bestOnly && !isBest) continue;
       const targets = all.length === 0 ? [null] : (latestOnly ? [all[0]] : all);
 
-      const masterAspect = c.creative_size
-        ? (sizeAspectMap[String(c.creative_size)] || parsePortfolioAspect(c.creative_size))
-        : null;
       const editable = canEditPortfolioNote({ roleCodes, userId, creative: c });
       const social = socialMap.get(c.id) || emptyPortfolioSocial();
       // ⭐ を操作できるのは本人（この作品の担当者）だけ。ロールに依らない本人判定なので
@@ -23988,17 +24034,14 @@ router.get('/portfolio', requireAuth, async (req, res) => {
       });
 
       for (const f of targets) {
-        const cacheAspect = (f?.media_width && f?.media_height)
-          ? { w: f.media_width, h: f.media_height }
-          : null;
         // 実ファイルの寸法を最優先にする（2026-07-23 ユーザー判断で master 優先から変更）。
         // マスターのサイズ区分は「その枠で発注した」という申告値でしかなく、実物が
         // 1080_1080 指定でも 1080x1350 で納品されている等のズレが普通にある。
         // ズレた比率の枠に流し込むとカードが見切れる（文字が両端で切れる）ため、
-        // 実寸 → マスター → 未解決（フロントが Drive 実寸を取りに行く）の順で解決する。
-        const aspect = cacheAspect || masterAspect;
+        // 実寸 → マスター → 未解決（フロントが Drive 実寸を取りに行く）の順で解決する
+        // （resolvePortfolioAspect・/showcase と共通）。
+        const { aspect, source: aspectSource, orientation } = resolvePortfolioAspect(c, f, sizeAspectMap);
         // 表現軸はカード（＝ファイル）単位。向きが効くので比率が決まってから解決する。
-        const orientation = portfolioOrientation(aspect?.w, aspect?.h);
         const style = resolvePortfolioStyle({
           style_override: c.portfolio_style_code,
           creative_type:  c.creative_type,
@@ -24043,7 +24086,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
           aspect_h:      aspect?.h || null,
           // フロントが「実寸取得が必要か」を判断するためのヒント。
           // measured = 一度 Drive に問い合わせ済み（取れなかった場合も含む）→ 再取得しない
-          aspect_source: cacheAspect ? 'drive' : (masterAspect ? 'master' : null),
+          aspect_source: aspectSource,
           measured:      !!(f?.media_meta_checked_at),
           orientation,
           // 系統（ADR 035）。genre は業種軸（クライアント継承＋作品上書き）、
@@ -24272,6 +24315,272 @@ router.post('/portfolio/:creativeId/reactions', requireAuth, async (req, res) =>
     res.status(500).json({ error: e.message });
   }
 });
+
+// ==================== 🎬 新着納品ショーケース（ADR 042 追補 2026-09-17） ====================
+//
+// 直近 N 日（JST・既定 7・上限 30）に納品された作品を「誰が作ったか」を前面にホームで流し、
+// その場で 👏 できるようにする。祝う場なので修正回数・遅延・単価・ランクは一切返さない。
+// 認可は作品ページと同じ requireAuth（全ロール）。
+//   - 対象: creatives.status='納品' かつ delivered_at が期間内 かつ projects.showcase_hidden=false
+//   - 制作担当: 納品時スナップショット delivered_director_ids ＋ creative_assignments の editor/designer
+//     （名前は id と表示名のみ。users.avatar_url は base64 なので載せない・#940。アバターは /members/:id/avatar）
+//   - 拍手/ひとこと集計・納品物ファイル・縦横比は GET /portfolio と同じ部品を使う（二重実装しない）
+//   - 同一案件 × 同一納品日で 4 本以上は utils/showcase.js の bundleDeliveries() でまとめスライドにする
+//   - 既読はブラウザ localStorage（ADR 041 の流儀）。DB には持たない
+
+const {
+  SHOWCASE_BULK_MAX, clampShowcaseDays, showcaseSinceIso, jstDateStr, bundleDeliveries, buildBulkNiceNotification,
+} = require('../utils/showcase');
+const SHOWCASE_MAX_ITEMS = 300;   // 1 リクエストで拾う納品作品の上限（7 日分としては十分）
+const SHOWCASE_PAGE = 100;        // PostgREST の既定 max rows で silent 打ち切りされないよう range で刻む
+// 「制作」として並べる creative_assignments.role（ディレクターは納品時スナップショットから別枠で出す）
+const SHOWCASE_MAKER_ROLES = ['editor', 'designer', 'director_as_editor'];
+
+function isMissingShowcaseColumn(err) {
+  return /showcase_hidden/.test(err?.message || '');
+}
+
+// GET /api/haruka/showcase?days=7
+router.get('/showcase', requireAuth, async (req, res) => {
+  try {
+    const days = clampShowcaseDays(req.query.days);
+    const since = showcaseSinceIso(days);
+    const userId = req.user?.id;
+
+    const buildQuery = (withHidden) => {
+      const projCols = withHidden ? 'id, name, client_id, showcase_hidden, clients(id, name)' : 'id, name, client_id, clients(id, name)';
+      let q = supabase
+        .from('creatives')
+        .select(`
+          id, file_name, creative_type, creative_size, status, delivered_at, project_id, delivered_director_ids,
+          projects!inner(${projCols}),
+          creative_assignments(role, user_id, users(id, full_name, nickname))
+        `)
+        .eq('status', '納品')
+        .gte('delivered_at', since);
+      if (withHidden) q = q.eq('projects.showcase_hidden', false);
+      return q.order('delivered_at', { ascending: false });
+    };
+    const fetchAll = async (withHidden) => {
+      const all = [];
+      for (let offset = 0; offset < SHOWCASE_MAX_ITEMS; offset += SHOWCASE_PAGE) {
+        const { data, error } = await buildQuery(withHidden).range(offset, offset + SHOWCASE_PAGE - 1);
+        if (error) return { error };
+        all.push(...(data || []));
+        if (!data || data.length < SHOWCASE_PAGE) break;
+      }
+      return { data: all };
+    };
+
+    let { data: creatives, error } = await fetchAll(true);
+    if (error && isMissingShowcaseColumn(error)) {
+      // migration 未適用（projects.showcase_hidden が無い）でもホームを落とさない＝全案件を対象にする
+      console.warn('[showcase] projects.showcase_hidden 未反映のため、除外なしで表示します:', error.message);
+      ({ data: creatives, error } = await fetchAll(false));
+    }
+    if (error) return res.status(500).json({ error: error.message });
+    creatives = creatives || [];
+
+    const creativeIds = creatives.map(c => c.id);
+    const [filesByCreative, sizeAspectMap, socialMap] = await Promise.all([
+      fetchPortfolioFilesByCreative(creativeIds),
+      getPortfolioSizeAspectMap(),
+      fetchPortfolioSocialMap(creativeIds, userId),
+    ]);
+
+    // 納品時スナップショットのディレクター名を 1 回でまとめて引く（N+1 禁止・.in() は 100 件ずつ）
+    const directorIds = Array.from(new Set(creatives.flatMap(c => c.delivered_director_ids || []).filter(Boolean)));
+    const userById = new Map();
+    for (let i = 0; i < directorIds.length; i += PORTFOLIO_ID_CHUNK) {
+      const { data: us, error: uErr } = await supabase
+        .from('users').select('id, full_name, nickname').in('id', directorIds.slice(i, i + PORTFOLIO_ID_CHUNK));
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      for (const u of (us || [])) userById.set(u.id, u);
+    }
+
+    let noFileCount = 0;
+    const flat = [];
+    for (const c of creatives) {
+      const latest = sortPortfolioFilesLatestFirst(filesByCreative.get(c.id))[0] || null;
+      // 納品物ファイルが無い（外部リンクだけで納品された）作品は見せる絵が無いので流さない（作品ページの既定と同じ）
+      if (!latest) { noFileCount += 1; continue; }
+      const { aspect, orientation } = resolvePortfolioAspect(c, latest, sizeAspectMap);
+      const social = socialMap.get(c.id) || emptyPortfolioSocial();
+
+      const creators = [];
+      const seen = new Set();
+      const pushCreator = (u, kind, role) => {
+        if (!u?.id || seen.has(u.id)) return;
+        seen.add(u.id);
+        creators.push({ id: u.id, full_name: u.full_name || '', nickname: u.nickname || '', kind, role: role || null });
+      };
+      for (const a of (c.creative_assignments || [])) {
+        if (SHOWCASE_MAKER_ROLES.includes(a.role)) pushCreator(a.users, 'maker', a.role);
+      }
+      const snapDirectors = (c.delivered_director_ids || []).filter(Boolean);
+      if (snapDirectors.length) {
+        for (const id of snapDirectors) pushCreator(userById.get(id) || { id }, 'director', 'director');
+      } else {
+        // スナップショットが無い旧データは assignments の director を使う
+        for (const a of (c.creative_assignments || [])) if (a.role === 'director') pushCreator(a.users, 'director', 'director');
+      }
+
+      flat.push({
+        creative_id:   c.id,
+        file_id:       latest.id,
+        drive_file_id: latest.drive_file_id,
+        version:       latest.version ?? null,
+        mime_type:     latest.mime_type || null,
+        file_name:     c.file_name,
+        creative_type: c.creative_type,
+        project_id:    c.project_id,
+        project_name:  c.projects?.name || '(案件なし)',
+        client_id:     c.projects?.client_id || null,
+        client_name:   c.projects?.clients?.name || '',
+        delivered_at:  c.delivered_at,
+        delivered_date: jstDateStr(c.delivered_at),
+        aspect_w:      aspect?.w || null,
+        aspect_h:      aspect?.h || null,
+        orientation,
+        creators,
+        reactions:      social.reactions,
+        my_reactions:   social.my_reactions,
+        reaction_total: social.reaction_total,
+        comment_count:  social.comment_count,
+      });
+    }
+
+    const items = bundleDeliveries(flat);
+    res.json({
+      items,
+      total: flat.length,
+      days,
+      since,
+      no_file_count: noFileCount,
+      truncated: creatives.length >= SHOWCASE_MAX_ITEMS,
+    });
+  } catch (e) {
+    console.error('[showcase] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/haruka/portfolio/reactions/bulk  body: { creative_ids: [...], reaction_type }
+// まとめスライドの「👏 まとめてナイス！」。各作品に upsert（既に押していれば維持・外さない）。
+// 制作担当への通知は宛先 1 人につき 1 通に集約する（12 本分の通知が 12 通届かないように）。
+router.post('/portfolio/reactions/bulk', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const reactionType = String(req.body?.reaction_type || '').trim();
+    if (!isReactionType(reactionType)) return res.status(400).json({ error: 'リアクション種別が不正です' });
+    const rawIds = Array.isArray(req.body?.creative_ids) ? req.body.creative_ids : [];
+    const ids = Array.from(new Set(rawIds.map(v => String(v || '').trim()).filter(v => /^[0-9a-f-]{36}$/i.test(v))));
+    if (!ids.length) return res.status(400).json({ error: 'creative_ids が空です' });
+    if (ids.length > SHOWCASE_BULK_MAX) return res.status(400).json({ error: `一度にまとめられるのは ${SHOWCASE_BULK_MAX} 件までです` });
+
+    const { data: creatives, error: cErr } = await supabase
+      .from('creatives')
+      .select('id, file_name, project_id, delivered_at, delivered_director_ids, creative_assignments(role, user_id), projects(id, name)')
+      .in('id', ids);
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!creatives?.length) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
+    const targetIds = creatives.map(c => c.id);
+
+    // 既に押している分は維持（トグルではない）。足りない分だけ 1 回の INSERT で入れる
+    const { data: existing, error: eErr } = await supabase
+      .from('portfolio_reactions').select('creative_id')
+      .eq('user_id', userId).eq('reaction_type', reactionType).in('creative_id', targetIds);
+    if (eErr) return res.status(500).json({ error: eErr.message });
+    const had = new Set((existing || []).map(r => r.creative_id));
+    const missing = targetIds.filter(id => !had.has(id));
+    if (missing.length) {
+      const rows = missing.map(id => ({ creative_id: id, user_id: userId, reaction_type: reactionType }));
+      const { error: iErr } = await supabase.from('portfolio_reactions').insert(rows);
+      if (iErr && iErr.code === '23505') {
+        // 同時押しで一部が既に入っていた → 1 件ずつ入れ直し（重複は無視）
+        for (const row of rows) {
+          const { error: one } = await supabase.from('portfolio_reactions').insert(row);
+          if (one && one.code !== '23505') return res.status(500).json({ error: one.message });
+        }
+      } else if (iErr) {
+        return res.status(500).json({ error: iErr.message });
+      }
+    }
+
+    // 通知: 新たに付いた作品の制作担当へ、宛先 1 人 1 通。await せず主処理を先に返す
+    if (missing.length) {
+      notifyBulkPortfolioReaction({ req, creatives: creatives.filter(c => missing.includes(c.id)), reactionType })
+        .catch(e => console.warn('[portfolio/bulk] 通知失敗（主処理は継続）:', e.message));
+    }
+
+    const socialMap = await fetchPortfolioSocialMap(targetIds, userId);
+    const social = {};
+    for (const id of targetIds) {
+      const sc = socialMap.get(id) || emptyPortfolioSocial();
+      social[id] = { counts: sc.reactions, my_reactions: sc.my_reactions, reaction_total: sc.reaction_total };
+    }
+    res.json({ added: missing.length, already: had.size, social });
+  } catch (e) {
+    console.error('[portfolio/reactions/bulk] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// まとめてナイス！の通知。宛先ごとに「◯◯さんが ◯◯ N本にまとめて👏」を 1 通。
+// 同じ人 × 同じまとめ（案件 × 納品日）× 同じ種別は 24h に 1 回に抑える（単品の 24h 抑制と同じ思想）。
+async function notifyBulkPortfolioReaction({ req, creatives, reactionType }) {
+  const actorId = req.user?.id;
+  const perRecipient = new Map();   // uid → { count, firstCreativeId }
+  for (const c of creatives) {
+    const recipients = resolvePortfolioNotifyRecipients({
+      assignments: c.creative_assignments, deliveredDirectorIds: c.delivered_director_ids, actorId,
+    });
+    for (const uid of recipients) {
+      if (!perRecipient.has(uid)) perRecipient.set(uid, { count: 0, firstCreativeId: c.id });
+      perRecipient.get(uid).count += 1;
+    }
+  }
+  if (!perRecipient.size) return;
+
+  const projectIds = Array.from(new Set(creatives.map(c => c.project_id).filter(Boolean)));
+  const first = creatives[0];
+  const projectName = projectIds.length === 1
+    ? (first.projects?.name || '作品')
+    : `${first.projects?.name || '作品'} ほか`;
+  const bundleKey = `bulk:${projectIds.length === 1 ? projectIds[0] : 'multi'}:${jstDateStr(first.delivered_at) || 'na'}:${reactionType}`;
+
+  const { data: recent, error: rErr } = await supabase
+    .from('notification_logs')
+    .select('id')
+    .eq('sender_id', actorId)
+    .eq('notification_type', 'portfolio_reaction')
+    .eq('meta->>bundle_key', bundleKey)
+    .gte('created_at', portfolioNotifyWindowStart())
+    .limit(1);
+  if (rErr) console.warn('[portfolio/bulk] 通知の抑制判定に失敗（送信は続行）:', rErr.message);
+  if ((recent || []).length > 0) return;
+
+  const emoji = (require('../utils/reactions').REACTION_EMOJI || {})[reactionType] || '👏';
+  const actorName = req.user?.nickname || req.user?.full_name || '誰か';
+  await Promise.all(Array.from(perRecipient.entries()).map(([uid, info]) => {
+    const n = buildBulkNiceNotification({ actorName, projectName, count: info.count, emoji, firstCreativeId: info.firstCreativeId });
+    return createNotification({
+      userId: uid,
+      type: n.type,
+      title: n.title,
+      body: n.body,
+      linkUrl: n.linkUrl,
+      meta: {
+        creative_id: info.firstCreativeId,
+        creative_ids: creatives.map(c => c.id),
+        reaction_type: reactionType,
+        bundle_key: bundleKey,
+        bundle: true,
+      },
+      senderId: actorId,
+    });
+  }));
+}
 
 // ひとことの 1 行を API 形式にする（users.avatar_url は base64 なので返さない・#940）
 function portfolioCommentRow(c, viewerId, isAdmin) {

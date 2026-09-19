@@ -1418,6 +1418,91 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .dash-tweets-empty{text-align:center;padding:14px 0 6px;font-size:13px;color:var(--text-muted)}
 /* 🏅 マイ実績（本人専用カード・ADR 036） */
 .my-stats-card{margin-bottom:14px;border-left:4px solid var(--em)}
+/* 🎬 新着納品ショーケース（ADR 042 追補 2026-09-17）— ホームカード。祝う場なので評価っぽい数字は出さない */
+.dash-showcase-card{margin-bottom:14px;border-left:4px solid #F5B942}
+.dash-showcase-card .dash-section-title{flex-wrap:wrap;margin-bottom:10px}
+.dash-showcase-card .sc-sub{font-weight:500;color:var(--text-muted);letter-spacing:0;text-transform:none;font-size:11.5px}
+.dash-showcase-card .sc-sub b{color:#B7791F;font-weight:800}
+.dash-showcase-card .sc-new{font-weight:800;color:#B7791F;letter-spacing:0;text-transform:none}
+.dash-showcase-card .sc-collapse{width:30px;padding:4px 0;text-align:center}
+.sc-layout{display:grid;grid-template-columns:minmax(0,1fr) 168px;gap:12px;align-items:start}
+.sc-stage{position:relative;height:250px;border-radius:12px;overflow:hidden;background:#0b0c0e;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.sc-stage img,.sc-stage video{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block}
+.sc-stage .pf-ph{color:rgba(255,255,255,.6);display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px}
+.sc-stage .pf-ph span:first-child{font-size:34px}
+.sc-stage-badge{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.55);color:#fff;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;pointer-events:none}
+.sc-stage-play{position:absolute;right:10px;bottom:10px;background:rgba(0,0,0,.55);color:#fff;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;pointer-events:none}
+.sc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;width:100%;height:100%;padding:8px;box-sizing:border-box;align-content:center}
+.sc-grid .sc-cell{position:relative;aspect-ratio:1/1;border-radius:8px;overflow:hidden;background:#1a1c20;cursor:pointer}
+.sc-grid .sc-cell img{width:100%;height:100%;object-fit:cover;display:block}
+.sc-grid .sc-cell.more{display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:15px;background:rgba(255,255,255,.12)}
+.sc-strip{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;max-height:250px;overflow-y:auto;padding-right:2px}
+.sc-thumb{position:relative;aspect-ratio:1/1;border-radius:8px;overflow:hidden;background:#111;cursor:pointer;border:2px solid transparent;transition:border-color .12s,transform .12s}
+.sc-thumb:hover{transform:translateY(-1px)}
+.sc-thumb.on{border-color:#F5B942}
+.sc-thumb.seen img{opacity:.8}
+.sc-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.sc-thumb .sc-thumb-n{position:absolute;left:5px;top:4px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;font-weight:700;border-radius:999px;padding:1px 6px}
+.sc-thumb .sc-thumb-dot{position:absolute;right:5px;top:5px;width:8px;height:8px;border-radius:50%;background:#EF4444;box-shadow:0 0 0 2px rgba(0,0,0,.4)}
+.sc-thumb .sc-thumb-bundle{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;font-weight:700;border-radius:6px;padding:1px 5px}
+.sc-meta{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.sc-name{font-size:14px;font-weight:700;color:var(--text);line-height:1.4;word-break:break-word}
+.sc-name small{font-weight:500;color:var(--text-muted);margin-left:8px;font-size:12px;white-space:nowrap}
+.sc-creators{font-size:12.5px;color:#374151;line-height:1.6}
+.sc-creators .sc-cr{display:inline-flex;align-items:center;gap:5px;margin-right:6px}
+.sc-creators .sc-av{width:20px;height:20px;border-radius:50%;object-fit:cover;background:linear-gradient(135deg,#A8EDEA,#3ECFCA);color:#fff;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;vertical-align:middle}
+.sc-creators .sc-kind{color:var(--text-muted);font-size:11px;margin-right:2px}
+.sc-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sc-actions .pf-react{display:flex;align-items:center;flex-wrap:wrap;gap:5px}
+.sc-link{font-size:12px;font-weight:700;color:#8A6100;background:#FFF7E0;border:1px solid #F5D682;border-radius:999px;padding:5px 11px;cursor:pointer;text-decoration:none;white-space:nowrap;font-family:inherit}
+.sc-link:hover{background:#FDEFC2}
+.sc-nav{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);white-space:nowrap}
+.sc-nav button{font-size:12px;padding:4px 9px;border-radius:7px;border:0.5px solid var(--border);background:#fff;cursor:pointer;color:var(--em-dark);font-family:inherit}
+.sc-nav button:disabled{opacity:.35;cursor:default}
+.sc-bulk{display:inline-flex;align-items:center;gap:6px;border:1.5px solid #3ECFCA;background:#E6F9F8;color:#1F8F8B;border-radius:999px;padding:6px 14px;font-size:13px;font-weight:700;cursor:pointer;min-height:34px;font-family:inherit;transition:background .12s,transform .12s}
+.sc-bulk:hover{background:#D3F4F2;transform:translateY(-1px)}
+.sc-bulk.on{background:#2BB8B4;border-color:#2BB8B4;color:#fff}
+.sc-bulk:disabled{opacity:.6;cursor:default;transform:none}
+.sc-bulk .pf-rx-emoji{font-size:18px;line-height:1}
+/* スライドショー（全画面オーバーレイ）。作品を見る場なので暗い背景、情報は下のパネルに */
+.sc-overlay{display:none;position:fixed;inset:0;z-index:1190;background:rgba(10,11,13,.94);color:#fff}
+.sc-overlay.open{display:flex;flex-direction:column}
+.sc-shell{display:flex;flex-direction:column;flex:1;min-height:0;width:min(1200px,100%);margin:0 auto;padding:14px 20px 16px;box-sizing:border-box}
+.sc-top{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.sc-top .sc-x{background:rgba(255,255,255,.14);color:#fff;border:0;border-radius:999px;width:36px;height:36px;font-size:16px;cursor:pointer}
+.sc-top .sc-x:hover{background:rgba(255,255,255,.28)}
+.sc-top .sc-counter{margin-left:auto;font-size:13px;color:rgba(255,255,255,.75);font-variant-numeric:tabular-nums}
+.sc-top .sc-autobtn{background:rgba(255,255,255,.14);color:#fff;border:0;border-radius:999px;padding:7px 13px;font-size:12.5px;cursor:pointer;font-family:inherit}
+.sc-top .sc-autobtn:hover{background:rgba(255,255,255,.28)}
+.sc-progress{height:3px;background:rgba(255,255,255,.14);border-radius:2px;margin:10px 0 8px;overflow:hidden;flex-shrink:0}
+.sc-progress > i{display:block;height:100%;width:0;background:#F5B942;transition:width .2s linear}
+.sc-progress.paused > i{background:rgba(255,255,255,.45)}
+.sc-overlay .sc-stage{flex:1;min-height:0;height:auto;border-radius:14px;cursor:default}
+.sc-overlay .sc-stage .sc-grid{grid-template-columns:repeat(4,minmax(0,1fr));max-width:900px;gap:10px;padding:16px;height:auto;max-height:100%;overflow:auto}
+.sc-overlay .sc-stage .sc-grid .sc-cell{aspect-ratio:1/1}
+.sc-panel{flex-shrink:0;margin-top:12px;background:#fff;color:#1f2328;border-radius:14px;padding:14px 18px;display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow-y:auto}
+.sc-panel .sc-name{font-size:16px;color:#14171a}
+.sc-panel .sc-creators{color:#374151}
+.sc-panel .pf-react{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.sc-panel .pf-rx-main{font-size:15px;padding:8px 18px 8px 14px;min-height:44px;gap:8px}
+.sc-panel .pf-rx-main .pf-rx-emoji{font-size:22px}
+.sc-panel .pf-lb-react-sub{display:flex;flex-wrap:wrap;gap:6px;width:100%}
+.sc-panel .pf-rx{font-size:13px;padding:6px 12px;min-height:34px;gap:5px}
+.sc-panel .pf-rx.off{color:#6B7280;background:#F9FAFB;border-color:#E5E7EB}
+.sc-panel .pf-lb-nudge{width:100%;font-size:12.5px;color:#1F8F8B}
+.sc-panel .sc-bottom{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid #EDEFF2;padding-top:8px}
+.sc-panel .sc-dots{display:flex;align-items:center;gap:5px;flex-wrap:wrap;max-width:60%}
+.sc-panel .sc-dot{width:7px;height:7px;border-radius:50%;background:#D1D5DB;cursor:pointer;border:0;padding:0}
+.sc-panel .sc-dot.on{background:#F5B942;transform:scale(1.35)}
+.sc-panel .sc-dot.bundle{border-radius:3px;width:11px}
+.sc-panel .sc-arrow{background:#F3F4F6;border:0;border-radius:999px;width:34px;height:34px;font-size:15px;cursor:pointer;color:#374151}
+.sc-panel .sc-arrow:disabled{opacity:.35;cursor:default}
+.sc-panel .sc-skip{margin-left:auto;background:#fff;border:1px solid #E5E7EB;border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:700;color:#374151;cursor:pointer;font-family:inherit}
+.sc-panel .sc-skip:hover{background:#F9FAFB}
+.sc-panel .sc-back{background:#F3F4F6;border:0;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;color:#374151;cursor:pointer;font-family:inherit}
+.sc-panel .sc-cm{border:1px solid #E5E7EB;background:#fff;color:#374151;border-radius:999px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;min-height:40px}
+.sc-panel .sc-cm:hover{background:#F9FAFB}
+@media (prefers-reduced-motion: reduce){.sc-thumb:hover{transform:none}}
 .my-stats-card .dash-section-title{justify-content:space-between;margin-bottom:12px}
 .my-stats-lock{font-size:10px;font-weight:500;color:var(--text-muted);letter-spacing:0;text-transform:none;white-space:nowrap}
 .my-stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -1883,6 +1968,20 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   /* セクション */
   .dash-section{padding:14px}
   .dash-section-title{font-size:11px}
+  /* 🎬 新着納品ショーケース: ステージを全幅にし、サムネ列は横スクロールに */
+  .sc-layout{grid-template-columns:1fr;gap:8px}
+  .sc-stage{height:200px}
+  .sc-strip{display:flex;overflow-x:auto;overflow-y:hidden;max-height:none;gap:6px;padding-bottom:2px}
+  .sc-thumb{width:64px;flex:0 0 64px}
+  .sc-grid{grid-template-columns:repeat(4,1fr);gap:4px;padding:6px}
+  .sc-nav{margin-left:0;width:100%;justify-content:space-between}
+  .sc-shell{padding:10px 10px 12px}
+  .sc-overlay .sc-stage{border-radius:10px}
+  .sc-panel{padding:12px 12px;max-height:52vh}
+  .sc-panel .sc-name{font-size:14px}
+  .sc-panel .pf-rx-main{font-size:14px;min-height:42px}
+  .sc-panel .sc-dots{max-width:100%;order:3;width:100%;justify-content:center}
+  .sc-panel .sc-skip{margin-left:0}
   /* 🏅 マイ実績: 2×2 に折り返す */
   .my-stats-grid{grid-template-columns:repeat(2,1fr);gap:8px}
   .my-stats-tile{padding:10px 8px}
@@ -4280,6 +4379,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   <div id="dash-tweets"></div>
   <!-- 🏅 マイ実績（本人専用・ADR 036。editor/designer/director ダッシュで renderMyStatsCard() が描画。admin ダッシュには出さない） -->
   <div id="dash-my-stats"></div>
+  <!-- 🎬 新着納品ショーケース（ADR 042 追補・全ロール）: 直近 7 日の納品作品を「誰が作ったか」つきで流し、その場で 👏 できる。
+       renderShowcaseCard() が描画し、実効ロールで置き場を移す（作り手＝マイ実績の直下 / ディレクター＝自チームの直下 / 管理層＝全体連絡の前）。
+       新着ゼロの週はカード自体を出さない。既読・畳み状態はブラウザ localStorage（ADR 041 の流儀）。 -->
+  <div id="dash-showcase"></div>
   <!-- 📝 契約・登録手続きバナー（ADR 035）: GET /contracts/me の banner が非 null のとき contract-wizard.js の renderContractBanner() が描画 -->
   <div id="dash-contract-banner"></div>
   <!-- 全体連絡（全ロール共通） -->
@@ -7220,10 +7323,17 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 
     <!-- フッター -->
     <div style="padding:14px 28px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:#fff;border-radius:0 0 16px 16px;flex-shrink:0">
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);cursor:pointer">
-        <input type="checkbox" id="p-is-hidden" style="width:15px;height:15px">
-        非表示にする
-      </label>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);cursor:pointer">
+          <input type="checkbox" id="p-is-hidden" style="width:15px;height:15px">
+          非表示にする
+        </label>
+        <!-- ADR 042 追補: 機密案件はホームの 🎬 新着納品ショーケース（スライドショー）に流さない -->
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);cursor:pointer" title="ON にすると、この案件の納品作品はホームの「🎬 新着納品」に出ません（作品ページには出ます）">
+          <input type="checkbox" id="p-showcase-hidden" style="width:15px;height:15px">
+          🎬 ショーケースに出さない
+        </label>
+      </div>
       <div style="display:flex;gap:10px;align-items:center">
         <button class="btn" id="p-delete-btn" onclick="openProjectDeleteConfirm()" style="display:none;color:#A32D2D;border-color:#F09595;margin-right:auto">🗑️ 削除</button>
         <button class="btn-primary" id="p-submit-btn" onclick="submitProject()">追加する</button>
@@ -8849,6 +8959,20 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
     </div>
     <div class="pf-lb-card" id="pf-lb-card"></div>
+  </div>
+</div>
+
+<!-- 🎬 新着納品ショーケース: スライドショー（全画面オーバーレイ・ADR 042 追補）。ライトボックス(1200)より下に置き、💬 ひとことでライトボックスを重ねて開ける -->
+<div id="showcase-overlay" class="sc-overlay" role="dialog" aria-modal="true" aria-label="新着納品スライドショー">
+  <div class="sc-shell" id="sc-shell">
+    <div class="sc-top">
+      <button type="button" class="sc-x" onclick="scCloseSlideshow()" title="閉じる（Esc）">✕</button>
+      <span class="sc-counter" id="sc-counter"></span>
+      <button type="button" class="sc-autobtn" id="sc-autobtn" onclick="scToggleAuto()" title="5秒ごとに次の作品へ">⏸ 自動</button>
+    </div>
+    <div class="sc-progress" id="sc-progress"><i></i></div>
+    <div class="sc-stage pf-media" id="sc-stage"></div>
+    <div class="sc-panel" id="sc-panel"></div>
   </div>
 </div>
 
@@ -19935,6 +20059,7 @@ function openProjectModal(preClientId) {
   document.getElementById('p-slack-channel-url').value = '';
   document.getElementById('p-admin-note').value = '';
   document.getElementById('p-is-hidden').checked = false;
+  { const _sh = document.getElementById('p-showcase-hidden'); if (_sh) _sh.checked = false; }   // ADR 042 追補
   // ADR 008 Phase 1: 新規時は同期 URL 空、結果表示も非表示
   { const _exp = document.getElementById('p-creatives-export-sheet-url'); if (_exp) _exp.value = ''; }
   { const _r = document.getElementById('p-sync-sheet-result'); if (_r) _r.style.display = 'none'; }
@@ -20154,6 +20279,7 @@ function openEditProject(p) {
   document.getElementById('p-slack-channel-url').value = p.slack_channel_url || '';
   document.getElementById('p-admin-note').value = p.admin_note || '';
   document.getElementById('p-is-hidden').checked = !!p.is_hidden;
+  { const _sh = document.getElementById('p-showcase-hidden'); if (_sh) _sh.checked = !!p.showcase_hidden; }   // ADR 042 追補
   // ADR 008 Phase 1: クリエイティブ管理シート同期 URL 復元
   { const _exp = document.getElementById('p-creatives-export-sheet-url'); if (_exp) _exp.value = p.creatives_export_sheet_url || ''; }
   { const _r = document.getElementById('p-sync-sheet-result'); if (_r) _r.style.display = 'none'; }
@@ -24649,6 +24775,7 @@ async function submitProject() {
   }
   const admin_note = document.getElementById('p-admin-note').value.trim() || null;
   const is_hidden = document.getElementById('p-is-hidden').checked;
+  const showcase_hidden = !!document.getElementById('p-showcase-hidden')?.checked;   // ADR 042 追補
   const deadline_unit = document.getElementById('p-deadline-unit').value || 'monthly';
   const deadline_weekday_raw = document.getElementById('p-deadline-weekday').value;
   const deadline_weekday = (deadline_unit === 'weekly' && deadline_weekday_raw !== '') ? parseInt(deadline_weekday_raw) : null;
@@ -24708,7 +24835,7 @@ async function submitProject() {
   const res = await apiFetch(isEdit ? `${API}/projects/${id}` : `${API}/projects`, {
     method: isEdit ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, serial_source, serial_sheet_url, serial_sheet_tab, serial_sheet_column, serial_sheet_used_column, wcheck_required, billing_timing })
+    body: JSON.stringify({ client_id, name, status, primary_category_id, start_date, end_date, producer_id, director_id, liaison_user_id, sheet_url, regulation_url, chatwork_room_id, slack_channel_url, admin_note, is_hidden, sync_products, sync_appeal_axes, deadline_unit, deadline_weekday, sub_director_ids: Array.isArray(_editingProjectSubDirectorIds) ? _editingProjectSubDirectorIds : [], sub_producer_ids: Array.isArray(_editingProjectSubProducerIds) ? _editingProjectSubProducerIds : [], tags, filename_template_id, filename_token_overrides, creatives_export_sheet_url, next_filename_serial, serial_digits, serial_source, serial_sheet_url, serial_sheet_tab, serial_sheet_column, serial_sheet_used_column, wcheck_required, billing_timing, showcase_hidden })
   });
 
   btn.textContent = origText; btn.disabled = false;
@@ -25535,6 +25662,11 @@ const PF_PRIMARY_TYPE = (window.ReactionsUtils && ReactionsUtils.PORTFOLIO_PRIMA
 //   lb:   [👏 ナイス！ 3] ……………… [🔗 共有]
 //         [❤️ 好き 1] [👍 参考になる] [😊 ほっこり] [😳 すごい…！]   ← 全種を言葉つきで常時表示
 //         まだ拍手はありません。最初の拍手をどうぞ 👏            ← 0 件のときだけ
+// ctx: 'card'（作品ページのカード）/ 'lb'（ライトボックス）/ 'sc'（🎬 ショーケースのスライド）/ 'sccard'（🎬 ホームカード）。
+// idx は pfItemsFor(ctx) の添字（作品ページは pfItems、ショーケースは scFlat）。
+function pfItemsFor(ctx) {
+  return (ctx === 'sc' || ctx === 'sccard') ? (typeof scFlat !== 'undefined' ? scFlat : []) : pfItems;
+}
 function pfReactRowHtml(item, idx, ctx) {
   const cid = item.creative_id;
   if (!cid) return '';
@@ -25548,26 +25680,27 @@ function pfReactRowHtml(item, idx, ctx) {
   const mainOn = mine.has(primary.type);
   const mainBtn = `<button type="button" class="pf-rx-main${mainOn ? ' on' : ''}" data-rt="${primary.type}" aria-pressed="${mainOn}"
       title="${mainOn ? '送りました（もう一度押すと取り消せます）' : `ワンクリックで「${esc(primary.label)}」を送る`}"
-      onclick="event.stopPropagation();pfToggleReaction(${idx}, '${primary.type}')">
+      onclick="event.stopPropagation();pfToggleReaction(${idx}, '${primary.type}', '${ctx}')">
       <span class="pf-rx-emoji">${primary.emoji}</span><span class="pf-rx-label">${esc(primary.label)}</span>${n(primary.type) > 0 ? `<span class="pf-rx-n">${n(primary.type)}</span>` : ''}
     </button>`;
 
-  if (ctx === 'lb') {
+  // ライトボックスとショーケースのスライドは幅があるので 5 種を言葉つきで常時出す（🔗 共有はライトボックスだけ）
+  if (ctx === 'lb' || ctx === 'sc') {
     const chips = others.map(r => {
       const on = mine.has(r.type);
       const cls = on ? ' on' : (n(r.type) > 0 ? '' : ' off');
       return `<button type="button" class="pf-rx${cls}" data-rt="${r.type}" aria-pressed="${on}"
           title="${on ? 'もう一度押すと取り消せます' : `「${esc(r.label)}」を送る`}"
-          onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}')">
+          onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}', '${ctx}')">
           <span class="pf-rx-emoji">${r.emoji}</span><span class="pf-rx-label">${esc(r.label)}</span>${n(r.type) > 0 ? `<span class="pf-rx-n">${n(r.type)}</span>` : ''}
         </button>`;
     }).join('');
     const nudge = total === 0
       ? `<div class="pf-lb-nudge">まだ拍手はありません。最初の拍手をどうぞ 👏</div>` : '';
     return `
-    <div class="pf-react" data-cid="${esc(cid)}" data-idx="${idx}" data-ctx="lb" onclick="event.stopPropagation()">
+    <div class="pf-react" data-cid="${esc(cid)}" data-idx="${idx}" data-ctx="${ctx}" onclick="event.stopPropagation()">
       ${mainBtn}
-      ${pfShareBtnHtml(idx)}
+      ${ctx === 'lb' ? pfShareBtnHtml(idx) : ''}
       <div class="pf-lb-react-sub">${chips}</div>
       ${nudge}
     </div>`;
@@ -25577,15 +25710,16 @@ function pfReactRowHtml(item, idx, ctx) {
   const pills = others
     .filter(r => n(r.type) > 0 || mine.has(r.type))
     .map(r => `<button type="button" class="pf-rx${mine.has(r.type) ? ' on' : ''}" data-rt="${r.type}" title="${esc(r.label)}${mine.has(r.type) ? '（もう一度押すと外れる）' : ''}"
-        onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}')">
+        onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}', '${ctx}')">
         <span class="pf-rx-emoji">${r.emoji}</span>${n(r.type) > 0 ? `<span class="pf-rx-n">${n(r.type)}</span>` : ''}
       </button>`).join('');
   const pickerBtns = PF_REACTIONS.map(r =>
     `<button type="button" class="${mine.has(r.type) ? 'on' : ''}" title="${esc(r.label)}"
-       onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}')"><span class="pf-rx-emoji">${r.emoji}</span>${esc(r.label)}</button>`).join('');
+       onclick="event.stopPropagation();pfToggleReaction(${idx}, '${r.type}', '${ctx}')"><span class="pf-rx-emoji">${r.emoji}</span>${esc(r.label)}</button>`).join('');
   const cmCount = item.comment_count || 0;
   const cmOpen = pfOpenComments.has(cid);
-  const cmBtn = `<button type="button" class="pf-rx pf-rx-cm${cmOpen ? ' open' : ''}" title="ひとこと${cmCount ? `（${cmCount}件）` : ''}"
+  // ホームのショーケースカードでは 💬 を出さない（ひとことは作品ページ／スライドショーから）
+  const cmBtn = ctx === 'sccard' ? '' : `<button type="button" class="pf-rx pf-rx-cm${cmOpen ? ' open' : ''}" title="ひとこと${cmCount ? `（${cmCount}件）` : ''}"
        aria-expanded="${cmOpen}" onclick="event.stopPropagation();pfToggleComments(${idx})">
        <span class="pf-rx-emoji">💬</span>${cmCount > 0 ? `<span class="pf-rx-n">${cmCount}</span>` : ''}
      </button>`;
@@ -25740,14 +25874,18 @@ function pfShareViaTweet(idx) {
 // 同じ creative の全カード（過去版が並んでいる場合）に値を配る
 function pfApplySocial(creativeId, patch) {
   pfItems.forEach(it => { if (it.creative_id === creativeId) Object.assign(it, patch); });
+  // 🎬 ショーケース（ホームカード／スライドショー）に同じ作品が出ていればそちらも同期
+  if (typeof scFlat !== 'undefined') scFlat.forEach(it => { if (it.creative_id === creativeId) Object.assign(it, patch); });
 }
 
 // リアクション行だけを差し替える（ギャラリー全体を再描画しない＝入力中のひとことを消さない）
 function pfRefreshReactDom(creativeId) {
   document.querySelectorAll(`.pf-react[data-cid="${CSS.escape(creativeId)}"]`).forEach(el => {
     const idx = Number(el.dataset.idx);
-    if (!pfItems[idx]) return;
-    el.outerHTML = pfReactRowHtml(pfItems[idx], idx, el.dataset.ctx || 'card');
+    const ctx = el.dataset.ctx || 'card';
+    const item = pfItemsFor(ctx)[idx];
+    if (!item) return;
+    el.outerHTML = pfReactRowHtml(item, idx, ctx);
   });
 }
 function pfRefreshCommentsDom(creativeId) {
@@ -25758,8 +25896,8 @@ function pfRefreshCommentsDom(creativeId) {
   });
 }
 
-async function pfToggleReaction(idx, type) {
-  const item = pfItems[idx];
+async function pfToggleReaction(idx, type, ctx = 'card') {
+  const item = pfItemsFor(ctx)[idx];
   if (!item?.creative_id) return;
   const cid = item.creative_id;
   // 楽観的更新: 押した瞬間に反映し、失敗したら元に戻す
@@ -25976,8 +26114,8 @@ function pfConsumePendingOpen() {
 }
 
 // ホバー: 動画なら 400ms 後に無音ループ再生を差し込む（連続ホバーで無駄に取得しない）
-function pfHoverIn(cardEl, idx) {
-  const item = pfItems[idx];
+function pfHoverIn(cardEl, idx, ctx = 'card') {
+  const item = pfItemsFor(ctx)[idx];
   if (!item || !item.file_id || !pfIsVideo(item)) return;
   clearTimeout(pfHoverTimer);
   pfHoverTimer = setTimeout(async () => {
@@ -26437,6 +26575,515 @@ async function pfSaveGenre() {
   } catch (e) {
     showToast(e.message, 'error');
   }
+}
+
+// ==================== 🎬 新着納品ショーケース（ADR 042 追補 2026-09-17） ====================
+//
+// 直近 7 日に納品された作品を「誰が作ったか」を前面にホームで流し、その場で 👏 できるようにする。
+// 納品はフロー上唯一の達成イベントだが通知は本人にしか届かないので、チームで共有する場を作る。
+//   - データ: GET /api/haruka/showcase?days=7（requireAuth・作品ページと同じ認可）。
+//     祝う場なので修正回数・遅延・単価・ランクは API が返さないし、ここでも出さない（ADR 033 の思想）。
+//   - 部品: 作品ページの pfReactRowHtml / pfToggleReaction / pfHoverIn / pfOnThumbError を ctx='sc'|'sccard' で再利用
+//     （idx は scFlat の添字。pfItemsFor(ctx) が配列を切り替える）。💬 ひとことは既存ライトボックス（pfOpenByCreativeId）。
+//   - 既読: 端末ローカル（localStorage・creative_id の配列・上限 500 で古い順に捨てる）。DB は触らない（ADR 041 の流儀）。
+//   - 畳み状態も localStorage。畳んでいても未見が増えたらヘッダー行に「🎬 新着納品 N本」を太字で出す。
+//   - ホームを開いた瞬間に自動再生しない。スライドショーは「▶ スライドショー」からだけ。
+//   - つぶやきへの自動投稿はしない（#1182 の「🔗 つぶやきで紹介」と重複するため）。
+//   - 置き場は実効ロールで移す（作り手＝マイ実績の直下 / ディレクター＝自チームの直下 / 管理層＝全体連絡の前）。
+//     ロール分岐はこの「置き場」だけで、中身は全員同じ（ADR 015: effectiveRole() で判定）。
+
+const SC_SEEN_LS_KEY = 'hfs_showcase_seen';           // 既読 creative_id の配列（古い順）
+const SC_COLLAPSED_LS_KEY = 'hfs_showcase_collapsed'; // '1' = 畳んでいる
+const SC_SEEN_MAX = 500;
+const SC_AUTO_MS = 5000;        // スライドショーの自動送り
+const SC_DAYS = 7;
+const SC_GRID_MAX = 8;          // まとめスライドに並べるサムネの最大数（残りは「＋N本」）
+
+let scItems = [];   // API の items（single / bundle）
+let scFlat = [];    // 全作品（creative 単位）。pf* 部品の item 配列（ctx='sc'|'sccard' の idx はここ）
+let scPos = 0;      // ホームカードで表示中の scItems の添字
+let _scSeq = 0;
+let _scBulkBusy = false;
+
+// ---- 既読（端末ローカル）----
+function scLoadSeen() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(SC_SEEN_LS_KEY) || '[]');
+    return Array.isArray(arr) ? arr.map(String) : [];
+  } catch (_) { return []; }
+}
+let _scSeenList = scLoadSeen();
+let _scSeenSet = new Set(_scSeenList);
+function scIsSeen(cid) { return _scSeenSet.has(String(cid)); }
+function scMarkSeen(cids) {
+  let changed = false;
+  for (const raw of (Array.isArray(cids) ? cids : [cids])) {
+    const cid = String(raw || '');
+    if (!cid || _scSeenSet.has(cid)) continue;
+    _scSeenSet.add(cid);
+    _scSeenList.push(cid);
+    changed = true;
+  }
+  if (!changed) return;
+  while (_scSeenList.length > SC_SEEN_MAX) {       // 古い順に捨てる
+    const old = _scSeenList.shift();
+    _scSeenSet.delete(old);
+  }
+  try { localStorage.setItem(SC_SEEN_LS_KEY, JSON.stringify(_scSeenList)); } catch (_) {}
+  scUpdateHeader();
+}
+function scUnseenCount() { return scFlat.filter(it => !scIsSeen(it.creative_id)).length; }
+
+function scIsCollapsed() {
+  try { return localStorage.getItem(SC_COLLAPSED_LS_KEY) === '1'; } catch (_) { return false; }
+}
+function scSetCollapsed(v) {
+  try { localStorage.setItem(SC_COLLAPSED_LS_KEY, v ? '1' : '0'); } catch (_) {}
+}
+
+// ---- 表示ヘルパー ----
+function scFmtDate(it) {
+  // API が JST の 'YYYY-MM-DD' を返す（delivered_date）。無ければ pfFormatDate と同じ JST 変換
+  const d = it?.delivered_date || (it?.delivered_at ? new Date(it.delivered_at).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) : '');
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
+  return m ? `${Number(m[2])}/${Number(m[3])}` : '';
+}
+function scThumbUrl(it) { return it?.file_id ? `/api/haruka/portfolio/thumbnail/${esc(it.file_id)}` : ''; }
+function scAvatarHtml(u) {
+  const initial = String(u.nickname || u.full_name || '?').trim().charAt(0);
+  // users.avatar_url は API に載せない（base64・#940）。既存の配信エンドポイントを使い、無ければイニシャル
+  return `<img class="sc-av" src="${API}/members/${esc(u.id)}/avatar" alt="" loading="lazy"
+            onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'sc-av',textContent:'${esc(initial)}'}))">`;
+}
+// 🎨 制作: ぴょん（片山紗季） / D: たごん（川崎かおり）
+function scCreatorsHtml(creators, { short = false } = {}) {
+  const list = Array.isArray(creators) ? creators : [];
+  if (!list.length) return `<div class="sc-creators"><span class="sc-kind">🎨 制作:</span> <span style="color:var(--text-muted)">担当未登録</span></div>`;
+  const name = (u) => (window.NameDisplay ? (short ? NameDisplay.short(u) : NameDisplay.full(u)) : (u.nickname || u.full_name || 'メンバー'));
+  const cr = (u) => `<span class="sc-cr" title="${esc(window.NameDisplay ? NameDisplay.tooltip(u) : '')}">${scAvatarHtml(u)}<span>${esc(name(u))}</span></span>`;
+  const makers = list.filter(c => c.kind !== 'director');
+  const directors = list.filter(c => c.kind === 'director');
+  const parts = [];
+  if (makers.length) parts.push(`<span class="sc-kind">🎨 制作:</span> ${makers.map(cr).join('<span class="sc-kind">/</span> ')}`);
+  if (directors.length) parts.push(`<span class="sc-kind">D:</span> ${directors.map(cr).join('<span class="sc-kind">/</span> ')}`);
+  return `<div class="sc-creators">${parts.join(' <span class="sc-kind">／</span> ')}</div>`;
+}
+function scFlatIdx(cid) { return scFlat.findIndex(it => it.creative_id === cid); }
+function scItemCreatives(item) { return item?.type === 'bundle' ? (item.creatives || []) : (item?.creative ? [item.creative] : []); }
+function scItemTitle(item) {
+  if (!item) return '';
+  if (item.type === 'bundle') return `${item.project.client_name ? esc(item.project.client_name) + ' ' : ''}${esc(item.project.name || '')}`;
+  const c = item.creative;
+  return `${c.client_name ? esc(c.client_name) + ' ' : ''}${esc(c.project_name || '')}「${esc(c.file_name || '')}」`;
+}
+
+// ---- 取得と描画（ホームカード）----
+async function renderShowcaseCard() {
+  const el = document.getElementById('dash-showcase');
+  if (!el) return;
+  const seq = ++_scSeq;
+  let d = null;
+  try {
+    const res = await apiFetch(`${API}/showcase?days=${SC_DAYS}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    d = await res.json();
+  } catch (e) {
+    console.warn('[showcase] fetch failed（カードを省略）', e);
+    if (seq === _scSeq) { el.innerHTML = ''; el.style.marginBottom = ''; }
+    return;
+  }
+  if (seq !== _scSeq) return; // VIEW AS 連打等で後発の描画が優先
+  if (!document.getElementById('page-dashboard')?.classList.contains('active')) return;
+
+  scItems = Array.isArray(d.items) ? d.items : [];
+  scFlat = scItems.flatMap(scItemCreatives);
+  scPlaceCard(el);
+  if (!scItems.length) { el.innerHTML = ''; el.style.marginBottom = ''; return; }   // 新着ゼロの週はカードを出さない
+  // 未見の作品があればそこから始める（無ければ先頭＝一番新しい納品）
+  const firstUnseen = scItems.findIndex(it => scItemCreatives(it).some(c => !scIsSeen(c.creative_id)));
+  scPos = firstUnseen >= 0 ? firstUnseen : 0;
+  el.innerHTML = scCardHtml();
+  el.style.marginBottom = '14px';
+  scRenderCardBody();
+}
+
+// 置き場を実効ロールで移す（DOM 上の 1 要素を動かすだけ。中身は全ロール同じ）
+function scPlaceCard(el) {
+  const role = effectiveRole();
+  let anchor = null, where = 'afterend';
+  if (role === 'editor' || role === 'designer') anchor = document.getElementById('dash-my-stats');
+  else if (role === 'director') anchor = document.getElementById('dash-team-focus');
+  else { anchor = document.getElementById('dash-announcements'); where = 'beforebegin'; }
+  if (!anchor || anchor === el) return;
+  const already = where === 'afterend' ? anchor.nextElementSibling === el : anchor.previousElementSibling === el;
+  if (!already) anchor.insertAdjacentElement(where, el);
+}
+
+function scCardHtml() {
+  const collapsed = scIsCollapsed();
+  return `<div class="dash-section dash-showcase-card" id="sc-card">
+    <div class="dash-section-title">
+      <span id="sc-head-title">🎬 新着納品</span>
+      <span class="sc-sub" id="sc-head-sub"></span>
+      <span class="dash-tweets-actions">
+        <button class="btn-sm" onclick="scOpenSlideshow()" title="直近の納品作品を 5 秒ごとに流して見る">▶ スライドショー</button>
+        <button class="btn-sm sc-collapse" id="sc-collapse-btn" onclick="scToggleCollapse()" title="${collapsed ? '開く' : '畳む'}" aria-expanded="${!collapsed}">${collapsed ? '∧' : '∨'}</button>
+      </span>
+    </div>
+    <div id="sc-body"${collapsed ? ' hidden' : ''}></div>
+  </div>`;
+}
+
+function scUpdateHeader() {
+  const title = document.getElementById('sc-head-title');
+  const sub = document.getElementById('sc-head-sub');
+  if (!title || !sub) return;
+  const unseen = scUnseenCount();
+  const collapsed = scIsCollapsed();
+  if (collapsed && unseen > 0) {
+    // 畳んでいても新着が増えたことは分かるように（中身は開かない）
+    title.innerHTML = `<span class="sc-new">🎬 新着納品 ${unseen}本</span>`;
+    sub.textContent = '';
+  } else {
+    title.textContent = '🎬 新着納品';
+    sub.innerHTML = `この${SC_DAYS}日で ${scFlat.length}本${unseen > 0 ? `（<b>未見 ${unseen}本</b>）` : ''}`;
+  }
+}
+
+function scToggleCollapse() {
+  const next = !scIsCollapsed();
+  scSetCollapsed(next);
+  const body = document.getElementById('sc-body');
+  const btn = document.getElementById('sc-collapse-btn');
+  if (body) body.hidden = next;
+  if (btn) { btn.textContent = next ? '∧' : '∨'; btn.title = next ? '開く' : '畳む'; btn.setAttribute('aria-expanded', String(!next)); }
+  if (!next) scRenderCardBody(); else scUpdateHeader();
+}
+
+function scRenderCardBody() {
+  const body = document.getElementById('sc-body');
+  if (!body) return;
+  scUpdateHeader();
+  if (scIsCollapsed()) return;
+  const item = scItems[scPos];
+  if (!item) { body.innerHTML = ''; return; }
+
+  // 右のサムネ列（全スライド。表示中は枠つき、未見は赤点、まとめは「×N」）
+  const strip = scItems.map((it, i) => {
+    const cs = scItemCreatives(it);
+    const head = cs[0];
+    const unseen = cs.some(c => !scIsSeen(c.creative_id));
+    return `<div class="sc-thumb${i === scPos ? ' on' : ''}${unseen ? '' : ' seen'}" onclick="scGo(${i})" title="${scItemTitle(it)}">
+      ${head?.file_id ? `<img src="${scThumbUrl(head)}" alt="" loading="lazy" decoding="async" onerror="pfOnThumbError(this, '${esc(head.file_id)}')">` : ''}
+      <span class="sc-thumb-n">${i + 1}</span>
+      ${unseen ? '<span class="sc-thumb-dot" title="未見"></span>' : ''}
+      ${it.type === 'bundle' ? `<span class="sc-thumb-bundle">×${it.count}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  let stage, meta;
+  if (item.type === 'bundle') {
+    stage = `<div class="sc-stage" onclick="scOpenSlideshow(${scPos})" title="スライドショーで見る">${scBundleGridHtml(item, scPos)}</div>`;
+    meta = `
+      <div class="sc-name">${scItemTitle(item)}<small>${esc(scFmtDate(item.creatives[0]))} 一括納品 ×${item.count}本</small></div>
+      ${scCreatorsHtml(item.creators, { short: true })}
+      <div class="sc-actions">
+        ${scBulkBtnHtml(item, 'sccard')}
+        <button type="button" class="sc-link" onclick="scOpenSlideshow(${scPos})">▶ 1本ずつ見る</button>
+        ${scNavHtml()}
+      </div>`;
+    scMarkSeen(item.creatives.map(c => c.creative_id));
+  } else {
+    const c = item.creative;
+    const idx = scFlatIdx(c.creative_id);
+    const isVideo = pfIsVideo(c);
+    stage = `<div class="sc-stage pf-media" onclick="scOpenSlideshow(${scPos})" title="スライドショーで見る">
+      ${c.file_id ? `<img src="${scThumbUrl(c)}" alt="${esc(c.file_name)}" decoding="async" onerror="pfOnThumbError(this, '${esc(c.file_id)}')">`
+                  : `<div class="pf-ph"><span>${isVideo ? '🎬' : '🎨'}</span><span>ファイル未登録</span></div>`}
+      <span class="sc-stage-badge">${isVideo ? '🎬 動画' : '🎨 静止画'}</span>
+      ${isVideo ? '<span class="sc-stage-play">ホバーでプレビュー</span>' : ''}
+    </div>`;
+    meta = `
+      <div class="sc-name">${scItemTitle(item)}<small>${esc(scFmtDate(c))} 納品</small></div>
+      ${scCreatorsHtml(c.creators)}
+      <div class="sc-actions">
+        ${pfReactRowHtml(c, idx, 'sccard')}
+        <button type="button" class="sc-link" onclick="pfOpenByCreativeId('${esc(c.creative_id)}')" title="作品ページでこの作品を開く（ひとことも書けます）">🏆 作品ページで見る</button>
+        ${scNavHtml()}
+      </div>`;
+    scMarkSeen(c.creative_id);
+  }
+  // 動画はホバーで無音プレビュー（pfHoverIn は子孫の .pf-media に video を差し込むので包みに付ける）
+  const hoverAttrs = item.type === 'single'
+    ? `onmouseenter="pfHoverIn(this, ${scFlatIdx(item.creative.creative_id)}, 'sc')" onmouseleave="pfHoverOut(this)"` : '';
+  body.innerHTML = `<div class="sc-layout">
+      <div class="sc-main" ${hoverAttrs}>${stage}</div>
+      <div class="sc-strip">${strip}</div>
+    </div>
+    <div class="sc-meta">${meta}</div>`;
+  const on = body.querySelector('.sc-thumb.on');
+  if (on && typeof on.scrollIntoView === 'function') { try { on.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {} }
+}
+
+function scNavHtml() {
+  return `<span class="sc-nav">
+    <button type="button" onclick="scStep(-1)" ${scPos <= 0 ? 'disabled' : ''}>← 前</button>
+    <span>${scPos + 1}/${scItems.length}</span>
+    <button type="button" onclick="scStep(1)" ${scPos >= scItems.length - 1 ? 'disabled' : ''}>次 →</button>
+  </span>`;
+}
+function scGo(i) {
+  if (i < 0 || i >= scItems.length) return;
+  scPos = i;
+  scRenderCardBody();
+}
+function scStep(delta) { scGo(scPos + delta); }
+
+// まとめスライドのサムネ格子（ホームカード／スライドショー共用）。タップで 1 本ずつ見る
+function scBundleGridHtml(item, itemPos) {
+  const cs = item.creatives || [];
+  const shown = cs.slice(0, SC_GRID_MAX);
+  const rest = cs.length - shown.length;
+  const cells = shown.map((c, i) => `<div class="sc-cell" onclick="event.stopPropagation();scOpenSlideshow(${itemPos}, ${i})" title="${esc(c.file_name)}">
+      ${c.file_id ? `<img src="${scThumbUrl(c)}" alt="" loading="lazy" decoding="async" onerror="pfOnThumbError(this, '${esc(c.file_id)}')">` : ''}
+    </div>`).join('');
+  const more = rest > 0 ? `<div class="sc-cell more" onclick="event.stopPropagation();scOpenSlideshow(${itemPos}, ${SC_GRID_MAX})">＋${rest}本</div>` : '';
+  return `<div class="sc-grid">${cells}${more}</div>`;
+}
+
+// 「👏 まとめてナイス！（N本）」— 全本に主リアクション（clap）を付ける。全部に付いていれば押した状態で表示
+function scBulkBtnHtml(item, ctx) {
+  const cs = item.creatives || [];
+  const allOn = cs.length > 0 && cs.every(c => (c.my_reactions || []).includes(PF_PRIMARY_TYPE));
+  const primary = PF_REACTIONS.find(r => r.type === PF_PRIMARY_TYPE) || PF_REACTIONS[0];
+  return `<button type="button" class="sc-bulk${allOn ? ' on' : ''}" data-bundle="${esc(item.key)}" ${allOn ? 'disabled' : ''}
+      title="${allOn ? 'この一式にはもう送りました' : `この一式 ${cs.length}本すべてに「${esc(primary.label)}」を送る`}"
+      onclick="event.stopPropagation();scBulkNice('${esc(item.key)}', '${ctx}')">
+      <span class="pf-rx-emoji">${primary.emoji}</span>${allOn ? `まとめてナイス！ 送りました（${cs.length}本）` : `まとめてナイス！（${cs.length}本）`}
+    </button>`;
+}
+async function scBulkNice(bundleKey, ctx) {
+  const item = scItems.find(it => it.key === bundleKey);
+  if (!item || _scBulkBusy) return;
+  const cs = item.creatives || [];
+  const ids = cs.map(c => c.creative_id).filter(Boolean);
+  if (!ids.length) return;
+  _scBulkBusy = true;
+  document.querySelectorAll(`.sc-bulk[data-bundle="${CSS.escape(bundleKey)}"]`).forEach(b => { b.disabled = true; b.classList.add('pf-pop'); });
+  if (ctx === 'sc') scResetTimer();
+  try {
+    const res = await apiFetch(`${API}/portfolio/reactions/bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ creative_ids: ids, reaction_type: PF_PRIMARY_TYPE }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'まとめてナイス！に失敗しました');
+    for (const cid of ids) {
+      const sc = json.social?.[cid];
+      if (sc) pfApplySocial(cid, { reactions: sc.counts, my_reactions: sc.my_reactions, reaction_total: sc.reaction_total });
+      pfRefreshReactDom(cid);
+    }
+    showToast(json.added > 0 ? `👏 ${cs.length}本にまとめてナイス！を送りました` : 'この一式にはもう送っています', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    _scBulkBusy = false;
+    // ボタンの状態（押した／未）を描き直す
+    if (ctx === 'sc') scRenderSlide(); else scRenderCardBody();
+  }
+}
+
+// ---- スライドショー（全画面オーバーレイ）----
+// 5 秒で次へ。ホバー中・動画再生中・リアクション操作直後は止める。← → / スワイプ / ⏭ / ✕。
+const scSlide = { open: false, pos: 0, child: -1, auto: true, timer: null, tickTimer: null, startedAt: 0, hover: false, playing: false, touchX: null };
+
+function scOpenSlideshow(pos, childIdx) {
+  if (!scItems.length) return;
+  const box = document.getElementById('showcase-overlay');
+  if (!box) return;
+  scSlide.open = true;
+  scSlide.pos = Number.isInteger(pos) ? Math.max(0, Math.min(pos, scItems.length - 1)) : scPos;
+  scSlide.child = Number.isInteger(childIdx) ? childIdx : -1;
+  scSlide.auto = true;
+  scSlide.hover = false; scSlide.playing = false;
+  box.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  document.addEventListener('keydown', scSlideKey);
+  const shell = document.getElementById('sc-shell');
+  if (shell && !shell.dataset.bound) {
+    shell.dataset.bound = '1';
+    // ホバーで止めるのは下のパネル（リアクション等の操作面）だけ。画面全体にすると PC では常に止まってしまう
+    const panelEl = document.getElementById('sc-panel');
+    panelEl?.addEventListener('mouseenter', () => { scSlide.hover = true; scRefreshAutoState(); });
+    panelEl?.addEventListener('mouseleave', () => { scSlide.hover = false; scRefreshAutoState(); });
+    shell.addEventListener('touchstart', (e) => { scSlide.touchX = e.touches?.[0]?.clientX ?? null; }, { passive: true });
+    shell.addEventListener('touchend', (e) => {
+      const x0 = scSlide.touchX; scSlide.touchX = null;
+      const x1 = e.changedTouches?.[0]?.clientX;
+      if (x0 == null || x1 == null) return;
+      const dx = x1 - x0;
+      if (Math.abs(dx) > 40) scSlideStep(dx < 0 ? 1 : -1);
+    }, { passive: true });
+    // パネル内の操作（リアクション等）は自動送りを仕切り直す（押した直後に流れないように）
+    document.getElementById('sc-panel')?.addEventListener('click', () => scResetTimer());
+  }
+  scRenderSlide();
+}
+function scCloseSlideshow() {
+  const box = document.getElementById('showcase-overlay');
+  if (!box) return;
+  scStopTimer();
+  const stage = document.getElementById('sc-stage');
+  if (stage) stage.innerHTML = '';   // 再生を止める
+  box.classList.remove('open');
+  document.body.style.overflow = '';
+  document.removeEventListener('keydown', scSlideKey);
+  scSlide.open = false;
+  // ホームカードの位置を今見ていたスライドに合わせる
+  if (scItems.length) { scPos = Math.min(scSlide.pos, scItems.length - 1); if (document.getElementById('sc-body')) scRenderCardBody(); }
+}
+function scSlideKey(ev) {
+  if (document.getElementById('portfolio-lightbox')?.classList.contains('open')) return;   // 上に作品ライトボックスが開いていればそちらに任せる
+  if (ev.key === 'Escape') { scCloseSlideshow(); return; }
+  if (ev.key === 'ArrowLeft')  { ev.preventDefault(); scSlideStep(-1); }
+  if (ev.key === 'ArrowRight') { ev.preventDefault(); scSlideStep(1); }
+  const tag = document.activeElement?.tagName;
+  if (ev.key === ' ' && !['BUTTON', 'INPUT', 'TEXTAREA', 'A', 'SELECT', 'VIDEO'].includes(tag)) { ev.preventDefault(); scToggleAuto(); }
+}
+function scToggleAuto() {
+  scSlide.auto = !scSlide.auto;
+  scRefreshAutoState();
+}
+function scRefreshAutoState() {
+  const btn = document.getElementById('sc-autobtn');
+  const bar = document.getElementById('sc-progress');
+  const paused = !scSlide.auto || scSlide.hover || scSlide.playing || document.visibilityState === 'hidden';
+  if (btn) { btn.textContent = scSlide.auto ? '⏸ 自動' : '▶ 自動'; btn.title = scSlide.auto ? '自動送りを止める（Space）' : '5秒ごとに次へ（Space）'; }
+  if (bar) bar.classList.toggle('paused', paused);
+  if (paused) scStopTimer(false); else if (!scSlide.timer) scStartTimer();
+}
+function scStartTimer() {
+  scStopTimer(false);
+  scSlide.startedAt = Date.now();
+  scSlide.timer = setTimeout(() => { scSlide.timer = null; scSlideAdvanceAuto(); }, SC_AUTO_MS);
+  const fill = document.querySelector('#sc-progress > i');
+  scSlide.tickTimer = setInterval(() => {
+    const f = document.querySelector('#sc-progress > i');
+    if (!f) return;
+    f.style.width = `${Math.min(100, ((Date.now() - scSlide.startedAt) / SC_AUTO_MS) * 100)}%`;
+  }, 200);
+  if (fill) fill.style.width = '0%';
+}
+function scStopTimer(resetBar = true) {
+  if (scSlide.timer) clearTimeout(scSlide.timer);
+  if (scSlide.tickTimer) clearInterval(scSlide.tickTimer);
+  scSlide.timer = null; scSlide.tickTimer = null;
+  if (resetBar) { const f = document.querySelector('#sc-progress > i'); if (f) f.style.width = '0%'; }
+}
+function scResetTimer() {
+  if (!scSlide.open) return;
+  scStopTimer();
+  scRefreshAutoState();
+}
+document.addEventListener('visibilitychange', () => { if (scSlide.open) scRefreshAutoState(); });
+
+// 自動送り: まとめの中を 1 本ずつ見ているときはその中で進み、最後まで来たら次のスライドへ。末尾で止まる
+function scSlideAdvanceAuto() {
+  const item = scItems[scSlide.pos];
+  if (item?.type === 'bundle' && scSlide.child >= 0 && scSlide.child < item.creatives.length - 1) {
+    scSlide.child += 1; scRenderSlide(); return;
+  }
+  if (scSlide.pos >= scItems.length - 1) { scSlide.auto = false; scRefreshAutoState(); return; }
+  scSlide.pos += 1; scSlide.child = -1; scRenderSlide();
+}
+// 手動: まとめ内で 1 本ずつ見ている最中は本単位で、まとめ表示中はスライド単位で動く
+function scSlideStep(delta) {
+  const item = scItems[scSlide.pos];
+  if (item?.type === 'bundle' && scSlide.child >= 0) {
+    const next = scSlide.child + delta;
+    if (next >= 0 && next < item.creatives.length) { scSlide.child = next; scRenderSlide(); return; }
+    if (next < 0) { scSlide.child = -1; scRenderSlide(); return; }   // 先頭より前 → まとめに戻る
+  }
+  const pos = scSlide.pos + delta;
+  if (pos < 0 || pos >= scItems.length) return;
+  scSlide.pos = pos; scSlide.child = -1; scRenderSlide();
+}
+function scSlideGo(pos) { if (pos >= 0 && pos < scItems.length) { scSlide.pos = pos; scSlide.child = -1; scRenderSlide(); } }
+function scSlideSkip() { scSlideStep(1); }
+function scSlideBackToBundle() { scSlide.child = -1; scRenderSlide(); }
+function scSlideOpenChild(i) { scSlide.child = i; scRenderSlide(); }
+
+async function scRenderSlide() {
+  if (!scSlide.open) return;
+  const stage = document.getElementById('sc-stage');
+  const panel = document.getElementById('sc-panel');
+  const counter = document.getElementById('sc-counter');
+  const item = scItems[scSlide.pos];
+  if (!stage || !panel || !item) return;
+  scSlide.playing = false;
+  scResetTimer();
+
+  const dots = scItems.map((it, i) =>
+    `<button type="button" class="sc-dot${i === scSlide.pos ? ' on' : ''}${it.type === 'bundle' ? ' bundle' : ''}" onclick="scSlideGo(${i})" title="${scItemTitle(it)}" aria-label="${i + 1}枚目"></button>`).join('');
+  const bottom = (skipLabel) => `<div class="sc-bottom">
+      <button type="button" class="sc-arrow" onclick="scSlideStep(-1)" ${scSlide.pos <= 0 && scSlide.child < 0 ? 'disabled' : ''} title="前へ（←）">←</button>
+      <span class="sc-dots">${dots}</span>
+      <button type="button" class="sc-arrow" onclick="scSlideStep(1)" ${scSlide.pos >= scItems.length - 1 && !(item.type === 'bundle' && scSlide.child >= 0 && scSlide.child < item.creatives.length - 1) ? 'disabled' : ''} title="次へ（→）">→</button>
+      <button type="button" class="sc-skip" onclick="scSlideSkip()">${skipLabel} ⏭</button>
+    </div>`;
+
+  if (item.type === 'bundle' && scSlide.child < 0) {
+    if (counter) counter.textContent = `${scSlide.pos + 1} / ${scItems.length}`;
+    stage.innerHTML = scBundleGridHtml(item, scSlide.pos);
+    panel.innerHTML = `
+      <div class="sc-name">${scItemTitle(item)}<small>${esc(scFmtDate(item.creatives[0]))} 一括納品 ×${item.count}本</small></div>
+      <div style="font-size:12px;color:var(--text-muted)">サムネをタップすると 1 本ずつ見られます</div>
+      ${scCreatorsHtml(item.creators, { short: true })}
+      <div class="sc-actions">${scBulkBtnHtml(item, 'sc')}</div>
+      ${bottom('まとめてスキップ')}`;
+    scMarkSeen(item.creatives.map(c => c.creative_id));
+    return;
+  }
+
+  const c = item.type === 'bundle' ? item.creatives[Math.min(scSlide.child, item.creatives.length - 1)] : item.creative;
+  const idx = scFlatIdx(c.creative_id);
+  if (counter) counter.textContent = item.type === 'bundle'
+    ? `${scSlide.pos + 1} / ${scItems.length}（${scSlide.child + 1} / ${item.creatives.length}本）`
+    : `${scSlide.pos + 1} / ${scItems.length}`;
+  const back = item.type === 'bundle' ? `<button type="button" class="sc-back" onclick="scSlideBackToBundle()">← まとめに戻る</button>` : '';
+  panel.innerHTML = `
+    <div class="sc-name">${scItemTitle(item.type === 'bundle' ? { type: 'single', creative: c } : item)}<small>${esc(scFmtDate(c))} 納品</small>${back ? ' ' + back : ''}</div>
+    ${scCreatorsHtml(c.creators)}
+    <div class="sc-actions">
+      ${pfReactRowHtml(c, idx, 'sc')}
+      <button type="button" class="sc-cm" onclick="scOpenComments('${esc(c.creative_id)}')" title="作品ページでこの作品を開き、ひとことを書く">💬 ひとこと${c.comment_count ? ` ${c.comment_count}` : ''}</button>
+    </div>
+    ${bottom('この作品をスキップ')}`;
+  scMarkSeen(c.creative_id);
+
+  // ステージ: 動画は controls つきで自動再生（無音）。再生中は自動送りを止め、終わったら次へ
+  stage.innerHTML = '<div style="color:rgba(255,255,255,.55);font-size:13px">読み込み中…</div>';
+  if (!c.file_id) { stage.innerHTML = '<div style="color:rgba(255,255,255,.55);font-size:13px">この作品にはファイルが登録されていません</div>'; return; }
+  const token = `${scSlide.pos}:${scSlide.child}`;
+  if (pfIsVideo(c)) {
+    const src = await pfResolvePlaybackUrl(c);
+    if (!scSlide.open || `${scSlide.pos}:${scSlide.child}` !== token) return;   // 送っている間に切り替わった
+    stage.innerHTML = `<video src="${esc(src)}" controls autoplay muted playsinline preload="metadata"
+      onplay="scSlide.playing=true;scRefreshAutoState()" onpause="scSlide.playing=false;scRefreshAutoState()"
+      onended="scSlide.playing=false;if(scSlide.auto)scSlideAdvanceAuto();else scRefreshAutoState()"
+      onerror="this.onerror=null;this.src='/api/haruka/files/${esc(c.drive_file_id)}/stream'"></video>`;
+  } else {
+    stage.innerHTML = `<img src="/api/haruka/files/${esc(c.drive_file_id)}/stream" alt="${esc(c.file_name)}"
+      onerror="this.onerror=null;this.src='${scThumbUrl(c)}'">`;
+  }
+}
+
+// 💬 ひとこと: 既存の作品ライトボックスを開く（スライドショーは閉じる。ライトボックスは z-index 1200 で上に来るが、
+// 戻ったときに自動送りが再開しないよう閉じておく）
+function scOpenComments(creativeId) {
+  scCloseSlideshow();
+  pfOpenByCreativeId(creativeId);
 }
 
 // ==================== 📦 一括納品完了（月次消込） ====================
@@ -30270,6 +30917,8 @@ function loadDashboard() {
   renderMyFocusCard();
   // 💭 みんなのつぶやき（全ロール共通・ADR 041）: 自前 fetch（limit=3）。マイフォーカスの直下。
   renderDashTweetsCard();
+  // 🎬 新着納品ショーケース（全ロール共通・ADR 042 追補）: 自前 fetch。置き場は実効ロールで移す（新着ゼロなら出さない）。
+  renderShowcaseCard();
   // 全ロール共通: 全体連絡セクション
   loadAnnouncements();
   // 全ロール共通: 誕生日セクション
