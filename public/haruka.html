@@ -9525,7 +9525,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
             </select>
           </div>
         </div>
-        <div style="font-size:11.5px;color:var(--text-muted)">納品前まで変更できます。変更すると報酬・本数カウントは<strong>変更後の担当者に全帰属</strong>します（按分なし）。変更は履歴に残ります。</div>
+        <div style="font-size:11.5px;color:var(--text-muted)">納品前まで変更できます。担当者はそのままでチームだけ変えることもできます。担当者を変更すると報酬・本数カウントは<strong>変更後の担当者に全帰属</strong>します（按分なし）。変更は履歴に残ります。</div>
       </div>
 
       <div class="form-group" style="margin-bottom:0">
@@ -53066,6 +53066,7 @@ async function refreshCreativeEditHistory(creativeId) {
     draft_deadline: '初稿締切日',
     final_deadline: '最終納品日',
     assignee_id: '担当者',
+    team_id: 'チーム',
   };
 
   // edited_at + edited_by + reason ごとにグルーピング（同一保存の複数列変更を1ブロックに）
@@ -53245,8 +53246,12 @@ async function openCreativePostEdit() {
   const curAssign = (c.creative_assignments || []).find(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
   const curAssignUserId = curAssign?.users?.id || '';
   const curMember = curAssignUserId ? (allMembers || []).find(m => m.id === curAssignUserId) : null;
-  peTeamSel.value = curMember?.team_id || '';
+  // チームは creatives.team_id を最優先（一覧・チーム状況の表示と同じ判定）。未設定なら担当者の主所属で補完
+  peTeamSel.value = c.team_id || curMember?.team_id || '';
   peUpdateAssigneeSelect(curAssignUserId);
+  // チーム初期値を保持（変更検知用。バグ報告 #2c549a97: 担当者はそのままでチームだけ変えた保存が
+  // 「実際の変更がありません」で弾かれていた → 変わったときだけ team_id を送る）
+  document.getElementById('modal-creative-postedit').dataset.originalTeamId = peTeamSel.value || '';
   peTeamSel.disabled = !canChangeAssignee;
   peAsnSel.disabled = !canChangeAssignee;
   if (!canChangeAssignee && assigneeBlockReason) {
@@ -53414,6 +53419,9 @@ async function saveCreativeRateOverrides() {
 function peUpdateAssigneeSelect(selectedId) {
   const teamId = document.getElementById('pe-team-id').value;
   const sel = document.getElementById('pe-assignee-id');
+  // チーム切替（onchange）で呼ばれたときは現在の担当者選択を維持する
+  // （空になると「担当者が外れた」ように見えてしまう。担当者はそのままでチームだけ変える操作を素直にできるように）
+  if (!selectedId && sel.value) selectedId = sel.value;
   // 兼務メンバー（主所属 team_id が別チーム）も候補に出すため team_members を参照する（cdUpdateAssigneeSelect と同じ判定）
   const team = teamId ? (allTeams || []).find(t => t.id === teamId) : null;
   const teamMemberIds = new Set((team?.team_members || []).map(tm => tm.user_id));
@@ -53511,6 +53519,14 @@ async function saveCreativePostEdit() {
   const newAssigneeId = peAsnSelEl?.value || '';
   if (peAsnSelEl && !peAsnSelEl.disabled && newAssigneeId && newAssigneeId !== originalAssigneeId) {
     body.assignee_id = newAssigneeId;
+  }
+  // チーム（バグ報告 #2c549a97）: 担当者はそのままでチームだけ変えた場合も保存できるよう、
+  // 初期値から変わったときだけ team_id を送る（空=未設定に戻す）
+  const peTeamSelEl = document.getElementById('pe-team-id');
+  const originalTeamId = document.getElementById('modal-creative-postedit').dataset.originalTeamId || '';
+  const newTeamId = peTeamSelEl?.value || '';
+  if (peTeamSelEl && !peTeamSelEl.disabled && newTeamId !== originalTeamId) {
+    body.team_id = newTeamId || null;
   }
 
   const res = await apiFetch(`${API}/creatives/${id}/edit-mode`, {

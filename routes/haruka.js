@@ -11999,14 +11999,20 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
   const newAssigneeId = assigneeProvided
     ? ((typeof req.body.assignee_id === 'string' ? req.body.assignee_id.trim() : req.body.assignee_id) || null)
     : null;
-  if (Object.keys(incoming).length === 0 && !assigneeProvided) {
+  // チーム（creatives.team_id）: 担当者はそのままでチームだけ付け替えるケース（兼務メンバー・チーム名の
+  // 登録ミス等。バグ報告 #2c549a97）。フロントはチーム選択が初期値から変わったときだけ送る。null は「未設定に戻す」。
+  const teamProvided = ('team_id' in (req.body || {}));
+  const newTeamId = teamProvided
+    ? ((typeof req.body.team_id === 'string' ? req.body.team_id.trim() : req.body.team_id) || null)
+    : null;
+  if (Object.keys(incoming).length === 0 && !assigneeProvided && !teamProvided) {
     return res.status(400).json({ error: '変更項目がありません' });
   }
 
   // 旧クリエイティブをフルロードして差分計算 + 表示用スナップショット作成
   const { data: before, error: beforeErr } = await supabase
     .from('creatives')
-    .select('id, project_id, creative_type, file_name, product_id, appeal_type_id, memo, note, draft_deadline, final_deadline, projects:project_id(id, name)')
+    .select('id, project_id, creative_type, file_name, product_id, appeal_type_id, memo, note, draft_deadline, final_deadline, team_id, projects:project_id(id, name)')
     .eq('id', creativeId)
     .maybeSingle();
   if (beforeErr) return res.status(500).json({ error: beforeErr.message });
@@ -12061,8 +12067,35 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
       if (!newUser) return res.status(400).json({ error: '指定された担当者が見つかりません' });
       assigneeChange = { oldRows: curAsn || [], oldUser: currentRow?.users || null, newUser };
       // チーム表示は creatives.team_id が最優先のため、新担当者のチームへ追従させる
-      if (newUser.team_id) incoming.team_id = newUser.team_id;
+      // （フロントがチームを明示指定している場合はそちらを優先 — 兼務メンバーを主所属以外のチームで担当させるケース）
+      if (!teamProvided && newUser.team_id) incoming.team_id = newUser.team_id;
     }
+  }
+
+  // チーム変更（バグ報告 #2c549a97）: 担当者を変えずにチームだけ付け替える。
+  // 集計（チーム状況・チーム別本数）の帰属が変わるため、担当者変更と同じガード（納品前・請求確定前まで）を掛ける。
+  const teamLabel = (t) => t ? `${t.team_code || ''}チーム / ${t.team_name || ''}`.replace(/^チーム \/ /, '') : null;
+  let teamChange = null; // { oldTeam, newTeam }
+  if (teamProvided && newTeamId !== (before.team_id || null)) {
+    if (!eligibility.canChangeAssignee) {
+      const reasonMsg = eligibility.assigneeChangeBlockedReason
+        ? eligibility.assigneeChangeBlockedReason.replace(/担当者/g, 'チーム')
+        : 'チームを変更できません';
+      return res.status(400).json({ error: reasonMsg });
+    }
+    let newTeam = null;
+    if (newTeamId) {
+      const { data: t } = await supabase.from('teams').select('id, team_code, team_name').eq('id', newTeamId).maybeSingle();
+      if (!t) return res.status(400).json({ error: '指定されたチームが見つかりません' });
+      newTeam = t;
+    }
+    let oldTeam = null;
+    if (before.team_id) {
+      const { data: t } = await supabase.from('teams').select('id, team_code, team_name').eq('id', before.team_id).maybeSingle();
+      oldTeam = t || null;
+    }
+    incoming.team_id = newTeamId; // 明示指定は担当者追従より優先
+    teamChange = { oldTeam, newTeam };
   }
 
   // 表示用スナップショットを作るために旧 product / appeal の名称を取得
@@ -12137,6 +12170,17 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
       field_name: 'assignee_id',
       old_value: assigneeChange.oldUser ? (assigneeChange.oldUser.full_name || assigneeChange.oldUser.nickname || null) : null,
       new_value: assigneeChange.newUser.full_name || assigneeChange.newUser.nickname || null,
+      reason: reason,
+    });
+  }
+  if (teamChange) {
+    logRows.push({
+      creative_id: creativeId,
+      edited_by: req.user?.id || null,
+      edited_by_name: editorName,
+      field_name: 'team_id',
+      old_value: teamLabel(teamChange.oldTeam) || (before.team_id ? String(before.team_id) : null),
+      new_value: teamLabel(teamChange.newTeam) || (newTeamId ? String(newTeamId) : null),
       reason: reason,
     });
   }
