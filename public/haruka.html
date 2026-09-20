@@ -28067,7 +28067,7 @@ function renderOnboardingDetail() {
 
   document.getElementById('ob-d-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-      ${obAvatarHtml(r, 36)}
+      <span id="ob-d-avatar" style="display:inline-flex;border-radius:50%">${obAvatarHtml(r, 36)}</span>
       <span style="font-size:11px;font-weight:700;color:${st.color};border:1px solid ${st.color}55;border-radius:10px;padding:2px 10px">${esc(st.label)}</span>
       <div style="flex:1;min-width:140px;display:flex;align-items:center;gap:8px">
         <div style="flex:1;height:8px;border-radius:4px;background:var(--border);overflow:hidden">
@@ -28084,14 +28084,44 @@ function renderOnboardingDetail() {
     <div style="border:1px solid var(--border);border-radius:8px;padding:4px 12px 10px;margin-bottom:12px">${checklist}</div>
     ${memoBlock}`;
 
-  // 紐付けセレクトにメンバー候補を流し込む（未取得なら取得してから再構築）
+  // 紐付けセレクトにメンバー候補 / アバターのメンバー編集リンクを有効化。
+  // どちらも allMembers（未取得なら /members を1回だけ取得）に依存するので、
+  // 手元データで一度描いてから取得完了後に描き直す。
   const userSel = document.getElementById('ob-d-user');
-  if (userSel) {
-    obFillUserSelect(userSel, r.user_id || '', '（紐付けなし）');
+  if (userSel) obFillUserSelect(userSel, r.user_id || '', '（紐付けなし）');
+  obApplyAvatarMemberLink();
+  if (userSel || r.user_id) {
     obEnsureMembers()
-      .then(() => obFillUserSelect(userSel, r.user_id || '', '（紐付けなし）'))
+      .then(() => {
+        if (userSel) obFillUserSelect(userSel, r.user_id || '', '（紐付けなし）');
+        obApplyAvatarMemberLink();
+      })
       .catch(e => console.warn('[onboarding] メンバー候補の取得に失敗', e));
   }
+}
+
+// 👤 アバターをクリック → そのメンバーの編集モーダルへ。
+// HFSメンバー紐付け済み かつ canEditMember()（= ADR 015 の実効ロール判定）を満たすときだけ
+// クリック可能にする。未紐付け・権限なしはただの表示のまま（見た目も変えない）。
+function obApplyAvatarMemberLink() {
+  const wrap = document.getElementById('ob-d-avatar');
+  const r = _obDetail;
+  if (!wrap || !r || !r.user_id) return;
+  const m = (allMembers || []).find(x => x.id === r.user_id);
+  if (!m || !canEditMember(m)) return; // allMembers 未取得のうちは無効。取得後に再度呼ばれる
+  wrap.classList.add('avatar-clickable'); // 既存の共通ホバー演出（拡大＋影）を流用
+  wrap.title = `${obDisplayName(r)} のメンバー編集を開く`;
+  wrap.onclick = () => obOpenMemberEdit();
+}
+
+function obOpenMemberEdit() {
+  const r = _obDetail;
+  const m = (allMembers || []).find(x => x.id === (r && r.user_id));
+  if (!m) { showToast('メンバー情報が見つかりませんでした', 'warn'); return; }
+  if (!canEditMember(m)) { showToast('このメンバーを編集する権限がありません', 'warn'); return; }
+  // 詳細モーダル（z-index:300）が上に残ると編集モーダルを操作できないので、閉じてから開く
+  closeModal('modal-onboarding-detail');
+  openEditMember(m);
 }
 
 // 🔗 HFSメンバー紐付けの保存（PATCH user_id。空選択で解除）
