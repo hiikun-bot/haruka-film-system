@@ -3704,8 +3704,18 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <div id="br-comments-list" style="background:#fff;border:1px solid var(--border);border-radius:8px;max-height:240px;overflow-y:auto;padding:6px">
             <div style="padding:12px;text-align:center;color:var(--text-muted);font-size:12px">読み込み中…</div>
           </div>
-          <div style="display:flex;gap:6px;margin-top:6px">
-            <textarea id="br-comment-input" class="form-input" rows="2" maxlength="2000" placeholder="コメントを入力（全員が見られます）" style="resize:vertical;font-size:12px;flex:1"></textarea>
+          <!-- 入力欄。Ctrl+V / D&D / 📎 で画像を添付できる（送信時にコメントへ紐づく） -->
+          <div id="br-comment-compose" style="display:flex;gap:6px;margin-top:6px;align-items:flex-start">
+            <div style="flex:1;min-width:0">
+              <textarea id="br-comment-input" class="form-input" rows="2" maxlength="2000" placeholder="コメントを入力（全員が見られます）／画像は Ctrl+V で貼り付け" style="resize:vertical;font-size:12px;width:100%"></textarea>
+              <!-- 送信前の添付プレビュー（× で取り消し） -->
+              <div id="br-comment-pending-strip" class="cd-cimg-strip"></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+                <button type="button" class="btn" style="font-size:11px;padding:4px 10px" onclick="document.getElementById('br-comment-image-input').click()">📎 画像を添付</button>
+                <span style="font-size:11px;color:var(--text-muted)">Ctrl+V で貼り付け / ドラッグ&amp;ドロップも可</span>
+                <input type="file" id="br-comment-image-input" accept="image/*" multiple style="display:none" onchange="_brOnCommentImageInput(this)">
+              </div>
+            </div>
             <button type="button" class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="postBugReportComment()">送信</button>
           </div>
         </div>
@@ -55402,6 +55412,9 @@ async function openBugReportModal(options = {}) {
   document.getElementById('br-triage-comment').value = '';
   document.getElementById('br-triage-current').textContent = '';
   document.getElementById('br-comment-input').value = '';
+  // 送信前の添付画像も持ち越さない（別の報告を開いたときに前の画像が残るのを防ぐ）
+  _brCommentImagesByComment = {};
+  _brClearPendingCommentImages();
   // 類似検出パネル: 新規モード時にだけ動作。値はリセット
   _brSelectedDuplicateOfId = null;
   document.getElementById('br-similar-wrap').style.display = 'none';
@@ -55767,17 +55780,58 @@ function _brSetupDropzone() {
     const modal = document.getElementById('modal-bug-report');
     if (!modal || !modal.classList.contains('open')) return;
     const items = (e.clipboardData && e.clipboardData.items) || [];
-    let imageFile = null;
+    const imageFiles = [];
     for (const item of items) {
       if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
-        imageFile = item.getAsFile();
-        if (imageFile) break;
+        const f = item.getAsFile();
+        if (f) imageFiles.push(f);
       }
     }
-    if (!imageFile) return;
+    if (!imageFiles.length) return;
     e.preventDefault();
-    await bugReportHandleFile(imageFile);
+    // 💬 コメント入力エリアにフォーカスがあるときは、報告本体のスクショではなく
+    // 「そのコメントへの添付」として扱う（理由を書きながら貼れるようにするため）
+    if (_brIsCommentComposeFocused()) {
+      for (const f of imageFiles) await _brStageCommentImage(f);
+      return;
+    }
+    await bugReportHandleFile(imageFiles[0]);
   });
+
+  // 💬 コメント入力エリアへのドラッグ&ドロップ
+  const compose = document.getElementById('br-comment-compose');
+  if (compose) {
+    const setHighlight = (on) => {
+      compose.style.outline = on ? '2px dashed var(--em, #3B82F6)' : '';
+      compose.style.outlineOffset = on ? '4px' : '';
+    };
+    compose.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      setHighlight(true);
+    });
+    compose.addEventListener('dragleave', (e) => {
+      if (e.relatedTarget && compose.contains(e.relatedTarget)) return;
+      setHighlight(false);
+    });
+    compose.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setHighlight(false);
+      const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+      for (const f of files) { if (f.type && f.type.startsWith('image/')) await _brStageCommentImage(f); }
+    });
+  }
+}
+
+// 貼り付け先の判定: コメント入力欄そのもの or その周辺（📎ボタン等）にフォーカスがあるか
+function _brIsCommentComposeFocused() {
+  const active = document.activeElement;
+  if (!active) return false;
+  if (active.id === 'br-comment-input') return true;
+  return !!(active.closest && active.closest('#br-comment-compose'));
 }
 
 window.addEventListener('load', () => {
@@ -56186,6 +56240,159 @@ function _brCommentAuthorLabel(u) {
   return full || nick || '—';
 }
 
+// ============================================================
+// 💬 コメントの添付画像（Ctrl+V / D&D / 📎）
+// ============================================================
+// 「ここがこうだから直してほしい」をスクショ＋理由のセットで残せるようにするための添付。
+// 送信前はクライアント側に溜め（_brPendingCommentImages）、コメント作成後に
+// comment_id で紐づける（クリエイティブ詳細の返信画像と同じ流れ）。
+// 一覧は image_data を持たず GET /bug-report-comment-images/:id/image で <img> 遅延取得する。
+// ============================================================
+let _brCommentImagesByComment = {};  // comment_id → images[]（保存済み）
+let _brPendingCommentImages   = [];  // [{ localId, dataUrl }]（送信前ステージング）
+let _brPendingCommentSeq      = 0;
+const BR_COMMENT_IMAGE_MAX    = 5;   // 1コメントあたりの添付枚数上限
+
+function _brCommentImageUrl(id) { return `/api/haruka/bug-report-comment-images/${encodeURIComponent(id)}/image`; }
+
+// 画像を長辺1280px / JPEG に圧縮して data URL 化。
+// クリエイティブ詳細の実装（段階的縮小で ~1.1MB に収める）をそのまま使い回す。
+async function _brCompressCommentImage(file) {
+  if (!file || !(file.type || '').startsWith('image/')) throw new Error('画像ファイルを選択してください');
+  if (typeof _cdFileToCompressedDataUrl === 'function') return await _cdFileToCompressedDataUrl(file);
+  // フォールバック（圧縮関数が無い場合）: 生データのままサイズチェックだけ行う
+  const dataUrl = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+  if (String(dataUrl).length > 1.2 * 1024 * 1024) throw new Error('画像サイズが大きすぎます（縮小してから貼り付けてください）');
+  return dataUrl;
+}
+
+// 報告単位で添付画像メタを一括取得（画像本体は含まれない）
+async function _brLoadCommentImages(bugId) {
+  try {
+    const res = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(bugId)}/comment-images`);
+    if (!res.ok) { _brCommentImagesByComment = {}; return; }
+    const rows = await res.json();
+    const dict = {};
+    (Array.isArray(rows) ? rows : []).forEach(im => {
+      if (im && im.comment_id) (dict[im.comment_id] ||= []).push(im);
+    });
+    _brCommentImagesByComment = dict;
+  } catch (e) {
+    console.warn('[br-comment-images] fetch failed:', e?.message || e);
+    _brCommentImagesByComment = {};
+  }
+}
+
+// 保存済みサムネ列（本人 / admin には × 削除ボタン）
+function _brRenderCommentImageStrip(commentId) {
+  const images = _brCommentImagesByComment[commentId] || [];
+  if (!images.length) return '';
+  const myId = (typeof currentUser !== 'undefined' && currentUser?.id) ? currentUser.id : null;
+  const role = (typeof effectiveRole === 'function') ? effectiveRole() : (typeof currentUser !== 'undefined' ? currentUser?.role : '');
+  const isAdmin = role === 'admin';
+  const thumbs = images.map(im => {
+    const url = _brCommentImageUrl(im.id);
+    const canDel = isAdmin || (myId && im.created_by && im.created_by === myId);
+    const delBtn = canDel
+      ? `<button type="button" class="cd-cimg-del" title="削除" onclick="_brDeleteCommentImage('${_brEsc(im.id)}', event)">×</button>`
+      : '';
+    return `<span class="cd-cimg-thumb"><img src="${url}" alt="添付画像" onclick="openTweetLightbox('${url}')">${delBtn}</span>`;
+  }).join('');
+  return `<div class="cd-cimg-strip">${thumbs}</div>`;
+}
+
+// 送信前プレビュー（× で取り消し）
+function _brRenderPendingCommentStrip() {
+  const el = document.getElementById('br-comment-pending-strip');
+  if (!el) return;
+  el.innerHTML = _brPendingCommentImages.map(p =>
+    `<span class="cd-cimg-thumb"><img src="${p.dataUrl}" alt="添付予定" onclick="openTweetLightbox('${p.dataUrl}')"><button type="button" class="cd-cimg-del" title="取り消し" onclick="_brRemovePendingCommentImage(${p.localId}, event)">×</button></span>`
+  ).join('');
+}
+
+function _brClearPendingCommentImages() {
+  _brPendingCommentImages = [];
+  _brRenderPendingCommentStrip();
+}
+
+// 画像をコメントにステージング（圧縮のみ。アップロードはコメント送信時）
+async function _brStageCommentImage(file) {
+  if (!file) return;
+  if (_brPendingCommentImages.length >= BR_COMMENT_IMAGE_MAX) {
+    showToast(`画像は1コメントにつき ${BR_COMMENT_IMAGE_MAX} 枚までです`, 'warn');
+    return;
+  }
+  let dataUrl;
+  try { dataUrl = await _brCompressCommentImage(file); }
+  catch (e) { showToast(e?.message || '画像の処理に失敗しました', 'warn'); return; }
+  _brPendingCommentImages.push({ localId: ++_brPendingCommentSeq, dataUrl });
+  _brRenderPendingCommentStrip();
+}
+
+function _brRemovePendingCommentImage(localId, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  _brPendingCommentImages = _brPendingCommentImages.filter(p => String(p.localId) !== String(localId));
+  _brRenderPendingCommentStrip();
+}
+
+// 📎 ボタン / ファイル選択から（複数可）
+async function _brOnCommentImageInput(input) {
+  const files = Array.from(input?.files || []);
+  if (input) input.value = '';
+  for (const f of files) { if (f.type && f.type.startsWith('image/')) await _brStageCommentImage(f); }
+}
+
+// コメント作成後、ステージング済み画像を comment_id で添付する
+async function _brUploadPendingCommentImages(commentId) {
+  const pend = _brPendingCommentImages.slice();
+  if (!pend.length) return { ok: 0, failed: 0 };
+  let ok = 0, failed = 0;
+  for (const p of pend) {
+    try {
+      const res = await fetch(`/api/haruka/bug-report-comments/${encodeURIComponent(commentId)}/images`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_data: p.dataUrl }),
+      });
+      if (res.ok) ok++;
+      else {
+        failed++;
+        const j = await res.json().catch(() => ({}));
+        console.warn('[br-comment-image upload]', j?.error || res.status);
+      }
+    } catch (e) { failed++; console.warn('[br-comment-image upload]', e?.message || e); }
+  }
+  _brClearPendingCommentImages();
+  return { ok, failed };
+}
+
+// 添付画像の削除（添付した本人 / admin）
+async function _brDeleteCommentImage(imageId, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  if (!imageId) return;
+  if (!window.confirm('この画像を削除しますか？')) return;
+  try {
+    const res = await fetch(`/api/haruka/bug-report-comment-images/${encodeURIComponent(imageId)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || '画像の削除に失敗しました');
+      return;
+    }
+    const bugId = document.getElementById('br-id').value;
+    await _brLoadComments(bugId);
+    showToast('画像を削除しました', 'success');
+  } catch (e) { alert(e.message); }
+}
+
+window._brRemovePendingCommentImage = _brRemovePendingCommentImage;
+window._brOnCommentImageInput = _brOnCommentImageInput;
+window._brDeleteCommentImage = _brDeleteCommentImage;
+
 // コメント一覧読み込み
 async function _brLoadComments(bugId) {
   const list = document.getElementById('br-comments-list');
@@ -56195,6 +56402,8 @@ async function _brLoadComments(bugId) {
     const res = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(bugId)}/comments`);
     if (!res.ok) throw new Error('コメント取得失敗');
     const rows = await res.json();
+    // 添付画像メタ（image_data 本体は含まない）をまとめて取得してから描画する
+    await _brLoadCommentImages(bugId);
     document.getElementById('br-comments-count').textContent = `(${rows.length})`;
     if (!rows.length) {
       list.innerHTML = `<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">まだコメントはありません</div>`;
@@ -56233,6 +56442,7 @@ async function _brLoadComments(bugId) {
             ${actions}
           </div>
           <div data-comment-body style="color:#1F2937;line-height:1.45">${bodyEsc}</div>
+          ${_brRenderCommentImageStrip(c.id)}
         </div>`;
     }).join('');
   } catch (e) {
@@ -56308,19 +56518,29 @@ async function postBugReportComment() {
   if (!id) return;
   const ta = document.getElementById('br-comment-input');
   const body = (ta?.value || '').trim();
-  if (!body) { showToast('コメントを入力してください', 'warn'); return; }
+  const hasImages = _brPendingCommentImages.length > 0;
+  if (!body && !hasImages) { showToast('コメントを入力してください', 'warn'); return; }
   try {
     const res = await fetch(`/api/haruka/bug-reports/${encodeURIComponent(id)}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body }),
+      // body は DB 上 NOT NULL。画像だけ貼って送ったときはプレースホルダを入れる
+      body: JSON.stringify({ body: body || '（画像のみ）' }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       alert(err.error || 'コメント送信に失敗しました');
       return;
     }
+    const created = await res.json().catch(() => null);
     ta.value = '';
+    // 添付画像は作成されたコメントに後追いで紐づける（失敗枚数だけ通知）
+    if (created && created.id) {
+      const r = await _brUploadPendingCommentImages(created.id);
+      if (r.failed) showToast(`画像 ${r.failed} 枚の添付に失敗しました`, 'error');
+    } else {
+      _brClearPendingCommentImages();
+    }
     await _brLoadComments(id);
   } catch (e) { alert(e.message); }
 }
