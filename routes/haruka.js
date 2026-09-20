@@ -23743,6 +23743,131 @@ router.delete('/bug-report-comments/:commentId', requireAuth, async (req, res) =
   }
 });
 
+// ============================================================
+// バグ報告コメントの添付画像 (bug_report_comment_images)
+// ============================================================
+// 💬 コメント欄に Ctrl+V / D&D / ファイル選択で貼った画像。
+// 画像本体は base64 data URL を列に格納し、一覧では返さず
+// GET /bug-report-comment-images/:id/image で1枚ずつ遅延配信する
+// （一覧ペイロード肥大を避ける。creative_comment_images と同じ方式）。
+// ============================================================
+
+// data URL 後 1.2MB 上限（クライアント側で長辺1280px / JPEG 0.8 前後に圧縮して送る）
+const BUG_REPORT_COMMENT_IMAGE_MAX_BYTES = 1.2 * 1024 * 1024;
+
+// GET /api/haruka/bug-reports/:id/comment-images
+// 報告単位で添付画像メタを一括取得（image_data 本体は含めない）
+router.get('/bug-reports/:id/comment-images', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('bug_report_comment_images')
+      .select('id, bug_report_id, comment_id, mime, created_by, created_at')
+      .eq('bug_report_id', req.params.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(Array.isArray(data) ? data : []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/haruka/bug-report-comments/:commentId/images
+// コメント1件に画像を1枚添付。投稿者本人 or admin のみ（コメント送信直後に呼ばれる）。
+// express.json() の既定上限は 100KB なので、ここだけ 10mb を明示する。
+router.post('/bug-report-comments/:commentId/images', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    const imageData = req.body?.image_data;
+    if (typeof imageData !== 'string' || !/^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(imageData)) {
+      return res.status(400).json({ error: 'image_data（画像の data URL）は必須です' });
+    }
+    if (imageData.length > BUG_REPORT_COMMENT_IMAGE_MAX_BYTES) {
+      return res.status(413).json({ error: '画像サイズが大きすぎます（縮小してから貼り付けてください）' });
+    }
+    const mimeMatch = /^data:([^;,]+);base64,/.exec(imageData);
+    const mime = mimeMatch ? mimeMatch[1] : null;
+
+    const { data: comment, error: cErr } = await supabase
+      .from('bug_report_comments')
+      .select('id, bug_report_id, author_user_id, kind')
+      .eq('id', req.params.commentId)
+      .maybeSingle();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!comment) return res.status(404).json({ error: 'コメントが見つかりません' });
+    if (comment.kind === 'system') return res.status(403).json({ error: 'システムコメントには添付できません' });
+
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    const isAuthor = comment.author_user_id && req.user?.id === comment.author_user_id;
+    if (!isAdmin && !isAuthor) {
+      return res.status(403).json({ error: '自分のコメントにのみ画像を添付できます' });
+    }
+
+    const { data, error } = await supabase
+      .from('bug_report_comment_images')
+      .insert({
+        bug_report_id: comment.bug_report_id,
+        comment_id: comment.id,
+        image_data: imageData,
+        mime,
+        created_by: req.user?.id || null,
+      })
+      .select('id, bug_report_id, comment_id, mime, created_by, created_at')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/haruka/bug-report-comment-images/:id/image
+// 添付画像本体をバイナリ配信（つぶやき画像 /tweets/:id/image と同じパターン）
+router.get('/bug-report-comment-images/:id/image', requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from('bug_report_comment_images')
+    .select('image_data, deleted_at')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error || !data || data.deleted_at || !data.image_data) return res.status(404).end();
+  const m = /^data:([^;,]+);base64,(.+)$/s.exec(data.image_data);
+  if (!m) return res.status(404).end();
+  const buf = Buffer.from(m[2], 'base64');
+  res.setHeader('Content-Type', m[1]);
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.setHeader('Content-Length', buf.length);
+  return res.end(buf);
+});
+
+// DELETE /api/haruka/bug-report-comment-images/:id
+// 添付画像を論理削除（添付した本人 or admin）
+router.delete('/bug-report-comment-images/:id', requireAuth, async (req, res) => {
+  try {
+    const { data: row, error: rErr } = await supabase
+      .from('bug_report_comment_images')
+      .select('id, created_by, deleted_at')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (rErr) return res.status(500).json({ error: rErr.message });
+    if (!row) return res.status(404).json({ error: '画像が見つかりません' });
+    if (row.deleted_at) return res.json({ ok: true, id: row.id, already_deleted: true });
+
+    const isAdmin = await requesterHasAnyRole(req, ['admin']);
+    const isOwner = !!(req.user?.id && row.created_by && req.user.id === row.created_by);
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: '自分が添付した画像のみ削除できます' });
+    }
+
+    const { error: upErr } = await supabase
+      .from('bug_report_comment_images')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    res.json({ ok: true, id: row.id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /api/haruka/bug-reports/:id - 削除（admin のみ）
 router.delete('/bug-reports/:id', requireAuth, async (req, res) => {
   try {
