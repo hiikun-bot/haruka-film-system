@@ -3098,3 +3098,10 @@ ALTER TABLE http_sessions ENABLE ROW LEVEL SECURITY;
 
 -- PostgREST のスキーマキャッシュをリロード
 NOTIFY pgrst, 'reload schema';
+
+-- ============================================================
+-- 🎬 新着納品ショーケース（ADR 042 追補 2026-09-17 / migrations/2026-09-17_project_showcase_hidden.sql）
+-- ホームで直近 7 日の納品作品をスライドショーとして流す機能。機密案件は案件単位で除外できる。
+-- ============================================================
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS showcase_hidden BOOLEAN NOT NULL DEFAULT false;
+COMMENT ON COLUMN projects.showcase_hidden IS 'true ならホームの🎬新着納品ショーケースに出さない（機密案件向け・ADR 042 追補）';
