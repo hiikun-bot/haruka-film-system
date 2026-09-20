@@ -1425,6 +1425,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .dash-showcase-card .sc-sub b{color:#B7791F;font-weight:800}
 .dash-showcase-card .sc-new{font-weight:800;color:#B7791F;letter-spacing:0;text-transform:none}
 .dash-showcase-card .sc-collapse{width:30px;padding:4px 0;text-align:center}
+#pf-showcase .dash-showcase-card{margin-bottom:12px}
+/* ホームの 1 行導線（ADR 042 追補 2026-09-20）。フルカードは作品ページ #pf-showcase に移した */
+.dash-section.dash-showcase-line{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;padding:10px 16px;border-left:4px solid #F5B942}
+.dash-showcase-line .sc-line-title{font-size:12px;font-weight:700;color:var(--em-dark);letter-spacing:0.04em;white-space:nowrap}
+.dash-showcase-line .sc-line-sub{font-size:12px;color:var(--text-muted);white-space:nowrap}
+.dash-showcase-line .sc-line-sub b{color:#B7791F;font-weight:800}
+.dash-showcase-line .dash-tweets-actions{margin-left:auto;flex-wrap:wrap}
 .sc-layout{display:grid;grid-template-columns:minmax(0,1fr) 168px;gap:12px;align-items:start}
 .sc-stage{position:relative;height:250px;border-radius:12px;overflow:hidden;background:#0b0c0e;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .sc-stage img,.sc-stage video{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block}
@@ -4191,7 +4198,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="members" onclick="showPage('members',this)">メンバー</button>
     <button class="nav-btn" data-page="invoices" onclick="showPage('invoices',this)">請求書</button>
     <button class="nav-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
-    <button class="nav-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
+    <button class="nav-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品<span class="nav-unread-badge" data-for="portfolio" hidden aria-label="未見の新着納品"></span></button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">学び広場</button>
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
     <!-- 📝 契約・登録手続き: 本人の依頼・契約のみ（requireAuth・全ロール）。ADR 035 -->
@@ -4323,7 +4330,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="members" onclick="showPage('members',this)">👤 メンバー</button>
     <button class="nav-drawer-btn" data-page="invoices" onclick="showPage('invoices',this)">🧾 請求書</button>
     <button class="nav-drawer-btn" data-page="work-hours" onclick="showPage('work-hours',this)">⏱ 作業時間</button>
-    <button class="nav-drawer-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品</button>
+    <button class="nav-drawer-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品<span class="nav-unread-badge" data-for="portfolio" hidden aria-label="未見の新着納品"></span></button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
     <button class="nav-drawer-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
@@ -4379,9 +4386,10 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   <div id="dash-tweets"></div>
   <!-- 🏅 マイ実績（本人専用・ADR 036。editor/designer/director ダッシュで renderMyStatsCard() が描画。admin ダッシュには出さない） -->
   <div id="dash-my-stats"></div>
-  <!-- 🎬 新着納品ショーケース（ADR 042 追補・全ロール）: 直近 7 日の納品作品を「誰が作ったか」つきで流し、その場で 👏 できる。
-       renderShowcaseCard() が描画し、実効ロールで置き場を移す（作り手＝マイ実績の直下 / ディレクター＝自チームの直下 / 管理層＝全体連絡の前）。
-       新着ゼロの週はカード自体を出さない。既読・畳み状態はブラウザ localStorage（ADR 041 の流儀）。 -->
+  <!-- 🎬 新着納品（ADR 042 追補 2026-09-20・全ロール）: ホームは 1 行の導線だけ（「この7日で N本（未見 M本）」＋ 🏆 作品で見る ＋ ▶ スライドショー）。
+       フルカードは作品ページ先頭の #pf-showcase に renderShowcaseCard() が描く。renderShowcaseLine() が描画し、
+       実効ロールで置き場を移す（作り手＝マイ実績の直下 / ディレクター＝自チームの直下 / 管理層＝全体連絡の前）。
+       新着ゼロの週は行自体を出さない。既読はブラウザ localStorage（ADR 041 の流儀）。 -->
   <div id="dash-showcase"></div>
   <!-- 📝 契約・登録手続きバナー（ADR 035）: GET /contracts/me の banner が非 null のとき contract-wizard.js の renderContractBanner() が描画 -->
   <div id="dash-contract-banner"></div>
@@ -8894,6 +8902,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 </style>
 <div id="page-portfolio" class="page">
   <div class="pf-wrap">
+    <!-- 🎬 新着納品（ADR 042 追補 2026-09-20）: 直近 7 日の納品作品のフルカード（大サムネ／サムネ列／制作担当／👏 ナイス！／▶ スライドショー）。
+         loadPortfolioPage() → renderShowcaseCard() が描く。新着ゼロの週は出さない。畳み状態・既読は localStorage。 -->
+    <div id="pf-showcase"></div>
     <div class="pf-toolbar">
       <span class="pf-seg" role="group" aria-label="表示範囲">
         <button type="button" id="pf-scope-me" onclick="pfSetScope('me')" title="自分が担当した作品だけを表示">👤 自分</button>
@@ -25076,6 +25087,7 @@ async function loadPortfolioPage() {
   pfSyncSizeButtons();
   pfRefreshAssigneeLabel();
   pfFillClientOptions();
+  renderShowcaseCard();   // 🎬 新着納品（先頭カード・ADR 042 追補 2026-09-20）。一覧と並行、失敗しても一覧は出る
   await pfReload();
 }
 
@@ -26077,6 +26089,12 @@ function pfOpenByCreativeId(creativeId) {
   if (!creativeId) return;
   pfPendingOpenCreative = String(creativeId);
   pfPendingOpenRetried = false;
+  // 作品ページを開いていて一覧も読めているなら（先頭の 🎬 新着納品カードの「🔍 大きく見る」）、ページを読み直さずにそのまま開く。
+  // 今のフィルタに無ければ pfConsumePendingOpen() が「全員・全件」に広げて一度だけ探し直す（既存の経路）
+  if (document.getElementById('page-portfolio')?.classList.contains('active') && pfInitialized && Array.isArray(pfItems)) {
+    pfConsumePendingOpen();
+    return;
+  }
   const navBtn = document.querySelector('.nav-btn[data-page="portfolio"]');
   showPage('portfolio', navBtn || null);   // → loadPortfolioPage() → pfReload() → pfConsumePendingOpen()
 }
@@ -26577,9 +26595,12 @@ async function pfSaveGenre() {
   }
 }
 
-// ==================== 🎬 新着納品ショーケース（ADR 042 追補 2026-09-17） ====================
+// ==================== 🎬 新着納品ショーケース（ADR 042 追補 2026-09-17 / 置き場の移設 2026-09-20） ====================
 //
-// 直近 7 日に納品された作品を「誰が作ったか」を前面にホームで流し、その場で 👏 できるようにする。
+// 直近 7 日に納品された作品を「誰が作ったか」を前面に流し、その場で 👏 できるようにする。
+// 置き場（2026-09-20）: フルカードは「🏆 作品」ページ先頭の #pf-showcase（renderShowcaseCard）。
+//   ホーム #dash-showcase は 1 行の導線だけ（renderShowcaseLine）。ナビの「🏆 作品」に未見件数バッジ（refreshShowcaseUnread）。
+//   API は 1 本（GET /showcase）で、scFetchItems() が 60 秒キャッシュして二重 fetch を避ける。
 // 納品はフロー上唯一の達成イベントだが通知は本人にしか届かないので、チームで共有する場を作る。
 //   - データ: GET /api/haruka/showcase?days=7（requireAuth・作品ページと同じ認可）。
 //     祝う場なので修正回数・遅延・単価・ランクは API が返さないし、ここでも出さない（ADR 033 の思想）。
@@ -26587,10 +26608,10 @@ async function pfSaveGenre() {
 //     （idx は scFlat の添字。pfItemsFor(ctx) が配列を切り替える）。💬 ひとことは既存ライトボックス（pfOpenByCreativeId）。
 //   - 既読: 端末ローカル（localStorage・creative_id の配列・上限 500 で古い順に捨てる）。DB は触らない（ADR 041 の流儀）。
 //   - 畳み状態も localStorage。畳んでいても未見が増えたらヘッダー行に「🎬 新着納品 N本」を太字で出す。
-//   - ホームを開いた瞬間に自動再生しない。スライドショーは「▶ スライドショー」からだけ。
+//   - ページを開いた瞬間に自動再生しない。スライドショーは「▶ スライドショー」からだけ（作品ページ・ホームの両方から開ける）。
 //   - つぶやきへの自動投稿はしない（#1182 の「🔗 つぶやきで紹介」と重複するため）。
-//   - 置き場は実効ロールで移す（作り手＝マイ実績の直下 / ディレクター＝自チームの直下 / 管理層＝全体連絡の前）。
-//     ロール分岐はこの「置き場」だけで、中身は全員同じ（ADR 015: effectiveRole() で判定）。
+//   - ホームの 1 行導線の置き場は実効ロールで移す（作り手＝マイ実績の直下 / ディレクター＝自チームの直下 / 管理層＝全体連絡の前）。
+//     ロール分岐はこの「置き場」だけで、中身は全員同じ（ADR 015: effectiveRole() で判定）。作品ページ側は全ロール同じ位置。
 
 const SC_SEEN_LS_KEY = 'hfs_showcase_seen';           // 既読 creative_id の配列（古い順）
 const SC_COLLAPSED_LS_KEY = 'hfs_showcase_collapsed'; // '1' = 畳んでいる
@@ -26601,7 +26622,7 @@ const SC_GRID_MAX = 8;          // まとめスライドに並べるサムネの
 
 let scItems = [];   // API の items（single / bundle）
 let scFlat = [];    // 全作品（creative 単位）。pf* 部品の item 配列（ctx='sc'|'sccard' の idx はここ）
-let scPos = 0;      // ホームカードで表示中の scItems の添字
+let scPos = 0;      // 作品ページのカードで表示中の scItems の添字（ホームの ▶ スライドショーの開始位置にも使う）
 let _scSeq = 0;
 let _scBulkBusy = false;
 
@@ -26631,6 +26652,8 @@ function scMarkSeen(cids) {
   }
   try { localStorage.setItem(SC_SEEN_LS_KEY, JSON.stringify(_scSeenList)); } catch (_) {}
   scUpdateHeader();
+  scUpdateLine();
+  setShowcaseUnreadBadge(scUnseenCount());
 }
 function scUnseenCount() { return scFlat.filter(it => !scIsSeen(it.creative_id)).length; }
 
@@ -26677,37 +26700,141 @@ function scItemTitle(item) {
   return `${c.client_name ? esc(c.client_name) + ' ' : ''}${esc(c.project_name || '')}「${esc(c.file_name || '')}」`;
 }
 
-// ---- 取得と描画（ホームカード）----
+// ---- 取得（60 秒キャッシュ）----
+// 作品ページのカード・ホームの 1 行導線・ナビのバッジが同じ GET /showcase を叩くので、ここで 1 本にまとめる。
+// 返す配列は同じ参照を使い回す（pfApplySocial が scFlat の要素を直接更新するため、キャッシュ側にも反映される）。
+const SC_CACHE_MS = 60 * 1000;
+const _scCache = { at: 0, items: null, promise: null };
+async function scFetchItems({ force = false } = {}) {
+  if (!force && _scCache.items && (Date.now() - _scCache.at) < SC_CACHE_MS) return _scCache.items;
+  if (_scCache.promise) return _scCache.promise;   // 進行中の fetch に相乗り
+  _scCache.promise = (async () => {
+    try {
+      const res = await apiFetch(`${API}/showcase?days=${SC_DAYS}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      _scCache.items = Array.isArray(d?.items) ? d.items : [];
+      _scCache.at = Date.now();
+      return _scCache.items;
+    } finally {
+      _scCache.promise = null;
+    }
+  })();
+  return _scCache.promise;
+}
+function scApplyItems(items) {
+  scItems = Array.isArray(items) ? items : [];
+  scFlat = scItems.flatMap(scItemCreatives);
+}
+// 未見の作品があればそこから始める（無ければ先頭＝一番新しい納品）
+function scFirstUnseenPos() {
+  const i = scItems.findIndex(it => scItemCreatives(it).some(c => !scIsSeen(c.creative_id)));
+  return i >= 0 ? i : 0;
+}
+// 描画先が今表示中のページ（.page.active）の中にあるか
+function scTargetVisible(el) { return !!el?.closest('.page')?.classList.contains('active'); }
+
+// ---- 作品ページ先頭のフルカード（#pf-showcase）----
 async function renderShowcaseCard() {
-  const el = document.getElementById('dash-showcase');
+  const el = document.getElementById('pf-showcase');
   if (!el) return;
   const seq = ++_scSeq;
-  let d = null;
+  let items;
   try {
-    const res = await apiFetch(`${API}/showcase?days=${SC_DAYS}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    d = await res.json();
+    items = await scFetchItems();
   } catch (e) {
     console.warn('[showcase] fetch failed（カードを省略）', e);
-    if (seq === _scSeq) { el.innerHTML = ''; el.style.marginBottom = ''; }
+    if (seq === _scSeq) el.innerHTML = '';
     return;
   }
   if (seq !== _scSeq) return; // VIEW AS 連打等で後発の描画が優先
-  if (!document.getElementById('page-dashboard')?.classList.contains('active')) return;
+  if (!scTargetVisible(el)) return;
 
-  scItems = Array.isArray(d.items) ? d.items : [];
-  scFlat = scItems.flatMap(scItemCreatives);
-  scPlaceCard(el);
-  if (!scItems.length) { el.innerHTML = ''; el.style.marginBottom = ''; return; }   // 新着ゼロの週はカードを出さない
-  // 未見の作品があればそこから始める（無ければ先頭＝一番新しい納品）
-  const firstUnseen = scItems.findIndex(it => scItemCreatives(it).some(c => !scIsSeen(c.creative_id)));
-  scPos = firstUnseen >= 0 ? firstUnseen : 0;
+  scApplyItems(items);
+  setShowcaseUnreadBadge(scUnseenCount());
+  if (!scItems.length) { el.innerHTML = ''; return; }   // 新着ゼロの週はカードを出さない
+  scPos = scFirstUnseenPos();
   el.innerHTML = scCardHtml();
-  el.style.marginBottom = '14px';
   scRenderCardBody();
 }
 
-// 置き場を実効ロールで移す（DOM 上の 1 要素を動かすだけ。中身は全ロール同じ）
+// ---- ホームの 1 行導線（#dash-showcase）----
+// 「🎬 新着納品 この7日で 9本（未見 3本） [🏆 作品で見る] [▶ スライドショー]」。畳むボタンは無し。
+async function renderShowcaseLine() {
+  const el = document.getElementById('dash-showcase');
+  if (!el) return;
+  const seq = ++_scSeq;
+  let items;
+  try {
+    items = await scFetchItems();
+  } catch (e) {
+    console.warn('[showcase] fetch failed（ホームの導線を省略）', e);
+    if (seq === _scSeq) { el.innerHTML = ''; el.style.marginBottom = ''; }
+    return;
+  }
+  if (seq !== _scSeq) return;
+  if (!scTargetVisible(el)) return;
+
+  scApplyItems(items);
+  setShowcaseUnreadBadge(scUnseenCount());
+  scPlaceCard(el);
+  if (!scItems.length) { el.innerHTML = ''; el.style.marginBottom = ''; return; }   // 新着ゼロの週は行を出さない
+  scPos = scFirstUnseenPos();   // ホームの ▶ スライドショーも未見の作品から始める
+  el.innerHTML = `<div class="dash-section dash-showcase-line" id="sc-line">
+    <span class="sc-line-title">🎬 新着納品</span>
+    <span class="sc-line-sub" id="sc-line-sub"></span>
+    <span class="dash-tweets-actions">
+      <button class="btn-sm" onclick="scOpenPortfolioPage()" title="作品ページの先頭で、この7日の納品作品を大きく見る">🏆 作品で見る</button>
+      <button class="btn-sm" onclick="scOpenSlideshow()" title="直近の納品作品を 5 秒ごとに流して見る">▶ スライドショー</button>
+    </span>
+  </div>`;
+  el.style.marginBottom = '14px';
+  scUpdateLine();
+}
+function scUpdateLine() {
+  const sub = document.getElementById('sc-line-sub');
+  if (!sub) return;
+  const unseen = scUnseenCount();
+  sub.innerHTML = `この${SC_DAYS}日で ${scFlat.length}本${unseen > 0 ? `（<b>未見 ${unseen}本</b>）` : ''}`;
+}
+// 「🏆 作品で見る」: 作品ページを開く（先頭に新着納品のフルカードが出る）。openTweetsPage() と同じ要領
+function scOpenPortfolioPage() {
+  const navBtn = document.querySelector('.nav-btn[data-page="portfolio"]')
+              || document.querySelector('.nav-drawer-btn[data-page="portfolio"]');
+  showPage('portfolio', navBtn || null);
+}
+
+// ---- ナビ「🏆 作品」の未見バッジ（つぶやきの setTweetsUnreadBadge / refreshTweetsUnread と同じ流儀）----
+function setShowcaseUnreadBadge(n) {
+  const count = Math.max(0, Number(n) || 0);
+  const text = count > 99 ? '99+' : String(count);
+  document.querySelectorAll('.nav-unread-badge[data-for="portfolio"]').forEach(b => {
+    b.hidden = count === 0;
+    b.textContent = text;
+  });
+}
+async function refreshShowcaseUnread() {
+  if (!currentUser?.id) return;
+  try {
+    const items = await scFetchItems();
+    if (document.getElementById('sc-body') || scSlide.open) {
+      // 作品ページのカード／スライドショーを見ている最中は配列を差し替えない（送り位置がズレる）。件数だけ数える
+      const flat = items.flatMap(scItemCreatives);
+      setShowcaseUnreadBadge(flat.filter(it => !scIsSeen(it.creative_id)).length);
+    } else {
+      scApplyItems(items);
+      setShowcaseUnreadBadge(scUnseenCount());
+      scUpdateLine();
+    }
+  } catch (e) { console.warn('[showcase-unread] fetch failed', e); }
+}
+document.addEventListener('notification:authReady', () => { refreshShowcaseUnread(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshShowcaseUnread();
+});
+setInterval(() => { if (document.visibilityState === 'visible') refreshShowcaseUnread(); }, 10 * 60 * 1000);
+
+// ホームの 1 行導線の置き場を実効ロールで移す（DOM 上の 1 要素を動かすだけ。中身は全ロール同じ）
 function scPlaceCard(el) {
   const role = effectiveRole();
   let anchor = null, where = 'afterend';
@@ -26808,7 +26935,7 @@ function scRenderCardBody() {
       ${scCreatorsHtml(c.creators)}
       <div class="sc-actions">
         ${pfReactRowHtml(c, idx, 'sccard')}
-        <button type="button" class="sc-link" onclick="pfOpenByCreativeId('${esc(c.creative_id)}')" title="作品ページでこの作品を開く（ひとことも書けます）">🏆 作品ページで見る</button>
+        <button type="button" class="sc-link" onclick="pfOpenByCreativeId('${esc(c.creative_id)}')" title="この作品を大きく開く（ひとことも書けます）">🔍 大きく見る（ひとことも書けます）</button>
         ${scNavHtml()}
       </div>`;
     scMarkSeen(c.creative_id);
@@ -26839,7 +26966,7 @@ function scGo(i) {
 }
 function scStep(delta) { scGo(scPos + delta); }
 
-// まとめスライドのサムネ格子（ホームカード／スライドショー共用）。タップで 1 本ずつ見る
+// まとめスライドのサムネ格子（作品ページのカード／スライドショー共用）。タップで 1 本ずつ見る
 function scBundleGridHtml(item, itemPos) {
   const cs = item.creatives || [];
   const shown = cs.slice(0, SC_GRID_MAX);
@@ -26940,7 +27067,7 @@ function scCloseSlideshow() {
   document.body.style.overflow = '';
   document.removeEventListener('keydown', scSlideKey);
   scSlide.open = false;
-  // ホームカードの位置を今見ていたスライドに合わせる
+  // 作品ページのカードの位置を今見ていたスライドに合わせる（ホームから開いた場合はカードが無いので既読表示の更新だけ）
   if (scItems.length) { scPos = Math.min(scSlide.pos, scItems.length - 1); if (document.getElementById('sc-body')) scRenderCardBody(); }
 }
 function scSlideKey(ev) {
@@ -30917,8 +31044,8 @@ function loadDashboard() {
   renderMyFocusCard();
   // 💭 みんなのつぶやき（全ロール共通・ADR 041）: 自前 fetch（limit=3）。マイフォーカスの直下。
   renderDashTweetsCard();
-  // 🎬 新着納品ショーケース（全ロール共通・ADR 042 追補）: 自前 fetch。置き場は実効ロールで移す（新着ゼロなら出さない）。
-  renderShowcaseCard();
+  // 🎬 新着納品（全ロール共通・ADR 042 追補）: ホームは 1 行の導線だけ（フルカードは作品ページ）。自前 fetch（60 秒キャッシュ）。置き場は実効ロールで移す（新着ゼロなら出さない）。
+  renderShowcaseLine();
   // 全ロール共通: 全体連絡セクション
   loadAnnouncements();
   // 全ロール共通: 誕生日セクション
