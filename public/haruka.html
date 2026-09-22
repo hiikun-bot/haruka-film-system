@@ -8498,8 +8498,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     </div>
     <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button class="btn-primary" id="wh-add-row-btn" onclick="whAddRow()" style="font-size:13px;padding:8px 16px">＋ 行を追加</button>
-      <button class="btn" id="wh-save-all-btn" onclick="whSaveAll()" style="font-size:13px;padding:8px 16px">💾 すべて保存</button>
-      <span style="font-size:11px;color:var(--text-muted)">稼働分は開始・終了から自動計算されます（手修正可）。「💾 すべて保存」で未保存の行をまとめて保存できます。</span>
+      <span id="wh-autosave-status" style="font-size:12px;color:var(--text-muted);min-width:90px"></span>
+      <span style="font-size:11px;color:var(--text-muted)">入力すると自動で保存されます（行の右端に ✓ が出れば保存済み）。稼働分は開始・終了から自動計算されます（手修正可）。</span>
     </div>
   </div>
 </div>
@@ -30365,6 +30365,12 @@ function whRender() {
   // ---- メンバー切替（管理者のみ表示・ロール絞り込みつき） ----
   whRenderMemberPicker();
 
+  whRenderSummary(d);
+  whRenderTable(d);
+}
+
+// 上部サマリー＋月次確認バー（自動保存後は whRefreshSummary からここだけ再描画する）
+function whRenderSummary(d) {
   // ---- 上部サマリー（時給・合計勤務h・月給・経費・合計） ----
   const s = d.summary || {};
   const u = d.user || {};
@@ -30417,7 +30423,10 @@ function whRender() {
     bar.style.display = 'none';
     bar.innerHTML = '';
   }
+}
 
+// 明細テーブル（入力中の行を壊すため、自動保存の後には呼ばない）
+function whRenderTable(d) {
   // ---- 明細テーブル ----
   const entries = d.entries || [];
   const head = `
@@ -30449,11 +30458,9 @@ function whRender() {
 
   const addBtn = document.getElementById('wh-add-row-btn');
   if (addBtn) addBtn.style.display = whCanAddRow() ? '' : 'none';
-  const saveAllBtn = document.getElementById('wh-save-all-btn');
-  if (saveAllBtn) {
-    saveAllBtn.style.display = whCanAddRow() ? '' : 'none';
-    saveAllBtn.classList.remove('btn-primary'); // 再描画 = 保存済み状態
-  }
+  const status = document.getElementById('wh-autosave-status');
+  if (status) status.style.display = whCanAddRow() ? '' : 'none';
+  whUpdateAutosaveStatus(); // 再描画 = 保存済み状態
 }
 
 // ブラウザを閉じる・リロード時: 未保存行があれば標準の確認ダイアログを出す
@@ -30740,26 +30747,176 @@ function whRowHtml(e) {
     <td style="padding:6px 8px"><input type="date" data-f="work_date" value="${v(isNew ? e?.work_date : e.work_date)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="start_time" value="${timeVal(isNew ? (e?.start_time || '') : e.start_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
     <td style="padding:6px 6px"><input type="time" data-f="end_time" value="${timeVal(isNew ? '' : e.end_time)}" ${dis} style="${st}" onchange="whAutoMinutes(this);whMarkDirty(this)"></td>
-    <td style="padding:6px 6px"><input type="number" min="0" step="1" data-f="minutes" value="${isNew ? '' : (e.minutes ?? 0)}" ${dis} style="${st};text-align:right" onchange="whMarkDirty(this)"></td>
-    <td style="padding:6px 8px"><textarea data-f="description" rows="1" ${dis} style="${st};resize:vertical;min-height:29px" onchange="whMarkDirty(this)" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'">${v(isNew ? '' : e.description)}</textarea></td>
-    <td style="padding:6px 6px"><input type="number" min="0" step="1" data-f="expense_amount" value="${isNew ? '' : (e.expense_amount || '')}" ${dis} style="${st};text-align:right" onchange="whMarkDirty(this)"></td>
-    <td style="padding:6px 6px"><input type="text" data-f="expense_note" value="${v(isNew ? '' : e.expense_note)}" ${dis} style="${st}" onchange="whMarkDirty(this)"></td>
+    <td style="padding:6px 6px"><input type="number" min="0" step="1" data-f="minutes" value="${isNew ? '' : (e.minutes ?? 0)}" ${dis} style="${st};text-align:right" onchange="whMarkDirty(this)" oninput="whMarkDirty(this)"></td>
+    <td style="padding:6px 8px"><textarea data-f="description" rows="1" ${dis} style="${st};resize:vertical;min-height:29px" onchange="whMarkDirty(this)" oninput="whMarkDirty(this);this.style.height='auto';this.style.height=this.scrollHeight+'px'">${v(isNew ? '' : e.description)}</textarea></td>
+    <td style="padding:6px 6px"><input type="number" min="0" step="1" data-f="expense_amount" value="${isNew ? '' : (e.expense_amount || '')}" ${dis} style="${st};text-align:right" onchange="whMarkDirty(this)" oninput="whMarkDirty(this)"></td>
+    <td style="padding:6px 6px"><input type="text" data-f="expense_note" value="${v(isNew ? '' : e.expense_note)}" ${dis} style="${st}" onchange="whMarkDirty(this)" oninput="whMarkDirty(this)"></td>
     <td style="padding:6px 4px;text-align:center"><input type="checkbox" data-f="receipt_submitted" ${(!isNew && e.receipt_submitted) ? 'checked' : ''} ${dis} style="width:15px;height:15px;cursor:${editable ? 'pointer' : 'default'}" onchange="whMarkDirty(this)"></td>
     <td style="padding:6px 6px;text-align:center;white-space:nowrap">
       ${confirmed ? '<span style="font-size:10px;padding:2px 6px;border-radius:8px;background:#E5E7EB;color:#374151" title="確認済みのため本人は編集できません">確認済</span>' : ''}
-      ${editable ? `<button class="btn-sm wh-save-btn" style="font-size:11px;padding:3px 8px;display:${isNew ? 'inline-block' : 'none'}" onclick="whSaveRow(this)" title="この行を保存">💾</button>
+      ${editable ? `<span class="wh-row-status" style="display:inline-block;min-width:18px;font-size:12px;vertical-align:middle" title=""></span>
       <button class="btn-sm" style="font-size:11px;padding:3px 8px;color:#A32D2D;border-color:#F09595" onclick="whDeleteRow(this)" title="この行を削除">🗑</button>` : ''}
     </td>
   </tr>`;
 }
 
+// ---- 自動保存（オートセーブ） ----
+// 行のどれかを編集すると WH_AUTOSAVE_DELAY 後にその行だけ保存する（入力中は都度延長）。
+// 保存中にさらに編集された行は完了後にもう一度保存。行右端に ✓（保存済）/ …（保存中）/ ⚠（未保存・クリックで再試行）を表示。
+// 明示の「すべて保存」ボタンは廃止したが、ページ移動・月切替のガード用に whSaveAll は残している
+// （未入力で保存できない行・通信エラーで残った行を拾うため）。
+const WH_AUTOSAVE_DELAY = 1200;
+
 function whMarkDirty(el) {
   const tr = el.closest('tr');
-  if (tr) tr.dataset.dirty = '1';
-  const btn = tr?.querySelector('.wh-save-btn');
-  if (btn) { btn.style.display = 'inline-block'; btn.classList.add('btn-primary'); }
-  const saveAll = document.getElementById('wh-save-all-btn');
-  if (saveAll) saveAll.classList.add('btn-primary');
+  if (!tr) return;
+  tr.dataset.dirty = '1';
+  whScheduleAutosave(tr);      // 先に予約してからステータス更新（フッターを「保存中…」にするため）
+  whSetRowStatus(tr, 'pending');
+}
+
+function whScheduleAutosave(tr) {
+  clearTimeout(tr._whTimer);
+  tr._whTimer = setTimeout(() => { tr._whTimer = null; whAutosaveRow(tr); }, WH_AUTOSAVE_DELAY);
+}
+
+// 行のステータス表示。state: pending | saving | saved | invalid | error | ''
+function whSetRowStatus(tr, state, msg) {
+  const el = tr.querySelector('.wh-row-status');
+  if (el) {
+    const map = {
+      pending: ['', ''],
+      saving: ['<span style="color:var(--text-muted)">…</span>', '保存中'],
+      saved: ['<span style="color:#15803D">✓</span>', '保存済み'],
+      invalid: ['<span style="color:#B45309">⚠</span>', msg || '未保存（入力が足りません）'],
+      error: ['<span style="color:#B91C1C;cursor:pointer" onclick="whRetryRow(this)">⚠</span>', (msg || '保存に失敗しました') + '（クリックで再試行）'],
+    };
+    const [html, title] = map[state] || ['', ''];
+    el.innerHTML = html;
+    el.title = title;
+  }
+  whUpdateAutosaveStatus();
+}
+
+// フッターの全体ステータス（保存中の行数 / 未保存の行数 / 保存済み）
+function whUpdateAutosaveStatus() {
+  const box = document.getElementById('wh-autosave-status');
+  const tbody = document.getElementById('wh-tbody');
+  if (!box || !tbody) return;
+  const rows = whDataRows(tbody);
+  const saving = rows.filter(tr => tr._whSaving || tr._whTimer).length;
+  const unsaved = rows.filter(tr => !tr._whSaving && !tr._whTimer && whRowIsDirty(tr)).length;
+  if (saving) box.innerHTML = '<span style="color:var(--text-muted)">💾 保存中…</span>';
+  else if (unsaved) box.innerHTML = `<span style="color:#B45309">⚠ 未保存 ${unsaved}行</span>`;
+  else box.innerHTML = '<span style="color:#15803D">✓ 保存済み</span>';
+}
+
+function whRetryRow(el) {
+  const tr = el.closest('tr');
+  if (tr) whAutosaveRow(tr);
+}
+
+// 保存前の入力チェック。問題があればメッセージ、なければ null
+function whValidateRow(body) {
+  if (!body.work_date) return '日付が未入力です';
+  // 下書き保存を許容: 開始時刻だけ入れて退勤前に離席するケース等も保存できるよう、
+  // 「開始/終了/稼働分/立替経費/業務内容」のどれか1つでも入っていれば保存する（あとで本人が確認）
+  if (body.minutes === null && !body.start_time && !body.end_time && !body.expense_amount && !body.description) {
+    return '開始時刻・稼働分・立替経費・業務内容のいずれかを入力してください';
+  }
+  return null;
+}
+
+// 1行を保存する共通処理（自動保存・すべて保存・再試行で共用）。
+// 戻り値: { ok: true } | { ok: false, error, invalid }（invalid=入力不足で送信していない）
+async function whPersistRow(tr) {
+  if (tr._whSaving) return tr._whSaving;
+  const run = (async () => {
+    const id = tr.dataset.id;
+    const body = whCollectRow(tr);
+    const invalid = whValidateRow(body);
+    if (invalid) return { ok: false, error: invalid, invalid: true };
+    // admin/秘書が他メンバーのシートに行を代理追加するケース
+    if (!id && !whViewingSelf()) body.user_id = _whUserId;
+    tr.dataset.dirty = ''; // 送信開始時点の内容で保存。送信中の再編集は whMarkDirty が再度 dirty にする
+    try {
+      const res = await apiFetch(id ? `${API}/work-hours/${id}` : `${API}/work-hours`, {
+        method: id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { tr.dataset.dirty = '1'; return { ok: false, error: data.error || '保存に失敗しました' }; }
+      if (!id && data && data.id) tr.dataset.id = data.id; // 新規行は以降 PUT 扱い（二重登録防止）
+      whApplySavedRow(tr, data);
+      return { ok: true, data };
+    } catch (e) {
+      tr.dataset.dirty = '1';
+      return { ok: false, error: `通信エラー: ${e.message || ''}` };
+    }
+  })();
+  tr._whSaving = run;
+  try { return await run; } finally { tr._whSaving = null; }
+}
+
+// 保存レスポンスを行の表示に反映（適用時給ラベルなど、再描画なしで更新できるもの）
+function whApplySavedRow(tr, data) {
+  if (!data) return;
+  const cell = tr.querySelector('[data-f="project_id"]')?.closest('td');
+  if (!cell) return;
+  let label = cell.querySelector('.wh-rate-label');
+  if (data.hourly_rate_applied) {
+    if (!label) {
+      label = document.createElement('div');
+      label.className = 'wh-rate-label';
+      label.style.cssText = 'font-size:10px;color:var(--text-muted);margin-top:2px';
+      cell.appendChild(label);
+    }
+    label.textContent = `適用時給 ¥${Number(data.hourly_rate_applied).toLocaleString()}/h`;
+  } else if (label) {
+    label.remove();
+  }
+  // 新規行の背景（薄緑）は保存できた時点で通常表示に戻す
+  if (tr.dataset.id) { tr.style.background = ''; tr.style.opacity = ''; }
+}
+
+// 自動保存本体。保存中なら完了後に再実行、入力不足なら ⚠ を出して待つ（dirty のまま＝ガード対象）
+async function whAutosaveRow(tr) {
+  if (!tr.isConnected) return;
+  if (tr._whSaving) { tr._whQueued = true; return; }
+  if (!whRowIsDirty(tr)) { whSetRowStatus(tr, tr.dataset.id ? 'saved' : ''); return; }
+  whSetRowStatus(tr, 'saving');
+  const r = await whPersistRow(tr);
+  if (!tr.isConnected) return;
+  if (r.ok) {
+    whSetRowStatus(tr, 'saved');
+    whRefreshSummary();
+  } else if (r.invalid) {
+    whSetRowStatus(tr, 'invalid', r.error);
+  } else {
+    whSetRowStatus(tr, 'error', r.error);
+    showToast(r.error, 'error');
+  }
+  if (tr._whQueued) { tr._whQueued = false; whAutosaveRow(tr); }
+}
+
+// 上部サマリー（合計勤務・月給・経費）と月次確認バーだけを取り直す。
+// 明細テーブルは触らない（入力中の行を壊さない・フォーカスを奪わない）。
+let _whSummaryRefreshing = null;
+let _whSummaryRefreshAgain = false;
+async function whRefreshSummary() {
+  if (_whSummaryRefreshing) { _whSummaryRefreshAgain = true; return; }
+  const y = _whYear, m = _whMonth, uid = _whUserId; // 取得中に月・メンバーが切り替わったら結果は捨てる
+  _whSummaryRefreshing = (async () => {
+    try {
+      const res = await apiFetch(`${API}/work-hours?year=${y}&month=${m}${uid ? `&user_id=${encodeURIComponent(uid)}` : ''}`);
+      if (!res.ok) return;
+      const d = await res.json();
+      if (y === _whYear && m === _whMonth && uid === _whUserId && d) { _whData = d; whRenderSummary(d); }
+    } catch (_) { /* サマリーの更新失敗は無視（次の保存で再取得） */ }
+  })();
+  try { await _whSummaryRefreshing; } finally { _whSummaryRefreshing = null; }
+  if (_whSummaryRefreshAgain) { _whSummaryRefreshAgain = false; whRefreshSummary(); }
 }
 
 // 行に未保存の変更があるか。新規行はデフォルト（日付＋開始時刻だけ）の状態なら対象外
@@ -30778,8 +30935,8 @@ function whDataRows(tbody) {
 function whHasUnsaved() {
   const tbody = document.getElementById('wh-tbody');
   if (!tbody) return false;
-  // 保存済みで変更ありの行だけでなく、入力途中の新規行も未保存として扱う（別画面へ移る前に取りこぼさない）
-  return whDataRows(tbody).some(whRowIsDirty);
+  // 保存済みで変更ありの行だけでなく、入力途中の新規行・保存中の行も未保存として扱う（別画面へ移る前に取りこぼさない）
+  return whDataRows(tbody).some((tr) => tr._whSaving || whRowIsDirty(tr));
 }
 
 // 作業時間ページが表示中で未保存行があるか（ページ移動ガード用）
@@ -30796,47 +30953,28 @@ function whGuardedRun(proceed) {
   whSaveAll({ refetch: false }).then((allSaved) => { if (allSaved) proceed(); });
 }
 
-// 未保存の行をまとめて保存。戻り値: 全行成功なら true。
-// opts.refetch=false で最後の再読み込みを呼び出し側に委ねる（月切替と二重fetchしないため）
+// 未保存の行をまとめて保存（自動保存で拾えなかった行の最終手段。ページ移動・月切替ガードから呼ぶ）。
+// 戻り値: 全行成功なら true。opts.refetch=false で最後の再読み込みを呼び出し側に委ねる（月切替と二重fetchしないため）
 async function whSaveAll(opts) {
   const refetch = !(opts && opts.refetch === false);
   const tbody = document.getElementById('wh-tbody');
   if (!tbody) return true;
-  // 保存済みで変更ありの行＋入力途中の新規行をまとめて保存（新規行は POST 扱い）
-  const trs = whDataRows(tbody).filter(whRowIsDirty);
-  if (!trs.length) { showToast('未保存の変更はありません', 'success'); return true; }
-  const btn = document.getElementById('wh-save-all-btn');
-  if (btn) btn.disabled = true;
+  const trs = whDataRows(tbody).filter((tr) => tr._whSaving || tr._whTimer || whRowIsDirty(tr));
+  if (!trs.length) return true;
   let saved = 0; const errors = [];
   for (const tr of trs) {
-    const id = tr.dataset.id;
-    const body = whCollectRow(tr);
-    if (!body.work_date) { errors.push('日付が未入力の行があります'); continue; }
-    // 下書き保存を許容: 開始時刻だけ入れて退勤前に離席するケース等も保存できるよう、
-    // 「開始/終了/稼働分/立替経費/業務内容」のどれか1つでも入っていれば保存する（あとで本人が確認）
-    if (body.minutes === null && !body.start_time && !body.end_time && !body.expense_amount && !body.description) {
-      errors.push(`${body.work_date}: 開始時刻・稼働分・立替経費・業務内容のいずれかを入力してください`); continue;
-    }
-    if (!id && !whViewingSelf()) body.user_id = _whUserId;
-    try {
-      const res = await apiFetch(id ? `${API}/work-hours/${id}` : `${API}/work-hours`, {
-        method: id ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { errors.push(data.error || '保存に失敗しました'); continue; }
-      saved++;
-      tr.dataset.dirty = ''; // 保存済み（残りが失敗しても二重保存しない）
-      if (!id && data && data.id) tr.dataset.id = data.id; // 新規行は以降 PUT 扱い（二重登録防止）
-    } catch (e) {
-      errors.push(`通信エラー: ${e.message || ''}`);
-    }
+    clearTimeout(tr._whTimer); tr._whTimer = null;
+    if (tr._whSaving) await tr._whSaving; // 進行中の自動保存を待ってから判定
+    if (!whRowIsDirty(tr)) { saved++; continue; }
+    whSetRowStatus(tr, 'saving');
+    const r = await whPersistRow(tr);
+    if (r.ok) { saved++; whSetRowStatus(tr, 'saved'); continue; }
+    errors.push(r.invalid ? `${whCollectRow(tr).work_date || '日付なし'}: ${r.error}` : r.error);
+    whSetRowStatus(tr, r.invalid ? 'invalid' : 'error', r.error);
   }
-  if (btn) btn.disabled = false;
   if (errors.length) {
     showToast(`${saved}行を保存 / ${errors.length}行が未保存: ${errors[0]}`, 'warn');
-  } else {
+  } else if (saved) {
     showToast(`${saved}行を保存しました`, 'success');
   }
   if (refetch && saved && !errors.length) await whFetch();
@@ -30873,6 +31011,7 @@ function whAddRow() {
   const tr = tbody.lastElementChild;
   // 案件を最初に選ぶ入力順（ユーザー指示）。秘書は既定「ひーくん（管理者サポート）」のまま進めばよい
   tr.querySelector('[data-f="project_id"]')?.focus();
+  whUpdateAutosaveStatus();
   // 新しく作られた案件・時給設定を拾う（裏側で取得し、差分があれば選択肢を更新）
   whRefreshProjects();
 }
@@ -30892,39 +31031,15 @@ function whCollectRow(tr) {
   };
 }
 
-async function whSaveRow(btn) {
-  const tr = btn.closest('tr');
-  const id = tr.dataset.id;
-  const body = whCollectRow(tr);
-  if (!body.work_date) { showToast('日付を入力してください', 'warn'); return; }
-  // 下書き保存を許容: 開始時刻だけ・業務内容だけでも保存できる（終了/稼働分は退勤時に追記）
-  if (body.minutes === null && !body.start_time && !body.end_time && !body.expense_amount && !body.description) {
-    showToast('開始時刻・稼働分・立替経費・業務内容のいずれかを入力してください', 'warn'); return;
-  }
-  // admin/秘書が他メンバーのシートに行を代理追加するケース
-  if (!id && !whViewingSelf()) body.user_id = _whUserId;
-  btn.disabled = true;
-  try {
-    const res = await apiFetch(id ? `${API}/work-hours/${id}` : `${API}/work-hours`, {
-      method: id ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { showToast(data.error || '保存に失敗しました', 'error'); btn.disabled = false; return; }
-    showToast('保存しました', 'success');
-    await whFetch();
-  } catch (e) {
-    showToast(`通信エラー: ${e.message || ''}`, 'error');
-    btn.disabled = false;
-  }
-}
-
 async function whDeleteRow(btn) {
   const tr = btn.closest('tr');
+  // 自動保存の予約は取り消し、進行中なら完了を待つ（POST 完了後に消さないと孤児行が残る）
+  clearTimeout(tr._whTimer); tr._whTimer = null;
+  if (tr._whSaving) await tr._whSaving;
   const id = tr.dataset.id;
   if (!id) { // 未保存行はDOMから消すだけ
     tr.remove();
+    whUpdateAutosaveStatus();
     return;
   }
   if (!confirm('この行を削除しますか？')) return;
