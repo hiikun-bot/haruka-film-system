@@ -1507,8 +1507,18 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .sc-panel .sc-skip{margin-left:auto;background:#fff;border:1px solid #E5E7EB;border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:700;color:#374151;cursor:pointer;font-family:inherit}
 .sc-panel .sc-skip:hover{background:#F9FAFB}
 .sc-panel .sc-back{background:#F3F4F6;border:0;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;color:#374151;cursor:pointer;font-family:inherit}
-.sc-panel .sc-cm{border:1px solid #E5E7EB;background:#fff;color:#374151;border-radius:999px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;min-height:40px}
-.sc-panel .sc-cm:hover{background:#F9FAFB}
+/* パネルの操作面: 左＝👏 リアクション行 / 右＝💬 ひとこと（一覧＋入力・その場で送れる）。狭い幅では縦積み */
+.sc-panel .sc-actions-2col{align-items:flex-start;gap:14px 18px}
+.sc-panel .sc-actions-main{flex:1 1 340px;min-width:0}
+.sc-panel .sc-cm-col{flex:1 1 320px;min-width:280px;max-width:520px}
+.sc-panel .pf-comments{margin-top:0;background:#F9FAFB;border:1px solid #EDEFF2;border-radius:12px;padding:10px 12px;font-size:12.5px}
+.sc-panel .pf-comments-title{font-size:12px;color:#374151;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.sc-panel .pf-comments-n{background:#14171a;color:#fff;border-radius:999px;font-size:10.5px;padding:0 7px;line-height:17px;font-weight:700}
+.sc-panel .pf-cm-list{max-height:132px;overflow-y:auto;padding-right:2px}
+.sc-panel .pf-cm-empty{padding:2px 0 4px}
+.sc-panel .pf-cm-form{margin-top:8px}
+.sc-panel .pf-cm-form input{font-size:13px;padding:8px 13px;min-height:38px;box-sizing:border-box}
+.sc-panel .pf-cm-form button{font-size:12.5px;padding:8px 15px;min-height:38px}
 @media (prefers-reduced-motion: reduce){.sc-thumb:hover{transform:none}}
 .my-stats-card .dash-section-title{justify-content:space-between;margin-bottom:12px}
 .my-stats-lock{font-size:10px;font-weight:500;color:var(--text-muted);letter-spacing:0;text-transform:none;white-space:nowrap}
@@ -1988,6 +1998,10 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   .sc-panel .sc-name{font-size:14px}
   .sc-panel .pf-rx-main{font-size:14px;min-height:42px}
   .sc-panel .sc-dots{max-width:100%;order:3;width:100%;justify-content:center}
+  .sc-panel .sc-cm-col{flex-basis:100%;min-width:0;max-width:none}
+  .sc-panel .pf-cm-list{max-height:96px}
+  .sc-panel .pf-cm-form{flex-direction:row}
+  .sc-panel .pf-cm-form button{align-self:auto}
   .sc-panel .sc-skip{margin-left:0}
   /* 🏅 マイ実績: 2×2 に折り返す */
   .my-stats-grid{grid-template-columns:repeat(2,1fr);gap:8px}
@@ -8983,7 +8997,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
 </div>
 
-<!-- 🎬 新着納品ショーケース: スライドショー（全画面オーバーレイ・ADR 042 追補）。ライトボックス(1200)より下に置き、💬 ひとことでライトボックスを重ねて開ける -->
+<!-- 🎬 新着納品ショーケース: スライドショー（全画面オーバーレイ・ADR 042 追補）。ライトボックス(1200)より下。💬 ひとことは下のパネル内でその場で読み書き（2026-09-23） -->
 <div id="showcase-overlay" class="sc-overlay" role="dialog" aria-modal="true" aria-label="新着納品スライドショー">
   <div class="sc-shell" id="sc-shell">
     <div class="sc-top">
@@ -25953,11 +25967,11 @@ async function pfToggleReaction(idx, type, ctx = 'card') {
   }
 }
 
-// ひとこと欄。card では 💬 を開いたときだけ描画、lb では常に描画
+// ひとこと欄。card では 💬 を開いたときだけ描画、lb / sc（🎬 スライドショーのパネル）では常に描画
 function pfCommentsHtml(item, idx, ctx) {
   const cid = item.creative_id;
   if (!cid) return '';
-  if (ctx !== 'lb' && !pfOpenComments.has(cid)) return '';
+  if (ctx !== 'lb' && ctx !== 'sc' && !pfOpenComments.has(cid)) return '';
   const list = pfCommentsCache.get(cid);
   let body;
   if (list === undefined || list === null) {
@@ -25970,7 +25984,7 @@ function pfCommentsHtml(item, idx, ctx) {
       const name = ctx === 'lb' ? NameDisplay.full(u) : NameDisplay.short(u);   // 名前表示は NameDisplay 経由（直書き禁止）
       // 削除ボタンは API が返す can_delete（本人 or admin・サーバー側で実効ロール判定済み）で出し分ける
       const del = c.can_delete
-        ? `<button type="button" class="pf-cm-del" title="このひとことを削除" onclick="event.stopPropagation();pfDeleteComment(${idx}, '${esc(c.id)}')">✕</button>` : '';
+        ? `<button type="button" class="pf-cm-del" title="このひとことを削除" onclick="event.stopPropagation();pfDeleteComment(${idx}, '${esc(c.id)}', '${ctx}')">✕</button>` : '';
       return `<div class="pf-cm">
         <div class="pf-cm-head">
           <span class="pf-cm-name" title="${esc(NameDisplay.tooltip(u))}">${esc(name)}</span>
@@ -25980,13 +25994,16 @@ function pfCommentsHtml(item, idx, ctx) {
       </div>`;
     }).join('');
   }
-  const title = ctx === 'lb' ? '' : `<div class="pf-comments-title">💬 ひとこと</div>`;
+  const cmCount = Array.isArray(list) ? list.length : (item.comment_count || 0);
+  const title = ctx === 'lb' ? '' : `<div class="pf-comments-title">💬 ひとこと${ctx === 'sc' && cmCount ? ` <span class="pf-comments-n">${cmCount}</span>` : ''}</div>`;
+  // sc は自動送りの最中に打つので、入力欄を送信ボタンより先に目に入れる（placeholder で「その場で送れる」と伝える）
+  const placeholder = ctx === 'sc' ? 'この作品にひとこと…（Enter で送る）' : 'ひとこと…';
   return `
     <div class="pf-comments" data-cid="${esc(cid)}" data-idx="${idx}" data-ctx="${ctx}" onclick="event.stopPropagation()">
       ${title}
-      ${body}
-      <form class="pf-cm-form" onsubmit="event.preventDefault();pfSubmitComment(${idx}, this)">
-        <input type="text" maxlength="500" placeholder="ひとこと…" autocomplete="off" onkeydown="event.stopPropagation()">
+      <div class="pf-cm-list">${body}</div>
+      <form class="pf-cm-form" onsubmit="event.preventDefault();pfSubmitComment(${idx}, this, '${ctx}')">
+        <input type="text" maxlength="500" placeholder="${placeholder}" autocomplete="off" onkeydown="event.stopPropagation();if(event.key==='Escape')this.blur()">
         <button type="submit">送る</button>
       </form>
     </div>`;
@@ -26025,6 +26042,21 @@ function pfRerenderCommentsPanels(creativeId) {
     if (!pfItems[idx]) return;
     el.outerHTML = pfCommentsHtml(pfItems[idx], idx, 'lb');
   });
+  // 🎬 スライドショーのパネル（ctx='sc'・配列は scFlat）も常設。取得完了で差し替わるので、打ちかけの文字とフォーカスは引き継ぐ
+  document.querySelectorAll(`.pf-comments[data-cid="${CSS.escape(creativeId)}"][data-ctx="sc"]`).forEach(el => {
+    const idx = Number(el.dataset.idx);
+    const item = pfItemsFor('sc')[idx];
+    if (!item) return;
+    const oldInput = el.querySelector('input');
+    const draft = oldInput?.value || '';
+    const focused = !!oldInput && document.activeElement === oldInput;
+    el.outerHTML = pfCommentsHtml(item, idx, 'sc');
+    if (!draft && !focused) return;
+    const input = document.querySelector(`.pf-comments[data-cid="${CSS.escape(creativeId)}"][data-ctx="sc"] input`);
+    if (!input) return;
+    input.value = draft;
+    if (focused) { input.focus(); try { input.setSelectionRange(draft.length, draft.length); } catch (_) {} }
+  });
 }
 
 async function pfLoadComments(creativeId, force) {
@@ -26045,8 +26077,8 @@ async function pfLoadComments(creativeId, force) {
   pfRefreshReactDom(creativeId);
 }
 
-async function pfSubmitComment(idx, formEl) {
-  const item = pfItems[idx];
+async function pfSubmitComment(idx, formEl, ctx = 'card') {
+  const item = pfItemsFor(ctx)[idx];
   if (!item?.creative_id) return;
   const cid = item.creative_id;
   const input = formEl?.querySelector('input');
@@ -26065,8 +26097,14 @@ async function pfSubmitComment(idx, formEl) {
     const list = (pfCommentsCache.get(cid) || []).concat([json.comment]);
     pfCommentsCache.set(cid, list);
     pfApplySocial(cid, { comment_count: json.comment_count ?? list.length });
+    if (input) input.value = '';   // sc パネルは打ちかけを引き継ぐので、送れた分は先に空にしておく
     pfRerenderCommentsPanels(cid);
     pfRefreshReactDom(cid);
+    if (ctx === 'sc') {
+      // スライドショーでは続けて打てるようフォーカスを戻し、送った直後に流れないよう自動送りを仕切り直す
+      document.querySelector(`.pf-comments[data-cid="${CSS.escape(cid)}"][data-ctx="sc"] input`)?.focus();
+      if (typeof scResetTimer === 'function') scResetTimer();
+    }
     showToast('ひとことを送りました', 'success');
   } catch (e) {
     if (btn) btn.disabled = false;
@@ -26074,8 +26112,8 @@ async function pfSubmitComment(idx, formEl) {
   }
 }
 
-async function pfDeleteComment(idx, commentId) {
-  const item = pfItems[idx];
+async function pfDeleteComment(idx, commentId, ctx = 'card') {
+  const item = pfItemsFor(ctx)[idx];
   if (!item?.creative_id) return;
   const cid = item.creative_id;
   if (!confirm('このひとことを削除しますか？')) return;
@@ -26615,7 +26653,8 @@ async function pfSaveGenre() {
 //   - データ: GET /api/haruka/showcase?days=7（requireAuth・作品ページと同じ認可）。
 //     祝う場なので修正回数・遅延・単価・ランクは API が返さないし、ここでも出さない（ADR 033 の思想）。
 //   - 部品: 作品ページの pfReactRowHtml / pfToggleReaction / pfHoverIn / pfOnThumbError を ctx='sc'|'sccard' で再利用
-//     （idx は scFlat の添字。pfItemsFor(ctx) が配列を切り替える）。💬 ひとことは既存ライトボックス（pfOpenByCreativeId）。
+//     （idx は scFlat の添字。pfItemsFor(ctx) が配列を切り替える）。💬 ひとことも同じ部品（pfCommentsHtml / pfSubmitComment・ctx='sc'）で
+//     スライドショーのパネル内にそのまま置く（2026-09-23・ライトボックスへは飛ばさない。入力中は自動送りを止める）。
 //   - 既読: 端末ローカル（localStorage・creative_id の配列・上限 500 で古い順に捨てる）。DB は触らない（ADR 041 の流儀）。
 //   - 畳み状態も localStorage。畳んでいても未見が増えたらヘッダー行に「🎬 新着納品 N本」を太字で出す。
 //   - ページを開いた瞬間に自動再生しない。スライドショーは「▶ スライドショー」からだけ（作品ページ・ホームの両方から開ける）。
@@ -27033,7 +27072,11 @@ async function scBulkNice(bundleKey, ctx) {
 
 // ---- スライドショー（全画面オーバーレイ）----
 // 5 秒で次へ。ホバー中・動画再生中・リアクション操作直後は止める。← → / スワイプ / ⏭ / ✕。
-const scSlide = { open: false, pos: 0, child: -1, auto: true, timer: null, tickTimer: null, startedAt: 0, hover: false, playing: false, touchX: null };
+const scSlide = { open: false, pos: 0, child: -1, auto: true, timer: null, tickTimer: null, startedAt: 0, hover: false, playing: false, typing: false, touchX: null };
+// パネルのひとこと欄に打ちかけの文字があるか（自動送りで消してしまわないための判定）
+function scHasCommentDraft() {
+  return !!String(document.querySelector('#sc-panel .pf-comments[data-ctx="sc"] input')?.value || '').trim();
+}
 
 function scOpenSlideshow(pos, childIdx) {
   if (!scItems.length) return;
@@ -27043,7 +27086,7 @@ function scOpenSlideshow(pos, childIdx) {
   scSlide.pos = Number.isInteger(pos) ? Math.max(0, Math.min(pos, scItems.length - 1)) : scPos;
   scSlide.child = Number.isInteger(childIdx) ? childIdx : -1;
   scSlide.auto = true;
-  scSlide.hover = false; scSlide.playing = false;
+  scSlide.hover = false; scSlide.playing = false; scSlide.typing = false;
   box.classList.add('open');
   document.body.style.overflow = 'hidden';
   document.addEventListener('keydown', scSlideKey);
@@ -27054,6 +27097,10 @@ function scOpenSlideshow(pos, childIdx) {
     const panelEl = document.getElementById('sc-panel');
     panelEl?.addEventListener('mouseenter', () => { scSlide.hover = true; scRefreshAutoState(); });
     panelEl?.addEventListener('mouseleave', () => { scSlide.hover = false; scRefreshAutoState(); });
+    // ひとこと欄に入力中（フォーカス中）はスマホでもホバーが無いので、フォーカスで自動送りを止める
+    const isTyping = (t) => ['INPUT', 'TEXTAREA'].includes(t?.tagName);
+    panelEl?.addEventListener('focusin',  (e) => { if (isTyping(e.target)) { scSlide.typing = true;  scRefreshAutoState(); } });
+    panelEl?.addEventListener('focusout', (e) => { if (isTyping(e.target)) { scSlide.typing = false; scRefreshAutoState(); } });
     shell.addEventListener('touchstart', (e) => { scSlide.touchX = e.touches?.[0]?.clientX ?? null; }, { passive: true });
     shell.addEventListener('touchend', (e) => {
       const x0 = scSlide.touchX; scSlide.touchX = null;
@@ -27095,7 +27142,7 @@ function scToggleAuto() {
 function scRefreshAutoState() {
   const btn = document.getElementById('sc-autobtn');
   const bar = document.getElementById('sc-progress');
-  const paused = !scSlide.auto || scSlide.hover || scSlide.playing || document.visibilityState === 'hidden';
+  const paused = !scSlide.auto || scSlide.hover || scSlide.playing || scSlide.typing || scHasCommentDraft() || document.visibilityState === 'hidden';
   if (btn) { btn.textContent = scSlide.auto ? '⏸ 自動' : '▶ 自動'; btn.title = scSlide.auto ? '自動送りを止める（Space）' : '5秒ごとに次へ（Space）'; }
   if (bar) bar.classList.toggle('paused', paused);
   if (paused) scStopTimer(false); else if (!scSlide.timer) scStartTimer();
@@ -27127,6 +27174,8 @@ document.addEventListener('visibilitychange', () => { if (scSlide.open) scRefres
 
 // 自動送り: まとめの中を 1 本ずつ見ているときはその中で進み、最後まで来たら次のスライドへ。末尾で止まる
 function scSlideAdvanceAuto() {
+  // 打ちかけのひとことがあるうちは流さない（フォーカスを外しただけの状態）。5 秒後にもう一度見る
+  if (scHasCommentDraft()) { scStartTimer(); return; }
   const item = scItems[scSlide.pos];
   if (item?.type === 'bundle' && scSlide.child >= 0 && scSlide.child < item.creatives.length - 1) {
     scSlide.child += 1; scRenderSlide(); return;
@@ -27158,7 +27207,7 @@ async function scRenderSlide() {
   const counter = document.getElementById('sc-counter');
   const item = scItems[scSlide.pos];
   if (!stage || !panel || !item) return;
-  scSlide.playing = false;
+  scSlide.playing = false; scSlide.typing = false;   // パネルごと描き直すので入力中状態も戻す（要素が消えると focusout は飛ばない）
   scResetTimer();
 
   const dots = scItems.map((it, i) =>
@@ -27192,12 +27241,14 @@ async function scRenderSlide() {
   panel.innerHTML = `
     <div class="sc-name">${scItemTitle(item.type === 'bundle' ? { type: 'single', creative: c } : item)}<small>${esc(scFmtDate(c))} 納品</small>${back ? ' ' + back : ''}</div>
     ${scCreatorsHtml(c.creators)}
-    <div class="sc-actions">
-      ${pfReactRowHtml(c, idx, 'sc')}
-      <button type="button" class="sc-cm" onclick="scOpenComments('${esc(c.creative_id)}')" title="作品ページでこの作品を開き、ひとことを書く">💬 ひとこと${c.comment_count ? ` ${c.comment_count}` : ''}</button>
+    <div class="sc-actions sc-actions-2col">
+      <div class="sc-actions-main">${pfReactRowHtml(c, idx, 'sc')}</div>
+      <div class="sc-cm-col">${pfCommentsHtml(c, idx, 'sc')}</div>
     </div>
     ${bottom('この作品をスキップ')}`;
   scMarkSeen(c.creative_id);
+  // 💬 ひとことはパネル内でその場で読み書きする（ライトボックスに飛ばない）。本文はここで初めて取りに行く（キャッシュ済みならそのまま）
+  if (!pfCommentsCache.has(c.creative_id)) pfLoadComments(c.creative_id);
 
   // ステージ: 動画は controls つきで自動再生（無音）。再生中は自動送りを止め、終わったら次へ
   stage.innerHTML = '<div style="color:rgba(255,255,255,.55);font-size:13px">読み込み中…</div>';
@@ -27214,13 +27265,6 @@ async function scRenderSlide() {
     stage.innerHTML = `<img src="/api/haruka/files/${esc(c.drive_file_id)}/stream" alt="${esc(c.file_name)}"
       onerror="this.onerror=null;this.src='${scThumbUrl(c)}'">`;
   }
-}
-
-// 💬 ひとこと: 既存の作品ライトボックスを開く（スライドショーは閉じる。ライトボックスは z-index 1200 で上に来るが、
-// 戻ったときに自動送りが再開しないよう閉じておく）
-function scOpenComments(creativeId) {
-  scCloseSlideshow();
-  pfOpenByCreativeId(creativeId);
 }
 
 // ==================== 📦 一括納品完了（月次消込） ====================
