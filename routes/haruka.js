@@ -21919,9 +21919,10 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
 
       if (parentComment && parentComment.user_id && parentComment.user_id !== senderId) {
         // 返信通知 → 親コメント投稿者へ
+        // 種別は creative_comment（ADR 043）。つぶやき返信の post_comment と分け、通知設定で別々に ON/OFF できる
         await createNotification({
           userId: parentComment.user_id,
-          type: 'post_comment',
+          type: 'creative_comment',
           title: `${senderName}さんがあなたのコメントに返信しました`,
           body: excerpt,
           linkUrl,
@@ -21951,7 +21952,7 @@ router.post('/creative-files/:fid/comments', requireAuth, async (req, res) => {
             : `${senderName}さんがクリエイティブにコメントしました`;
           await Promise.all(recipientIds.map(uid => createNotification({
             userId: uid,
-            type: 'post_comment',
+            type: 'creative_comment',
             title: titleBase,
             body: excerpt,
             linkUrl,

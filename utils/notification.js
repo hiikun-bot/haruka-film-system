@@ -29,28 +29,40 @@
 
 const supabase = require('../supabase');
 
-// notification_settings の {type}_enabled 列名対応表。
-// type が settings 列に対応していないものは「常時ON扱い」（settings 確認をスキップ）
+// 種別 → notification_settings の列名・既定値は utils/notification-settings.js（ADR 043）に集約。
+// 列が無い種別（pricing_approval / leader_remind / announcement_remind / bulk_delivered / global 系）は
+// 常時 ON。設定行が無いユーザー・migration 未適用で列が無い場合は既定値で判定する。
 //
-// 通知タイプ追加手順:
-//   1) migration で notification_settings に <type>_enabled BOOLEAN DEFAULT true 列を追加
-//   2) この表に { <type>: '<type>_enabled' } を追記
-//   3) public/js/notification-card.js の ICON_BY_TYPE にアイコン絵文字を追加
-const TYPE_TO_SETTING_COL = {
-  ball_returned:        'ball_returned_enabled',
-  global:               'global_enabled',
-  mention:              'mention_enabled',
-  post_reaction:        'post_reaction_enabled',
-  post_comment:         'post_comment_enabled',
-  sos:                  'sos_enabled',
-  deadline:             'deadline_enabled',
-  assignment:           'assignment_enabled',
-  invoice:              'invoice_enabled',
-  creative_registered:  'creative_registered_enabled',
-  // 🏆 作品ギャラリーの 👏 拍手 / 💬 ひとこと（ADR 042・migrations/2026-09-03_portfolio_reactions.sql）
-  portfolio_reaction:   'portfolio_reaction_enabled',
-  portfolio_comment:    'portfolio_comment_enabled',
-};
+// 通知タイプ追加手順は utils/notification-settings.js の冒頭コメントを参照。
+const {
+  settingColumnFor,
+  isEnabledFor,
+  filterRowsBySettings,
+} = require('./notification-settings');
+
+/**
+ * 受信者集合の notification_settings 行を 1 クエリで引いて Map にする。
+ * 取得失敗時は空 Map（＝全員既定値で判定）。
+ */
+async function fetchSettingsMap(userIds) {
+  const map = new Map();
+  const ids = Array.from(new Set((userIds || []).filter(Boolean)));
+  if (ids.length === 0) return map;
+  try {
+    const { data, error } = await supabase
+      .from('notification_settings')
+      .select('*')
+      .in('user_id', ids);
+    if (error) {
+      console.error('[notification] settings 一括取得失敗（既定値で継続）:', error.message);
+      return map;
+    }
+    (data || []).forEach(row => { if (row && row.user_id) map.set(row.user_id, row); });
+  } catch (e) {
+    console.error('[notification] settings 一括取得例外（既定値で継続）:', e.message);
+  }
+  return map;
+}
 
 // JST(UTC+9) のオフセットミリ秒
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -208,20 +220,12 @@ async function createNotification({
     return null;
   }
 
-  // 受信者の設定を確認（対応する _enabled 列がある型のみ）
-  const settingCol = TYPE_TO_SETTING_COL[type];
-  if (settingCol) {
-    try {
-      const { data: settings } = await supabase
-        .from('notification_settings')
-        .select(settingCol)
-        .eq('user_id', userId)
-        .maybeSingle();
-      if (settings && settings[settingCol] === false) {
-        return null; // ユーザーが種別ごと OFF にしている
-      }
-    } catch (e) {
-      console.error('[notification] settings 取得失敗（処理は継続）:', e.message);
+  // 受信者の設定を確認（対応する _enabled 列がある型のみ）。
+  // 設定行が無い / 列が無い（migration 未適用）→ 種別の既定値で判定（既定 OFF の種別は届けない）。
+  if (settingColumnFor(type)) {
+    const settingsMap = await fetchSettingsMap([userId]);
+    if (!isEnabledFor(settingsMap.get(userId) || null, type)) {
+      return null; // ユーザーが種別ごと OFF にしている（または既定 OFF）
     }
   }
 
@@ -281,7 +285,8 @@ async function createNotification({
 
 /**
  * 複数通知を一括発火する。全体通知（admin が全員へ告知）等で使う。
- * notification_settings の確認は省略（全体通知を個別 OFF にする UI は Phase 2で別途）。
+ * 受信者ごとの notification_settings を 1 クエリで引き、OFF（既定 OFF 含む）の行は間引く。
+ * 列が無い種別（global / pricing_approval / leader_remind など）は常時 ON。
  *
  * sendMode='scheduled' のとき:
  *   ・ scheduledSendAt が明示指定されていれば全員共通でその時刻
@@ -293,8 +298,16 @@ async function createNotification({
  * @param {Date|string|null=} options.scheduledSendAt 全員共通の配信時刻（明示）
  * @returns {Promise<Array>} INSERT 結果の行配列、失敗時は空配列
  */
-async function createBulkNotifications(notifications, options = {}) {
-  if (!Array.isArray(notifications) || notifications.length === 0) return [];
+async function createBulkNotifications(notificationsInput, options = {}) {
+  if (!Array.isArray(notificationsInput) || notificationsInput.length === 0) return [];
+
+  // 受信者の設定で間引く（設定列が無い種別だけなら settings を引かない）
+  let notifications = notificationsInput;
+  if (notificationsInput.some(n => n && settingColumnFor(n.notification_type))) {
+    const settingsMap = await fetchSettingsMap(notificationsInput.map(n => n && n.user_id));
+    notifications = filterRowsBySettings(notificationsInput, settingsMap);
+    if (notifications.length === 0) return [];
+  }
 
   const { sendMode = 'immediate', scheduledSendAt = null } = options;
   const nowIso = new Date().toISOString();

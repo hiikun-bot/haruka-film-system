@@ -71,6 +71,7 @@ NNN は連番（`001`, `002`, ...）。
 | [022](decisions/022-estimate-line-rank.md) | 成果物グループ（見積明細）にランクを第一級の列として持たせる | pricing, rank, estimate, payout, editor |
 | [035](decisions/035-contract-management.md) | 契約管理：業務委託契約の依頼URL発行・閲覧・同意・版管理・期限監視（法人化対応） | contracts, consent, legal-entity, incorporation, onboarding, audit |
 | [040](decisions/040-session-store-supabase-zero-downtime.md) | HTTP セッションストアを Supabase に移し Railway Volume を外す（ゼロダウンタイムデプロイ） | session, auth, railway, volume, deploy, zero-downtime, infra |
+| [043](decisions/043-notification-defaults-and-settings.md) | 件数の多い通知（creative_registered / ball_returned）は既定オフ・通知ベルの受信設定は本人がメンバー編集モーダルで変える | notifications, settings, defaults, member-modal, ball_returned |
 | [037](decisions/037-director-pricing-with-admin-approval.md) | ディレクターも単価を設定可・承認権限なしの単価変更は有効なまま admin 承認待ち | pricing, estimate, permissions, approval, director |
 
 ### 共通参照
