@@ -102,6 +102,26 @@
   // DB の形式 CHECK と同じ規則（type を足すときの自己チェック用）
   const REACTION_TYPE_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
 
+  // ---- 動く絵文字（ADR 044 追補 2026-09-26）----
+  // Google の Noto Emoji Animation（CC BY 4.0）を 96px のアニメ WebP にして
+  // public/img/emoji-anim/<codepoint>.webp に自オリジンで置く（scripts/build-emoji-anim.sh）。
+  // 常時は静止（フォントの絵文字）で、ホバー中と「自分が押した直後の 2.4 秒」だけ動く。
+  // 絵文字 → ファイル名: コードポイントの 16 進を _ で連結（異体字セレクタ FE0F は除く）。例 🤣 → 1f923
+  function emojiCodepoint(emoji) {
+    return Array.from(String(emoji || ''))
+      .map(ch => ch.codePointAt(0).toString(16))
+      .filter(hex => hex !== 'fe0f')
+      .join('_');
+  }
+  // Noto 側に素材が無い絵文字（404）。これらは静止のまま
+  const ANIM_UNAVAILABLE = new Set(['1f37a', '1f647', '1f4a6', '1f4a4']); // 🍺 🙇 💦 💤
+  const ANIM_DIR = '/img/emoji-anim/';
+  // type → 動く絵文字の URL（無い type はキー自体なし）
+  const REACTION_ANIM_SRC = Object.fromEntries(ALL_REACTIONS
+    .map(r => [r.type, emojiCodepoint(r.emoji)])
+    .filter(([, cp]) => cp && !ANIM_UNAVAILABLE.has(cp))
+    .map(([type, cp]) => [type, ANIM_DIR + cp + '.webp']));
+
   // つぶやき（本体・返信）で受け付ける種別か（基本＋拡張）
   function isReactionType(type) {
     return ALL_REACTION_TYPES.includes(String(type || ''));
@@ -143,6 +163,7 @@
     ALL_REACTIONS, ALL_REACTION_TYPES,
     REACTION_EMOJI, REACTION_LABEL, REACTION_TYPE_PATTERN,
     isReactionType, isBaseReactionType,
+    emojiCodepoint, REACTION_ANIM_SRC, ANIM_UNAVAILABLE, ANIM_DIR,
     PORTFOLIO_REACTIONS, PORTFOLIO_LABEL, PORTFOLIO_PRIMARY,
   };
 });

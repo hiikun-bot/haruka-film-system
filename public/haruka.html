@@ -32426,6 +32426,60 @@ function _twPresentReactions(counts, myReactions) {
   return ordered;
 }
 
+// 動く絵文字（ADR 044 追補 2026-09-26）
+//   Noto Emoji Animation（CC BY 4.0）を自オリジン /img/emoji-anim/ に置き、
+//   常時は静止（フォントの絵文字）→ ホバー中と「自分が押した直後の 2.4 秒」だけ <img> に差し替えて動かす。
+//   タイムラインで常時動かさないのは CPU・電池・目障りさのため。OS の「視差効果を減らす」が ON なら一切動かさない。
+const _twAnimSrcMap = (window.ReactionsUtils && ReactionsUtils.REACTION_ANIM_SRC) || {};
+const _twAnimEnabled = !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+const _twHoverCapable = !!(window.matchMedia && matchMedia('(hover: hover)').matches);
+// 絵文字 1 個ぶんの markup（ピッカーのボタン・ピルで共用）
+function _twEmojiHtml(r, extraClass) {
+  const src = _twAnimEnabled ? _twAnimSrcMap[r.type] : null;
+  return `<span class="tw-emoji${extraClass ? ' ' + extraClass : ''}"${src ? ` data-anim="${src}"` : ''}>${r.emoji}</span>`;
+}
+// 動く絵文字に差し替える（画像の読み込みが済んでから差し替えるので、初回もチラつかない）
+function _twEmojiAnimStart(el) {
+  if (!el || !el.dataset.anim || el._animOn) return;
+  el._animOn = true;
+  if (el.dataset.static == null) el.dataset.static = el.textContent;
+  const img = new Image();
+  img.alt = el.dataset.static; img.draggable = false; img.decoding = 'async';
+  img.onload = () => { if (el._animOn) el.replaceChildren(img); };
+  img.src = el.dataset.anim;
+}
+function _twEmojiAnimStop(el) {
+  if (!el || !el._animOn) return;
+  el._animOn = false;
+  if (el._animTimer) { clearTimeout(el._animTimer); el._animTimer = null; }
+  el.textContent = el.dataset.static != null ? el.dataset.static : el.textContent;
+}
+// 一定時間だけ動かす（自分が押した直後のピル用）
+function _twEmojiPlayOnce(el, ms) {
+  if (!el || !_twAnimEnabled) return;
+  _twEmojiAnimStart(el);
+  el._animTimer = setTimeout(() => _twEmojiAnimStop(el), ms || 2400);
+}
+// container 内の指定種別のピルを一度だけ動かす（本体・返信の楽観的更新から呼ぶ）
+function _twEmojiPlayOnceIn(container, type) {
+  if (!container) return;
+  const el = container.querySelector(`.tweet-reaction-pill[data-type="${type}"] .tw-emoji[data-anim]`);
+  if (el) _twEmojiPlayOnce(el);
+}
+// ホバーで動かす（PC のみ。タッチ端末は mouseover が張り付くので押した直後だけ）
+if (_twAnimEnabled && _twHoverCapable) {
+  document.addEventListener('mouseover', (e) => {
+    const el = e.target.closest && e.target.closest('.tw-emoji[data-anim]');
+    if (el && !el._animTimer) _twEmojiAnimStart(el);
+  });
+  document.addEventListener('mouseout', (e) => {
+    const el = e.target.closest && e.target.closest('.tw-emoji[data-anim]');
+    if (!el || el._animTimer) return;
+    if (e.relatedTarget && el.contains(e.relatedTarget)) return;
+    _twEmojiAnimStop(el);
+  });
+}
+
 // ➕ ピッカーの中身: 基本 5 種の行 ＋ 「＋」で開く拡張パレット（グリッド）。
 //   handlerFor(type, active) … その種別を押したときの onclick 文字列（本体・返信で API が違うので呼び出し側が渡す）
 //   自分が押している種別は .active で示す（もう一度押すと外れる）
@@ -32433,7 +32487,7 @@ function _twPickerHtml(myReactions, handlerFor) {
   const my = new Set(myReactions || []);
   const btn = (r) => {
     const active = my.has(r.type);
-    return `<button class="${active ? 'active' : ''}" onclick="${handlerFor(r.type, active)}" title="${esc(r.label)}">${r.emoji}</button>`;
+    return `<button class="${active ? 'active' : ''}" onclick="${handlerFor(r.type, active)}" title="${esc(r.label)}">${_twEmojiHtml(r)}</button>`;
   };
   const base = TWEET_REACTIONS.map(btn).join('');
   if (!TWEET_EXTRA_REACTIONS.length) return `<span class="tweet-reaction-picker-row">${base}</span>`;
@@ -33240,6 +33294,8 @@ function _twApplyReactionLocal(tweetId, type, action) {
   t.reaction_users = reactionUsers;
 
   _twReplaceCardDom(t);
+  // 自分が押した直後だけ、そのピルの絵文字を一度動かす（動く絵文字がある種別のみ）
+  if (action === 'add') _twEmojiPlayOnceIn(document.querySelector(`article.tweet-card[data-tweet-id="${tweetId}"] .tweet-reaction-summary`), type);
   return true;
 }
 
@@ -33552,8 +33608,8 @@ function renderTweetCard(t) {
             ${who.map(u => `<span class="tweet-reaction-who-name">${esc(NameDisplay.full(u))}</span>`).join('')}
           </span>`
         : '';
-      return `<button class="tweet-reaction-pill ${active ? 'active' : ''}" onclick="${handler}" title="${esc(r.label)}">
-        <span class="emoji">${r.emoji}</span>${c > 0 ? `<span class="count">${c}</span>` : ''}${whoPop}
+      return `<button class="tweet-reaction-pill ${active ? 'active' : ''}" data-type="${r.type}" onclick="${handler}" title="${esc(r.label)}">
+        ${_twEmojiHtml(r, 'emoji')}${c > 0 ? `<span class="count">${c}</span>` : ''}${whoPop}
       </button>`;
     }).join('');
 
@@ -33773,8 +33829,8 @@ function _twRenderCommentReactions(tweetId, c) {
             ${who.map(u => `<span class="tweet-reaction-who-name">${esc(NameDisplay.full(u))}</span>`).join('')}
           </span>`
         : '';
-      return `<button class="tweet-reaction-pill sm ${active ? 'active' : ''}" onclick="${handler}" title="${esc(r.label)}">
-        <span class="emoji">${r.emoji}</span>${n > 0 ? `<span class="count">${n}</span>` : ''}${whoPop}
+      return `<button class="tweet-reaction-pill sm ${active ? 'active' : ''}" data-type="${r.type}" onclick="${handler}" title="${esc(r.label)}">
+        ${_twEmojiHtml(r, 'emoji')}${n > 0 ? `<span class="count">${n}</span>` : ''}${whoPop}
       </button>`;
     }).join('');
   const pickerBtns = _twPickerHtml(c.my_reactions, (type, active) => active
@@ -33821,7 +33877,10 @@ function _twApplyCommentReactionLocal(tweetId, commentId, type, action) {
     const holder = document.createElement('div');
     holder.innerHTML = _twRenderCommentReactions(tweetId, c);
     const next = holder.firstElementChild;
-    if (next) box.replaceWith(next);
+    if (next) {
+      box.replaceWith(next);
+      if (action === 'add') _twEmojiPlayOnceIn(next, type);
+    }
   }
   return true;
 }

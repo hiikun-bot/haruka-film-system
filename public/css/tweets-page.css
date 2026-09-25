@@ -566,6 +566,25 @@
   transform: scale(1.15);
 }
 
+/* 動く絵文字（ADR 044 追補）: 常時はフォントの絵文字、ホバー中／押した直後だけ <img>（アニメ WebP）に差し替わる。
+   画像は絵文字グリフと同じ見た目の大きさに合わせる（1.3em・ベースライン少し下げ） */
+.tw-emoji { display: inline-block; line-height: 1; }
+.tw-emoji img {
+  width: 1.3em;
+  height: 1.3em;
+  vertical-align: -0.3em;
+  display: inline-block;
+  pointer-events: none;
+}
+.tweet-reaction-picker button .tw-emoji img {
+  width: 26px;
+  height: 26px;
+  vertical-align: middle;
+}
+.tweet-reaction-pill .tw-emoji img {
+  vertical-align: -0.35em;
+}
+
 /* 自分が押している種別（もう一度押すと外れる） */
 .tweet-reaction-picker button.active {
   background: #E6F9F8;
