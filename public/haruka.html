@@ -27186,8 +27186,13 @@ async function pfExtSubmit() {
     const newId = json.work?.id || json.item?.external_id || null;
     pfExtClose();
     showToast('🌐 作品を追加しました', 'success');
-    // 追加した作品が今の絞り込みで見えるように、種別タブが違えば「共通」に戻す
-    if (pfTab !== 'all') pfSetTab('all'); else await pfReload();
+    // 追加した作品が今の絞り込みで見えるように、種別タブが違えば「共通」に戻してから引き直す
+    //（pfSetTab は pfReload を await しないので、ここでは手で切り替えて 1 回だけ await する）
+    if (pfTab !== 'all') {
+      pfTab = 'all';
+      ['all', 'video', 'design'].forEach(t => document.getElementById(`pf-tab-${t}`)?.classList.toggle('active', t === 'all'));
+    }
+    await pfReload();
     const idx = pfItems.findIndex(it => it.external_id === newId);
     if (idx >= 0) pfOpenLightbox(idx);
   } catch (e) {
