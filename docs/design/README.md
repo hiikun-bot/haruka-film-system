@@ -72,6 +72,7 @@ NNN は連番（`001`, `002`, ...）。
 | [035](decisions/035-contract-management.md) | 契約管理：業務委託契約の依頼URL発行・閲覧・同意・版管理・期限監視（法人化対応） | contracts, consent, legal-entity, incorporation, onboarding, audit |
 | [040](decisions/040-session-store-supabase-zero-downtime.md) | HTTP セッションストアを Supabase に移し Railway Volume を外す（ゼロダウンタイムデプロイ） | session, auth, railway, volume, deploy, zero-downtime, infra |
 | [037](decisions/037-director-pricing-with-admin-approval.md) | ディレクターも単価を設定可・承認権限なしの単価変更は有効なまま admin 承認待ち | pricing, estimate, permissions, approval, director |
+| [044](decisions/044-tweet-reactions-extended-palette.md) | つぶやきのリアクションは「基本 5 種 ＋『＋』で開く拡張パレット（🤣 🔥 🎉 …約 40 種）」。DB は形式 CHECK のみ・許可値はコード側 | tweets, reactions, emoji, picker, palette, notifications |
 
 ### 共通参照
 - [philosophy.md](philosophy.md) — 共通設計原則

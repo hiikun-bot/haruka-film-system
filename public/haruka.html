@@ -2628,7 +2628,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <script src="/js/mention-resolve.js"></script>
 <!-- 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js を server.js が配信）。インラインJSが参照するため defer なし -->
 <script src="/js/personal-goals.js"></script>
-<!-- リアクション 5 種（👍 ❤️ 👏 😊 😳）の定義（utils/reactions.js を server.js が配信）。つぶやき・作品ギャラリーで共通。インラインJSが参照するため defer なし -->
+<!-- リアクションの定義（基本 5 種 👍 ❤️ 👏 😊 😳 ＋ つぶやき用の拡張パレット 🤣 🔥 🎉 …。utils/reactions.js を server.js が配信）。つぶやき・作品ギャラリーで共通。インラインJSが参照するため defer なし -->
 <script src="/js/reactions.js"></script>
 </head>
 <body>
@@ -32410,6 +32410,38 @@ const TWEET_REACTIONS = (window.ReactionsUtils && ReactionsUtils.REACTIONS) || [
   { type: 'smile',     emoji: '😊', label: 'スマイル' },
   { type: 'surprised', emoji: '😳', label: 'びっくり' },
 ];
+// 拡張パレット（ADR 044）: ピッカーの「＋」を押すと開く 🤣 🔥 🎉 など。定義が読めない環境では基本 5 種だけ
+const TWEET_EXTRA_REACTIONS = (window.ReactionsUtils && ReactionsUtils.EXTRA_REACTIONS) || [];
+const TWEET_ALL_REACTIONS = TWEET_REACTIONS.concat(TWEET_EXTRA_REACTIONS);
+const _twReactionDefMap = new Map(TWEET_ALL_REACTIONS.map(r => [r.type, r]));
+
+// 押されている（または自分が押した）種別だけを、表示順（基本 5 種 → 拡張パレット順）で返す。
+// 定義に無い種別（将来の追加分を古いタブで見た等）は ✨ で末尾に出し、数を隠さない。
+function _twPresentReactions(counts, myReactions) {
+  const c = counts || {};
+  const present = new Set(Object.keys(c).filter(t => (c[t] || 0) > 0));
+  (myReactions || []).forEach(t => present.add(t));
+  const ordered = TWEET_ALL_REACTIONS.filter(r => present.has(r.type));
+  present.forEach(t => { if (!_twReactionDefMap.has(t)) ordered.push({ type: t, emoji: '✨', label: t }); });
+  return ordered;
+}
+
+// ➕ ピッカーの中身: 基本 5 種の行 ＋ 「＋」で開く拡張パレット（グリッド）。
+//   handlerFor(type, active) … その種別を押したときの onclick 文字列（本体・返信で API が違うので呼び出し側が渡す）
+//   自分が押している種別は .active で示す（もう一度押すと外れる）
+function _twPickerHtml(myReactions, handlerFor) {
+  const my = new Set(myReactions || []);
+  const btn = (r) => {
+    const active = my.has(r.type);
+    return `<button class="${active ? 'active' : ''}" onclick="${handlerFor(r.type, active)}" title="${esc(r.label)}">${r.emoji}</button>`;
+  };
+  const base = TWEET_REACTIONS.map(btn).join('');
+  if (!TWEET_EXTRA_REACTIONS.length) return `<span class="tweet-reaction-picker-row">${base}</span>`;
+  const more = `<button class="tweet-reaction-more" onclick="toggleTweetReactionPalette(event,this)" title="ほかの絵文字" aria-label="ほかの絵文字を開く">＋</button>`;
+  const palette = TWEET_EXTRA_REACTIONS.map(btn).join('');
+  return `<span class="tweet-reaction-picker-row">${base}${more}</span>
+    <span class="tweet-reaction-palette" role="group" aria-label="ほかの絵文字">${palette}</span>`;
+}
 
 // dash-tweets ダッシュボード内つぶやき欄は廃止（独立タブ #page-tweets に集約）。
 // 旧 loadTweets() / toggleTweetComments() / loadTweetComments() / submitTweetComment() /
@@ -33505,8 +33537,7 @@ function renderTweetCard(t) {
   const myReactions = new Set(t.my_reactions || []);
   const counts = t.reaction_counts || {};
   const reactionUsers = t.reaction_users || {};
-  const summaryPills = TWEET_REACTIONS
-    .filter(r => (counts[r.type] || 0) > 0 || myReactions.has(r.type))
+  const summaryPills = _twPresentReactions(counts, t.my_reactions)
     .map(r => {
       const active = myReactions.has(r.type);
       const c = counts[r.type] || 0;
@@ -33526,14 +33557,10 @@ function renderTweetCard(t) {
       </button>`;
     }).join('');
 
-  // ➕ リアクション追加ピッカー
-  const pickerBtns = TWEET_REACTIONS.map(r => {
-    const active = myReactions.has(r.type);
-    const handler = active
-      ? `removeTweetReactionFromCard('${t.id}','${r.type}')`
-      : `addTweetReactionFromCard('${t.id}','${r.type}')`;
-    return `<button onclick="${handler}" title="${esc(r.label)}">${r.emoji}</button>`;
-  }).join('');
+  // ➕ リアクション追加ピッカー（基本 5 種 ＋ 「＋」で拡張パレット）
+  const pickerBtns = _twPickerHtml(t.my_reactions, (type, active) => active
+    ? `removeTweetReactionFromCard('${t.id}','${type}')`
+    : `addTweetReactionFromCard('${t.id}','${type}')`);
   const addReactionWrap = `<span class="tweet-reaction-add-wrap" style="position:relative;display:inline-block">
     <button class="tweet-reaction-add" onclick="toggleTweetReactionPicker(event,'${t.id}')" title="リアクションを追加">➕</button>
     <span id="tw-page-picker-${t.id}" class="tweet-reaction-picker">${pickerBtns}</span>
@@ -33600,7 +33627,30 @@ function toggleTweetReactionPicker(ev, tweetId, pickerId) {
     if (p.id !== targetId) p.classList.remove('open');
   });
   const picker = document.getElementById(targetId);
-  if (picker) picker.classList.toggle('open');
+  if (!picker) return;
+  picker.classList.toggle('open');
+  if (picker.classList.contains('open')) _twFitPicker(picker);
+}
+// ピッカーが画面右端からはみ出すぶんだけ左へずらす（左端 8px は割らない）。開くたびに測り直す（パレット展開時も）
+function _twFitPicker(picker) {
+  picker.style.left = '';
+  const r = picker.getBoundingClientRect();
+  const over = r.right - (window.innerWidth - 8);
+  if (over > 0) {
+    const shift = Math.min(over, Math.max(0, r.left - 8));
+    if (shift > 0) picker.style.left = `-${Math.round(shift)}px`;
+  }
+}
+// 「＋」で拡張パレット（🤣 🔥 🎉 …）を開閉する。ピッカー自体は開いたまま
+function toggleTweetReactionPalette(ev, btn) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const picker = btn && btn.closest('.tweet-reaction-picker');
+  if (!picker) return;
+  const expanded = picker.classList.toggle('expanded');
+  btn.textContent = expanded ? '−' : '＋';
+  btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  btn.title = expanded ? '閉じる' : 'ほかの絵文字';
+  _twFitPicker(picker);
 }
 // 外側クリックでピッカーを閉じる
 document.addEventListener('click', (e) => {
@@ -33709,8 +33759,7 @@ function _twRenderCommentReactions(tweetId, c) {
   const myReactions = new Set(c.my_reactions || []);
   const counts = c.reaction_counts || {};
   const reactionUsers = c.reaction_users || {};
-  const pills = TWEET_REACTIONS
-    .filter(r => (counts[r.type] || 0) > 0 || myReactions.has(r.type))
+  const pills = _twPresentReactions(counts, c.my_reactions)
     .map(r => {
       const active = myReactions.has(r.type);
       const n = counts[r.type] || 0;
@@ -33728,13 +33777,9 @@ function _twRenderCommentReactions(tweetId, c) {
         <span class="emoji">${r.emoji}</span>${n > 0 ? `<span class="count">${n}</span>` : ''}${whoPop}
       </button>`;
     }).join('');
-  const pickerBtns = TWEET_REACTIONS.map(r => {
-    const active = myReactions.has(r.type);
-    const handler = active
-      ? `removeTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`
-      : `addTweetCommentReaction('${tweetId}','${c.id}','${r.type}')`;
-    return `<button onclick="${handler}" title="${esc(r.label)}">${r.emoji}</button>`;
-  }).join('');
+  const pickerBtns = _twPickerHtml(c.my_reactions, (type, active) => active
+    ? `removeTweetCommentReaction('${tweetId}','${c.id}','${type}')`
+    : `addTweetCommentReaction('${tweetId}','${c.id}','${type}')`);
   return `<div class="tw-comment-reactions">
     ${pills}
     <span class="tweet-reaction-add-wrap" style="position:relative;display:inline-block">
