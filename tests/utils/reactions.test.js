@@ -73,4 +73,42 @@ describe('utils/reactions', () => {
     expect(R.PORTFOLIO_REACTIONS[0].type).toBe('clap');
     expect(R.PORTFOLIO_LABEL.clap).toBe('ナイス！');
   });
+
+  // ---- 動く絵文字（ADR 044 追補 2026-09-26）----
+  describe('動く絵文字（Noto Emoji Animation）', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const dir = path.join(__dirname, '../../public/img/emoji-anim');
+
+    test('絵文字 → コードポイント（FE0F を除く・複数は _ 連結）', () => {
+      expect(R.emojiCodepoint('🤣')).toBe('1f923');
+      expect(R.emojiCodepoint('❤️')).toBe('2764');   // FE0F を落とす
+      expect(R.emojiCodepoint('✌️')).toBe('270c');
+      expect(R.emojiCodepoint('☕')).toBe('2615');
+      expect(R.emojiCodepoint('')).toBe('');
+      expect(R.emojiCodepoint(null)).toBe('');
+    });
+
+    test('REACTION_ANIM_SRC は素材が無い 4 種を除く全種別を /img/emoji-anim/<cp>.webp で指す', () => {
+      const types = Object.keys(R.REACTION_ANIM_SRC);
+      expect(types.length).toBe(R.ALL_REACTIONS.length - R.ANIM_UNAVAILABLE.size);
+      expect(R.REACTION_ANIM_SRC.lol).toBe('/img/emoji-anim/1f923.webp');
+      expect(R.REACTION_ANIM_SRC.beer).toBeUndefined();   // 🍺 は Noto に素材なし
+      for (const t of types) {
+        expect(R.REACTION_ANIM_SRC[t]).toMatch(/^\/img\/emoji-anim\/[0-9a-f_]+\.webp$/);
+      }
+    });
+
+    test('定義にある動く絵文字のファイルが実在し、逆に定義に無いファイルも置かれていない', () => {
+      const expected = new Set(Object.values(R.REACTION_ANIM_SRC).map(u => path.basename(u)));
+      for (const f of expected) {
+        const p = path.join(dir, f);
+        expect(fs.existsSync(p)).toBe(true);
+        // 1 個 256KB 以内（96px・多くは 60〜120KB、😇 💯 など動きの大きいものが 200KB 強。超えたら変換設定を疑う）
+        expect(fs.statSync(p).size).toBeLessThan(256 * 1024);
+      }
+      const actual = fs.readdirSync(dir).filter(f => f.endsWith('.webp'));
+      expect(actual.sort()).toEqual([...expected].sort());
+    });
+  });
 });
