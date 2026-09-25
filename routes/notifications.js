@@ -69,9 +69,8 @@ function applyDeliveredFilter(q) {
 //
 // 既読判定: グループ内の全行が is_read=true のときだけ既読バッジ。1 つでも未読なら未読扱い。
 // ============================================================
-const REACTION_EMOJI_MAP = {
-  good: '👍', heart: '❤️', clap: '👏', smile: '😊', surprised: '😳',
-};
+// type → 絵文字は utils/reactions.js が正（基本 5 種＋拡張パレット。ADR 044）
+const { REACTION_EMOJI: REACTION_EMOJI_MAP } = require('../utils/reactions');
 const REACTION_AGGREGATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function aggregatePostReactionNotifications(rows) {

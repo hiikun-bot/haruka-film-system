@@ -536,6 +536,15 @@
 
 .tweet-reaction-picker.open {
   display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* 1 行目: 基本 5 種 ＋ 「＋」 */
+.tweet-reaction-picker-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .tweet-reaction-picker button {
@@ -555,6 +564,58 @@
 .tweet-reaction-picker button:hover {
   background: #E6F9F8;
   transform: scale(1.15);
+}
+
+/* 自分が押している種別（もう一度押すと外れる） */
+.tweet-reaction-picker button.active {
+  background: #E6F9F8;
+  box-shadow: inset 0 0 0 1.5px #3ECFCA;
+}
+
+/* 「＋」= 拡張パレットを開く（ADR 044）。絵文字ボタンと区別がつくよう点線の丸 */
+.tweet-reaction-picker button.tweet-reaction-more {
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  color: #6B7280;
+  border: 1px dashed #D1D5DB;
+}
+
+.tweet-reaction-picker button.tweet-reaction-more:hover {
+  color: #2BA8A4;
+  border-color: #3ECFCA;
+  transform: none;
+}
+
+/* 拡張パレット（🤣 🔥 🎉 …）: 「＋」で展開。8 列グリッド・多いときは縦スクロール */
+.tweet-reaction-palette {
+  display: none;
+}
+
+.tweet-reaction-picker.expanded {
+  border-radius: 16px;
+  padding: 6px 8px 8px;
+}
+
+.tweet-reaction-picker.expanded .tweet-reaction-palette {
+  display: grid;
+  grid-template-columns: repeat(8, 32px);
+  gap: 2px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #F3F4F6;
+  max-height: 176px; /* 5 行ぶん。それ以上はスクロール */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 480px) {
+  .tweet-reaction-picker.expanded .tweet-reaction-palette {
+    grid-template-columns: repeat(6, 32px);
+  }
 }
 
 /* コメント・保存ボタン */

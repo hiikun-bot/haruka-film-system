@@ -17235,8 +17235,12 @@ const TWEET_IMAGE_MAX_BYTES = 500 * 1024; // base64 後 500KB 上限（1枚あ�
 const TWEET_IMAGE_MAX_COUNT = 4;          // 1投稿あたりの写真上限
 const TWEET_BODY_MAX = 280;
 const TWEET_COMMENT_MAX = 500;
-// リアクション 5 種の定義は utils/reactions.js が正（フロントも /js/reactions.js で同じ定義を読む）
-const { REACTION_TYPES: TWEET_REACTION_TYPES, REACTION_EMOJI } = require('../utils/reactions');
+// リアクションの定義は utils/reactions.js が正（フロントも /js/reactions.js で同じ定義を読む）。
+// つぶやき（本体・返信）は基本 5 種＋拡張パレット（🤣 🔥 🎉 …）の全部を受け付ける（ADR 044）。
+const { ALL_REACTION_TYPES: TWEET_REACTION_TYPES, REACTION_EMOJI } = require('../utils/reactions');
+// 拡張パレットの種別が DB の旧・列挙 CHECK（migration 2026-09-25 未適用）で弾かれたときの文言。
+// 基本 5 種は従来どおり通るので、ここだけ分かる言葉で返す（500 にしない）。
+const TWEET_REACTION_CHECK_VIOLATION_MSG = 'この絵文字はまだ使えません（システム更新待ち）。基本の 5 種はお使いいただけます';
 // 本文の改行正規化（multipart 送信で CRLF 化された本文を LF に戻して数える。バグ報告 7374bea4）
 const { normalizeTweetBody } = require('../utils/tweet-body');
 
@@ -17724,6 +17728,10 @@ router.post('/tweets/:id/reactions', requireAuth, async (req, res) => {
     if (error.code === '23505') {
       return res.status(409).json({ error: 'すでにこのリアクションを押しています' });
     }
+    // CHECK 違反（拡張絵文字を旧 CHECK の DB に入れた）→ 400 で分かる文言
+    if (error.code === '23514') {
+      return res.status(400).json({ error: TWEET_REACTION_CHECK_VIOLATION_MSG });
+    }
     return res.status(500).json({ error: error.message });
   }
 
@@ -17865,15 +17873,16 @@ router.post('/tweets/:id/comments/:commentId/reactions', requireAuth, async (req
     if (error.code === '23505') {
       return res.status(409).json({ error: 'すでにこのリアクションを押しています' });
     }
+    if (error.code === '23514') {
+      return res.status(400).json({ error: TWEET_REACTION_CHECK_VIOLATION_MSG });
+    }
     return res.status(500).json({ error: error.message });
   }
 
   // 返信者が自分以外なら post_reaction 通知（本体と同じ type なので通知設定・24h 集約もそのまま効く）
   if (c.user_id !== req.user.id) {
     const senderName = req.user.nickname || req.user.full_name || '誰か';
-    const reactionEmoji = {
-      good: '👍', heart: '❤️', clap: '👏', smile: '😊', surprised: '😳',
-    }[reactionType] || '✨';
+    const reactionEmoji = REACTION_EMOJI[reactionType] || '✨';
     const excerpt = (c.body || '').length > 50
       ? c.body.slice(0, 50) + '…'
       : (c.body || '');

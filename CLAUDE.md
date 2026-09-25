@@ -122,7 +122,7 @@ migration を含む PR を作る／本番適用が必要な SQL を提示する�
 
 | 領域 | 主要テーブル | バックエンド | フロント | 補足 |
 |---|---|---|---|---|
-| 社内SNS（つぶやき） | `tweets` / `tweet_likes` / `tweet_reactions` / `tweet_comments` | `routes/haruka.js` の `/api/tweets/*` | `public/haruka.html` の **独立タブ `#page-tweets`** + `loadTweetsPage()` + 投稿モーダル `modal-tweet-compose` | リベシティ風タイムライン（PR #209）。ダッシュボード内 `dash-tweets` は廃止。**@メンション**の解決は `utils/mention-resolve.js`（前方一致・最長一致。`/js/mention-resolve.js` で配信しフロントの「@」補完・本文ハイライトと同一ロジック）。候補は `GET /api/tweets/mention-candidates` |
+| 社内SNS（つぶやき） | `tweets` / `tweet_likes` / `tweet_reactions` / `tweet_comments` / `tweet_comment_reactions` | `routes/haruka.js` の `/api/tweets/*` | `public/haruka.html` の **独立タブ `#page-tweets`** + `loadTweetsPage()` + 投稿モーダル `modal-tweet-compose` | リベシティ風タイムライン（PR #209）。ダッシュボード内 `dash-tweets` は廃止。**@メンション**の解決は `utils/mention-resolve.js`（前方一致・最長一致。`/js/mention-resolve.js` で配信しフロントの「@」補完・本文ハイライトと同一ロジック）。候補は `GET /api/tweets/mention-candidates`。リアクションの種類は `utils/reactions.js` が正（基本 5 種＋「＋」で開く拡張パレット、ADR 044） |
 | 全体連絡（旧版） | `announcements` / `announcement_acks` | `routes/haruka.js` | `public/haruka.html` の `modal-announcement-status` | 既読確認つきの全体周知。新通知系（`notification_logs`）と並走 |
 | 通知（Phase 1） | `notification_logs` / `notification_settings` | `routes/notifications.js` + `utils/notification.js` | `public/js/notification-bell.js` / `notification-panel.js` / `notification-realtime.js` / `notification-card.js` | リベシティ風 5エンドポイント。Realtime購読あり |
 | 通知（旧設計の遺物） | `posts` / `post_reactions` / `post_comments` | なし | なし | migration `2026-05-03_notification_phase1.sql` で作成されたが**未使用**。Phase 1 段階4 で `tweets` 拡張に方針変更したため塩漬け |

@@ -385,7 +385,7 @@ app.use('/js/vendor/chart.umd.js', express.static(
   path.join(__dirname, 'node_modules/chart.js/dist/chart.umd.js'),
   { maxAge: '1h' }
 ));
-// リアクション 5 種（👍 ❤️ 👏 😊 😳）の定義（utils/reactions.js・UMD形式）。
+// リアクションの定義（基本 5 種 👍 ❤️ 👏 😊 😳 ＋ つぶやき用の拡張パレット。utils/reactions.js・UMD形式）。
 // つぶやきと作品ギャラリーのフロント・サーバーで同じ定義を使う（二重定義しない）
 app.use('/js/reactions.js', express.static(path.join(__dirname, 'utils/reactions.js')));
 // haruka.html は認証後のみ配信（ミニファイ + 事前圧縮 + ETag/304 の最適化配信）
