@@ -8696,6 +8696,91 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   /* ライトボックス（作品詳細）
      左＝メディア（映像の周りだけ黒）／右＝白いインフォカード。
      全面黒だと「見る画面」になってしまうので、作品を語るページとして白基調にする。 */
+  /* ===== 🌐 みんなのポートフォリオ（外部作品・ADR 045） ===== */
+  #page-portfolio .pf-ext-chip {
+    position: absolute; top: 6px; right: 6px; z-index: 2; font-size: 11px; line-height: 1;
+    padding: 5px 7px; border-radius: 999px; background: rgba(0,0,0,.45); color: #fff; pointer-events: none;
+  }
+  #page-portfolio .pf-group-head.pf-group-ext { background: linear-gradient(90deg, rgba(43,184,180,.10), transparent); }
+  #page-portfolio .pf-ext-add {
+    font-size: 12.5px; padding: 7px 14px; border-radius: 999px; border: 0; cursor: pointer; font-weight: 700;
+    background: var(--em, #2BB8B4); color: #fff; box-shadow: 0 2px 8px rgba(43,184,180,.28); white-space: nowrap;
+  }
+  #page-portfolio .pf-ext-add:hover { filter: brightness(1.06); }
+  .pf-lb-stage iframe { width: 100%; height: calc(100vh - 130px); max-height: 100%; border: 0; display: block; }
+  .pf-lb-stage .pf-lb-linkcard {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 32px; text-align: center; color: #fff;
+  }
+  .pf-lb-stage .pf-lb-linkcard img { max-height: 60vh; border-radius: 10px; }
+  .pf-lb-stage .pf-lb-linkcard a { color: #fff; background: rgba(255,255,255,.16); border-radius: 999px; padding: 10px 20px; text-decoration: none; font-weight: 700; }
+  .pf-lb-stage .pf-lb-linkcard a:hover { background: rgba(255,255,255,.3); }
+
+  /* 追加モーダル（ライトボックス 1200 より上に出す） */
+  .pf-ext-overlay { display: none; position: fixed; inset: 0; z-index: 1300; background: rgba(20,22,26,.55); backdrop-filter: blur(3px); }
+  .pf-ext-overlay.open { display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .pf-ext-modal {
+    width: min(920px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; background: #fff; border-radius: 16px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.28); color: #1f2328; padding: 22px 24px 20px;
+  }
+  .pf-ext-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .pf-ext-head h3 { margin: 0; font-size: 17px; font-weight: 800; }
+  .pf-ext-steps { display: flex; gap: 6px; margin-left: auto; font-size: 11.5px; color: #9CA3AF; }
+  .pf-ext-steps span { padding: 3px 9px; border-radius: 999px; background: #F3F4F6; }
+  .pf-ext-steps span.on { background: #E0F5F4; color: #1F8F8B; font-weight: 700; }
+  .pf-ext-x { margin-left: 8px; border: 0; background: #F3F4F6; border-radius: 999px; width: 30px; height: 30px; cursor: pointer; font-size: 14px; }
+  .pf-ext-url { width: 100%; font-size: 14px; padding: 12px 14px; border-radius: 10px; border: 1.5px solid #D1D5DB; outline: none; }
+  .pf-ext-url:focus { border-color: #2BB8B4; box-shadow: 0 0 0 3px rgba(43,184,180,.18); }
+  .pf-ext-or { display: flex; align-items: center; gap: 10px; color: #9CA3AF; font-size: 12px; margin: 14px 0; }
+  .pf-ext-or::before, .pf-ext-or::after { content: ''; flex: 1; height: 1px; background: #E5E7EB; }
+  .pf-ext-drop {
+    border: 2px dashed #CBD5E1; border-radius: 12px; padding: 26px 16px; text-align: center; color: #6B7280; cursor: pointer;
+    background: #FAFBFC; transition: background .12s, border-color .12s;
+  }
+  .pf-ext-drop:hover, .pf-ext-drop.over { border-color: #2BB8B4; background: #F0FBFA; }
+  .pf-ext-drop strong { color: #1F2937; }
+  .pf-ext-hint { font-size: 11.5px; color: #9CA3AF; margin-top: 10px; line-height: 1.7; }
+  .pf-ext-foot { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
+  .pf-ext-foot .spacer { flex: 1; }
+  .pf-ext-btn { border: 1px solid #E5E7EB; background: #fff; color: #374151; border-radius: 999px; padding: 9px 18px; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .pf-ext-btn:hover { background: #F9FAFB; }
+  .pf-ext-btn.primary { background: #14171a; border-color: #14171a; color: #fff; }
+  .pf-ext-btn.primary:hover { background: #2b2f36; }
+  .pf-ext-btn.danger { color: #B91C1C; border-color: #FECACA; }
+  .pf-ext-btn:disabled { opacity: .45; cursor: default; }
+  .pf-ext-progress { height: 8px; background: #EEF2F7; border-radius: 999px; overflow: hidden; margin-top: 10px; }
+  .pf-ext-progress > div { height: 100%; width: 0; background: linear-gradient(90deg,#3ECFCA,#2BB8B4); transition: width .2s; }
+  .pf-ext-wait { text-align: center; padding: 34px 10px; color: #374151; font-size: 14px; }
+  .pf-ext-wait .spin { width: 34px; height: 34px; border: 3px solid #E5E7EB; border-top-color: #2BB8B4; border-radius: 50%; margin: 0 auto 14px; animation: pfExtSpin .9s linear infinite; }
+  @keyframes pfExtSpin { to { transform: rotate(360deg); } }
+  .pf-ext-form { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; }
+  .pf-ext-preview { background: #0b0c0e; border-radius: 12px; overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 200px; max-height: 420px; }
+  .pf-ext-preview img { max-width: 100%; max-height: 420px; object-fit: contain; display: block; }
+  .pf-ext-preview .ph { color: rgba(255,255,255,.6); font-size: 12.5px; text-align: center; padding: 20px; }
+  .pf-ext-src { font-size: 12px; color: #6B7280; margin-top: 8px; line-height: 1.6; word-break: break-all; }
+  .pf-ext-src a { color: #2563EB; }
+  .pf-ext-fields { display: grid; gap: 11px; }
+  .pf-ext-fields label { display: grid; gap: 4px; font-size: 11.5px; color: #6B7280; font-weight: 700; }
+  .pf-ext-fields input, .pf-ext-fields select, .pf-ext-fields textarea {
+    font-size: 13.5px; padding: 8px 11px; border-radius: 8px; border: 1px solid #D1D5DB; background: #fff; color: #1f2328; outline: none; font-weight: 400;
+  }
+  .pf-ext-fields textarea { min-height: 84px; resize: vertical; line-height: 1.6; }
+  .pf-ext-fields input:focus, .pf-ext-fields select:focus, .pf-ext-fields textarea:focus { border-color: #2BB8B4; box-shadow: 0 0 0 3px rgba(43,184,180,.16); }
+  .pf-ext-fields .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .pf-ext-ai { display: inline-block; font-size: 10px; font-weight: 800; color: #6D28D9; background: #EDE9FE; border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
+  .pf-ext-ainote { font-size: 11.5px; color: #6B7280; background: #F8F7FF; border: 1px solid #E9E5FF; border-radius: 8px; padding: 8px 11px; line-height: 1.6; }
+  .pf-ext-ainote.off { background: #F9FAFB; border-color: #E5E7EB; }
+  .pf-ext-kind { display: inline-flex; border: 1px solid #D1D5DB; border-radius: 999px; overflow: hidden; }
+  .pf-ext-kind button { border: 0; background: #fff; padding: 6px 13px; font-size: 12.5px; cursor: pointer; color: #374151; }
+  .pf-ext-kind button.on { background: #14171a; color: #fff; }
+  .pf-ext-err { color: #B91C1C; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 9px 12px; font-size: 12.5px; margin-top: 12px; line-height: 1.6; }
+  @media (max-width: 760px) {
+    .pf-ext-form { grid-template-columns: 1fr; }
+    .pf-ext-preview { max-height: 46vh; }
+    .pf-ext-fields .row2 { grid-template-columns: 1fr; }
+    .pf-ext-overlay.open { padding: 0; }
+    .pf-ext-modal { border-radius: 0; max-height: 100vh; }
+  }
+
   .pf-lightbox { display: none; position: fixed; inset: 0; z-index: 1200; background: rgba(20,22,26,.55); backdrop-filter: blur(3px); }
   .pf-lightbox.open { display: flex; align-items: center; justify-content: center; padding: 24px; }
   .pf-lb-shell {
@@ -8950,6 +9035,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <label class="pf-check" title="納品物のファイルがシステムに登録されていない作品（外部リンクのみで納品されたもの）も表示します"><input type="checkbox" id="pf-include-nofile" onchange="pfOnFilterChange()">ファイル未登録も表示</label>
       <label class="pf-check" title="まだ納品完了していない制作途中のクリエイティブ（初稿・修正中など）も表示します。既定は納品済みのみ"><input type="checkbox" id="pf-include-wip" onchange="pfOnFilterChange()">🚧 制作途中も表示</label>
       <label class="pf-check" title="カードを選んでまとめてダウンロードします"><input type="checkbox" id="pf-select-mode" onchange="pfToggleSelectMode(this.checked)">選択モード</label>
+      <!-- 🌐 みんなのポートフォリオ（ADR 045）: HFS の案件外の作品を URL / ファイルで追加する -->
+      <button type="button" class="pf-ext-add" onclick="pfExtOpen()" title="YouTube・Google ドライブ・その他の URL を貼るか、ファイルをアップロードして、自分の作品を作品ページに追加します">＋ 作品を追加</button>
       <!-- マイベスト切替（担当者を1名に絞っているときだけ出る）。既定は「本人のマイベスト」 -->
       <span class="pf-seg" id="pf-best-seg" role="group" aria-label="マイベスト表示" style="display:none">
         <button type="button" id="pf-best-best" onclick="pfSetBestMode('best')">⭐ マイベスト</button>
@@ -8994,6 +9081,18 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
     </div>
     <div class="pf-lb-card" id="pf-lb-card"></div>
+  </div>
+</div>
+
+<!-- 🌐 みんなのポートフォリオ: 外部作品の追加／編集モーダル（ADR 045）。1) 貼る・上げる → 2) 読み取り（AI 提案） → 3) 微修正して登録 -->
+<div id="pf-ext-modal" class="pf-ext-overlay" onclick="pfExtBackdrop(event)">
+  <div class="pf-ext-modal" role="dialog" aria-modal="true" aria-labelledby="pf-ext-title">
+    <div class="pf-ext-head">
+      <h3 id="pf-ext-title">🌐 作品を追加</h3>
+      <div class="pf-ext-steps" id="pf-ext-steps"></div>
+      <button type="button" class="pf-ext-x" onclick="pfExtClose()" title="閉じる">✕</button>
+    </div>
+    <div id="pf-ext-body"></div>
   </div>
 </div>
 
@@ -25378,7 +25477,11 @@ function pfRenderSummary(json) {
     ...[...pfStyleSel].map(c => pfGenreLabelOf('pf-style-row', c)),
   ];
   const genre = picked.length ? `【${picked.join(' ・ ')}】 ` : '';
-  el.textContent = `${best}${genre}${who}作品 ${pfItems.length}件 ／ ${pfGroups.length}案件（${scope}）${truncated}${hidden}`;
+  // 🌐 外部作品（ADR 045）は案件ではないので、案件数から外して内訳を添える
+  const extN = json.external_count || 0;
+  const projN = pfGroups.filter(g => !g.external).length;
+  const extPart = extN ? `（うち 🌐 外部作品 ${extN}件）` : '';
+  el.textContent = `${best}${genre}${who}作品 ${pfItems.length}件${extPart} ／ ${projN}案件（${scope}）${truncated}${hidden}`;
 }
 
 function pfRenderGallery() {
@@ -25424,6 +25527,18 @@ function pfRenderGallery() {
     }).join('');
 
     const clientPart = g.client_name ? `${esc(g.client_name)} ／ ` : '';
+    // 🌐 外部作品のグループは持ち主単位（ADR 045）。見出しは「🌐 みんなのポートフォリオ ／ 名前」、日付は制作時期
+    if (g.external) {
+      const who = g.owner ? ((window.NameDisplay && NameDisplay.short(g.owner)) || g.owner.nickname || g.owner.full_name || '') : '';
+      return `
+      <div class="pf-group">
+        <div class="pf-group-head pf-group-ext">
+          <span class="pf-group-title">🌐 みんなのポートフォリオ${who ? ` ／ ${esc(who)}` : ''}</span>
+          <span class="pf-group-meta">${g.count}件 ・ 最新 ${esc(pfFormatDate(g.latest_delivered_at))}</span>
+        </div>
+        ${lanesHtml}
+      </div>`;
+    }
     return `
       <div class="pf-group">
         <div class="pf-group-head">
@@ -25454,10 +25569,20 @@ function pfToggleLane(key) {
 
 function pfCardHtml(item, idx) {
   const isVideo = pfIsVideo(item);
-  const media = item.file_id
-    ? `<img loading="lazy" decoding="async" src="/api/haruka/portfolio/thumbnail/${esc(item.file_id)}" alt=""
-           onload="pfOnThumbLoad(${idx}, this)" onerror="pfOnThumbError(this, '${esc(item.file_id)}')">`
-    : `<div class="pf-ph"><span>${isVideo ? '🎬' : '🎨'}</span><span class="pf-ph-label">ファイル未登録</span></div>`;
+  let media;
+  if (item.file_id) {
+    media = `<img loading="lazy" decoding="async" src="/api/haruka/portfolio/thumbnail/${esc(item.file_id)}" alt=""
+           onload="pfOnThumbLoad(${idx}, this)" onerror="pfOnThumbError(this, '${esc(item.file_id)}')">`;
+  } else if (item.external && item.thumb_url) {
+    // 🌐 外部作品（ADR 045）: youtube / link は URL 直、drive / upload はサーバー代理配信。取り直しは data-retry-src で同じ URL へ
+    media = `<img loading="lazy" decoding="async" src="${esc(item.thumb_url)}" alt="" data-retry-src="${esc(item.thumb_url)}"
+           onload="pfOnThumbLoad(${idx}, this)" onerror="pfOnThumbError(this, ${item.drive_file_id ? `'${esc(item.external_id)}'` : 'null'})">`;
+  } else if (item.external) {
+    media = `<div class="pf-ph"><span>${item.source_type === 'link' ? '🔗' : (isVideo ? '🎬' : '🎨')}</span><span class="pf-ph-label">${item.source_type === 'link' ? 'リンク' : 'サムネ準備中'}</span></div>`;
+  } else {
+    media = `<div class="pf-ph"><span>${isVideo ? '🎬' : '🎨'}</span><span class="pf-ph-label">ファイル未登録</span></div>`;
+  }
+  const extChip = item.external ? `<span class="pf-ext-chip" title="🌐 みんなのポートフォリオ（${esc(pfExtSourceLabel(item))}）">${item.source_type === 'youtube' ? '▶ YouTube' : (item.source_type === 'link' ? '🔗' : '🌐')}</span>` : '';
   // 説明が未入力ならオーバーレイ自体を出さない（ポートフォリオ画面なので空欄を目立たせない）
   const note = item.note
     ? `<div class="pf-note">${esc(item.note)}</div>`
@@ -25479,6 +25604,7 @@ function pfCardHtml(item, idx) {
         <span class="pf-badge">${isVideo ? '🎬' : '🎨'}</span>
         ${verBadge}
         ${wipBadge}
+        ${extChip}
         ${pfStarHtml(item, idx)}
         ${pfPickHtml(item, idx)}
         ${note}
@@ -26182,7 +26308,8 @@ function pfConsumePendingOpen() {
 // ホバー: 動画なら 400ms 後に無音ループ再生を差し込む（連続ホバーで無駄に取得しない）
 function pfHoverIn(cardEl, idx, ctx = 'card') {
   const item = pfItemsFor(ctx)[idx];
-  if (!item || !item.file_id || !pfIsVideo(item)) return;
+  // 🌐 外部作品は Drive にファイルがあるもの（drive / upload）だけホバー再生する（YouTube はライトボックスで埋め込み再生）
+  if (!item || !(item.file_id || (item.external && item.drive_file_id)) || !pfIsVideo(item)) return;
   clearTimeout(pfHoverTimer);
   pfHoverTimer = setTimeout(async () => {
     if (!cardEl.matches(':hover')) return;
@@ -26243,10 +26370,12 @@ function pfOnThumbLoad(idx, img) {
   item.aspect_source = 'thumb';
   item.orientation = real <= 0.9 ? 'portrait' : (real < 1.15 ? 'square' : 'landscape');
   if (item.file_id) _pfPendingSizeSync.set(item.file_id, { w: img.naturalWidth, h: img.naturalHeight });
+  // 🌐 外部作品は本人 or admin のときだけ実寸を書き戻す（サーバー側でも判定する）
+  else if (item.external && item.external_id && item.can_edit_external) _pfPendingExtSizeSync.set(item.external_id, { w: img.naturalWidth, h: img.naturalHeight });
 
   // 1枚ずつ再描画すると重いのでまとめて1回だけ
   clearTimeout(_pfAspectFixTimer);
-  _pfAspectFixTimer = setTimeout(() => { pfRenderGallery(); pfFlushSizeSync(); }, 400);
+  _pfAspectFixTimer = setTimeout(() => { pfRenderGallery(); pfFlushSizeSync(); pfFlushExtSizeSync(); }, 400);
 }
 
 // サムネが出せなかったときの受け皿。
@@ -26261,9 +26390,11 @@ function pfOnThumbError(img, fileId) {
     img.dataset.thumbRetry = String(tries + 1);
     // 一斉に取り直すとサーバーが再び詰まるので、回数で伸ばす＋ばらつかせる
     const wait = 4000 * (tries + 1) + Math.floor(Math.random() * 1500);
+    // 🌐 外部作品（drive / upload）は data-retry-src の代理配信 URL へ取り直す（ADR 045）
+    const retryBase = img.dataset.retrySrc || `/api/haruka/portfolio/thumbnail/${encodeURIComponent(fileId)}`;
     setTimeout(() => {
       if (!img.isConnected) return;   // 再描画で消えたカードは追わない
-      img.src = `/api/haruka/portfolio/thumbnail/${encodeURIComponent(fileId)}?r=${tries + 1}`;
+      img.src = `${retryBase}${retryBase.includes('?') ? '&' : '?'}r=${tries + 1}`;
     }, wait);
     return;
   }
@@ -26360,6 +26491,8 @@ function pfLightboxBackdrop(ev) {
 }
 
 function pfLightboxKey(ev) {
+  // 🌐 追加／編集モーダルが上に開いているときはそちらに任せる（Esc で両方閉じない・入力中の←→で作品を送らない）
+  if (document.getElementById('pf-ext-modal')?.classList.contains('open')) return;
   if (ev.key === 'Escape') { pfCloseLightbox(); return; }
   // 説明を編集中は左右キーをテキスト入力に渡す
   if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') return;
@@ -26411,6 +26544,33 @@ async function pfRenderLightbox() {
   const stage = document.getElementById('pf-lb-stage');
   if (!stage) return;
   stage.innerHTML = '<div style="color:rgba(255,255,255,.55);font-size:13px">読み込み中…</div>';
+  // 🌐 外部作品（ADR 045）: YouTube は埋め込み再生、リンクは画像＋外部リンク、drive / upload は通常の再生経路
+  if (item.external) {
+    if (item.source_type === 'youtube' && item.embed_url) {
+      stage.innerHTML = `<iframe src="${esc(item.embed_url)}?autoplay=1&rel=0&playsinline=1" title="${esc(item.file_name)}"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+      return;
+    }
+    if (item.source_type === 'link' || !item.drive_file_id) {
+      const href = pfExtOpenSourceUrl(item);
+      stage.innerHTML = `<div class="pf-lb-linkcard">
+        ${item.thumb_url ? `<img src="${esc(item.thumb_url)}" alt="" onerror="this.style.display='none'">` : '<div style="font-size:48px">🔗</div>'}
+        ${href ? `<a href="${esc(href)}" target="_blank" rel="noopener">🔗 リンクを開く ↗</a>` : ''}
+      </div>`;
+      return;
+    }
+    const openIdxExt = pfLightboxIdx;
+    if (pfIsVideo(item)) {
+      const src = await pfResolvePlaybackUrl(item);
+      if (openIdxExt !== pfLightboxIdx) return;
+      stage.innerHTML = `<video src="${esc(src)}" controls autoplay playsinline preload="metadata"
+        onerror="this.onerror=null;this.src='/api/haruka/files/${esc(item.drive_file_id)}/stream'"></video>`;
+    } else {
+      stage.innerHTML = `<img src="/api/haruka/files/${esc(item.drive_file_id)}/stream" alt="${esc(item.file_name)}"
+        onerror="this.onerror=null;this.src='${esc(item.thumb_url || '')}'">`;
+    }
+    return;
+  }
   if (!item.file_id) {
     stage.innerHTML = '<div style="color:rgba(255,255,255,.55);font-size:13px">この作品にはファイルが登録されていません</div>';
     return;
@@ -26444,7 +26604,8 @@ function pfRenderLightboxCard() {
     const avatar = a.avatar_url
       ? `<img class="pf-lb-avatar" src="${esc(a.avatar_url)}" alt="">`
       : `<span class="pf-lb-avatar">${esc(initial)}</span>`;
-    const roleLbl = (typeof roleLabel === 'function' && a.role) ? (roleLabel(a.role) || a.role) : a.role;
+    const roleLbl = a.role === 'external_owner' ? '制作者'   // 🌐 外部作品の持ち主（ADR 045）
+      : ((typeof roleLabel === 'function' && a.role) ? (roleLabel(a.role) || a.role) : a.role);
     return `<div class="pf-lb-credit">
       ${avatar}
       <div style="min-width:0">
@@ -26459,6 +26620,37 @@ function pfRenderLightboxCard() {
          ${item.is_best ? '⭐ マイベスト' : '☆ マイベストに追加'}
        </button>`
     : (item.is_best ? `<span class="pf-lb-action starred" style="cursor:default">⭐ 本人のマイベスト</span>` : '');
+
+  // 🌐 外部作品（ADR 045）: 👏 / 💬 / ⭐ は無し。元のページへのリンクと、本人 or admin の編集・削除だけ
+  if (item.external) {
+    const href = pfExtOpenSourceUrl(item);
+    card.innerHTML = `
+    <h3>${esc(item.file_name || '')}</h3>
+    <div class="pf-lb-project">🌐 みんなのポートフォリオ${item.client_name ? ` ／ ${esc(item.client_name)}` : ''}<span class="pf-lb-chip" style="margin-left:8px">${esc(pfExtSourceLabel(item))}</span></div>
+    <div id="pf-lb-note-area"></div>
+    ${credits ? `<div class="pf-lb-sec">
+      <div class="pf-lb-sec-title">クレジット</div>
+      ${credits}
+    </div>` : ''}
+    <div class="pf-lb-sec">
+      <div class="pf-lb-sec-title">情報</div>
+      <dl class="pf-lb-meta">
+        <dt>制作時期</dt><dd>${esc(pfFormatDate(item.delivered_at))}</dd>
+        <dt>系統</dt><dd>${esc(item.genre_name || '未設定')}</dd>
+        <dt>表現</dt><dd>${esc(item.style_name || '—')}${item.style_overridden ? '（手動）' : ''}</dd>
+        <dt>種別</dt><dd>${esc(item.media_kind === 'web' ? 'Web・LP' : kind)}</dd>
+        <dt>サイズ</dt><dd>${esc(ratio)}</dd>
+        <dt>元</dt><dd>${href ? `<a href="${esc(href)}" target="_blank" rel="noopener" style="color:#2563EB;word-break:break-all">${esc(href)}</a>` : '—'}</dd>
+      </dl>
+    </div>
+    <div class="pf-lb-actions">
+      ${href ? `<a class="pf-lb-action primary" href="${esc(href)}" target="_blank" rel="noopener" style="text-decoration:none">↗ 元のページを開く</a>` : ''}
+      ${item.can_edit_external ? `<button type="button" class="pf-lb-action" onclick="pfExtOpen(pfItems[${pfLightboxIdx}])">✏️ 編集</button>` : ''}
+      ${item.can_edit_external ? `<button type="button" class="pf-lb-action" style="color:#B91C1C;border-color:#FECACA" onclick="pfExtDelete(${pfLightboxIdx})">🗑 削除</button>` : ''}
+    </div>`;
+    pfRenderNoteView();
+    return;
+  }
 
   card.innerHTML = `
     <h3>${esc(item.file_name || '')}</h3>
@@ -26641,6 +26833,403 @@ async function pfSaveGenre() {
   } catch (e) {
     showToast(e.message, 'error');
   }
+}
+
+// ==================== 🌐 みんなのポートフォリオ（外部作品・ADR 045） ====================
+//
+// HFS の案件外で作った作品（個人制作・前職・他社案件・YouTube 公開作）を作品ページに並べる。
+//   入口: ツールバーの「＋ 作品を追加」 → モーダル。URL 貼り付け（YouTube / Drive 共有 / その他リンク）か
+//         ファイルのドロップ（HFS の Drive へブラウザ直送・driveUploadToSession を流用）。
+//   流れ: 1) 貼る／上げる → 2) POST /portfolio/external-works/inspect（メタ取得＋AI 提案） → 3) 微修正して POST 登録。
+//   一覧: GET /portfolio に external:true の item として合流（creative_id は null ＝ 👏 / 💬 / ⭐ は付かない）。
+//   編集・削除: 本人 or admin（API が返す can_edit_external で出し分け）。
+
+const PF_EXT_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024;   // 直送の上限（2GB）
+const PF_EXT_KINDS = [
+  { code: 'video', label: '🎬 動画' },
+  { code: 'image', label: '🎨 静止画' },
+  { code: 'web',   label: '🌐 Web・LP' },
+];
+let pfExt = null;   // { step:'input'|'busy'|'form', mode:'create'|'edit', editId, source, inspect, form, busyText, progress, error, cancelled }
+
+function pfExtSourceLabel(item) {
+  const t = item?.source_type;
+  if (t === 'youtube') return '▶ YouTube';
+  if (t === 'drive')   return '📂 Google ドライブ';
+  if (t === 'upload')  return '⬆ アップロード（HFS Drive）';
+  if (t === 'link')    return '🔗 リンク';
+  return '🌐 外部';
+}
+function pfExtOpenSourceUrl(item) {
+  if (!item) return null;
+  if (item.source_type === 'youtube' && item.youtube_id) return item.source_url || `https://www.youtube.com/watch?v=${item.youtube_id}`;
+  if ((item.source_type === 'drive' || item.source_type === 'upload') && item.drive_file_id) return `https://drive.google.com/file/d/${item.drive_file_id}/view`;
+  return item.source_url || null;
+}
+
+// 追加（item 無し）／編集（item あり）でモーダルを開く
+async function pfExtOpen(item) {
+  const box = document.getElementById('pf-ext-modal');
+  if (!box) return;
+  pfExt = {
+    step: item ? 'form' : 'input', mode: item ? 'edit' : 'create', editId: item?.external_id || null,
+    source: item ? { source_type: item.source_type, source_url: item.source_url, youtube_id: item.youtube_id, drive_file_id: item.drive_file_id, mime_type: item.mime_type } : null,
+    inspect: null, error: null, cancelled: false, progress: 0, busyText: '',
+    form: item ? {
+      title: item.file_name || '', description: item.note || '', client_name: item.client_name || '',
+      media_kind: item.media_kind || 'video', genre_code: item.genre_code || '', style_code: item.style_overridden ? (item.style_code || '') : '',
+      produced_at: item.delivered_at ? String(item.delivered_at).slice(0, 10) : '', aspect_w: item.aspect_w || null, aspect_h: item.aspect_h || null,
+      preview_url: item.thumb_url || null,
+    } : null,
+  };
+  box.classList.add('open');
+  document.addEventListener('keydown', pfExtKey);
+  pfLoadGenreOptions();   // 系統の選択肢を温める
+  pfExtRender();
+}
+function pfExtClose() {
+  const box = document.getElementById('pf-ext-modal');
+  if (!box) return;
+  if (pfExt && pfExt.step === 'busy' && pfExt.uploading) {
+    if (!confirm('アップロード中です。中断しますか？')) return;
+    pfExt.cancelled = true;
+    try { pfExt.activeXhr && pfExt.activeXhr.abort(); } catch (_) {}
+  }
+  box.classList.remove('open');
+  document.removeEventListener('keydown', pfExtKey);
+  pfExt = null;
+}
+function pfExtBackdrop(ev) { if (ev.target && ev.target.id === 'pf-ext-modal') pfExtClose(); }
+function pfExtKey(ev) {
+  if (ev.key === 'Escape') { ev.stopPropagation(); pfExtClose(); }
+}
+
+function pfExtRender() {
+  const body = document.getElementById('pf-ext-body');
+  const steps = document.getElementById('pf-ext-steps');
+  const title = document.getElementById('pf-ext-title');
+  if (!body || !pfExt) return;
+  if (title) title.textContent = pfExt.mode === 'edit' ? '✏️ 外部作品を編集' : '🌐 作品を追加';
+  const stepIdx = pfExt.step === 'input' ? 1 : (pfExt.step === 'busy' ? 2 : 3);
+  if (steps) {
+    steps.innerHTML = pfExt.mode === 'edit' ? '' : ['① 貼る・上げる', '② 読み取り', '③ 確認して登録']
+      .map((s, i) => `<span class="${i + 1 === stepIdx ? 'on' : ''}">${s}</span>`).join('');
+  }
+  if (pfExt.step === 'input') body.innerHTML = pfExtInputHtml();
+  else if (pfExt.step === 'busy') body.innerHTML = pfExtBusyHtml();
+  else body.innerHTML = pfExtFormHtml();
+  if (pfExt.step === 'input') setTimeout(() => document.getElementById('pf-ext-url')?.focus(), 30);
+}
+
+function pfExtInputHtml() {
+  return `
+    <label style="display:block;font-size:12.5px;font-weight:700;color:#374151;margin-bottom:6px">URL を貼り付け</label>
+    <input type="url" id="pf-ext-url" class="pf-ext-url" placeholder="https://www.youtube.com/watch?v=…　／　https://drive.google.com/file/d/…/view　／　LP や作品ページの URL"
+      autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();pfExtInspectUrl();}">
+    <div class="pf-ext-hint">
+      ▶ <strong>YouTube</strong>（通常・Shorts）はそのまま埋め込み再生。
+      📂 <strong>Google ドライブ</strong>は「リンクを知っている全員」に共有されたファイルのリンク（フォルダは不可）。
+      🔗 それ以外の URL は OGP（タイトル・画像）を読み取ってリンク付きカードになります。
+    </div>
+    <div class="pf-ext-or">または</div>
+    <div class="pf-ext-drop" id="pf-ext-drop" onclick="document.getElementById('pf-ext-file').click()"
+         ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')"
+         ondrop="event.preventDefault();this.classList.remove('over');pfExtOnFiles(event.dataTransfer.files)">
+      <div style="font-size:26px;margin-bottom:6px">⬆</div>
+      <div><strong>動画・画像ファイルをドロップ</strong>、またはクリックして選択</div>
+      <div class="pf-ext-hint" style="margin-top:6px">HFS の Google ドライブ（🌐 みんなのポートフォリオ／あなたの名前）へブラウザから直接アップロードします。2GB まで</div>
+      <input type="file" id="pf-ext-file" accept="video/*,image/*" style="display:none" onchange="pfExtOnFiles(this.files)">
+    </div>
+    ${pfExt.error ? `<div class="pf-ext-err">${esc(pfExt.error)}</div>` : ''}
+    <div class="pf-ext-foot">
+      <span style="font-size:11.5px;color:#9CA3AF">読み取ったあとに、タイトル・系統・説明を直してから登録します</span>
+      <span class="spacer"></span>
+      <button type="button" class="pf-ext-btn" onclick="pfExtClose()">キャンセル</button>
+      <button type="button" class="pf-ext-btn primary" onclick="pfExtInspectUrl()">読み取る →</button>
+    </div>`;
+}
+
+function pfExtBusyHtml() {
+  const pct = Math.round(pfExt.progress || 0);
+  return `
+    <div class="pf-ext-wait">
+      <div class="spin"></div>
+      <div style="font-weight:700">${esc(pfExt.busyText || '読み取っています…')}</div>
+      ${pfExt.uploading ? `<div class="pf-ext-progress" style="max-width:420px;margin:12px auto 0"><div style="width:${pct}%"></div></div><div style="font-size:12px;color:#6B7280;margin-top:6px">${pct}%</div>` : ''}
+      <div style="font-size:12px;color:#9CA3AF;margin-top:14px">情報が取れたら、次の画面で内容を確認・修正できます</div>
+    </div>
+    <div class="pf-ext-foot"><span class="spacer"></span><button type="button" class="pf-ext-btn" onclick="pfExtClose()">中断</button></div>`;
+}
+
+function pfExtFormHtml() {
+  const f = pfExt.form || {};
+  const ai = pfExt.inspect?.ai || null;
+  const aiFields = new Set(ai?.fields || []);
+  const opts = pfGenreOptions || { genres: [], styles: [] };
+  const aiTag = (k) => aiFields.has(k) ? '<span class="pf-ext-ai" title="AI が提案した値です。自由に直せます">AI</span>' : '';
+  const genreOpts = (opts.genres || []).map(g => `<option value="${esc(g.code)}"${g.code === (f.genre_code || '') ? ' selected' : ''}>${esc(g.name)}</option>`).join('');
+  const styleOpt = (s) => `<option value="${esc(s.code)}"${s.code === (f.style_code || '') ? ' selected' : ''}>${esc(s.name)}</option>`;
+  const autoStyles = (opts.styles || []).filter(s => s.auto), manualStyles = (opts.styles || []).filter(s => !s.auto);
+  const preview = f.preview_url
+    ? `<img src="${esc(f.preview_url)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ph',textContent:'プレビューはまだ準備できていません（登録後に表示されます）'}))">`
+    : `<div class="ph">${pfExt.source?.source_type === 'link' ? '🔗 この URL には画像が見つかりませんでした。リンクカードとして登録されます' : '🎬 サムネは登録後にサーバーが用意します'}</div>`;
+  const srcUrl = pfExt.source ? pfExtOpenSourceUrl({ ...pfExt.source }) : null;
+  const srcLine = pfExt.source
+    ? `<div class="pf-ext-src">${esc(pfExtSourceLabel(pfExt.source))}${srcUrl ? `　<a href="${esc(srcUrl)}" target="_blank" rel="noopener">元を開く ↗</a>` : ''}${pfExt.inspect?.meta?.filename ? `<br>${esc(pfExt.inspect.meta.filename)}` : ''}${pfExt.inspect?.meta?.duration_sec ? `　${Math.floor(pfExt.inspect.meta.duration_sec / 60)}:${String(pfExt.inspect.meta.duration_sec % 60).padStart(2, '0')}` : ''}</div>`
+    : '';
+  let aiNote = '';
+  if (pfExt.mode === 'create') {
+    if (ai?.used) {
+      const cost = (typeof ai.cost_jpy === 'number') ? `／ 約 ¥${ai.cost_jpy < 0.01 ? '0.01 未満' : ai.cost_jpy.toFixed(2)}` : '';
+      aiNote = `<div class="pf-ext-ainote">🤖 AI が <strong>${esc([...aiFields].map(k => ({ title: 'タイトル', description: '説明', client_name: 'クライアント', genre_code: '系統', style_code: '表現', media_kind: '種別' })[k] || k).join('・') || '（提案なし）')}</strong> を提案しました。違っていたら直してください（${esc(ai.model || '')} ${cost}）</div>`;
+    } else {
+      aiNote = `<div class="pf-ext-ainote off">🤖 AI 提案は使いませんでした（${esc(ai?.message || '設定で無効')}）。取れた情報から初期値を入れています</div>`;
+    }
+  }
+  return `
+    ${aiNote}
+    <div class="pf-ext-form" style="margin-top:${aiNote ? 14 : 0}px">
+      <div>
+        <div class="pf-ext-preview">${preview}</div>
+        ${srcLine}
+      </div>
+      <div class="pf-ext-fields">
+        <label>タイトル ${aiTag('title')}<input type="text" id="pf-ext-f-title" maxlength="200" value="${esc(f.title || '')}" placeholder="作品のタイトル"></label>
+        <div class="row2">
+          <label>クライアント・掲載先（任意）${aiTag('client_name')}<input type="text" id="pf-ext-f-client" maxlength="100" value="${esc(f.client_name || '')}" placeholder="例）○○株式会社 ／ 自主制作"></label>
+          <label>制作時期<input type="date" id="pf-ext-f-date" value="${esc(f.produced_at || '')}"></label>
+        </div>
+        <label>種別 ${aiTag('media_kind')}
+          <span class="pf-ext-kind" id="pf-ext-kind">${PF_EXT_KINDS.map(k => `<button type="button" class="${(f.media_kind || 'video') === k.code ? 'on' : ''}" onclick="pfExtSetKind('${k.code}')">${k.label}</button>`).join('')}</span>
+        </label>
+        <div class="row2">
+          <label>系統（業種）${aiTag('genre_code')}
+            <select id="pf-ext-f-genre"><option value="">未設定</option>${genreOpts}</select>
+          </label>
+          <label>表現 ${aiTag('style_code')}
+            <select id="pf-ext-f-style">
+              <option value=""${f.style_code ? '' : ' selected'}>作品の形から自動で決める</option>
+              <optgroup label="形式">${autoStyles.map(styleOpt).join('')}</optgroup>
+              <optgroup label="作風（手で付ける）">${manualStyles.map(styleOpt).join('')}</optgroup>
+            </select>
+          </label>
+        </div>
+        <label>説明（任意・500字まで）${aiTag('description')}<textarea id="pf-ext-f-desc" maxlength="500" placeholder="狙い・工夫・担当範囲など">${esc(f.description || '')}</textarea></label>
+      </div>
+    </div>
+    ${pfExt.error ? `<div class="pf-ext-err">${esc(pfExt.error)}</div>` : ''}
+    <div class="pf-ext-foot">
+      ${pfExt.mode === 'create' ? `<button type="button" class="pf-ext-btn" onclick="pfExtBack()">← 戻る</button>` : ''}
+      <span class="spacer"></span>
+      <button type="button" class="pf-ext-btn" onclick="pfExtClose()">キャンセル</button>
+      <button type="button" class="pf-ext-btn primary" id="pf-ext-submit" onclick="pfExtSubmit()">${pfExt.mode === 'edit' ? '保存する' : '登録する'}</button>
+    </div>`;
+}
+
+function pfExtSetKind(code) {
+  if (!pfExt) return;
+  pfExtCollectForm();
+  pfExt.form.media_kind = code;
+  document.querySelectorAll('#pf-ext-kind button').forEach(b => b.classList.toggle('on', b.textContent.includes(PF_EXT_KINDS.find(k => k.code === code)?.label || '')));
+}
+function pfExtCollectForm() {
+  if (!pfExt) return;
+  const g = (id) => document.getElementById(id);
+  pfExt.form = pfExt.form || {};
+  if (g('pf-ext-f-title'))  pfExt.form.title = g('pf-ext-f-title').value;
+  if (g('pf-ext-f-client')) pfExt.form.client_name = g('pf-ext-f-client').value;
+  if (g('pf-ext-f-date'))   pfExt.form.produced_at = g('pf-ext-f-date').value;
+  if (g('pf-ext-f-genre'))  pfExt.form.genre_code = g('pf-ext-f-genre').value;
+  if (g('pf-ext-f-style'))  pfExt.form.style_code = g('pf-ext-f-style').value;
+  if (g('pf-ext-f-desc'))   pfExt.form.description = g('pf-ext-f-desc').value;
+}
+function pfExtBack() {
+  if (!pfExt) return;
+  pfExt.step = 'input'; pfExt.error = null; pfExt.inspect = null; pfExt.source = null; pfExt.form = null;
+  pfExtRender();
+}
+
+// ---- 1) URL を読み取る ----
+async function pfExtInspectUrl() {
+  if (!pfExt) return;
+  const url = (document.getElementById('pf-ext-url')?.value || '').trim();
+  if (!url) { pfExt.error = 'URL を貼り付けるか、ファイルをドロップしてください'; pfExtRender(); return; }
+  if (!/^https?:\/\//i.test(url)) { pfExt.error = 'http:// または https:// で始まる URL を貼ってください'; pfExtRender(); return; }
+  pfExt.error = null; pfExt.step = 'busy'; pfExt.uploading = false;
+  pfExt.busyText = /youtu\.?be/i.test(url) ? 'YouTube の情報を読み取っています…' : (/drive\.google\.com|docs\.google\.com/i.test(url) ? 'Google ドライブの情報を読み取っています…' : 'ページの情報を読み取っています…');
+  pfExtRender();
+  await pfExtRunInspect({ url });
+}
+
+// ---- 1') ファイルを Drive へ直送してから読み取る ----
+async function pfExtOnFiles(files) {
+  if (!pfExt || !files || !files.length) return;
+  const file = files[0];
+  if (!/^(video|image)\//.test(file.type || '')) { pfExt.error = '動画または画像ファイルだけ登録できます'; pfExtRender(); return; }
+  if (file.size > PF_EXT_UPLOAD_MAX_BYTES) { pfExt.error = 'ファイルが大きすぎます（2GB まで）'; pfExtRender(); return; }
+  pfExt.error = null; pfExt.step = 'busy'; pfExt.uploading = true; pfExt.progress = 0; pfExt.cancelled = false;
+  pfExt.busyText = 'Drive セッションを発行中…';
+  pfExtRender();
+  try {
+    const dims = await pfExtProbeDims(file).catch(() => null);
+    const initRes = await apiFetch(`${API}/portfolio/external-works/upload-session/init`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      body: JSON.stringify({ filename: file.name, fileSize: file.size, mimeType: file.type || 'application/octet-stream' }),
+    });
+    const init = await initRes.json().catch(() => ({}));
+    if (!initRes.ok) throw new Error(init.error || `アップロードの準備に失敗しました（HTTP ${initRes.status}）`);
+    if (init.ok === false) throw new Error('ファイルのアップロードは現在使えません（Drive 連携が未設定）。URL で登録してください');
+    const UPLOADING = 'Drive へ直接アップロード中…';
+    pfExt.busyText = UPLOADING; pfExtRender();
+    const { driveFileId } = await driveUploadToSession({
+      file, sessionUrl: init.driveSessionUrl, chunkBytes: init.recommended_chunk_size_bytes || CD_RESUMABLE_CHUNK_BYTES,
+      onProgress: (done) => { if (!pfExt) return; pfExt.progress = Math.min(100, (done / file.size) * 100); const bar = document.querySelector('#pf-ext-body .pf-ext-progress > div'); if (bar) bar.style.width = pfExt.progress + '%'; const pct = bar?.parentElement?.nextElementSibling; if (pct) pct.textContent = Math.round(pfExt.progress) + '%'; },
+      onStatus: (msg) => { if (pfExt) { pfExt.busyText = msg; const el = document.querySelector('#pf-ext-body .pf-ext-wait > div:nth-child(2)'); if (el) el.textContent = msg; } },
+      shouldAbort: () => !pfExt || pfExt.cancelled,
+      onXhrReady: (xhr) => { if (pfExt) pfExt.activeXhr = xhr; },
+      onChunkCommitted: () => { if (pfExt) pfExt.busyText = UPLOADING; },
+    });
+    if (!pfExt || pfExt.cancelled) return;
+    pfExt.uploading = false; pfExt.busyText = 'アップロード完了。内容を読み取っています…'; pfExtRender();
+    await pfExtRunInspect({ source_type: 'upload', drive_file_id: driveFileId, filename: file.name, mime_type: file.type || null, width: dims?.w || null, height: dims?.h || null });
+  } catch (e) {
+    if (!pfExt) return;
+    if (e && e.__cancelled) { pfExtClose(); return; }
+    pfExt.step = 'input'; pfExt.uploading = false;
+    pfExt.error = e?.message || 'アップロードに失敗しました';
+    pfExtRender();
+  }
+}
+
+// ローカルで実寸を読む（Drive がメタを返さない大きい動画向け）。失敗は null
+function pfExtProbeDims(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const done = (v) => { URL.revokeObjectURL(url); resolve(v); };
+    const t = setTimeout(() => done(null), 6000);
+    if (file.type.startsWith('image/')) {
+      const img = new Image();
+      img.onload = () => { clearTimeout(t); done({ w: img.naturalWidth, h: img.naturalHeight }); };
+      img.onerror = () => { clearTimeout(t); done(null); };
+      img.src = url;
+    } else {
+      const v = document.createElement('video');
+      v.preload = 'metadata'; v.muted = true;
+      v.onloadedmetadata = () => { clearTimeout(t); done({ w: v.videoWidth, h: v.videoHeight }); };
+      v.onerror = () => { clearTimeout(t); done(null); };
+      v.src = url;
+    }
+  });
+}
+
+// ---- 2) inspect → フォームへ ----
+async function pfExtRunInspect(payload) {
+  try {
+    const res = await apiFetch(`${API}/portfolio/external-works/inspect`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!pfExt) return;
+    if (!res.ok) throw new Error(json.error || `読み取りに失敗しました（HTTP ${res.status}）`);
+    pfExt.inspect = json;
+    pfExt.source = json.source;
+    pfExt.form = { ...(json.defaults || {}), preview_url: json.preview_url || null, thumb_url: json.thumb_url || null };
+    pfExt.step = 'form'; pfExt.error = null;
+    await pfLoadGenreOptions();
+    pfExtRender();
+    setTimeout(() => document.getElementById('pf-ext-f-title')?.focus(), 30);
+  } catch (e) {
+    if (!pfExt) return;
+    pfExt.step = 'input'; pfExt.error = e?.message || '読み取りに失敗しました';
+    pfExtRender();
+  }
+}
+
+// ---- 3) 登録／保存 ----
+async function pfExtSubmit() {
+  if (!pfExt) return;
+  pfExtCollectForm();
+  const f = pfExt.form || {};
+  if (!String(f.title || '').trim()) { pfExt.error = 'タイトルを入力してください'; pfExtRender(); return; }
+  const btn = document.getElementById('pf-ext-submit');
+  if (btn) { btn.disabled = true; btn.textContent = pfExt.mode === 'edit' ? '保存中…' : '登録中…'; }
+  try {
+    if (pfExt.mode === 'edit') {
+      const res = await apiFetch(`${API}/portfolio/external-works/${pfExt.editId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ title: f.title, description: f.description, client_name: f.client_name, media_kind: f.media_kind, genre_code: f.genre_code || null, style_code: f.style_code || null, produced_at: f.produced_at || '' }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || '保存に失敗しました');
+      const id = pfExt.editId;
+      pfExtClose();
+      showToast('外部作品を保存しました', 'success');
+      await pfReload();
+      const back = pfItems.findIndex(it => it.external_id === id);
+      if (back >= 0 && pfLightboxIdx >= 0) { pfLightboxIdx = back; pfRenderLightbox(); }
+      return;
+    }
+    const ins = pfExt.inspect || {};
+    const res = await apiFetch(`${API}/portfolio/external-works`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      body: JSON.stringify({
+        source: pfExt.source, thumb_url: f.thumb_url || null,
+        title: f.title, description: f.description, client_name: f.client_name, media_kind: f.media_kind || 'video',
+        genre_code: f.genre_code || null, style_code: f.style_code || null, produced_at: f.produced_at || '',
+        aspect_w: f.aspect_w || null, aspect_h: f.aspect_h || null,
+        ai: ins.ai?.used ? { model: ins.ai.model, cost_jpy: ins.ai.cost_jpy, usage: ins.ai.usage, raw: ins.ai.raw, prompt_version: ins.ai.prompt_version, fields: ins.ai.fields } : null,
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || '登録に失敗しました');
+    const newId = json.work?.id || json.item?.external_id || null;
+    pfExtClose();
+    showToast('🌐 作品を追加しました', 'success');
+    // 追加した作品が今の絞り込みで見えるように、種別タブが違えば「共通」に戻してから引き直す
+    //（pfSetTab は pfReload を await しないので、ここでは手で切り替えて 1 回だけ await する）
+    if (pfTab !== 'all') {
+      pfTab = 'all';
+      ['all', 'video', 'design'].forEach(t => document.getElementById(`pf-tab-${t}`)?.classList.toggle('active', t === 'all'));
+    }
+    await pfReload();
+    const idx = pfItems.findIndex(it => it.external_id === newId);
+    if (idx >= 0) pfOpenLightbox(idx);
+  } catch (e) {
+    if (!pfExt) { showToast(e.message, 'error'); return; }
+    pfExt.error = e?.message || '失敗しました';
+    pfExtRender();
+  }
+}
+
+async function pfExtDelete(idx) {
+  const item = pfItems[idx];
+  if (!item || !item.external || !item.can_edit_external) return;
+  if (!confirm(`「${item.file_name}」を作品ページから削除しますか？\n（Drive 上のファイルや元の動画は消えません）`)) return;
+  try {
+    const res = await apiFetch(`${API}/portfolio/external-works/${item.external_id}`, { method: 'DELETE', credentials: 'include' });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || '削除に失敗しました');
+    pfCloseLightbox();
+    showToast('外部作品を削除しました', 'success');
+    await pfReload();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// 外部作品のサムネから読んだ実寸をまとめて保存（creative_files の media-size と同じ発想・本人 or admin のみ反映）
+const _pfPendingExtSizeSync = new Map();   // external_id -> {w,h}
+async function pfFlushExtSizeSync() {
+  if (_pfPendingExtSizeSync.size === 0) return;
+  const sizes = [..._pfPendingExtSizeSync.entries()].map(([id, v]) => ({ id, width: v.w, height: v.h }));
+  _pfPendingExtSizeSync.clear();
+  try {
+    await apiFetch(`${API}/portfolio/external-works/media-size`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      body: JSON.stringify({ sizes }),
+    });
+  } catch (_) { /* 表示は正しいので握りつぶす */ }
 }
 
 // ==================== 🎬 新着納品ショーケース（ADR 042 追補 2026-09-17 / 置き場の移設 2026-09-20） ====================
