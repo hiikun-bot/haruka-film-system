@@ -33,6 +33,8 @@ const ICON_BY_TYPE = {
   // 🏆 作品ギャラリー: 自分の作品に 👏 拍手 / 💬 ひとことが付いた（制作担当向け・ADR 042）
   portfolio_reaction:  '👏',
   portfolio_comment:   '💬',
+  // クリエイティブへのコメント・返信（つぶやきの post_comment から分離・ADR 043）
+  creative_comment:    '💬',
 };
 
 // HTMLエスケープ — ユーザー入力を安全に埋め込むための関数

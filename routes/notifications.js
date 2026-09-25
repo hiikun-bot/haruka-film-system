@@ -13,6 +13,8 @@
 //   GET    /scheduled         自分が送った未配信予約一覧（差出人視点）
 //   PATCH  /:id/cancel        未配信予約をキャンセル
 //   PATCH  /:id/reschedule    未配信予約の時刻変更
+//   GET    /settings          受信設定（自分。admin は ?user_id= で他メンバー）＋ 種別カタログ（ADR 043）
+//   PUT    /settings          受信設定の更新（自分。admin は body.user_id で他メンバー）
 //
 // スコープ A（人が能動的に出す通知）の予約配信に対応。
 // システム自動通知（ball_returned, post_reaction 等）は send_mode='immediate' のままで挙動変更なし。
@@ -22,7 +24,12 @@ const router = express.Router();
 const supabase = require('../supabase');
 const { requireAuth, requireRole } = require('../auth');
 const { createBulkNotifications, nextActiveSlot } = require('../utils/notification');
-const { getUserRoleCodes } = require('../utils/roles');
+const { getUserRoleCodes, roleCodesHavePermission } = require('../utils/roles');
+const {
+  toClientSettings,
+  toSettingsPatch,
+  publicCatalog,
+} = require('../utils/notification-settings');
 
 // dual-read 期間: user_roles 経由でロール集合を取得し、空なら req.user.role を fallback。
 // 'producer_director' を持つユーザーは producer / director の両方を持つ扱いにする。
@@ -670,6 +677,86 @@ router.patch('/:id/reschedule', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   res.json({ updated_count: (data || []).length, scheduled_send_at: d.toISOString() });
+});
+
+// ============================================================
+// 受信設定（ADR 043）
+//   対象ユーザー: 省略時は自分。他メンバーを指定できるのはメンバー編集権限（member.edit_password ＝
+//   PUT /members/:id と同じ「admin 相当」判定）を持つ人だけ。VIEW AS で別ロールをプレビュー中でも、
+//   設定は実ユーザー（req.user）のものを読む（他人の設定を覗く機能ではない）。
+// ============================================================
+async function resolveSettingsTarget(req, requestedUserId) {
+  const self = req.user.id;
+  const target = requestedUserId ? String(requestedUserId) : self;
+  if (target === self) return { userId: self };
+  const codes = await getRequesterRoleCodes(req);
+  const canEditOthers = await roleCodesHavePermission(codes, 'member.edit_password');
+  if (!canEditOthers) return { error: '他のメンバーの通知設定は変更できません', status: 403 };
+  const { data: u } = await supabase.from('users').select('id').eq('id', target).maybeSingle();
+  if (!u) return { error: 'メンバーが見つかりません', status: 404 };
+  return { userId: target };
+}
+
+async function fetchSettingsRow(userId) {
+  const { data, error } = await supabase
+    .from('notification_settings')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+
+// GET /api/notifications/settings?user_id=
+router.get('/settings', async (req, res) => {
+  try {
+    const t = await resolveSettingsTarget(req, req.query.user_id);
+    if (t.error) return res.status(t.status).json({ error: t.error });
+    const row = await fetchSettingsRow(t.userId);
+    res.json({
+      user_id: t.userId,
+      settings: toClientSettings(row),
+      catalog: publicCatalog(),
+      has_row: !!row,
+    });
+  } catch (e) {
+    console.error('[notifications] GET /settings 失敗:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/notifications/settings   body: { user_id?, settings: { <type>: boolean } }
+//   （settings を省略して body 直下に { <type>: boolean } を置いてもよい）
+router.put('/settings', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const t = await resolveSettingsTarget(req, body.user_id);
+    if (t.error) return res.status(t.status).json({ error: t.error });
+
+    const source = (body.settings && typeof body.settings === 'object') ? body.settings : body;
+    const { patch, ignored } = toSettingsPatch(source);
+    const keys = Object.keys(patch);
+    if (keys.length === 0) {
+      return res.status(400).json({ error: '変更する通知種別がありません', ignored });
+    }
+
+    // 設定行が無いユーザー（migration 以降に追加された人など）は upsert で作る
+    const { error: upErr } = await supabase
+      .from('notification_settings')
+      .upsert({ user_id: t.userId, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    if (upErr) {
+      // 列未追加（migration 未適用）は 500 ではなく分かる文言で返す
+      const msg = /column .* does not exist/i.test(upErr.message)
+        ? '通知設定の列が本番DBにまだありません（migration 未適用）: ' + upErr.message
+        : upErr.message;
+      return res.status(500).json({ error: msg });
+    }
+    const row = await fetchSettingsRow(t.userId);
+    res.json({ user_id: t.userId, settings: toClientSettings(row), ignored });
+  } catch (e) {
+    console.error('[notifications] PUT /settings 失敗:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;

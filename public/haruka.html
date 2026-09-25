@@ -5500,6 +5500,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <button class="m-tab-btn" id="m-tab-btn-2" onclick="switchMemberTab(2)">連絡先</button>
         <button class="m-tab-btn" id="m-tab-btn-3" onclick="switchMemberTab(3)">口座情報</button>
         <button class="m-tab-btn" id="m-tab-btn-4" onclick="switchMemberTab(4)">機材・休日</button>
+        <button class="m-tab-btn" id="m-tab-btn-5" onclick="switchMemberTab(5)" style="display:none">🔔 通知</button>
       </div>
     </div>
 
@@ -5827,6 +5828,20 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
             <input class="form-input" id="m-lighting-info" placeholder="例：Aputure 600d / LED小型のみ" style="font-size:14px;padding:10px 14px">
           </div>
         </div>
+      </div>
+
+      <!-- Tab 5: 通知（ADR 043）— 通知ベルに届く種別ごとの ON/OFF。
+           一覧は GET /api/notifications/settings の catalog から描画（サーバーと同じ定義）。
+           保存は「保存する」ボタンで PUT /api/notifications/settings（メンバー本体の保存と一緒に）。 -->
+      <div id="m-tab-panel-5" class="m-tab-panel" style="display:none">
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.7;margin-bottom:14px">
+          🔔 通知ベルに届く通知を種類ごとにオン／オフできます。件数が多い種類は最初からオフになっています。<br>
+          <span style="font-size:11px">※ Slack / Chatwork への連絡、単価の承認、リーダー宛リマインド、全体のお知らせはここでは止められません。</span>
+        </div>
+        <div id="m-notif-settings-list" style="display:flex;flex-direction:column;gap:2px">
+          <div style="font-size:12px;color:var(--text-muted);padding:8px 0">読み込み中…</div>
+        </div>
+        <div id="m-notif-settings-note" style="font-size:11px;color:var(--text-muted);margin-top:10px;display:none"></div>
       </div>
 
     </div>
@@ -17755,8 +17770,108 @@ function applyMemberModalAdminFields(m) {
   if (bankTabBtn) bankTabBtn.style.display = (isAdm || isSelf) ? '' : 'none';
 }
 
+// ============================================================
+// メンバー編集モーダル「🔔 通知」タブ（ADR 043）
+//   ・GET /api/notifications/settings?user_id=… で { settings, catalog } を取得して描画
+//   ・チェックを触ると _memberNotif.dirty=true。保存は submitMember → memberNotifSettingsSave()
+//   ・自分以外を開けるのは member.edit_password（メンバー編集権限）を持つ人だけ。
+//     サーバー側も同じ判定で 403 を返すので、フロントの出し分けは「タブを出すか」だけ。
+// ============================================================
+const _memberNotif = { userId: null, loaded: false, dirty: false, values: {}, catalog: [] };
+
+function memberNotifSettingsReset(userId) {
+  _memberNotif.userId = userId || null;
+  _memberNotif.loaded = false;
+  _memberNotif.dirty = false;
+  _memberNotif.values = {};
+  _memberNotif.catalog = [];
+  const btn = document.getElementById('m-tab-btn-5');
+  if (btn) btn.style.display = 'none';
+  const list = document.getElementById('m-notif-settings-list');
+  if (list) list.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px 0">読み込み中…</div>';
+  const note = document.getElementById('m-notif-settings-note');
+  if (note) { note.style.display = 'none'; note.textContent = ''; }
+}
+
+function memberNotifSettingsCanShow(userId) {
+  if (!userId || !currentUser) return false;
+  if (userId === currentUser.id) return true;
+  return hasPermission('member.edit_password');
+}
+
+async function memberNotifSettingsLoad(userId) {
+  memberNotifSettingsReset(userId);
+  if (!memberNotifSettingsCanShow(userId)) return;
+  const btn = document.getElementById('m-tab-btn-5');
+  if (btn) btn.style.display = '';
+  try {
+    const res = await apiFetch(`/api/notifications/settings?user_id=${encodeURIComponent(userId)}`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+    // モーダルが閉じられて別の人を開いていたら捨てる
+    if (_memberNotif.userId !== userId) return;
+    _memberNotif.values = Object.assign({}, json.settings || {});
+    _memberNotif.catalog = Array.isArray(json.catalog) ? json.catalog : [];
+    _memberNotif.loaded = true;
+    memberNotifSettingsRender();
+  } catch (e) {
+    const list = document.getElementById('m-notif-settings-list');
+    if (list) list.innerHTML = `<div style="font-size:12px;color:#B91C1C;padding:8px 0">通知設定を読み込めませんでした（${esc(e.message)}）</div>`;
+  }
+}
+
+function memberNotifSettingsRender() {
+  const list = document.getElementById('m-notif-settings-list');
+  if (!list) return;
+  const rows = _memberNotif.catalog.map(c => {
+    const on = _memberNotif.values[c.type] !== false;
+    const defaultLabel = c.default_enabled ? '' : '<span style="font-size:10px;color:var(--text-muted);border:1px solid var(--border);border-radius:10px;padding:1px 7px;margin-left:6px;white-space:nowrap">既定オフ</span>';
+    return `
+      <label style="display:flex;align-items:flex-start;gap:12px;padding:10px 6px;border-bottom:0.5px solid var(--border);cursor:pointer">
+        <input type="checkbox" data-notif-type="${esc(c.type)}" ${on ? 'checked' : ''} onchange="memberNotifSettingsToggle(this)" style="margin-top:3px;cursor:pointer;width:16px;height:16px;flex-shrink:0">
+        <span style="font-size:18px;line-height:1;width:24px;text-align:center;flex-shrink:0">${esc(c.icon || '🔔')}</span>
+        <span style="flex:1;min-width:0">
+          <span style="display:block;font-size:14px;color:var(--text);font-weight:500">${esc(c.label)}${defaultLabel}</span>
+          ${c.description ? `<span style="display:block;font-size:12px;color:var(--text-muted);margin-top:2px;line-height:1.5">${esc(c.description)}</span>` : ''}
+        </span>
+      </label>`;
+  });
+  list.innerHTML = rows.join('') || '<div style="font-size:12px;color:var(--text-muted);padding:8px 0">設定できる通知はありません</div>';
+  const note = document.getElementById('m-notif-settings-note');
+  if (note) {
+    note.style.display = '';
+    note.textContent = _memberNotif.userId === (currentUser && currentUser.id)
+      ? '変更は「保存する」を押すと反映されます。'
+      : 'このメンバーの通知設定を代わりに変更します（本人の通知ベルに影響します）。';
+  }
+}
+
+function memberNotifSettingsToggle(cb) {
+  const type = cb && cb.dataset ? cb.dataset.notifType : null;
+  if (!type) return;
+  _memberNotif.values[type] = !!cb.checked;
+  _memberNotif.dirty = true;
+}
+
+async function memberNotifSettingsSave(userId) {
+  if (!_memberNotif.loaded || !_memberNotif.dirty) return;
+  if (!userId || _memberNotif.userId !== userId) return;
+  const res = await apiFetch('/api/notifications/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, settings: _memberNotif.values }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showToast('通知設定の保存に失敗しました: ' + (json.error || `HTTP ${res.status}`), 'warn');
+    return;
+  }
+  _memberNotif.dirty = false;
+  _memberNotif.values = Object.assign({}, json.settings || _memberNotif.values);
+}
+
 function switchMemberTab(idx) {
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     const btn = document.getElementById('m-tab-btn-' + i);
     const panel = document.getElementById('m-tab-panel-' + i);
     if (btn) btn.classList.toggle('active', i === idx);
@@ -17853,6 +17968,7 @@ function openAddMember() {
   applyMemberModalAdminFields(null);
   setMemberModalAvatar(null, null);
   onRoleChange('editor');
+  memberNotifSettingsReset(null); // 新規追加時は通知タブを出さない（保存後に既定値の行ができる）
   switchMemberTab(0);
   openModal('modal-member');
 }
@@ -17866,6 +17982,8 @@ function openEditMember(m) {
   // 先にモーダルを開く（途中エラーで「グレーだけで本体が出ない」状態を防ぐ）— PR #137 の defensive 構造
   try { switchMemberTab(0); } catch(_) {}
   openModal('modal-member');
+  // 通知タブ（ADR 043）: 本人 or メンバー編集権限者だけに出す。読み込みは非同期（他タブの表示を待たせない）
+  try { memberNotifSettingsLoad(m.id || null); } catch(e) { console.error('[openEditMember] notif settings:', e); }
   // 各フィールド代入は欠損プロパティ・要素不在に強くする
   const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   const setText = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
@@ -18210,6 +18328,8 @@ async function submitMember() {
       // 新規作成時は POST レスポンスに id が入っているのでそれを拾う
       if (!savedUserId && respJson && respJson.id) savedUserId = respJson.id;
     } catch(_) {}
+    // 通知設定（ADR 043）: 通知タブで変更があれば PUT /api/notifications/settings（失敗しても本体保存は成功扱い）
+    try { await memberNotifSettingsSave(savedUserId); } catch(e) { console.error('[submitMember] notif settings:', e); }
     // ADR 008 Stage 2: leader_rank 更新（team_members 経由）— team_id が選択済みのときのみ
     try {
       const leaderRankRaw = document.getElementById('m-leader-rank')?.value || '';

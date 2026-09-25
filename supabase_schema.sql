@@ -2016,10 +2016,12 @@ CREATE INDEX IF NOT EXISTS idx_notification_logs_sender_pending
   ON notification_logs (sender_id, scheduled_send_at)
   WHERE delivered_at IS NULL AND cancelled_at IS NULL;
 
--- notification_settings（受信ON/OFF設定。Phase 2でUI整備時に活用）
+-- notification_settings（受信ON/OFF設定。本人がメンバー編集モーダルの「通知」タブで変更・ADR 043）
+--   既定 OFF: ball_returned（creative_status と二重）/ creative_registered（admin・秘書に 1 日 10 件超）
+--   列の一覧・既定値・UI ラベルは utils/notification-settings.js が正
 CREATE TABLE IF NOT EXISTS notification_settings (
   user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  ball_returned_enabled BOOLEAN NOT NULL DEFAULT true,
+  ball_returned_enabled BOOLEAN NOT NULL DEFAULT false,
   global_enabled BOOLEAN NOT NULL DEFAULT true,
   mention_enabled BOOLEAN NOT NULL DEFAULT true,
   post_reaction_enabled BOOLEAN NOT NULL DEFAULT true,
@@ -2029,6 +2031,11 @@ CREATE TABLE IF NOT EXISTS notification_settings (
   assignment_enabled BOOLEAN NOT NULL DEFAULT true,
   invoice_enabled BOOLEAN NOT NULL DEFAULT true,
   browser_notification BOOLEAN NOT NULL DEFAULT false,
+  creative_registered_enabled BOOLEAN NOT NULL DEFAULT false,
+  portfolio_reaction_enabled BOOLEAN NOT NULL DEFAULT true,
+  portfolio_comment_enabled BOOLEAN NOT NULL DEFAULT true,
+  creative_status_enabled BOOLEAN NOT NULL DEFAULT true,
+  creative_comment_enabled BOOLEAN NOT NULL DEFAULT true,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO notification_settings (user_id)
@@ -2137,29 +2144,41 @@ CREATE POLICY post_comments_update_own ON post_comments
 -- トリガー: ball_holder_id 変化で自動通知発火
 CREATE OR REPLACE FUNCTION notify_ball_returned()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_enabled BOOLEAN;
 BEGIN
+  -- ADR 043: 受信者の notification_settings.ball_returned_enabled を尊重（設定行が無ければ既定 OFF）。
+  -- 配信済み（send_mode='immediate', delivered_at=now()）で INSERT しないと受信箱に出ない。
   IF NEW.ball_holder_id IS DISTINCT FROM OLD.ball_holder_id
      AND NEW.ball_holder_id IS NOT NULL THEN
-    INSERT INTO notification_logs (
-      user_id, notification_type, title, body, link_url, meta, sender_id
-    ) VALUES (
-      NEW.ball_holder_id,
-      'ball_returned',
-      'ボールが返ってきました',
-      COALESCE(NEW.file_name, 'クリエイティブ') || 'のボールが返ってきました',
-      '/creatives/' || NEW.id,
-      jsonb_build_object(
-        'creative_id', NEW.id,
-        'creative_name', NEW.file_name,
-        'previous_status', OLD.status,
-        'new_status', NEW.status
-      ),
-      OLD.ball_holder_id
-    );
+    SELECT ball_returned_enabled INTO v_enabled
+      FROM notification_settings
+     WHERE user_id = NEW.ball_holder_id;
+    IF COALESCE(v_enabled, false) THEN
+      INSERT INTO notification_logs (
+        user_id, notification_type, title, body, link_url, meta, sender_id, send_mode, delivered_at
+      ) VALUES (
+        NEW.ball_holder_id,
+        'ball_returned',
+        'ボールが返ってきました',
+        COALESCE(NEW.file_name, 'クリエイティブ') || 'のボールが返ってきました',
+        '/creatives/' || NEW.id,
+        jsonb_build_object(
+          'creative_id', NEW.id,
+          'creative_name', NEW.file_name,
+          'previous_status', OLD.status,
+          'new_status', NEW.status
+        ),
+        OLD.ball_holder_id,
+        'immediate',
+        now()
+      );
+    END IF;
   END IF;
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
+
 DROP TRIGGER IF EXISTS trg_creatives_ball_returned ON creatives;
 CREATE TRIGGER trg_creatives_ball_returned
 AFTER UPDATE OF ball_holder_id ON creatives
