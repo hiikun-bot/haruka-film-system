@@ -141,7 +141,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ プロデューサー向け</span>
     <h1>予算・単価の上書き<span>成果物グループ・ロール別単価・固定費を使いこなす</span></h1>
-    <div class="hero-eta">⏱ 読了 約 8 分</div>
+    <div class="hero-eta">⏱ 読了 約 10 分</div>
   </div>
 </header>
 
@@ -249,7 +249,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="step-card">
     <div class="step-card-title">🔁 一覧でできる操作</div>
-    <p>各グループの行には <b>▲▼（並び替え）／ 💰 内訳 ／ 停止・再開 ／ 編集 ／ 削除</b> のボタンが並びます。</p>
+    <p>各グループの行には <b>停止・再開 ／ ▲▼（並び替え）／ 💰 内訳 ／ ⧉ 複製 ／ 編集 ／ 削除</b> のボタンが並びます。</p>
+    <p style="margin-top:6px"><b>⧉ 複製</b>：グループ本体と 💰 内訳（ロール別単価）をまるごとコピーして元の直後に追加します。ランク違い・フェーズ違いのグループを作るときは、複製してから単価だけ直すのが早いです（承認権限が無い人が複製すると、複製先も承認待ちになります）。</p>
     <p style="margin-top:6px"><b>停止</b>：単価改定などで「今は適用していない」グループは、削除せず停止にします（適用期間が表示され、⛔ 停止中バッジが付きます）。<b>削除</b> はクリエイティブが紐付いていると実行できず、原因のクリエイティブ一覧が表示されます。</p>
   </div>
 
@@ -374,6 +375,13 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 変更前の単価と理由は請求明細に <b>監査用の記録</b> として保存されます。請求フロー全体は <a href="/guide-invoice.html" style="color:var(--em-dark);font-weight:700">請求ガイド</a> へ。</p>
   </div>
 
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">📊 集計・請求プレビューの単価は「締め月末時点で有効なグループ」で決まる</div>
+    <p>作成本数集計（分析 → 👤クリエイター別作成本数）と請求書プレビューの単価は、クリエイティブに紐付いたグループの値をそのまま使うのではなく、<b>そのクリエイティブが所属する案件</b> の同じカテゴリ／ランクのグループのうち、<b>締め月の月末時点で有効（停止されていない）なもの</b> から解決されます。グループに紐付いていないクリエイティブでも、案件側の成果物グループから単価を拾います。</p>
+    <p style="margin-top:6px">だからこそ「旧単価は停止 → 新単価を追加」の運用が効きます。改定月の月末に有効なグループの単価で、その月の集計・請求が組み上がります。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 内訳に「<b>単価不明</b>」バッジが出た行は、案件側にそのロールの単価が無い状態です。バッジをクリックすると、その案件の単価設定（成果物グループ）がそのまま開きます。管理者・秘書（全員の請求一覧を見られる人）は、請求書の明細画面の「<b>💴 案件の価格</b>」ボタンからも案件の支払単価を確認できます。</p>
+  </div>
+
   <div class="wanpoint">
     <div class="wanpoint-title">恒久変更と一時変更を使い分ける</div>
     <p>来月以降もずっと変わるなら <strong>案件の成果物グループを更新（旧グループは停止）</strong>。今月だけの特例なら <strong>請求画面で上書き＋理由を記録</strong>。</p>
@@ -415,7 +423,11 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">⚠️</span>
-      <div><div class="trouble-q">請求書の明細に「単価未設定」と出る</div><div class="trouble-a">そのクリエイティブのグループに単価（内訳）が入っていません。案件の「💰 見積・費用」タブで設定を</div></div>
+      <div><div class="trouble-q">請求書の明細に「単価未設定」と出る</div><div class="trouble-a">そのクリエイティブのグループに単価（内訳）が入っていません。案件の「💰 見積・費用」タブで設定を。分析の 👤クリエイター別作成本数 の内訳にある「単価不明」バッジをクリックしても、その案件の単価設定に直接飛べます</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🧮</span>
+      <div><div class="trouble-q">単価を変えたのに先月分の集計が変わらない／今月分が旧単価のまま</div><div class="trouble-a">集計の単価は「締め月の月末時点で有効なグループ」で決まります。旧グループを停止した日付と、新グループを追加した月を確認。まだ旧グループが有効なままなら停止を</div></div>
     </div>
   </div>
 </section>

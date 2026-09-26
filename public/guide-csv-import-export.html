@@ -144,16 +144,17 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ 秘書・管理者向け</span>
-    <h1>一括インポート / エクスポート<span>CSV ファイルではなく、Google スプレッドシートでやり取りします</span></h1>
-    <div class="hero-eta">⏱ 読了 約 5 分</div>
+    <h1>一括インポート / エクスポート<span>取り込みは Google スプレッドシート、書き出しはシート＋一部 CSV</span></h1>
+    <div class="hero-eta">⏱ 読了 約 7 分</div>
   </div>
 </header>
 
 <main class="container">
 
 <div class="step-card" style="margin-top:28px">
-  <div class="step-card-title">🧠 まず知っておくこと：このシステムに「CSV アップロード」はありません</div>
-  <p>一括の入出力はすべて <b>Google スプレッドシート</b> が基本です。エクスポートすると新しいシートが自動作成されて開き、インポートは <b>シートの URL を貼るだけ</b>。CSV ファイルの書き出し・アップロード機能はありません。</p>
+  <div class="step-card-title">🧠 まず知っておくこと：「CSV ファイルのアップロード（取り込み）」はありません</div>
+  <p>一括の <b>取り込み</b> はすべて <b>Google スプレッドシートの URL を貼る</b> 方式です（メンバー一括インポート・マイゴールの取込・費用台帳同期）。CSV ファイルを選んでアップロードする画面はありません。</p>
+  <p style="margin-top:6px"><b>書き出し</b> は Google スプレッドシートが基本（新しいシートが自動作成されて開く）で、Excel でそのまま開きたい用途向けに <b>CSV ダウンロード</b> が 2 か所だけあります：メンバー一覧の「<b>CSVで出力</b>」と、分析「👤クリエイター別作成本数」の内訳モーダルの「<b>⬇ CSV出力</b>」。</p>
 </div>
 
 <!-- ═══ STEP 1 ═══ -->
@@ -177,9 +178,12 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </ul>
     <div class="mock">
       <button class="mock-btn ghost">スプレッドシートへエクスポート</button>
+      <button class="mock-btn ghost" style="margin-left:8px">CSVで出力</button>
       <button class="mock-btn ghost" style="margin-left:8px">スプレッドシートからインポート</button>
-      <p style="margin-top:8px;font-size:11px;color:var(--text-muted)">メンバータブ右上のボタン（権限がある人にだけ表示）</p>
+      <p style="margin-top:8px;font-size:11px;color:var(--text-muted)">メンバータブ右上の 3 つのボタン（いずれもメンバー編集・PW変更の権限がある人にだけ表示）</p>
     </div>
+    <p style="margin-top:10px"><b>「CSVで出力」</b> は、いま画面に見えている <b>絞り込み・並び順のまま</b> のメンバー一覧を CSV（UTF-8 BOM 付き・Excel でそのまま開ける）でダウンロードします。列は ロール／（ランク）／チーム／名前／ニックネーム／メールアドレス…の並びで、ファイル名は「メンバー一覧_動画_20260724.csv」のように当日日付が付きます。インポートのひな形には使えません（ひな形はスプレッドシートへエクスポートで）。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 同じ権限がある人には、メンバー一覧に <b>メール列</b> も表示されます。アドレス横のボタン（「メールアドレスをコピー」）で 1 クリックコピーできるので、Drive 共有や連絡先の転記に便利です。</p>
     <span class="mock-fieldlabel" style="margin-top:10px">出力される列（そのままインポートのひな形になります）</span>
     <div class="col-chips">
       <span class="col-chip must">full_name（必須）</span>
@@ -269,14 +273,19 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="step-card">
     <div class="step-card-title">分析タブ →「📊 スプレッドシート出力」</div>
-    <p>分析ページ（分析・集計の閲覧権限が必要）で対象月を選び、<b>「📊 スプレッドシート出力」</b> を押すと、表示中の集計がそのまま新規シートになります。</p>
+    <p>分析ページ（「分析・集計ページ閲覧」権限。既定：管理者・秘書・プロデューサー・プロデューサー兼ディレクター）で左メニューから集計を選び、対象月を指定して <b>「📊 スプレッドシート出力」</b> を押すと、表示中の集計がそのまま新規シートになります。出力できるメニューは次のとおりです。</p>
     <ul>
-      <li><b>月次売上粗利</b>：当月の売上・原価・粗利の集計</li>
-      <li><b>クリエイター別</b>：クリエイター別の本数・金額集計（ステータス指定つき）</li>
-      <li><b>案件 × 担当者</b>：クリエイティブの案件×担当者クロス集計</li>
-      <li><b>バグ報告件数</b>：月次のバグ報告集計</li>
+      <li><b>💰月次売上・粗利</b>：当月の売上・原価・粗利の集計</li>
+      <li><b>📈月次推移</b>：対象月ではなく「直近 N ヶ月」で出力</li>
+      <li><b>🏆クライアント別採算</b>：from〜to の期間で出力</li>
+      <li><b>👤クリエイター別作成本数</b>：クリエイター別の本数・金額集計（ステータス指定つき）。名前をクリックして開く内訳モーダルには「<b>⬇ CSV出力</b>」もあり、表示中の内訳を CSV でダウンロードできます</li>
+      <li><b>📋案件×担当者集計</b>：クリエイティブの案件×担当者クロス集計</li>
+      <li><b>🚚納期遵守・修正回数</b>：納期と修正回数の集計</li>
+      <li><b>🧾請求突合チェッカー</b>（「請求突合チェッカー」権限。既定：管理者・秘書）：請求書と実データの突合結果</li>
+      <li><b>🦋バグ報告件数</b>：月次のバグ報告集計</li>
     </ul>
-    <div class="eg-box">📋 例：月末に「クリエイター別」を出力 → そのまま経営会議の資料や支払い突合に使える</div>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 「📄案件別ファイル名一覧」は画面内のコピペボタンに集約されているためシート出力ボタンは出ません。「⚠️単価未設定チェッカー」も画面で確認する専用です。</p>
+    <div class="eg-box">📋 例：月末に「👤クリエイター別作成本数」を出力 → そのまま経営会議の資料や支払い突合に使える</div>
   </div>
 
   <div class="step-card">
@@ -286,6 +295,31 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <li><b>📊 クリエイティブ管理シート同期</b>：案件編集モーダルにシート URL を設定すると、案件のクリエイティブ一覧をシートへ同期（出力マッピングは管理者がマスター管理で設定）</li>
     </ul>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">マスター管理の場所が分からないときは <a href="/guide-master-settings.html" style="color:var(--em-dark);font-weight:700">マスター設定ガイド</a> へ。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step4">STEP 4 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>🎯 マイゴールのタスクをシートと行き来する</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">マイゴール →「📊 スプシ連携」</div>
+    <p>個人の目標・タスク（🎯 マイゴール）は、<b>自分専用のスプレッドシート</b> に書き出して、シート上で編集したものを取り込み直せます。役職を問わず本人だけが使えます。</p>
+    <ul>
+      <li><b>準備</b>：sheets.new で自分のドライブに新しいシートを作り、シート右上の「共有」で画面に表示されるシステムのアドレスを <b>「編集者」</b> で追加（通知はオフで OK）。そのシートの URL をコピーして欄に貼り付け</li>
+      <li><b>「📤 スプシに出力」</b>（システム → シート）：タスク一覧をシートの <b>1 枚目のタブに上書き</b> で書き出します（タブ名は「目標一覧」）</li>
+      <li><b>「🔍 差分をプレビュー」→「📥 この内容で取り込む」</b>（シート → システム）：ID 列が入っている行は更新、ID 列が空の行は新規作成。<b>シートに無いタスクの削除はしません</b></li>
+    </ul>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 マイゴールの使い方そのものは <a href="/guide-my-goals.html" style="color:var(--em-dark);font-weight:700">マイゴールガイド</a> へ。</p>
   </div>
 
   <div class="done-banner">
@@ -317,6 +351,10 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="trouble-item">
       <span class="trouble-icon">🔗</span>
       <div><div class="trouble-q">「URL を認識できません」と出る</div><div class="trouble-a"><code>https://docs.google.com/spreadsheets/d/...</code> 形式の URL をそのまま貼ってください（短縮 URL は不可）</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">📧</span>
+      <div><div class="trouble-q">Yahoo! メール等のアドレスで新規登録・招待ができない</div><div class="trouble-a">メンバーの新規登録・招待リンク発行は Google アカウント（Gmail / Google Workspace）のアドレス限定です。本人に Gmail を用意してもらうか、独自ドメインの場合は管理者へ相談（<a href="/guide-master-settings.html" style="color:var(--em-dark);font-weight:700">マスター設定ガイド</a>）</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🔑</span>

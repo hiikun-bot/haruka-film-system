@@ -129,7 +129,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ ディレクター向け</span>
     <h1>Dチェックの進め方<span>依頼が来てから、承認・修正依頼（FB）を出すまで</span></h1>
-    <div class="hero-eta">⏱ 読了 約 8 分</div>
+    <div class="hero-eta">⏱ 読了 約 9 分</div>
   </div>
 </header>
 
@@ -177,12 +177,25 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   </div>
 
   <div class="step-card">
+    <div class="step-card-title">🏠 まずはホームの「🎯 いま、あなたにボールがあるもの」</div>
+    <p>ログイン直後のホーム最上段に、<b>いま自分が動かす番（ボール）のクリエイティブ</b>が納期の近い順に並びます。Dチェック待ちの行には <b>「Dチェックのボール」</b> と表示され、行をクリックするとそのまま詳細モーダルが開きます。ホームに出るのは上位5件までで、それ以上あるときは <b>「他 N 件を見る →」</b> でクリエイティブ一覧の「自分のボール」ビューに移ります。</p>
+    <div class="mock">
+      <span class="mock-fieldlabel">🎯 いま、あなたにボールがあるもの　3件</span>
+      <p style="font-size:12.5px;color:var(--text)"><span style="background:#FEF3C7;color:#92400E;padding:1px 6px;border-radius:4px;font-weight:600">あと2日</span>　<code>Dチェック</code>　Dチェックのボール　📁 春キャンペーンCM</p>
+      <p style="font-size:12.5px;color:var(--text)"><span style="background:#FEE2E2;color:#B91C1C;padding:1px 6px;border-radius:4px;font-weight:600">3日超過</span>　<code>Dチェック後修正</code>　制作のボール 🆘 SOS　📁 〇〇コスメ バナー</p>
+      <p style="font-size:11px;color:var(--text-muted)">手元にボールが無いときは「手元にボールはありません ✨」と、クライアント確認待ち・今週締切の件数だけが出ます。</p>
+    </div>
+    <p style="margin-top:8px">その下の <b>「👥 自チームで気になるもの」</b> は、自分が案件のディレクター／プロデューサー、またはチームの代表ディレクターになっているときだけ出るカードです。<b>自分にボールが無くても</b>、担当案件の中で <b>🆘 SOS ／ 期限超過 ／ 今週締切</b> に当たるクリエイティブを「👤 ◯◯ で停止中」（いま誰の手元で止まっているか）付きで見せてくれます。「クリエイティブ一覧で見る →」を押すと一覧の「自分の案件」ビューに移ります。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 ホームの読み方全体は <a href="/guide-progress-board.html" style="color:var(--em-dark);font-weight:700">進行ボードの読み方</a> と合わせてどうぞ。</p>
+  </div>
+
+  <div class="step-card">
     <div class="step-card-title">📥 依頼はこうやって届く</div>
     <p>編集者が「Dチェックへ →」で提出するとき、<b>「Dチェックに進める」モーダルであなたが担当に選ばれます</b>（複数人選択可。報酬対象外の「追加レビュアー」として呼ばれることもあります）。選ばれると同時に、次の3つが自動で起こります。</p>
     <ul>
       <li>💬 <b>Slack / Chatwork 通知</b>：案件のチャンネル・ルームに、あなた宛のメンション付きで「Dチェック依頼」が投稿されます。本文のURLをクリックすると該当クリエイティブの詳細モーダルが直接開きます。</li>
-      <li>🔔 <b>画面内のベル通知</b>：ヘッダーの通知ベルにも「Dチェック依頼」が入ります。</li>
-      <li>🏐 <b>ボールがあなたに移動</b>：クリエイティブ一覧の「ボール保持者」があなたになります。進行ボードの <b>「自分のボール」ビュー</b> に切り替えると、いま自分が動かす番のものだけが並びます（詳しくは <a href="/guide-progress-board.html" style="color:var(--em-dark);font-weight:700">進行ボードの読み方</a>）。</li>
+      <li>🔔 <b>画面内のベル通知</b>：ヘッダーの通知ベルにも Dチェック依頼が入ります（受け取る通知の種類は、メンバー編集モーダルの「🔔 通知」タブで自分で調整できます）。</li>
+      <li>🏐 <b>ボールがあなたに移動</b>：ホームの「🎯 いま、あなたにボールがあるもの」に載り、クリエイティブ一覧の「ボール保持者」があなたになります。一覧の <b>「自分のボール」ビュー</b> に切り替えると、いま自分が動かす番のものだけが並びます（詳しくは <a href="/guide-progress-board.html" style="color:var(--em-dark);font-weight:700">進行ボードの読み方</a>）。</li>
     </ul>
   </div>
 
@@ -228,7 +241,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       </div>
       <span class="hint">シークバー上にコメントの ● が並ぶ。クリックでその位置にジャンプ</span>
     </div>
-    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 カテゴリーは<b>必須</b>です。未選択のまま送信するとエラーになります。</p>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 カテゴリーは<b>必須</b>です。未選択のまま送信するとエラーになります。動画のカテゴリーは「冒頭フック」「マーケティング」「カット」「音声・ノイズ除去」「テロップ」「エフェクト」「SE（効果音）」「BGM」「デザイン」「CTA」「画像・動画」の順に並びます（マスター管理で増減できます）。</p>
+    <p style="margin-top:4px;font-size:12px;color:var(--text-muted)">💡 コメント本文に参考 URL を貼ると、送信後に<b>自動でクリックできるリンク</b>になります（別タブで開きます）。参考動画や素材の場所を伝えるときに便利です。</p>
   </div>
 
   <div class="step-card">
@@ -246,8 +260,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="step-card">
     <div class="step-card-title">🔁 前回バージョンと見比べる（v2 以降で表示）</div>
     <ul>
-      <li><b>⬅️➡️ バージョン移動</b>：プレビュー上部の矢印ボタンで、最新⇄前回など<b>バージョン間を行き来</b>できます。コメントパネルも各バージョンのものに切り替わります。</li>
-      <li><b>🆚 差分比較（静止画・動画）</b>：上部の「🆚 差分比較」ボタンで、<b>前回（左）と今回（右）を横並び</b>で見比べられます。動画は下の共有バーで<b>左右が同期して再生・シーク</b>されます（音声は今回側のみ・前回側は自動ミュート）。もう一度押すと通常表示に戻ります。</li>
+      <li><b>⬅️ 前へ ／ 次へ ➡️</b>：プレビュー上部の大きなボタンで、最新⇄前回など<b>バージョン間を行き来</b>できます。いま何番を見ているかは中央のバージョン表示で確認できます。コメントパネルも各バージョンのものに切り替わります。</li>
+      <li><b>🆚 差分比較（静止画・動画）</b>：上部の「🆚 差分比較」ボタンで、<b>前回（左）と今回（右）を横並び</b>で見比べられます（今回と前回が同じ種類——両方静止画・両方動画——のときだけ使えます）。動画は下の共有バーで<b>左右が同期して再生・シーク</b>され、音声は今回側だけが鳴ります（前回側は自動ミュート）。ボタンが「✕ 比較を終了」に変わるので、もう一度押すと通常表示に戻ります。</li>
       <li><b>⏪ 長押しで前回（静止画のみ）</b>：ズームバーの「⏪ 長押しで前回」を<b>押している間だけ前回バージョン</b>が表示され、離すと今回に戻ります。ぱらぱら漫画のように切り替わるので、どこが変わったか一目で分かります（ズーム位置はそのまま維持）。</li>
     </ul>
   </div>
@@ -314,8 +328,14 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   </div>
 
   <div class="step-card">
-    <div class="step-card-title">🆚 ラウンド比較UIの見方</div>
-    <p>再提出後の詳細モーダルは <b>左＝前回の提出物とやり取り、右＝新しいバージョン</b> の2カラム比較になります。誤って過去バージョンを開こうとすると「新しいクリエイティブ（バージョン◯）が提出されています」と確認ダイアログが挟まるので、<b>チェックすべきは常に右側の最新版</b>と覚えれば大丈夫。</p>
+    <div class="step-card-title">🆚 ラウンド比較UI（往復履歴）の見方</div>
+    <p>再提出後の詳細モーダルは <b>左＝前回までの往復履歴、右＝今回（いまの入力欄と最新バージョン）</b> の2カラムになります。左カラムは <b>1ページ＝1つのやり取り</b> で、ヘッダーの ◀▶ でページを送れます。ページの種類はアイコンで見分けられます。</p>
+    <ul>
+      <li><b>📝 提出メモ</b>：制作担当が提出時に書いた連絡事項。そのラウンドで提出された<b>成果物ファイルのカード</b>もページ下部に付くので、どのバージョンのメモかを取り違えません。</li>
+      <li><b>🔁 修正依頼</b>：レビュアー（あなた）からの修正指示。添付した画像もここに残ります。</li>
+      <li><b>✅ 承認・引き継ぎ</b> ／ <b>🎉 納品承認</b>：次工程へ渡したときのコメント。</li>
+    </ul>
+    <p style="margin-top:6px">誤って過去バージョンを開こうとすると「新しいクリエイティブ（バージョン◯）が提出されています」と確認ダイアログが挟まるので、<b>チェックすべきは常に右側の最新版</b>と覚えれば大丈夫。</p>
   </div>
 
   <div class="step-card">
@@ -381,7 +401,11 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">⏭</span>
-      <div><div class="trouble-q">工程を飛ばしてステータスを変えたい</div><div class="trouble-a">通常の遷移ボタンは工程順のみ。ステップを跨ぐ自由ジャンプは管理者限定（理由の入力が必須で監査ログが残ります）。</div></div>
+      <div><div class="trouble-q">工程を飛ばしてステータスを変えたい／まとめて納品にしたい</div><div class="trouble-a">詳細モーダルの遷移ボタンは工程順のみで、ステップを跨ぐ自由ジャンプは管理者限定（理由の入力が必須で監査ログが残ります）。ただしクリエイティブ一覧の<b>リスト表示で複数選択 → 「ステータス一括変更」</b>なら、<b>「納品」と「クライアントチェック中」への一括変更はディレクターも実行できます</b>（納品は理由必須）。納期がまとめてずれたときは同じ選択バーの「📅 予定日一括変更」で初稿締切・最終納品日を一気に直せます → <a href="/guide-progress-board.html" style="color:var(--em-dark);font-weight:700">進行ボードの読み方</a></div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">✎</span>
+      <div><div class="trouble-q">納品済みのクリエイティブが別の案件で登録されていた</div><div class="trouble-a">詳細モーダル右上の <b>「✎ 事後修正」</b> から「紐づく案件」を付け替えられます。納品後でも<b>担当ディレクター／プロデューサーなら自分で変更可</b>（変更理由が必須。確定済みの請求書に紐づいている場合は変更できません）。案件を変えると商材・訴求軸は選び直しになります。</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🆘</span>

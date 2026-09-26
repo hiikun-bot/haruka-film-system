@@ -142,7 +142,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 <section class="step-section" style="margin-top:36px">
   <div class="step-card">
     <div class="step-card-title">🆘 SOSってなに？</div>
-    <p>各クリエイティブに付けられる <b>「助けてほしい」フラグ</b> です。素材が足りない、指示が分からない、納期がきつい……そんなとき、ボタンひとつで <b>そのクリエイティブが一覧・ダッシュボード上で目立つ状態</b> になり、ディレクターやプロデューサーが気づきやすくなります。</p>
+    <p>各クリエイティブに付けられる <b>「助けてほしい」フラグ</b> です。素材が足りない、指示が分からない、納期がきつい……そんなとき、ボタンひとつで <b>そのクリエイティブが一覧・ホーム上で目立つ状態</b> になり、ディレクターやプロデューサーが気づきやすくなります。</p>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 このページは <b>デザイナーも共通</b> です（操作・見え方は動画編集者とまったく同じ）。</p>
   </div>
 </section>
@@ -208,15 +208,26 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   </div>
 
   <div class="step-card">
-    <div class="step-card-title">👀 見え方は3つ</div>
+    <div class="step-card-title">👀 見え方は4つ</div>
     <p><b>① 一覧の行が目立つ</b> ── リスト表示で行の背景がクリーム色になり、ボタンが「SOS中」（オレンジ）に変わります。</p>
-    <p style="margin-top:6px"><b>② ダッシュボードに件数が出る</b> ── ダッシュボード上部の統計に <b>「SOS中 ◯件」</b> が赤系の数字で表示されます（SOSが1件以上あるときだけ出現）。チーム全体が最初に開く画面なので、ここで気づいてもらえます。</p>
-    <p style="margin-top:6px"><b>③ 「SOSのみ」フィルターで絞れる</b> ── クリエイティブ一覧の詳細フィルターに「SOSのみ」チェックがあり、ディレクター・プロデューサーはSOS中の案件だけを一発で抽出できます。</p>
+    <p style="margin-top:6px"><b>② ディレクターのホームに最優先で出る</b> ── あなたの案件のディレクター／プロデューサー、またはあなたのチームの代表ディレクターのホームには <b>「👥 自チームで気になるもの」</b> というカードがあり、SOS を立てたクリエイティブは <b>🆘 SOS</b> の赤バッジつきで、納期に関係なく<b>いちばん上</b>に出ます（見出しの右にも「🆘 SOS N件」と件数が出ます）。行をクリックすればそのままあなたのクリエイティブが開くので、ここで気づいてもらえます。</p>
+    <p style="margin-top:6px"><b>③ 自分のホームにも印が付く</b> ── あなた自身のホーム「🎯 いま、あなたにボールがあるもの」の該当行にも <b>🆘 SOS</b> が付きます。管理者・プロデューサー層のホーム上部の数字には <b>「SOS中 ◯件」</b> が赤で出ます（SOS が 1 件以上あるときだけ）。</p>
+    <p style="margin-top:6px"><b>④ 「SOSのみ」フィルターで絞れる</b> ── クリエイティブ一覧の詳細フィルターに「SOSのみ」チェックがあり、ディレクター・プロデューサーはSOS中のものだけを一発で抽出できます。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🖼 ディレクターのホームでの見え方（イメージ）</div>
+    <div class="mock" style="font-size:12px;line-height:1.9;color:#374151">
+      <div style="font-weight:700;margin-bottom:4px">👥 自チームで気になるもの <span style="float:right;font-weight:600;color:#6b7280">🆘 SOS 1件 ／ 今週締切 2件</span></div>
+      <div style="padding:6px 0;border-top:1px solid #e5e7eb"><span style="background:#FDECEA;color:#C0392B;padding:1px 6px;border-radius:4px;font-weight:700">🆘 SOS</span>　<span style="background:#f3f4f6;padding:1px 6px;border-radius:4px">編集</span>　👤 田中 太郎 で停止中<br>📁 B社_新商品CP　<span style="color:#6b7280;font-family:monospace">B社 · 0702_B社_新商品_30s.mp4</span></div>
+      <div style="padding:6px 0;border-top:1px solid #e5e7eb"><span style="background:#FEF3C7;color:#92400E;padding:1px 6px;border-radius:4px;font-weight:700">あと2日</span>　<span style="background:#f3f4f6;padding:1px 6px;border-radius:4px">Dチェック</span>　👤 佐藤 で停止中<br>📁 A社_夏CP　<span style="color:#6b7280;font-family:monospace">A社 · 0701_A社_夏CP_15s.mp4</span></div>
+    </div>
+    <p style="margin-top:8px;font-size:11px;color:var(--text-muted)">↑ SOS の行は納期バッジの代わりに 🆘 SOS が付き、期限が先でも最上段に来ます。</p>
   </div>
 
   <div class="wanpoint">
     <div class="wanpoint-title">過信しないで！</div>
-    <p>SOSを立てても <strong>自動のDM通知は飛びません</strong>（画面上で目立たせる仕組みです）。<strong>今すぐ返事がほしい緊急事態</strong> のときは、SOSに加えてクリエイティブのコメントや Slack／Chatwork でディレクターに直接ひとこと送りましょう。</p>
+    <p>SOSを立てても <strong>Slack / Chatwork の DM もベル 🔔 の通知も飛びません</strong>（ホームや一覧で目立たせる仕組みです）。ディレクターがホームを開いたときに気づいてもらう前提なので、<strong>今すぐ返事がほしい緊急事態</strong> のときは、SOSに加えてクリエイティブのコメントや Slack／Chatwork でディレクターに直接ひとこと送りましょう。</p>
   </div>
 
   <div class="next-btn-wrap"><a class="next-btn" href="#step3">STEP 3 へ進む</a></div>
@@ -252,8 +263,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="step-card">
     <div class="step-card-title">なぜすぐ解除する？</div>
-    <p>SOSは <b>ON／OFFを切り替えるトグル式</b>。同じボタンをもう一度押せば解除されます。解決済みのSOSが残っていると、ダッシュボードの「SOS中」件数が実態とズレて、<b>本当に困っている人のSOSが埋もれます</b>。解決したらその場で解除する習慣をつけましょう。</p>
-    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 ディレクター・プロデューサー・秘書・管理者は権限「他人のCLにSOSを操作」を持っているため、あなたの代わりに解除してくれることもあります。</p>
+    <p>SOSは <b>ON／OFFを切り替えるトグル式</b>。同じボタンをもう一度押せば解除されます。解決済みのSOSが残っていると、ディレクターのホーム「👥 自チームで気になるもの」の最上段を占領し続けて、<b>本当に困っている人のSOSが埋もれます</b>。解決したらその場で解除する習慣をつけましょう。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 ディレクター・プロデューサー・秘書・管理者は権限「他人のCLにSOSを操作」を持っているため（既定）、あなたの代わりに解除してくれることもあります。</p>
   </div>
 
   <div class="done-banner">
@@ -284,11 +295,11 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">⚠️</span>
-      <div><div class="trouble-q">「SOSフラグの更新に失敗しました」と出る</div><div class="trouble-a">通信エラーの可能性。ページを再読み込みしてもう一度。直らなければ秘書チームへ</div></div>
+      <div><div class="trouble-q">「SOSフラグの更新に失敗しました」と出る</div><div class="trouble-a">通信エラーの可能性。ページを再読み込みしてもう一度。直らなければ右上の 🦋 バグ報告か管理者へ</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">⏰</span>
-      <div><div class="trouble-q">SOSを立てたのに反応がない</div><div class="trouble-a">SOSは自動通知が飛ばない仕組みです。急ぎのときはディレクターへ Slack／Chatwork で直接連絡を（<a href="/guide-notification-settings.html" style="color:var(--em-dark);font-weight:700">通知設定ガイド</a> も参考に）</div></div>
+      <div><div class="trouble-q">SOSを立てたのに反応がない</div><div class="trouble-a">SOSは自動通知が飛ばない仕組みで、ディレクターがホームを開いたときに目に入ります。急ぎのときはディレクターへ Slack／Chatwork で直接連絡を（<a href="/guide-notification-settings.html" style="color:var(--em-dark);font-weight:700">通知設定ガイド</a> も参考に）</div></div>
     </div>
   </div>
 </section>

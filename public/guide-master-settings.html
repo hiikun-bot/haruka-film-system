@@ -144,7 +144,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ 秘書・管理者向け</span>
     <h1>マスター設定ガイド<span>プルダウンの「中身」は、ぜんぶここで育てる</span></h1>
-    <div class="hero-eta">⏱ 読了 約 6 分</div>
+    <div class="hero-eta">⏱ 読了 約 8 分</div>
   </div>
 </header>
 
@@ -219,6 +219,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="step-card-title">🗂 汎用マスター ── 区分の中の「値」を管理</div>
     <p>区分タイルを選ぶと、その区分の値を <b>コード・名称・備考・有効期限・表示順</b> つきで登録できます。</p>
     <div class="eg-box">📋 例：区分「媒体」を選択 → 「IG ／ Instagram」「YT ／ YouTube」…と値を追加。表示順の数字で並び替えもできる</div>
+    <div class="eg-box" style="margin-top:8px">📋 例：クリエイティブのコメントに付ける <b>レビューカテゴリー</b> も汎用マスターです（区分コード <code>COMMENT_CAT_VIDEO</code>＝動画、<code>COMMENT_CAT_DESIGN</code>＝静止画）。動画には「冒頭フック」「マーケティング」の後ろに「カット」「音声・ノイズ除去」が追加されています。途中に差し込みたいときは表示順を 10 刻みにしておくと楽です</div>
   </div>
 
   <div class="wanpoint">
@@ -292,7 +293,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="step-card">
     <div class="step-card-title">🛠 制作サポート系（管理者・秘書で表示）</div>
     <ul>
-      <li><b>📁 ファイル名テンプレート</b>：納品ファイル名の命名規約テンプレを管理。案件に紐づけて使います。ディレクター・プロデューサーも既定で編集できます（詳しくは <a href="/guide-project-create.html" style="color:var(--em-dark);font-weight:700">案件作成ガイド</a>）</li>
+      <li><b>📁 ファイル名テンプレート</b>：納品ファイル名の命名規約テンプレを管理。案件に紐づけて使います。ディレクター・プロデューサーも既定で編集できます（詳しくは <a href="/guide-project-create.html" style="color:var(--em-dark);font-weight:700">案件作成ガイド</a>）。テンプレ編集画面では、必須トークンは「連番」だけ（案件名・バージョンは任意）。「<b>桁数:</b>」セレクトで連番のゼロ埋め桁数の既定（未設定は 3 桁）を決め、「<b>＋ 固定文字</b>」でファイル名に固定で入れる文字（例: ネコ・イヌスエール）を、「<b>タイトル/内容</b>」トークンでクリエイティブごとの内容（例: 大好きなペットとの毎日に）を差し込めます</li>
       <li><b>✅ チェックリスト</b>：全案件共通のチェック項目。案件固有の項目は案件編集モーダルの「チェックリスト」タブで設定します</li>
       <li><b>📦 品目マスター</b>：見積で使う品目名と単位。案件の見積編集の「📦 品目マスターから選択」ピッカーに出ます</li>
       <li><b>💴 ランク単価プリセット</b>（管理者・秘書・プロデューサー系のみ表示）：カテゴリ別に制作者への支払単価 A / B / C を登録 → 案件の「見積・費用」の「📋 プリセットから一括生成」で使用（詳しくは <a href="/guide-budget-rates.html" style="color:var(--em-dark);font-weight:700">見積・単価ガイド</a>）</li>
@@ -300,16 +301,30 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   </div>
 
   <div class="step-card">
+    <div class="step-card-title">🔢 連番の桁数と採番元は「案件側」でも変えられる（ADR 038）</div>
+    <p>案件編集モーダルの「<b>⚙️ 設定</b>」サブタブ → 「<b>上級設定</b>」に、その案件だけの連番設定があります。</p>
+    <ul>
+      <li><b>次のファイル名連番</b>：次に生成されるファイル名の番号</li>
+      <li><b>連番桁数</b>：「テンプレ既定」のままならテンプレ側の桁数、変えたい案件だけ 1〜7 桁を選ぶ（例: 4 → 0001）</li>
+      <li><b>連番の採番元</b>：「<b>案件カウンタ</b>」（上の「次のファイル名連番」から採番）か「<b>スプレッドシート連動</b>」（管理シートの最終番号 +1 を次の連番にする）。連動にする場合は <b>連動するスプレッドシート URL・タブ名・番号の列（例: A）</b> を入力。No が先まで振ってあるシートは「<b>使用中判定の列</b>」に CR名 などの列（例: B）を指定すると、その列が埋まっている行だけを数えます</li>
+    </ul>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 連動シート側の桁数が設定と違うときは「⚠️ シート側は N 桁が多いようです」と教えてくれるので、桁数を揃えましょう。</p>
+  </div>
+
+  <div class="step-card">
     <div class="step-card-title">🔒 管理者ゾーン（最高管理者などに限定表示）</div>
     <ul>
-      <li><b>🔐 ロール権限</b>：ロール×権限のマトリクス編集（→ <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">権限・ロールの管理</a>）</li>
+      <li><b>🔐 ロール権限</b>（最高管理者）：ロール×権限のマトリクス編集（→ <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">権限・ロールの管理</a>）</li>
+      <li><b>📊 利用状況</b>（最高管理者）：ログイン・利用状況の確認</li>
       <li><b>📊 費用台帳同期</b>（管理者・秘書）：費用台帳スプレッドシートと双方向同期（→ <a href="/guide-csv-import-export.html" style="color:var(--em-dark);font-weight:700">一括インポート / エクスポート</a>）</li>
-      <li><b>📊 クリエイティブ出力マッピング</b>：案件ごとのクリエイティブ管理シート同期の出力設定</li>
-      <li><b>⚙️ システム設定 ／ 🔗 Slackワークスペース ／ 🧪 通知テスト ／ 📊 利用状況</b>：システム全体の設定・連携・デバッグ</li>
+      <li><b>📊 クリエイティブ出力マッピング</b>（管理者）：案件ごとのクリエイティブ管理シート同期の出力設定</li>
+      <li><b>⚙️ システム設定</b>（管理者）：「Google Drive 連携」（ルートフォルダ URL）／「📢 全体連絡 — Slack 投稿先」（通知先チャンネル URL）／「🧾 請求書案内 — 毎月20日の自動送信」（Chatwork ルーム ID・Slack チャンネル URL）／「🛠 メンテナンス — DB スキーマ同期」</li>
+      <li><b>🔗 Slackワークスペース ／ 🧪 通知テスト</b>（最高管理者）：Slack 連携の管理と Chatwork/Slack 通知のデバッグ送信</li>
       <li><b>📢 全体通知を送信</b>（管理者・秘書・プロデューサー系）：メンバー全員への一斉通知</li>
     </ul>
-    <div class="mock" style="max-width:280px">
-      <span class="mock-fieldlabel">左サイドバーのイメージ</span>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 最高管理者専用のメニューは、VIEW AS で別ロールをプレビュー中は隠れます。</p>
+    <div class="mock" style="max-width:300px">
+      <span class="mock-fieldlabel">左サイドバーのイメージ（上から順）</span>
       <div class="mock-nav">
         <div class="mock-nav-item on">区分マスター</div>
         <div class="mock-nav-item">汎用マスター</div>
@@ -317,12 +332,25 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
         <div class="mock-nav-item">📦 商材マスター</div>
         <div class="mock-nav-item">🎯 訴求軸マスター</div>
         <div class="mock-nav-item">📁 ファイル名テンプレート</div>
+        <div class="mock-nav-item locked">📊 クリエイティブ出力マッピング（管理者）</div>
         <div class="mock-nav-item">✅ チェックリスト</div>
         <div class="mock-nav-item">📦 品目マスター</div>
-        <div class="mock-nav-item locked">🔐 ロール権限（管理者のみ）</div>
-        <div class="mock-nav-item locked">⚙️ システム設定（管理者のみ）</div>
+        <div class="mock-nav-item">💴 ランク単価プリセット（管理者・秘書・P系）</div>
+        <div class="mock-nav-item locked">🔐 ロール権限（最高管理者）</div>
+        <div class="mock-nav-item locked">📊 利用状況（最高管理者）</div>
+        <div class="mock-nav-item">📊 費用台帳同期（管理者・秘書）</div>
+        <div class="mock-nav-item locked">⚙️ システム設定（管理者）</div>
+        <div class="mock-nav-item locked">🔗 Slackワークスペース（最高管理者）</div>
+        <div class="mock-nav-item locked">🧪 通知テスト（最高管理者）</div>
+        <div class="mock-nav-item">📢 全体通知を送信（管理者・秘書・P系）</div>
       </div>
     </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📧 メンバーのメールアドレスは「Google アカウント」限定</div>
+    <p>マスターの画面ではありませんが、秘書・管理者が知っておくべき設定です。メンバーの新規登録・招待リンク発行では、<b>Gmail か Google Workspace のアドレスだけ</b> が登録できます（Yahoo! メールなどは「Googleアカウントで使えるアドレス（Gmail / Google Workspace）のみ登録できます」と弾かれます）。請求書フォルダの共有が Google アカウント宛にしか付けられないためです。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 独自ドメインのメールで Google アカウントを作っている人は、Google Workspace として自動判定されれば通ります。それでも弾かれる場合は、システム設定の裏側にある許可ドメイン一覧（<code>system_settings</code> の <code>google_email_allow_domains</code>）にそのドメインを追加する必要があります。画面からは変えられないので管理者（開発側）に依頼を。</p>
   </div>
 
   <div class="done-banner">
@@ -356,8 +384,16 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <div><div class="trouble-q">「カテゴリが 1 件もありません」と出る</div><div class="trouble-a">データベースの初期設定が未適用のサインです。管理者（開発チーム）に連絡してください</div></div>
     </div>
     <div class="trouble-item">
+      <span class="trouble-icon">📧</span>
+      <div><div class="trouble-q">メンバー登録で「Googleアカウントで使えるアドレス…のみ登録できます」と出る</div><div class="trouble-a">Yahoo! メール等は登録できません。本人に Gmail（または Google Workspace）のアドレスを用意してもらうか、独自ドメインで Google アカウントを使っている場合は管理者（開発側）に許可ドメインの追加を依頼</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🔢</span>
+      <div><div class="trouble-q">ファイル名の連番が管理シートとズレる</div><div class="trouble-a">案件編集の「⚙️ 設定」→「上級設定」で「連番の採番元」を「スプレッドシート連動」にし、URL・タブ名・番号の列を設定。No が先まで振ってあるシートは「使用中判定の列」も指定を</div></div>
+    </div>
+    <div class="trouble-item">
       <span class="trouble-icon">🆘</span>
-      <div><div class="trouble-q">どのマスターを触ればいいか分からない</div><div class="trouble-a">秘書チームか管理者に「◯◯の選択肢を増やしたい」と相談を。スクショを添えると早いです</div></div>
+      <div><div class="trouble-q">どのマスターを触ればいいか分からない</div><div class="trouble-a">管理者に「◯◯の選択肢を増やしたい」と相談を。スクショを添えると早いです</div></div>
     </div>
   </div>
 </section>

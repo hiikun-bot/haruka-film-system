@@ -167,8 +167,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ 共通（全ロール向け）</span>
-    <h1>Slack / Chatwork 通知の設定<span>「気づかずスルー」をゼロにする 4 ステップ</span></h1>
-    <div class="hero-eta">⏱ 読了 約 5 分</div>
+    <h1>Slack / Chatwork 通知の設定<span>「気づかずスルー」をゼロにする 5 ステップ</span></h1>
+    <div class="hero-eta">⏱ 読了 約 6 分</div>
   </div>
 </header>
 
@@ -196,7 +196,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   </div>
   <div class="step-card">
     <div class="step-card-title">🔔 ベル通知（アプリ内通知）</div>
-    <p>システムのヘッダー右上にある <b>ベルアイコン 🔔</b> に届く通知です。未読件数バッジが付き、開くと一覧がスライドインします。<b>ログインしていれば設定なしで届く</b> のが特徴（詳しくは STEP 4）。</p>
+    <p>システムのヘッダー右上にある <b>ベルアイコン 🔔</b> に届く通知です。未読件数バッジが付き、開くと一覧がスライドインします。<b>ログインしていれば設定なしで届く</b> のが特徴（詳しくは STEP 4）。受け取る種類は自分で選べます（STEP 5）。</p>
   </div>
 
   <div class="wanpoint">
@@ -245,7 +245,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
           <div class="bie-num">1</div>
           <div class="bie-input-area">
             <div class="bie-label">💬 Slack DM ID</div>
-            <div class="bie-mock-input">例：U0123456789</div>
+            <div class="bie-mock-input">例：U01234ABCD</div>
           </div>
         </div>
         <div class="bie-row" data-field="chatwork-id">
@@ -283,6 +283,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
           <div class="bie-explain-eg">📋 例：Chatwork メンション形式 <b>[To:6603336]</b> の <b>数字部分</b> を入力</div>
           <h5>取得方法</h5>
           <p>Chatwork のメンションをコピペ、または プロフィール画面の「アカウント ID」を確認。</p>
+          <p style="margin-top:6px"><b>必ず数字だけ</b>。プロフィール URL に出る英数字の「Chatwork ID」を入れると、エラーは出ないのに通知が届きません。</p>
         </div>
       </div>
     </div>
@@ -321,7 +322,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
         <tr><td><b>Wチェック</b></td><td class="nt-emoji">📥</td><td><b>Wチェック担当者</b> に「Wチェック依頼」</td></tr>
         <tr><td><b>Dチェック</b></td><td class="nt-emoji">📥</td><td><b>ディレクター</b> に「Dチェック依頼」</td></tr>
         <tr><td><b>Pチェック</b></td><td class="nt-emoji">📥</td><td><b>プロデューサー</b> に「Pチェック依頼」</td></tr>
-        <tr><td><b>Wチェック後修正 / Dチェック後修正 / Pチェック後修正 / クライアントチェック後修正</b></td><td class="nt-emoji">🔁</td><td><b>編集者・デザイナー（制作担当）</b> に「修正依頼」</td></tr>
+        <tr><td><b>Wチェック後修正 / Dチェック後修正 / Pチェック後修正 / クライアントチェック後修正</b></td><td class="nt-emoji">🔁</td><td><b>編集者・デザイナー（制作担当）</b> に「◯チェック修正依頼」（Pチェック後修正・クライアントチェック後修正はディレクターにも）</td></tr>
         <tr><td><b>クライアントチェック中</b></td><td class="nt-emoji">🎉</td><td><b>制作担当</b> に「クライアントチェックに進みました」</td></tr>
         <tr><td><b>納品</b></td><td class="nt-emoji">🎉</td><td><b>編集者・デザイナー</b> に「クライアントOK！納品完了」</td></tr>
       </table>
@@ -336,7 +337,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="wanpoint">
     <div class="wanpoint-title">案件側の設定も必要</div>
-    <p>あなたの ID だけでなく、<strong>案件（またはクライアント）に Slack チャンネル URL / Chatwork ルーム ID が設定されている</strong> ことが前提です。案件側が未設定だとチャット通知は飛びません。設定はディレクター・秘書チームに確認を。</p>
+    <p>あなたの ID だけでなく、<strong>案件（またはクライアント）に Slack チャンネル URL / Chatwork ルーム ID が設定されている</strong> ことが前提です。案件側が未設定だとチャット通知は飛びません。設定はディレクター・管理者に確認を。</p>
     <p style="margin-top:6px">ディレクター以上のロールは、<b>案件タブ</b> の各案件・クライアント行にある「<b>🔔 通知</b>」ボタンから通知連携先を自分で設定できます（案件編集の権限がある場合は、従来どおり編集モーダルの 🔗 連携タブから設定します）。</p>
     <p style="margin-top:6px">Slack チャンネル URL は、チャンネル名をクリック →「<b>リンクをコピー</b>」で取得したもの（<code>https://ワークスペース名.slack.com/archives/C…</code>）か、デスクトップアプリのアドレス（<code>https://app.slack.com/client/T…/C…</code>）のどちらかを設定します。あわせて <b>通知用 bot をそのチャンネルに招待</b>（チャンネルで <code>/invite</code>）しておく必要があります。</p>
   </div>
@@ -360,20 +361,68 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="ntable-wrap">
       <table class="ntable">
         <tr><th></th><th>通知の種類</th><th>いつ届く？</th></tr>
-        <tr><td class="nt-emoji">⚪</td><td><b>ボールが返ってきました</b></td><td>クリエイティブのボール（次に動く番）があなたに移った瞬間</td></tr>
-        <tr><td class="nt-emoji">📢</td><td><b>全体通知</b></td><td>管理者・秘書・プロデューサーからの全体連絡</td></tr>
-        <tr><td class="nt-emoji">@</td><td><b>メンション</b></td><td>つぶやきやコメントで @あなた が呼ばれたとき</td></tr>
-        <tr><td class="nt-emoji">❤️</td><td><b>リアクション</b></td><td>あなたのつぶやきにリアクションが付いたとき</td></tr>
-        <tr><td class="nt-emoji">💬</td><td><b>コメント</b></td><td>あなたの投稿・コメントに返信が付いたとき</td></tr>
-        <tr><td class="nt-emoji">🎬</td><td><b>クリエイティブ関連</b></td><td>ステータス遷移の連絡や、新規登録の連絡（新規登録は管理者・秘書向け）</td></tr>
+        <tr><td class="nt-emoji">🎬</td><td><b>チェック依頼・修正依頼・進行の連絡</b></td><td>Dチェック依頼／Wチェック依頼／修正依頼／クライアントチェックに進んだとき</td></tr>
+        <tr><td class="nt-emoji">💬</td><td><b>クリエイティブへのコメント・返信</b></td><td>自分が担当する動画・静止画にコメントや返信が付いたとき</td></tr>
+        <tr><td class="nt-emoji">⚪</td><td><b>ボールが自分に来たとき</b> <span class="perm-chip">既定オフ</span></td><td>上の「チェック依頼・修正依頼」と同じタイミングで重ねて鳴るため、ふだんはオフで十分</td></tr>
+        <tr><td class="nt-emoji">🆕</td><td><b>クリエイティブの新規登録</b> <span class="perm-chip">既定オフ</span></td><td>管理者・秘書向け。誰かがクリエイティブを登録するたびに届くので件数が多い</td></tr>
+        <tr><td class="nt-emoji">@</td><td><b>つぶやきで @メンションされたとき</b></td><td>つぶやきや返信で @あなた が呼ばれたとき</td></tr>
+        <tr><td class="nt-emoji">💬</td><td><b>つぶやきへの返信</b></td><td>自分のつぶやき・自分の返信に返信が付いたとき</td></tr>
+        <tr><td class="nt-emoji">❤️</td><td><b>つぶやきへのリアクション</b></td><td>同じ人からのリアクションは 24 時間分まとめて 1 件で届く</td></tr>
+        <tr><td class="nt-emoji">👏</td><td><b>作品への 👏 拍手</b></td><td>自分が制作した作品（🏆 作品ギャラリー）に拍手が付いたとき。タップするとその作品が開く</td></tr>
+        <tr><td class="nt-emoji">💬</td><td><b>作品への 💬 ひとこと</b></td><td>自分が制作した作品にひとことが付いたとき</td></tr>
+        <tr><td class="nt-emoji">📢</td><td><b>全体通知</b> <span class="all-chip">常にオン</span></td><td>管理者・秘書・プロデューサーからの全体連絡。設定で止められません</td></tr>
+        <tr><td class="nt-emoji">💴</td><td><b>単価の承認</b> <span class="all-chip">常にオン</span></td><td>ディレクターが設定した単価の承認待ち／承認／差し戻し（関係者のみ）</td></tr>
       </table>
     </div>
-    <p style="margin-top:10px">未読があるとベルに <b>件数バッジ</b>（100件以上は「99+」）が付き、新着は <b>画面を開いたままリアルタイム</b> で飛び込んできます。パネルの「✓ すべて既読」でまとめて既読にできます。</p>
+    <p style="margin-top:10px">未読があるとベルに <b>件数バッジ</b>（100件以上は「99+」）が付き、新着は <b>画面を開いたままリアルタイム</b> で飛び込んできます。パネルの「✓ すべて既読」でまとめて既読にできます。<span class="perm-chip">既定オフ</span> の 2 種類は、必要なら STEP 5 の設定でオンにできます。</p>
   </div>
 
   <div class="step-card">
     <div class="step-card-title">📢 全体通知は「稼働時間」に合わせて届くことがある</div>
-    <p>送信者が時間帯指定モードを使うと、全体通知は <b>あなたのプロフィールの稼働時間の開始タイミング</b> に合わせて配信されます。深夜に通知が鳴らないのはこの仕組みのおかげ。稼働時間の設定は <a href="/guide-member-register.html" style="color:var(--em-dark);font-weight:700">はじめての登録チュートリアル STEP 2</a> を参照。</p>
+    <p>送信者が「時間帯指定送信」を選ぶと、全体通知は <b>受信者ごとの次回活動開始時刻</b>（あなたのプロフィールの稼働時間）に合わせて配信されます。深夜に通知が鳴らないのはこの仕組みのおかげ。稼働時間の設定は <a href="/guide-member-register.html" style="color:var(--em-dark);font-weight:700">はじめての登録チュートリアル STEP 2</a> を参照。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step5">STEP 5 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>受け取るベル通知を選ぶ（🔔 通知タブ）</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">👤</div>
+      <div class="flow-step-label">右上のアバター<br>をクリック</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔔</div>
+      <div class="flow-step-label">「🔔 通知」タブ<br>を開く</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">✅</div>
+      <div class="flow-step-label">種類ごとに<br>オン／オフ → 保存</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔔 通知タブでできること</div>
+    <p>プロフィール編集モーダルの右端にある <b>「🔔 通知」</b> タブを開くと、STEP 4 の表にある通知が種類ごとに並び、チェックでオン／オフできます。「ボールが自分に来たとき」と「クリエイティブの新規登録」の 2 つは <b>件数が多いので最初からオフ</b> になっています。変えたら、モーダル下の <b>「保存する」</b> で確定します。</p>
+    <p style="margin-top:6px">ここで変わるのは <b>ベル 🔔 に届く通知だけ</b>。Slack / Chatwork へのチャット通知（STEP 3）はこの設定に関係なく届きます。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 メンバー編集の権限を持つ管理者は、メンバータブから他の人の編集モーダルを開いて同じタブを設定できます。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📄 請求書案内は毎月 20 日に自動で届く</div>
+    <p>「請求書送付についてのご案内」は、<b>毎月 20 日の 10 時（日本時間）</b>に Chatwork の全体チャットと Slack の全体チャンネルへシステムが自動投稿し、同じ内容がホームの <b>「📢 全体連絡」</b> にも載ります。提出期間（毎月 26〜28 日）や請求書フォーマットへのリンクが書かれているので、届いたら <a href="/guide-invoice.html" style="color:var(--em-dark);font-weight:700">請求ガイド</a> の手順で提出しましょう。個人宛の DM ではなく全体チャットに来る点に注意。</p>
   </div>
 
   <div class="done-banner">
@@ -411,8 +460,12 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <div><div class="trouble-q">ベルの未読が消えない</div><div class="trouble-a">ベルを開いて「✓ すべて既読」ボタンをクリック</div></div>
     </div>
     <div class="trouble-item">
+      <span class="trouble-icon">🔇</span>
+      <div><div class="trouble-q">「ボールが来た」のベル通知が来ない</div><div class="trouble-a">既定でオフの種類です。必要なら「🔔 通知」タブでオンに（STEP 5）。チェック依頼の通知は別に届いています</div></div>
+    </div>
+    <div class="trouble-item">
       <span class="trouble-icon">🆘</span>
-      <div><div class="trouble-q">それ以外</div><div class="trouble-a">秘書チームに Chatwork で気軽に。スクショを添えると早い</div></div>
+      <div><div class="trouble-q">それ以外</div><div class="trouble-a">ディレクターや管理者に Chatwork / Slack で気軽に。スクショを添えると早い</div></div>
     </div>
   </div>
 </section>

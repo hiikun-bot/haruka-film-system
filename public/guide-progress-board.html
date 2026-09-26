@@ -155,7 +155,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ ディレクター向け</span>
     <h1>進行ボードの読み方<span>ガント・遅延・SOS・ボール——ひと目で「今やること」を拾う</span></h1>
-    <div class="hero-eta">⏱ 読了 約 7 分</div>
+    <div class="hero-eta">⏱ 読了 約 8 分</div>
   </div>
 </header>
 
@@ -175,10 +175,18 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <p style="font-size:13px;color:#374151;margin-bottom:6px">クリエイティブ画面を開くと、上部のツールバーで表示を切り替えられます。ディレクターの朝いちチェックは <b>ガント表示</b> が基本です。</p>
 
   <div class="step-card">
+    <div class="step-card-title">🏠 その前に——ホームの2枚のカードが「今日の入口」</div>
+    <p>ログイン直後のホーム最上段には <b>「🎯 いま、あなたにボールがあるもの」</b>（自分が動かす番のクリエイティブ・納期の近い順・上位5件）が出ます。「他 N 件を見る →」を押すと、この進行ボードの <b>「自分のボール」ビュー</b> に直接飛びます。</p>
+    <p style="margin-top:6px">自分が案件のディレクター／プロデューサー、またはチームの代表ディレクターなら、その下に <b>「👥 自チームで気になるもの」</b> も出ます。自分にボールが無くても、担当案件の <b>🆘 SOS ／ 期限超過 ／ 今週締切</b> のクリエイティブが「👤 ◯◯ で停止中」付きで並ぶので、朝いちはここを眺めてから進行ボードに来るのが近道です（「クリエイティブ一覧で見る →」で「自分の案件」ビューへ）。</p>
+  </div>
+
+  <div class="step-card">
     <div class="step-card-title">🎛 ツールバーの構成</div>
     <div class="mock">
-      <span class="mock-fieldlabel">1行目：範囲の切り替え ＋ 詳細フィルター</span>
+      <span class="mock-fieldlabel">1行目：検索 ＋ 担当者フィルター ＋ 詳細フィルター ＋ 範囲の切り替え</span>
       <div style="margin-bottom:10px">
+        <span class="seg"><span>🔍 キーワードで検索</span></span>
+        <span class="seg"><span>担当者でフィルタ</span></span>
         <span class="seg"><span>⚙ 詳細フィルター</span></span>
         <span class="seg"><span class="on">全案件</span><span>自分の案件</span><span>自分のボール</span></span>
       </div>
@@ -194,6 +202,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <li><b>表示</b>：ガント表示（期間バーで俯瞰）⇔ リスト表示（表で一覧。SOS・ボール保持者・納期の列あり）。</li>
       <li><b>グループ</b>：行のまとまりを 案件別／クライアント別／担当者別／チーム別 に切り替え。</li>
       <li><b>期間</b>：1週〜2ヶ月。「今日へ」で現在週に戻る、📅 で任意の日付にジャンプ。</li>
+      <li><b>担当者でフィルタ</b>：メンバー選択モーダルが開き、複数人を選んで絞り込めます（選ぶとボタンが「担当者: ◯◯」「担当者 (N名選択中)」に変わります）。ロール「全て」のときは<b>自分が一番上</b>に出るので、自分を選ぶのに探す必要はありません。デザインもできるディレクターのような<b>兼務メンバーは「D」でも「デザイン」でもヒット</b>し、バッジが「D・デザイン」のように連結表示されます。</li>
     </ul>
   </div>
 </section>
@@ -230,11 +239,12 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="step-card">
     <div class="step-card-title">📋 各行の固定4列（左側）</div>
     <ul>
-      <li><b>ファイル名</b>：クリックで詳細モーダルが開く。ホバーするとファイル名フル／クライアント・案件／担当者がツールチップ表示。</li>
+      <li><b>ファイル名</b>：クリックで詳細モーダルが開く。ホバーするとファイル名フル／クライアント・案件／担当者がツールチップ表示。<b>リスト表示ではファイル名の前に小さなサムネイル</b>（動画はポスターフレーム、画像は縮小版）が並ぶので、名前を読まなくてもどの作品か見当が付きます。</li>
       <li><b>担当アバター</b>：制作担当。ホバーで「ニックネーム（名前）／チーム」。「未」は未アサイン。</li>
       <li><b>ステータス</b>：チップ表示（ガント上では「CLチェック中」など短縮表記。ホバーで正式名）。</li>
       <li><b>遅れ</b>：納期との差分ラベル（次のSTEPで詳しく）。</li>
     </ul>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 グループ見出しの並びは「遅延 → 締切が近い順」ですが、<b>グループの中の行はクリエイティブ名順</b>に固定されています。先頭が管理番号のファイル名（001, 002…）は 001→002→…→010 と自然な数字順に並ぶので、管理シートと同じ順で追えます。</p>
   </div>
 
   <div class="step-card">
@@ -244,7 +254,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <li><b>訴求軸</b>：案件に登録された訴求軸から選択。</li>
       <li><b>編集者</b>：担当編集者を差し替え。</li>
       <li><b>初稿提出日 / 最終納期</b>：日付を直接入力。</li>
-      <li><b>納品日</b>：納品完了日を補正（<b>この月で支払い本数がカウント</b>されます。編集できるのは管理者・秘書・プロデューサーのみ）。</li>
+      <li><b>納品日</b>：納品完了日を補正（<b>この月で支払い本数がカウント</b>されます。編集できるのは管理者・秘書・プロデューサー（P兼D含む）のみで、ディレクター単独のときはこの列は表示だけです）。</li>
       <li><b>Frame.io</b>：レビューリンクを貼り付け。「🔗 開く」で別タブ表示。</li>
     </ul>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 セルにマウスを乗せると <b>✎</b> が出るのが編集できる目印です。編集中に <kbd>Esc</kbd> で取消。</p>
@@ -373,7 +383,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <li><b>自分の案件</b>：①自分がクリエイティブにアサインされている ②自分がその案件のディレクター ③自分がその案件のプロデューサー——のいずれかに該当するものだけ。</li>
       <li><b>自分のボール</b>：<b>いま自分が動かす番</b>のものだけ。Dチェック待ちが並ぶので、ディレクターの作業キューとして最強です。</li>
     </ul>
-    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 プロフィール設定の「クリエイティブ初期ビュー」で、画面を開いたときの初期値を選べます（全案件／自分の案件／自分のボール）。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 メンバー編集モーダル（自分のプロフィール）の <b>「クリエイティブ 初期ビュー」</b> で、画面を開いたときの初期値を選べます（全案件／自分の案件／自分のボール）。同じ場所の「クリエイティブ画面の初期表示状態（任意）」では、表示モード（ガント／リスト）・グルーピング・期間・「納品済み含む」などのトグルの初期値も決められます。Dチェック担当が多い人は「自分のボール」＋「リスト表示」にしておくと、開いた瞬間に作業キューになります。</p>
   </div>
 
   <div class="step-card">
@@ -383,6 +393,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <li><b>ステータス</b>：ピルボタンで複数選択（「Dチェック」＋「Dチェック後修正」だけ、など）。</li>
       <li><b>ボール種別</b>：編集者・D・P・クライアント のどこにボールがあるかで絞り込み。</li>
       <li>適用中はボタンに<b>件数バッジ</b>が付きます。迷子になったら「クリア」で一発リセット。</li>
+      <li><b>担当者でフィルタ</b>（1行目の別ボタン）と組み合わせれば、「〇〇さんの Dチェック後修正だけ」のような絞り込みもできます。</li>
     </ul>
   </div>
 
@@ -434,6 +445,10 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="trouble-item">
       <span class="trouble-icon">🧭</span>
       <div><div class="trouble-q">ガントが今日から遠く離れてしまった</div><div class="trouble-a">期間ナビの「今日へ」ボタンで現在期間に戻れます。📅 から日付指定ジャンプも可能。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🏆</span>
+      <div><div class="trouble-q">納品済みの作品を、進行ボードではなくギャラリーで見返したい</div><div class="trouble-a">ナビの <b>「🏆 作品」</b> ページへ。「👤 自分／👥 全員」で担当者の範囲を切り替えられ、「🚧 制作途中も表示」にチェックすると納品前（初稿・修正中）のクリエイティブも並びます。進行管理はこの進行ボード、完成品の見返しは作品ページ、と使い分けましょう。</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">👀</span>
