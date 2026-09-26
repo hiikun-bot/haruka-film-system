@@ -11255,7 +11255,8 @@ function maybeShowFirstLoginGuidePrompt() {
   lead.style.cssText = 'font-size:13.5px;color:var(--text);line-height:1.7;';
   // XSS 防止のため textContent で組み立てる
   const who = document.createElement('b');
-  who.textContent = `${u.nickname || u.name || u.email || ''} さん`;
+  // 名前表示は NameDisplay 経由（ニックネーム優先。PR #502 の共通標準）
+  who.textContent = `${(typeof NameDisplay !== 'undefined' ? NameDisplay.short(u) : (u.nickname || u.full_name || ''))} さん`;
   lead.appendChild(who);
   lead.appendChild(document.createTextNode('、はじめまして。まずは「新メンバー向けガイド」で、'));
   const roleB = document.createElement('b');
