@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜🏆 作品ギャラリーの使い方</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero */
+.hero{background:linear-gradient(135deg,#0284C7 0%,#0EA5E9 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+/* Progress bar */
+.progress-wrap{position:sticky;top:0;background:rgba(255,255,255,0.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:50;border-bottom:1px solid var(--border-light);padding:12px 16px}
+.progress-inner{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:16px}
+.progress-track{flex:1;height:6px;background:var(--border-light);border-radius:99px;overflow:hidden;position:relative}
+.progress-fill{position:absolute;top:0;left:0;height:100%;width:0;background:linear-gradient(90deg,var(--em),var(--em-dark));transition:width .3s ease;border-radius:99px}
+.progress-text{font-size:12px;font-weight:700;color:var(--em-dark);white-space:nowrap;letter-spacing:0.04em}
+.progress-dots{display:flex;gap:8px}
+.progress-dot{width:10px;height:10px;border-radius:50%;background:var(--border);transition:all .3s;cursor:pointer}
+.progress-dot.done{background:var(--em-dark)}
+.progress-dot.current{background:var(--em);box-shadow:0 0 0 4px var(--em-pale)}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:80px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram (SVG) */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+
+/* Wanpoint (sticky-note callout) */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Compact step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card-title-num{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+
+/* Mock screen */
+.mock{margin-top:10px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:12px 16px}
+.mock-input{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:8px 11px;font-size:13px;font-family:inherit;color:var(--text);width:100%;margin-bottom:8px}
+.mock-btn{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:3px;display:block}
+
+/* Tab pills */
+.tab-pills{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+.tab-pill{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px 8px;text-align:center;font-size:12px;font-weight:700;color:var(--text);position:relative;transition:transform .15s}
+.tab-pill-icon{font-size:22px;margin-bottom:4px;line-height:1}
+.tab-pill.star{border-color:var(--star);background:linear-gradient(135deg,var(--star-bg),#fff);color:var(--star-deep);box-shadow:0 4px 12px rgba(245,158,11,0.2)}
+.tab-pill.star::after{content:"⭐";position:absolute;top:-8px;right:-6px;font-size:14px}
+
+/* Field hierarchy: must / recommended / optional */
+.fields{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.must-card{background:linear-gradient(135deg,#FFF7ED 0%,#fff 60%);border:2px solid var(--star);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:flex-start;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.18)}
+.must-card-icon{font-size:28px;line-height:1;flex-shrink:0}
+.must-card-body{flex:1;min-width:0}
+.must-card-tag{display:inline-block;font-size:10px;font-weight:800;letter-spacing:0.14em;color:#fff;background:var(--star);padding:2px 9px;border-radius:99px;margin-bottom:6px;text-transform:uppercase}
+.must-card h4{font-size:15px;font-weight:800;color:var(--star-deep);margin-bottom:4px}
+.must-card p{font-size:12.5px;color:#78350F;line-height:1.65}
+.must-card p strong{font-weight:800;background:rgba(245,158,11,0.2);padding:1px 5px;border-radius:3px}
+
+.reco-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.reco-label{font-size:11px;color:var(--text-muted);font-weight:700;letter-spacing:0.06em;flex-shrink:0}
+.reco-chip{display:inline-flex;align-items:center;gap:5px;background:var(--em-pale);color:var(--em-dark);font-size:12px;font-weight:600;padding:5px 11px;border-radius:99px;border:1px solid var(--em-light)}
+
+.opt-row{margin-top:6px;font-size:11px;color:#9ca3af;line-height:1.6}
+.opt-row strong{color:#6b7280;font-weight:600}
+
+/* Basic-info interactive explorer */
+.bie{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.bie-mock{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.bie-mock-title{font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.bie-mock-title::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#EF4444;box-shadow:14px 0 #F59E0B,28px 0 #10B981}
+.bie-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;background:#fafdfd}
+.bie-row:hover{background:var(--em-pale);border-color:var(--em-light)}
+.bie-row.selected{background:var(--em-pale);border-color:var(--em-dark);box-shadow:0 4px 12px rgba(43,184,180,0.18)}
+.bie-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#fff;border:2px solid var(--em-dark);color:var(--em-dark);font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.bie-row:hover .bie-num{transform:scale(1.1)}
+.bie-row.selected .bie-num{background:var(--em-dark);color:#fff}
+.bie-input-area{flex:1;min-width:0}
+.bie-label{font-size:11px;color:var(--text);font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:4px}
+.bie-mock-input{background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;color:#9ca3af;font-family:inherit;min-height:22px;display:flex;align-items:center}
+.bie-mock-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#A8EDEA,#3ECFCA);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bie-mock-input.disabled{background:#f5f5f5;color:#9ca3af}
+.bie-explain{background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px solid var(--star-border);border-radius:12px;padding:16px 18px;min-height:200px;position:relative}
+.bie-explain-prompt{font-size:12px;color:var(--star-deep);text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:center;height:100%;padding:12px}
+.bie-explain-prompt-arrow{font-size:24px;animation:bie-arrow 1.4s ease-in-out infinite}
+@keyframes bie-arrow{0%,100%{transform:translateX(0)}50%{transform:translateX(-6px)}}
+.bie-explain-content{display:none}
+.bie-explain-content.show{display:block;animation:bie-fade 0.25s ease-out}
+@keyframes bie-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.bie-explain-num{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--star);color:#fff;font-size:11px;font-weight:800;margin-right:6px}
+.bie-explain-title{font-size:14px;font-weight:800;color:var(--star-deep);margin-bottom:10px;display:flex;align-items:center}
+.bie-explain h5{font-size:11px;font-weight:800;color:var(--star);letter-spacing:0.06em;margin:10px 0 4px;text-transform:uppercase}
+.bie-explain h5::before{content:"";display:inline-block;width:4px;height:12px;background:var(--star);margin-right:6px;vertical-align:middle;border-radius:2px}
+.bie-explain p{font-size:12.5px;color:#78350F;line-height:1.7}
+.bie-explain-eg{margin-top:8px;background:#fff;border-radius:8px;padding:10px 12px;font-size:11.5px;color:#78350F;line-height:1.7;border-left:3px solid var(--star)}
+.bie-explain-eg b{color:#92400E;background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px}
+@media (max-width:768px){
+  .bie{grid-template-columns:1fr;gap:10px}
+  .bie-explain{min-height:auto}
+}
+
+/* Done banner (compact) */
+.done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
+.done-icon{font-size:24px;flex-shrink:0}
+.done-text{flex:1;font-size:13px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:2px}
+
+/* Next button */
+.next-btn-wrap{display:flex;justify-content:center;margin-top:18px}
+.next-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--em-dark);text-decoration:none;font-weight:700;font-size:13px;padding:11px 22px;border-radius:99px;border:2px solid var(--em);transition:all .2s;box-shadow:0 2px 8px rgba(43,184,180,0.15)}
+.next-btn:hover{background:var(--em-dark);color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(43,184,180,0.3)}
+.next-btn::after{content:"↓";font-weight:900}
+
+/* Final */
+.final{margin-top:56px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:32px 24px;text-align:center;position:relative;overflow:hidden}
+.final::before{content:"🎉";position:absolute;font-size:120px;opacity:0.06;top:50%;left:50%;transform:translate(-50%,-50%)}
+.final-icon{font-size:42px;margin-bottom:6px}
+.final h2{font-size:22px;font-weight:800;color:#92400E;margin-bottom:6px}
+.final p{font-size:13px;color:#78350F;line-height:1.85;max-width:480px;margin:0 auto 16px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35);transition:transform .15s,box-shadow .15s}
+.final-cta:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(43,184,180,0.45)}
+
+/* Trouble (compact, single block) */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .progress-dots{display:none}
+  .flow-row{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .tab-pills{grid-template-columns:repeat(2,1fr)}
+  .must-card{padding:14px 16px;gap:12px}
+  .must-card-icon{font-size:24px}
+  .must-card h4{font-size:14px}
+  .final{padding:24px 18px}
+  .final h2{font-size:18px}
+}
+</style>
+</head>
+
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">GALLERY ／ 全員共通</span>
+    <h1>🏆 作品ギャラリーで、納品作品を見る・褒める<span>並び方・⭐ マイベスト・👏 ナイス！・🎬 新着納品・ZIP ダウンロード</span></h1>
+    <div class="hero-eta">⏱ 約 8 分</div>
+  </div>
+</header>
+
+<div class="progress-wrap">
+  <div class="progress-inner">
+    <div class="progress-text" id="progress-text">準備OK ／ 0 / 6</div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-dots">
+      <span class="progress-dot current" data-step="1"></span>
+      <span class="progress-dot" data-step="2"></span>
+      <span class="progress-dot" data-step="3"></span>
+      <span class="progress-dot" data-step="4"></span>
+      <span class="progress-dot" data-step="5"></span>
+      <span class="progress-dot" data-step="6"></span>
+    </div>
+  </div>
+</div>
+
+<main class="container">
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>作品ページの見方</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">🏆</div>
+      <div class="flow-step-label">ナビの<br>「🏆 作品」を押す</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🗂</div>
+      <div class="flow-step-label">案件ごと×向きレーンで<br>作品が並ぶ</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔍</div>
+      <div class="flow-step-label">カードを押して<br>大きく見る</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">納品済みの作品が、案件 × 向きで並びます</div>
+    <p>ヘッダーのナビ「<b>🏆 作品</b>」を押すと、<b>納品済み</b>のクリエイティブがギャラリーとして並びます。全ロール共通です。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">初回の表示</span>
+        <span class="reco-chip">👤 自分（自分が担当した作品だけ）</span>
+        <span class="reco-chip">「👥 全員」を押すとチーム全員の作品</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">グループ</span>
+        <span class="reco-chip">「クライアント ／ 案件名」ごと・件数・最終納品日</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">向きレーン</span>
+        <span class="reco-chip">縦型 9:16 / 4:5</span><span class="reco-chip">正方 1:1</span><span class="reco-chip">横型 16:9</span>
+      </div>
+    </div>
+    <div class="mock" style="margin-top:12px">
+      <div style="font-weight:700;font-size:13px">◯◯食品 ／ 秋のキャンペーン　<span style="font-weight:400;color:var(--text-muted);font-size:11px">6件 ・ 最終納品 2026/9/24</span></div>
+      <div style="font-size:12px;margin-top:6px;color:var(--text-muted)">▾ 縦型 9:16 / 4:5　3件</div>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <div style="width:64px;height:100px;background:#fff;border:1.5px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px">🎬</div>
+        <div style="width:64px;height:100px;background:#fff;border:1.5px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px">🎬</div>
+        <div style="width:64px;height:100px;background:#fff;border:1.5px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px">🎨</div>
+      </div>
+      <div style="font-size:12px;margin-top:8px;color:var(--text-muted)">▾ 横型 16:9　3件</div>
+    </div>
+    <div class="opt-row" style="margin-top:10px">カードには <strong>🎬（動画）／🎨（静止画）</strong> の印、ファイル名、納品日が出ます。動画はカードにマウスを乗せると<strong>無音でプレビュー再生</strong>されます。レーン見出しを押すと畳めます。右上の「小 / 中 / 大」でカードの大きさ、「レーン内：納品日が新しい順 / 名前順」で並び順を変えられます（この端末に記憶）。</div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">絞り込み（ツールバー）</div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">人・案件</span>
+        <span class="reco-chip">担当者でフィルタ（複数選択可）</span>
+        <span class="reco-chip">クライアント：すべて ▾</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">種別・期間</span>
+        <span class="reco-chip">共通 / 🎬 動画 / 🎨 静止画</span>
+        <span class="reco-chip">納品日 ◯ 〜 ◯</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">チェック</span>
+        <span class="reco-chip">☑ 最新の納品物のみ（外すと過去版も v2… バッジつきで並ぶ）</span>
+        <span class="reco-chip">☐ ファイル未登録も表示</span>
+        <span class="reco-chip">☐ 🚧 制作途中も表示</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">系統チップ</span>
+        <span class="reco-chip">業種（クライアントから自動）と表現（動画/静止画・向きから自動）を件数つきで絞り込み</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">ツールバーの下に「作品 N件 ／ N案件（納品済のみ）」のように、いま何を見ているかが文章で出ます。400 件を超えると「上限400件まで表示」と出るので、期間や担当者で絞ってください。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step2" onclick="markStep(1)">STEP 2 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>大きく見る・説明を書く（ライトボックス）</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">カードを押すと全画面で開きます</div>
+    <p>左に作品、右に情報カード。「<b>‹ 前の作品</b>」「<b>次の作品 ›</b>」で移動、「<b>✕ 閉じる</b>」（Esc でも）で戻ります。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">右カラム</span>
+        <span class="reco-chip">👏 ナイス！ と 4 種のリアクション（STEP 4）</span>
+        <span class="reco-chip">🔗 共有</span>
+        <span class="reco-chip">説明文</span>
+        <span class="reco-chip">💬 ひとこと</span>
+        <span class="reco-chip">クレジット（担当者と役職）</span>
+        <span class="reco-chip">情報（納品日・系統・表現・種別・サイズ）</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">下のボタン</span>
+        <span class="reco-chip">⭐ マイベストに追加</span>
+        <span class="reco-chip">✏️ 説明を編集</span>
+        <span class="reco-chip">🏷 系統を変更</span>
+        <span class="reco-chip">⬇ ダウンロード</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">「✏️ 説明を編集」（狙い・工夫・成果など 500 字まで、⌘/Ctrl＋Enter で保存）と「🏷 系統を変更」は、その作品の担当者・案件の P/D・管理者・秘書に出ます。説明を書くとカードにも重ねて表示されます。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step3" onclick="markStep(2)">STEP 3 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>⭐ マイベストを選ぶ</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">自分の代表作に ⭐ を付ける</div>
+    <p><b>自分が担当した作品</b>のカードには <b>☆</b> が出ます。押すと <b>⭐</b> になり「マイベスト」に登録されます（ライトボックスでは「☆ マイベストに追加」ボタン）。もう一度押すと外れます。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">誰が押せる？</span>
+        <span class="reco-chip">その作品の担当者本人だけ</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">他の人には</span>
+        <span class="reco-chip">本人が選んだ ⭐ が印として見える（操作はできない）</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">担当者を 1 人に絞って見ているときは、ツールバーに「<b>⭐ マイベスト</b>」「<b>すべて</b>」の切り替えが出ます。その人の代表作だけを並べたいときに使ってください。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ワンポイント</div>
+    <p>マイベストは「自分のポートフォリオの表紙」。<strong>自信作を 3 〜 5 本</strong>選んでおくと、ディレクターが「この人にお願いしたい」と判断しやすくなります。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step4" onclick="markStep(3)">STEP 4 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>👏 ナイス！・💬 ひとこと・🔗 共有</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">👏</div>
+      <div class="flow-step-label">カード下の<br>「👏 ナイス！」を押す</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔔</div>
+      <div class="flow-step-label">制作担当のベルに<br>通知が届く</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🏅</div>
+      <div class="flow-step-label">相手の「マイ実績」に<br>今月の 👏 として積み上がる</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">👏 ナイス！（ワンクリック）と 4 つの言葉</div>
+    <p>カード下部の「<b>👏 ナイス！</b>」はワンクリックで送れます。隣の「<b>＋</b>」を押すと、言葉つきのリアクションが選べます。</p>
+    <div class="mock">
+      <span class="mock-btn" style="padding:6px 14px">👏 ナイス！ 3</span>
+      <span class="reco-chip" style="margin-left:6px">＋</span>
+      <span class="reco-chip" style="margin-left:6px">💬 2</span>
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        <span class="reco-chip">❤️ 好き</span><span class="reco-chip">👍 参考になる</span><span class="reco-chip">😊 ほっこり</span><span class="reco-chip">😳 すごい…！</span>
+      </div>
+    </div>
+    <div class="opt-row" style="margin-top:10px"><strong>もう一度押すと取り消し</strong>。ライトボックスとスライドショーでは 5 種が言葉つきで常時並びます。自分の作品にも押せますが、自分への通知は飛びません。</div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">💬 ひとこと</div>
+    <p>カードの「<b>💬</b>」を押すと、その作品への短い感想欄が開きます。「ひとこと…」に入力して「<b>送る</b>」（500 字まで）。自分のひとことは ✕ で削除できます（管理者も可）。ライトボックスでは常に開いた状態で表示されます。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔗 共有（ライトボックスの右上）</div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">メニュー</span>
+        <span class="reco-chip">💭 つぶやきで紹介する ＝ 「👏 この作品、ナイス！」の一言・担当者への @メンション・作品リンク・サムネをセットして投稿画面を開く</span>
+        <span class="reco-chip">🔗 リンクをコピー ＝ Slack / Chatwork に貼れる作品 URL</span>
+        <span class="reco-chip">📤 他のアプリで共有 ＝ LINE・メール等（対応端末のみ）</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">つぶやきに貼った作品リンクは「🏆 作品を見る」チップになり、押すとその場で作品が開きます。</p>
+  </div>
+
+  <div class="step-card" style="border-color:var(--star);background:linear-gradient(180deg,#FFFCEB 0%,#fff 70%)">
+    <div class="step-card-title" style="color:var(--star-deep)">🔔 誰に通知が届く？</div>
+    <p>👏 や 💬 を送ると、その作品の<b>制作担当（編集者・デザイナー・ディレクター）</b>のベルに「作品への 👏 拍手」「作品への 💬 ひとこと」として届きます。プロデューサーや W チェック担当には届きません。同じ人が同じ作品に何度押しても、通知は 1 日 1 回にまとまります。受け取る側は「メンバー編集モーダル → 🔔 通知タブ」で OFF にもできます。</p>
+    <p style="margin-top:6px">受け取った 👏 は、ホームの「<b>🏅 マイ実績</b>」（編集者・デザイナー・ディレクター本人だけに出るカード）の「今月の👍👏」に <b>「ファイル N・作品 N」</b> として合算されます。順位やランキングにはなりません。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step5" onclick="markStep(4)">STEP 5 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>🎬 新着納品ショーケース</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">作品ページの先頭に「この 7 日の納品」が出ます</div>
+    <p>直近 7 日に納品された作品があると、作品ページのいちばん上に「<b>🎬 新着納品　この7日で N本（未見 M本）</b>」のカードが出ます。大きなサムネ、右にサムネ列（未見は赤い点）、制作担当、そして「👏 ナイス！」がその場で押せます。新着ゼロの週は出ません。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">カードの操作</span>
+        <span class="reco-chip">▶ スライドショー</span>
+        <span class="reco-chip">← 前 ／ 次 →</span>
+        <span class="reco-chip">🔍 大きく見る（ひとことも書けます）</span>
+        <span class="reco-chip">∨ / ∧ で畳む・開く</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">一括納品</span>
+        <span class="reco-chip">同じ案件で同じ日に 4 本以上 → 「一括納品 ×N本」に 1 枚でまとまる</span>
+        <span class="reco-chip">👏 まとめてナイス！（N本）</span>
+        <span class="reco-chip">▶ 1本ずつ見る</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">▶ スライドショー</div>
+    <p>全画面で 5 秒ごとに次の作品へ進みます。動画は無音で自動再生され、再生が終わると次へ。下のパネルで <b>👏 ナイス！</b> と <b>💬 ひとこと</b>（「この作品にひとこと…（Enter で送る）」）がその場で送れます。入力中は自動送りが止まります。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">操作</span>
+        <span class="reco-chip">⏸ 自動（自動送りの ON / OFF）</span>
+        <span class="reco-chip">← → キー・スワイプ</span>
+        <span class="reco-chip">この作品をスキップ ⏭</span>
+        <span class="reco-chip">✕ または Esc で閉じる</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">ホームの 1 行導線と、ナビの赤バッジ</div>
+    <p>ホームには「<b>🎬 新着納品　この7日で N本（未見 M本）</b>」の 1 行が出て、「<b>🏆 作品で見る</b>」「<b>▶ スライドショー</b>」から飛べます。ナビ「🏆 作品」の赤い数字は<b>まだ見ていない新着納品の本数</b>で、ショーケースで表示した作品から順に消えていきます（「見た」の記録はこの端末に保存）。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここは「祝う場」</div>
+    <p>ショーケースには修正回数・遅延・単価などは一切出ません。<strong>仲間の納品を見て、ひとこと添える</strong>ためだけの場所です。週に一度スライドショーを流すだけでも、チームの温度が上がります。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step6" onclick="markStep(5)">STEP 6 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 6 ═══ -->
+<section class="step-section" id="step6">
+  <div class="step-section-head">
+    <div class="step-section-num">6</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 6</div>
+      <h2>まとめてダウンロード（ZIP）</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">☑</div>
+      <div class="flow-step-label">「選択モード」に<br>チェック</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🖱</div>
+      <div class="flow-step-label">カードをクリック or<br>ドラッグで範囲選択</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">⬇</div>
+      <div class="flow-step-label">「⬇ まとめてダウンロード<br>（ZIP）」</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">手順</div>
+    <p>ツールバーの「<b>選択モード</b>」にチェックを入れると、カードを押しても開かずに選択できるようになります。空いている場所からドラッグすると範囲選択できます。選ぶと上に「<b>N件選択中</b>」バーが出るので「<b>⬇ まとめてダウンロード（ZIP）</b>」を押してください。「<b>選択を解除</b>」でやり直せます。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">上限</span>
+        <span class="reco-chip">最大 50 件・合計 2GB まで</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">1 件だけ</span>
+        <span class="reco-chip">ライトボックスの「⬇ ダウンロード」</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">作品ギャラリー、マスター！<small>まずは仲間の作品に 👏 ナイス！ を送ってみましょう</small></div>
+  </div>
+</section>
+
+<!-- 完了 -->
+<section class="final" id="finished">
+  <div class="final-icon">🏆</div>
+  <h2>仲間の作品を見て、褒めよう</h2>
+  <p>納品は締切ではなくお披露目。ギャラリーで見て、ナイス！を送って、ひとこと添える。それだけでチームが少し明るくなります。</p>
+  <a class="final-cta" href="/haruka.html" onclick="markStep(6)">システムを開く →</a>
+</section>
+
+<!-- 困ったら -->
+<section class="trouble">
+  <h3>💬 困ったら…</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">🫥</span>
+      <div><div class="trouble-q">作品が 1 件も出ない</div><div class="trouble-a">初回は「👤 自分」が選ばれています。「👥 全員」に切り替えるか、期間・クライアントの絞り込みを外してください。納品前の作品は「🚧 制作途中も表示」、ファイルがまだ登録されていない作品は「ファイル未登録も表示」で出ます</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">☆</span>
+      <div><div class="trouble-q">⭐ が押せない</div><div class="trouble-a">マイベストは、その作品の担当者本人だけが操作できます。他の人の作品には印としてだけ表示されます</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">✏️</span>
+      <div><div class="trouble-q">「✏️ 説明を編集」が出ない</div><div class="trouble-a">担当者・案件の P/D・管理者・秘書だけに出ます。担当していない作品の説明は変えられません</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">📦</span>
+      <div><div class="trouble-q">ZIP ダウンロードが始まらない</div><div class="trouble-a">最大 50 件・合計 2GB の上限を超えていないか、選択バーの容量表示を確認してください。超えるときは分けてください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🎬</span>
+      <div><div class="trouble-q">🎬 新着納品のカードが出ない</div><div class="trouble-a">直近 7 日に納品がない週は出ません。畳んでいる場合は右端の「∧」で開きます。案件で「🎬 ショーケースに出さない」が設定されている機密案件も出ません</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <p>HARUKA FILM SYSTEM ／ 作品ギャラリーの使い方 ／ 更新日 2026-09-26</p>
+</footer>
+
+<script>
+const TOTAL_STEPS = 6;
+const LS_KEY = 'haruka_guide_portfolio_progress';
+let completed = parseInt(localStorage.getItem(LS_KEY) || '0', 10);
+function updateProgress() {
+  const pct = Math.min(100, (completed / TOTAL_STEPS) * 100);
+  document.getElementById('progress-fill').style.width = pct + '%';
+  const label = completed === 0 ? '準備OK' : (completed >= TOTAL_STEPS ? '完了 🎉' : '進行中');
+  document.getElementById('progress-text').textContent = `${label} ／ ${completed} / ${TOTAL_STEPS}`;
+  document.querySelectorAll('.progress-dot').forEach((d, i) => {
+    const step = i + 1;
+    d.classList.toggle('done', step <= completed);
+    d.classList.toggle('current', step === completed + 1);
+  });
+}
+function markStep(n){ if(n>completed){ completed=n; localStorage.setItem(LS_KEY, String(completed)); updateProgress(); } }
+updateProgress();
+document.querySelectorAll('.progress-dot').forEach(d=>{
+  d.addEventListener('click',()=>document.getElementById('step'+d.dataset.step)?.scrollIntoView({behavior:'smooth',block:'start'}));
+});
+</script>
+
+</body>
+</html>

@@ -254,7 +254,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <!-- ⭐ ワンポイント -->
   <div class="wanpoint">
     <div class="wanpoint-title">ここだけは絶対！</div>
-    <p>招待リンクは <strong>24 時間で無効</strong>。期限切れだったら秘書チームに「再発行してください」とひとこと。</p>
+    <p>招待リンクは <strong>24 時間で無効</strong>。期限切れだったら、招待してくれた管理者に「再発行してください」とひとこと。</p>
   </div>
 
   <!-- 入力イメージ -->
@@ -265,14 +265,29 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <input class="mock-input" type="text" value="田中 太郎" readonly>
       <span class="mock-fieldlabel">パスワード（8文字以上）<span style="color:#E24B4A">*</span></span>
       <input class="mock-input" type="password" value="••••••••" readonly>
+      <span class="mock-fieldlabel">パスワード（確認）</span>
+      <input class="mock-input" type="password" value="••••••••" readonly>
       <button class="mock-btn">アカウントを作成してログイン</button>
     </div>
     <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 表示名は普段呼ばれている名前（例：田中、たろ）にすると、メンションされやすい。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">🔐 パスワードのルールは <b>半角英字・数字・記号で 8 文字以上</b>（全角文字・スペースは使えません）。確認欄と一致しないと「パスワードが一致しません」で止まります。</p>
+  </div>
+
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">📧 メールアドレスは招待で決まっています（Google アカウント限定）</div>
+    <p>登録画面にメールアドレスの入力欄はありません。<b>招待を送るときに指定されたアドレス</b>がそのままログイン ID になります。</p>
+    <p style="margin-top:6px">このアドレスは <b>Google アカウントで使えるもの（Gmail または Google Workspace）</b> だけが登録できます。Yahoo!メールなどを指定すると、招待の時点で「Googleアカウントで使えるメールアドレスを指定してください」と弾かれます。請求書フォルダなど Google ドライブの共有に使うためです。別のアドレスにしたいときは、招待してくれた管理者に招待の出し直しを頼んでください。</p>
   </div>
 
   <div class="done-banner">
     <span class="done-icon">✅</span>
-    <div class="done-text">アカウント作成、おつかれさま！<small>自動でダッシュボードが開きます</small></div>
+    <div class="done-text">アカウント作成、おつかれさま！<small>「ようこそ、◯◯さん！」と出たあと、自動でホーム画面が開きます</small></div>
+  </div>
+
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">🚀 登録すると「オンボーディング」タブが出ます（編集者・デザイナー）</div>
+    <p>アカウントができた瞬間に、あなた専用の <b>オンボーディング（入社チェックリスト）</b> が自動で用意され、メインタブに <b>「オンボーディング」</b> が現れます（編集者・デザイナーで登録した人。すでに管理者が作っていたチェックリストがあれば、名前で自動的に紐付きます）。</p>
+    <p style="margin-top:6px">中には「Slack IDをメンバー情報に登録」「Chatwork ID（数字のアカウントID）をメンバー情報に登録」など、このチュートリアルの STEP 2 でやることも並んでいます。終わった項目にチェックを入れながら進めると、抜け漏れがなくなります。</p>
   </div>
 
   <div class="next-btn-wrap"><a class="next-btn" href="#step2" onclick="markStep(1)">STEP 2 へ進む</a></div>
@@ -289,7 +304,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
   </div>
 
-  <p style="font-size:13px;color:#374151;margin-bottom:6px">画面右上の <b>アバター</b> をクリック → プロフィール編集モーダルが開きます。<b>4 つのタブ</b> を埋めていきます。</p>
+  <p style="font-size:13px;color:#374151;margin-bottom:6px">画面右上の <b>アバター（または自分の名前）</b> をクリック → プロフィール編集モーダルが開きます。タブは <b>6 つ</b>。まずは ⭐ 連絡先 → 基本情報 → 稼働時間 の順に埋めていきます。</p>
 
   <!-- タブの可視化 -->
   <div class="tab-pills">
@@ -297,8 +312,10 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="tab-pill"><div class="tab-pill-icon">⏰</div>稼働時間</div>
     <div class="tab-pill star"><div class="tab-pill-icon">💬</div>連絡先</div>
     <div class="tab-pill"><div class="tab-pill-icon">🏦</div>口座情報</div>
+    <div class="tab-pill"><div class="tab-pill-icon">🎥</div>機材・休日</div>
+    <div class="tab-pill"><div class="tab-pill-icon">🔔</div>通知</div>
   </div>
-  <p style="font-size:11px;color:var(--text-muted);text-align:center;margin-top:-6px">⭐ がついている「連絡先」が今回いちばん大事</p>
+  <p style="font-size:11px;color:var(--text-muted);text-align:center;margin-top:-6px">⭐ がついている「連絡先」が今回いちばん大事。「機材・休日」は休日にする曜日や使用カメラ機種など（任意）、「🔔 通知」はベル通知の受信設定（<a href="/guide-notification-settings.html" style="color:var(--em-dark);font-weight:700">通知設定ガイド</a>）</p>
 
   <!-- 連絡先 — インタラクティブ解説 -->
   <div class="step-card" style="margin-top:18px;border-color:var(--star);background:linear-gradient(180deg,#FFFCEB 0%,#fff 70%)">
@@ -311,7 +328,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
           <div class="bie-num">1</div>
           <div class="bie-input-area">
             <div class="bie-label">💬 Slack DM ID</div>
-            <div class="bie-mock-input">例：U0123456789</div>
+            <div class="bie-mock-input">例：U01234ABCD</div>
           </div>
         </div>
         <div class="bie-row" data-field="chatwork-id">
@@ -349,6 +366,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
           <div class="bie-explain-eg">📋 例：Chatwork メンション形式 <code style="background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px">[To:6603336]</code> の <b>数字部分</b> を入力</div>
           <h5>取得方法</h5>
           <p>Chatwork のメンションをコピペ、または プロフィール画面の「アカウント ID」を確認。</p>
+          <p style="margin-top:6px"><b>必ず数字だけ</b>を入れてください。プロフィール URL に出る英数字の「Chatwork ID」（例：<code style="background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px">taro_tanaka</code>）を入れると、エラーは出ないのに通知が届きません。</p>
         </div>
       </div>
     </div>
@@ -469,8 +487,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
         <div class="bie-row" data-field="default-view">
           <div class="bie-num">4</div>
           <div class="bie-input-area">
-            <div class="bie-label">👁 クリエイティブ初期ビュー</div>
-            <div class="bie-mock-input">全案件 ／ 自分の案件 ／ 自分のボール ▾</div>
+            <div class="bie-label">👁 クリエイティブ 初期ビュー</div>
+            <div class="bie-mock-input">全案件（デフォルト）／ 自分の案件 ／ 自分のボール ▾</div>
           </div>
         </div>
       </div>
@@ -509,9 +527,9 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
         </div>
 
         <div class="bie-explain-content" data-field="default-view">
-          <div class="bie-explain-title"><span class="bie-explain-num">4</span>👁 クリエイティブ初期ビュー</div>
+          <div class="bie-explain-title"><span class="bie-explain-num">4</span>👁 クリエイティブ 初期ビュー</div>
           <h5>なぜ設定する？</h5>
-          <p>クリエイティブ画面を開いたときの <b>初期表示フィルタ</b>。3 つから選べる。</p>
+          <p>クリエイティブ画面を開いたときの <b>初期表示フィルタ</b>。3 つから選べる。同じタブで「表示モード（ガント／リスト）」「グルーピング」「期間」の初期値も決められます。</p>
           <h5>入れるとどう変わる？</h5>
           <p><b>「自分のボール」</b> を選ぶと、<u>今あなたが動かす番のクリエイティブだけ</u> が最初に並ぶ。仕事の優先度が一発で分かる。</p>
           <div class="bie-explain-eg">📋 例：朝出社して画面を開いた瞬間、「今日やる作業」が 3 件だけ表示 → 余計なものが視界に入らず集中できる</div>
@@ -629,6 +647,11 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <span class="done-icon">✅</span>
     <div class="done-text">口座情報、登録完了！<small>これで請求書がスムーズに処理されます</small></div>
   </div>
+
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">📝 あわせて：契約・登録手続き</div>
+    <p>業務委託契約や登録情報の提出は、メインタブの <b>「📝 契約・登録手続き」</b> から画面の案内に沿って進めます。管理者からあなた宛の依頼があると、ホームの上のほうに <b>「契約・登録手続きのお願いが N 件あります」</b> というバナーが出るので、それが合図です。手順は <a href="/guide-contract.html" style="color:var(--em-dark);font-weight:700">契約・登録手続きガイド</a> へ。</p>
+  </div>
 </section>
 
 <!-- 完了 -->
@@ -645,19 +668,23 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="trouble-list">
     <div class="trouble-item">
       <span class="trouble-icon">⏰</span>
-      <div><div class="trouble-q">招待リンクが期限切れ</div><div class="trouble-a">秘書チームに「再発行してください」と連絡</div></div>
+      <div><div class="trouble-q">招待リンクが期限切れ</div><div class="trouble-a">招待してくれた管理者に「再発行してください」と連絡（「招待リンクの有効期限が切れています（24時間）」と出ます）</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🔁</span>
-      <div><div class="trouble-q">「すでに使用されています」と出る</div><div class="trouble-a">登録済み。<a href="/haruka.html" style="color:var(--em-dark);font-weight:700">ログイン画面</a> から入る。PW 忘れたら秘書チームへ</div></div>
+      <div><div class="trouble-q">「すでに使用されています」と出る</div><div class="trouble-a">登録済み。<a href="/haruka.html" style="color:var(--em-dark);font-weight:700">ログイン画面</a> から入る。PW を忘れたら管理者に再発行を依頼（<a href="/guide-login-password.html" style="color:var(--em-dark);font-weight:700">ログイン・パスワードガイド</a>）</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">📧</span>
+      <div><div class="trouble-q">メールアドレスが弾かれた（Yahoo!メール等）</div><div class="trouble-a">Google アカウントで使えるアドレス（Gmail / Google Workspace）でしか登録できません。そのアドレスで招待を出し直してもらってください</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🔕</span>
-      <div><div class="trouble-q">通知（DM）が来ない</div><div class="trouble-a">プロフィール「連絡先」タブで Slack/Chatwork ID を確認（STEP 2 参照）</div></div>
+      <div><div class="trouble-q">通知（DM）が来ない</div><div class="trouble-a">プロフィール「連絡先」タブで Slack/Chatwork ID を確認（STEP 2 参照）。Chatwork は数字のアカウント ID。ベル通知が来ないときは「🔔 通知」タブの受信設定も確認</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🆘</span>
-      <div><div class="trouble-q">それ以外</div><div class="trouble-a">秘書チームに Chatwork で気軽に。スクショを添えると早い</div></div>
+      <div><div class="trouble-q">それ以外</div><div class="trouble-a">ディレクターや管理者に Chatwork / Slack で気軽に。スクショを添えると早い</div></div>
     </div>
   </div>
 </section>

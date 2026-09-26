@@ -157,7 +157,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ 共通（全ロール向け）</span>
     <h1>制作の流れ 全体像<span>案件作成 → 制作 → チェック → 納品 → 請求 の地図</span></h1>
-    <div class="hero-eta">⏱ 読了 約 8 分</div>
+    <div class="hero-eta">⏱ 読了 約 10 分</div>
   </div>
 </header>
 
@@ -256,6 +256,12 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   </div>
 
   <div class="step-card">
+    <div class="step-card-title">📝 「初稿提出」は自動で記録される</div>
+    <p>クリエイティブが <b>初めて「クライアントチェック中」に到達した日時</b>が「初稿提出」として自動で記録され、詳細モーダルの納期欄の隣に <b>「📝 初稿提出 ◯月◯日 ◯:◯」</b> と表示されます（一度記録されると後から変わりません）。</p>
+    <p style="margin-top:6px">ふつうの案件は「納品」した月で支払い・請求が計上されますが、案件の設定で <b>請求タイミングが「初稿提出時」</b> になっている案件（案件一覧に「初稿請求」バッジ）では、この初稿提出の月で計上されます。表示にも「※この月で計上（初稿請求案件）」と出ます。</p>
+  </div>
+
+  <div class="step-card">
     <div class="step-card-title">🏐 「ボール保持者」＝ 今、誰が動かす番か</div>
     <p>各クリエイティブには、ステータスに応じて <b>「ボール保持者」（今アクションすべき人）</b> が自動で決まります。一覧・詳細モーダルに「誰のボールか」が表示されるので、<b>自分の名前が出ていたら自分の番</b>です。</p>
     <div class="ball-table-wrap">
@@ -272,9 +278,15 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
   </div>
 
+  <div class="step-card">
+    <div class="step-card-title">🎯 自分の作業には、ホームの「いま、あなたにボールがあるもの」から入る</div>
+    <p>ログイン直後のホーム最上段に <b>「🎯 いま、あなたにボールがあるもの」</b> が出ます。今あなたが動かす番のクリエイティブが納期の近い順に最大 5 件並び、各行に「Dチェック後修正」などのステータス、「制作のボール」「Dチェックのボール」といった理由、🆘 SOS、案件名・ファイル名が出ます。<b>行をクリックすると詳細モーダルが開く</b>ので、ここから提出・チェックの作業にそのまま入れます。行の下の「📊 管理シート ↗」「📐 レギュ ↗」から案件のシートとレギュレーションも開けます。</p>
+    <p style="margin-top:6px">6 件以上あるときは「他 N 件を見る →」でクリエイティブ一覧が <b>「自分のボール」表示</b>で開きます。手番がゼロなら「手元にボールはありません」と出て、クライアント確認待ちや今週締切の件数だけが添えられます。</p>
+  </div>
+
   <div class="wanpoint">
     <div class="wanpoint-title">ここだけは絶対！</div>
-    <p>クリエイティブ一覧の表示切替「全案件／自分の案件／<strong>自分のボール</strong>」で「自分のボール」を選ぶと、<strong>今あなたが動かす番のものだけ</strong>が並びます。毎朝ここを見れば、今日やることを見落としません。</p>
+    <p>クリエイティブ一覧の表示切替「全案件／自分の案件／<strong>自分のボール</strong>」で「自分のボール」を選ぶと、<strong>今あなたが動かす番のものだけ</strong>が並びます。ホームの「🎯」カードと合わせて、毎朝ここを見れば今日やることを見落としません。</p>
   </div>
 
   <div class="link-chips">
@@ -318,9 +330,9 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="step-card" style="margin-top:12px">
     <div class="step-card-title">⚙️ ON / OFF はどこで決まる？（2 段階）</div>
     <ul>
-      <li><b>案件マスターが初期値</b> ── 案件編集モーダルの「この案件のクリエイティブは Wチェックを行う」チェック。静止画案件でだけ表示され、その案件で作るクリエイティブの<b>初期値</b>になります（静止画案件は基本 ON）。</li>
-      <li><b>クリエイティブ個別に ON / OFF 可</b> ── クリエイティブ詳細モーダルの「この<b>クリエイティブ</b>で Wチェックを行う」チェックで、<b>その 1 本だけ</b>案件の初期値を上書きできます。誤操作防止のため、変更時は確認ダイアログが出ます。</li>
-      <li>この設定を操作できるのは<b>「Wチェック要否の個別設定」権限（creative.wcheck_toggle）を持つ人</b>です。既定では管理者・秘書・プロデューサー・ディレクター・デザイナーが操作できます（権限管理画面で変更可）。また、<b>Wチェック工程に入った後は変更できません</b>（グレーアウトします）。</li>
+      <li><b>案件マスターが初期値</b> ── 案件編集モーダルの「この案件のクリエイティブはWチェックを行う（初期値・各クリエイティブで個別にON/OFF可）」チェック。静止画案件でだけ表示され、その案件で作るクリエイティブの<b>初期値</b>になります（静止画案件は基本 ON）。</li>
+      <li><b>クリエイティブ個別に ON / OFF 可</b> ── クリエイティブ詳細モーダルの「この<b>クリエイティブ</b>でWチェックを行う（Dチェックの前にダブルチェック／このクリエイティブのみ）」チェックで、<b>その 1 本だけ</b>案件の初期値を上書きできます。誤操作防止のため、変更時は確認ダイアログが出ます。</li>
+      <li>この設定を操作できるのは<b>「Wチェック要否の個別設定（静止画）」権限（creative.wcheck_toggle）を持つ人</b>です。既定では管理者・秘書・プロデューサー・ディレクター・デザイナーが操作できます（権限管理画面で変更可）。また、<b>Wチェック工程に入った後は変更できません</b>（グレーアウトします）。</li>
     </ul>
   </div>
 
@@ -406,6 +418,15 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <p>修正指示は<strong>チャットではなくシステムのコメント欄に</strong>残しましょう。ラウンド履歴として積み上がり、「言った・言わない」がなくなります。返信は <strong>↩ 引用</strong> を使うと行き違いが減ります。</p>
   </div>
 
+  <div class="step-card">
+    <div class="step-card-title">✎ 「事後修正」── 案件の取り違え・ファイル名の間違いを後から直す</div>
+    <p>案件を間違えて登録した、ファイル名や商材・訴求軸を直したい、というときは、クリエイティブ詳細モーダル右上の <b>「✎ 事後修正」</b> ボタンから直します。理由の入力が必須で、変更はモーダル下部の「編集履歴（事後修正モード）」に残ります。初稿締切・最終納品日もここから直せます。</p>
+    <ul>
+      <li><b>誰が押せる？</b> ── 管理者・秘書は全件。それ以外のロール（編集者・デザイナー・ディレクター・プロデューサー）は<b>自分が担当に入っているクリエイティブだけ</b>ボタンが出ます。</li>
+      <li><b>納品後の案件変更</b>は管理者と案件の担当ディレクター／プロデューサーのみ（納品後の担当者変更はできません）。請求書が発行・確定済みのものは担当者を変えられません。</li>
+    </ul>
+  </div>
+
   <div class="link-chips">
     <a class="link-chip" href="/guide-editor-delivery.html">✂️ 編集者の提出・納品手順</a>
     <a class="link-chip" href="/guide-notification-settings.html">🔔 通知設定</a>
@@ -438,6 +459,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="step-card-title">⚙️ 削除すると何が起きる？</div>
     <ul>
       <li><b>システム内（DB）の情報は即削除</b> ── クリエイティブ本体・担当アサイン・ファイル記録が消えます。</li>
+      <li><b>削除の記録（監査ログ）が必ず残る</b> ── 「誰が・いつ・何を消したか」と、消したクリエイティブの全項目・ファイル一覧のスナップショットが保存されます。記録に失敗した場合は削除自体が中止されます。誤って消してしまったときは、この記録をもとに管理者が再登録できるので、すぐ管理者に伝えてください。</li>
       <li><b>Google Drive のファイルは消えません</b> ── 原本もプレビュー版も <b>「【削除】&lt;元のファイル名&gt;」にリネームされるだけ</b>。誤削除防止のため、後から Drive 上で確認して手動整理する運用です。</li>
       <li><b>請求書の明細に載っているクリエイティブは削除できません</b> ── 「請求書の明細に登録されているため削除できません」とエラーになります。先に該当請求書から明細を外す（または下書き請求書を削除する）必要があります。</li>
     </ul>
@@ -450,7 +472,67 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="wanpoint">
     <div class="wanpoint-title">ここだけは絶対！</div>
-    <p>削除は<strong>誰でも押せて、システム内のデータは元に戻せません</strong>。迷ったら消さずにディレクター・秘書チームに相談を。Drive のファイルは「【削除】」リネームで残るので、万一のときはファイル自体は復元できます。</p>
+    <p>削除は<strong>誰でも押せて、画面上からは元に戻せません</strong>。迷ったら消さずにディレクター・管理者に相談を。Drive のファイルは「【削除】」リネームで残り、システム側も監査ログにスナップショットが残るので、万一のときは管理者に「いつ・どのファイルを消したか」を伝えれば復元の相談ができます。</p>
+  </div>
+  <div class="next-btn-wrap"><a class="next-btn" href="#step5">STEP 5 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>ステータスをまとめて変える（一括変更・一括納品）</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row flow-4">
+    <div class="flow-step">
+      <div class="flow-step-icon">📋</div>
+      <div class="flow-step-label">リスト表示に切替</div>
+      <div class="flow-step-sub">一覧上部「リスト表示」</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">☑️</div>
+      <div class="flow-step-label">行頭にチェック</div>
+      <div class="flow-step-sub">「◯件選択中」が出る</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔀</div>
+      <div class="flow-step-label">「ステータス一括変更」</div>
+      <div class="flow-step-sub">変更先を選ぶ</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">✅</div>
+      <div class="flow-step-label">「一括変更する」</div>
+      <div class="flow-step-sub">結果が件数で出る</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔀 「ステータス一括変更」でできること・できる人</div>
+    <p>クリエイティブ一覧（リスト表示）で複数の行にチェックを入れると、ツールバーに <b>「ステータス一括変更」</b> ボタンが出ます。モーダルで「変更先ステータス」を選んで「一括変更する」を押すと、1 件ずつ順に処理され、進められなかったものは理由つきで報告されます。</p>
+    <ul>
+      <li><b>工程どおりの前進</b>（未着手 → 制作中 など、詳細画面でも押せる遷移）── ふだんの権限どおり。担当者が未設定のものはスキップされます。</li>
+      <li><b>「クライアントチェック中」「納品」への一括変更</b> ── <b>管理者・秘書・プロデューサー・PD兼任・ディレクター</b>のみ（編集者・デザイナーは詳細画面から 1 件ずつ）。「納品」は<b>変更理由が必須</b>（監査ログに残ります）で、請求書との整合性チェックも自動で入ります。</li>
+      <li><b>それ以外のジャンプ</b>（工程を飛ばす・戻す）── 管理者のみ。理由必須。</li>
+      <li>LP・HP・LINE など工程テンプレートで進める案件のクリエイティブは対象外（スキップされます）。</li>
+    </ul>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📦 月末の「一括納品」タブ（管理者・秘書・プロデューサー）</div>
+    <p>メインタブの <b>「一括納品」</b>（📦 一括納品完了・月次消込）は、月末に「クライアントチェック中」のものをまとめて「納品」にする管理者・秘書・プロデューサー（PD兼任含む）向けの画面です。編集者・デザイナー・ディレクターには表示されません。仕組みは上の一括変更の「納品」と同じで、理由の記録と請求書ガードが入ります。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>一括で「納品」にすると<strong>納品完了日時は「いま」</strong>になり、その月の支払い本数に数えられます。月をまたぐ前に済ませるか、意図した月かを確認してから押しましょう。</p>
   </div>
 </section>
 
@@ -458,7 +540,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 <section class="final" id="finished">
   <div class="final-icon">🗺</div>
   <h2>これで制作の流れはバッチリ！</h2>
-  <p>「クライアント ＞ 案件 ＞ クリエイティブ」の構造と、ボール保持者・チェックフロー・修正依頼・削除の基本を押さえました。あとは実際の画面で「自分のボール」から触ってみましょう。</p>
+  <p>「クライアント ＞ 案件 ＞ クリエイティブ」の構造と、ボール保持者・チェックフロー・修正依頼・削除・一括変更の基本を押さえました。あとは実際の画面で、ホームの「🎯 いま、あなたにボールがあるもの」から触ってみましょう。</p>
   <a class="final-cta" href="/haruka.html">システムを開く →</a>
 </section>
 
@@ -468,7 +550,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="trouble-list">
     <div class="trouble-item">
       <span class="trouble-icon">🏐</span>
-      <div><div class="trouble-q">自分が今なにをすべきか分からない</div><div class="trouble-a">クリエイティブ一覧を「自分のボール」表示に。出てきたものがあなたの番です</div></div>
+      <div><div class="trouble-q">自分が今なにをすべきか分からない</div><div class="trouble-a">ホームの「🎯 いま、あなたにボールがあるもの」を見る。クリエイティブ一覧なら「自分のボール」表示に。出てきたものがあなたの番です</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🙈</span>
@@ -484,7 +566,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🆘</span>
-      <div><div class="trouble-q">それ以外</div><div class="trouble-a">秘書チームに気軽に連絡を。急ぎは <a href="/guide-sos.html" style="color:var(--em-dark);font-weight:700">SOS ガイド</a> へ</div></div>
+      <div><div class="trouble-q">それ以外</div><div class="trouble-a">ディレクターや管理者に気軽に連絡を。急ぎは <a href="/guide-sos.html" style="color:var(--em-dark);font-weight:700">SOS ガイド</a> へ</div></div>
     </div>
   </div>
 </section>

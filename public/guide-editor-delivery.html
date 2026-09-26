@@ -140,7 +140,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ 動画編集者向け</span>
     <h1>納品ファイルのアップロード<span>ドロップするだけ。名前もバージョンも変換も、ぜんぶ自動</span></h1>
-    <div class="hero-eta">⏱ 読了 約 5 分</div>
+    <div class="hero-eta">⏱ 読了 約 8 分</div>
   </div>
 </header>
 
@@ -215,11 +215,29 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="step-card">
     <div class="step-card-title">⚡ 20MB を超えると自動で「直送モード」</div>
     <p>20MB 以上のファイルは、サーバーを経由せず <b>ブラウザから Google Drive へ直接</b>（16MB ずつの分割送信で）アップロードされます。回線が不安定でも Drive に届いた位置から自動で再開されるので、<b>数十 GB の 4K 動画でも OK</b>。切り替えは全自動で、操作は何も変わりません。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 アップロード中はブラウザのタブを閉じないでください。別のページを見たいときは新しいタブで開くのが安全です。</p>
     <div class="mock">
       <span class="mock-fieldlabel">アップロード中…（進捗バーと ✕ キャンセルボタンが出ます）</span>
       <div class="mock-bar"><div class="mock-bar-fill"></div></div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:6px">Drive へ直送中… 62%</div>
     </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔁 途中で切れても自動で再送される</div>
+    <p>直送中に回線が切れたり止まったりしても、システムが自分で立て直します。進捗の下に「<b>リトライ中… (2/8) 52% — ネットワークエラー（Drive 直送）</b>」のような表示が出ている間は、<b>何もせず待つのが正解</b>です。</p>
+    <p style="margin-top:6px">・Drive に届いた位置を問い合わせて、<b>そこから</b>送り直します（送れた分は無駄になりません）<br>
+    ・連続 <b>8 回</b>まで再送。失敗するたびに送る単位を半分にして、不安定な回線でも通りやすくします<br>
+    ・Wi-Fi が落ちて<b>オフライン</b>になったときは「オフラインになりました。回線の復帰を待っています…」と出て、最大 90 秒ほど復帰を待ちます<br>
+    ・60 秒間まったく進まなければ止まったとみなして切り替えます</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🩺 「回線の問題」と「ファイルの問題」を自動で切り分ける</div>
+    <p>それでも最終的に失敗したときは、エラーの文面で原因が分かります。</p>
+    <p style="margin-top:6px">・「<b>…／52% 付近で 8 回連続失敗。回線が不安定な可能性があります。</b>Wi-Fi なら有線接続に切り替える／VPN やセキュリティソフトの Web 保護を一時的に無効にする／ブラウザを再起動する、などをお試しください」→ <b>回線側</b>の問題。書いてある対処を試してから、もう一度ドロップします<br>
+    ・「<b>ファイルを読み取れませんでした（NotReadableError）。</b>アップロード中にファイルが変更・移動されたか、書き出し途中のファイル／クラウド同期フォルダ（Google Drive・OneDrive・Dropbox）や外付け・ネットワークドライブ上のファイルの可能性があります。PC 内蔵ディスクにコピーしてから「クリックして選択」で再度お試しください」→ <b>ファイル側</b>の問題。書き出しの完了を待ち、内蔵ディスクにコピーしてから上げ直します</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 最終失敗の内容は診断情報つきで管理者側に自動通知されます。「何度やってもダメ」なときは、そのまま <a href="/guide-sos.html">SOS</a> やディレクターに連絡してください（スクショがあると早いです）。</p>
   </div>
 
   <div class="step-card">
@@ -250,6 +268,14 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 Drive 上の名前: 007_あるる_ドラム_上地無_v2.mp4</div>
     </div>
     <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 手元のファイル名は何でも OK。提出用の正式名はシステムが管理します。Drive 上のファイルを手動でリネームする必要はありません（クリエイティブ名が変わったときも Drive 側へ自動で追従します）。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔢 先頭の連番は「案件の管理シート」と連動していることがある</div>
+    <p>ファイル名の先頭にある連番（<code>007</code> など）は、案件の設定「<b>連番の採番元</b>」によって決まり方が 2 通りあります。</p>
+    <p style="margin-top:6px">・<b>案件カウンタ</b>：HARUKA 内で登録するたびに +1（既定）<br>
+    ・<b>スプレッドシート連動</b>：クライアントの管理シートの最終番号 +1 を次の連番にする。クリエイティブ登録画面に「<b>この案件の N 本目 ／ 連番はシート連動（最終 007 → 008）</b>」と出るのが目印です</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 桁数（3 桁／4 桁など）も案件・テンプレート側の設定です。連番がシートとズレて見えるときは自分で直さず、ディレクターか管理者に連絡してください。</p>
   </div>
 
   <div class="next-btn-wrap"><a class="next-btn" href="#step4">STEP 4 へ進む</a></div>
@@ -287,7 +313,15 @@ Drive 上の名前: 007_あるる_ドラム_上地無_v2.mp4</div>
     <div class="step-card-title">🔢 番号は提出→指摘の「往復」ごとに上がる</div>
     <p>バージョン番号は <b>ラウンド番号</b>（提出とそれに対する指摘のワンセット）と同じです。採番はサーバーが自動で行うので、自分で数える必要はありません。</p>
     <p style="margin-top:6px">・提出前なら <b>アップロード取り消し → 同じ番号のまま上げ直し</b> ができます（v2 を取り消して再アップしても v2 のまま）。<br>
-    ・過去バージョンのファイルもカードとして残り、いつでも見返せます。うっかり古い方を開こうとすると「<b>過去のバージョンを開こうとしています</b>」と確認が出るので取り違えも防げます。</p>
+    ・過去バージョンのファイルもカードとして残り、「<b>▶ バージョン 2をチェックする</b>」からいつでも見返せます。うっかり古い方を開こうとすると「<b>過去のバージョンを開こうとしています</b>」と確認が出るので取り違えも防げます。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🆚 プレビュー画面でバージョンを行き来する・見比べる</div>
+    <p>チェック画面（プレビュー）のヘッダーに <b>「⬅️ 前へ」 v2/3 「次へ ➡️」</b> のナビが出ます（バージョンが 2 つ以上あるとき）。古い版を表示中は「<b>⚠️ 過去バージョン v1 を表示中 — 最新は v3 です</b>」と大きく出るので、どちらを見ているか迷いません。</p>
+    <p style="margin-top:6px">・<b>「🆚 差分比較」</b>：今回と前回を <b>左右に横並び</b>で表示。動画同士なら <b>左右同期再生</b>（▶ / ⏸ ひとつで両方が動く）で「直したところ」がすぐ分かります。もう一度押す（「✕ 比較を終了」）と戻ります<br>
+    ・<b>「⏪ 長押しで前回」</b>：静止画のとき、ズームツールバーのこのボタンを<b>押している間だけ</b>前回バージョンに切り替わります（ぱらぱら比較）。テロップ位置や色のわずかな違いを見つけるのに便利です</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 ディレクターも同じ画面で見比べています。修正版では「何を直したか」が視覚的に伝わるので、コメントの「↩ 引用」と合わせて使うと往復が減ります。</p>
   </div>
 
   <div class="next-btn-wrap"><a class="next-btn" href="#step5">STEP 5 へ進む</a></div>
@@ -309,7 +343,7 @@ Drive 上の名前: 007_あるる_ドラム_上地無_v2.mp4</div>
     <p>動画（MP4 / MOV / M4V）をアップロードすると、バックグラウンドで <b>すぐ再生が始まる高速版（faststart 版）</b> が自動生成されます。</p>
     <p style="margin-top:6px">・MP4（H.264 + AAC）→ メタデータの位置を先頭に移動するだけ。<b>画質は完全にそのまま</b><br>
     ・MOV / ProRes / HEVC など → 高画質設定で MP4 に変換。<b>解像度・フレームレートは変わりません</b>（720p などへの縮小はしません）</p>
-    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 チェック画面のプレビュー再生では高速版が自動で使われます。Drive の原本はそのまま残るので、生成に失敗してもアップロード自体には影響ありません。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 チェック画面のプレビュー再生では高速版が自動で使われます。Drive の原本はそのまま残るので、生成に失敗してもアップロード自体には影響ありません。ファイルカードのバッジは「<b>⏳ 準備中</b>」→「<b>🎞 生成中</b>」→「<b>✅ プレビュー版</b>」と変わり、失敗すると「<b>⚠️ 生成失敗</b>」（管理者が「↻ 再生成」できます）。プレビューの「画質」メニュー（1080p / 720p / 540p / 360p）は回線が遅いときの<b>再生側の切替</b>で、原本には影響しません。</p>
   </div>
 
   <div class="done-banner">
@@ -374,11 +408,11 @@ Drive 上の名前: 007_あるる_ドラム_上地無_v2.mp4</div>
   <div class="trouble-list">
     <div class="trouble-item">
       <span class="trouble-icon">⏸</span>
-      <div><div class="trouble-q">アップロードが途中で止まる・失敗する</div><div class="trouble-a">✕ キャンセルしてもう一度ドロップ。20MB 以上の直送は回線が切れても最大 8 回まで自動で再開します（送れた分は無駄になりません）。「ファイルを読み取れませんでした」と出たら回線ではなくファイル側の問題です。書き出しが完了しているか確認し、クラウド同期フォルダ（Google Drive・OneDrive・Dropbox）や外付けドライブにある場合は PC 内蔵ディスクにコピーしてから「クリックして選択」で上げ直してください</div></div>
+      <div><div class="trouble-q">アップロードが途中で止まる・失敗する</div><div class="trouble-a">「リトライ中… (n/8)」の間は待つ。最終的に失敗したら文面で切り分け：「回線が不安定な可能性があります」→ 有線・VPN 停止・ブラウザ再起動のあと再ドロップ／「ファイルを読み取れませんでした」→ 書き出し完了を確認し、クラウド同期フォルダ（Google Drive・OneDrive・Dropbox）や外付けドライブにあるなら PC 内蔵ディスクにコピーしてから「クリックして選択」で上げ直し（STEP 2 参照）</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🏷</span>
-      <div><div class="trouble-q">生成ファイル名が想定と違う</div><div class="trouble-a">案件のファイル名テンプレート設定の問題です。自分で直さず、ディレクターか管理者に連絡を</div></div>
+      <div><div class="trouble-q">生成ファイル名・連番が想定と違う</div><div class="trouble-a">案件のファイル名テンプレートや連番設定（案件カウンタ／スプレッドシート連動）の問題です。自分で直さず、ディレクターか管理者に連絡を</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🔢</span>

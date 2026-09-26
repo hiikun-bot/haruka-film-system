@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜🎯 マイゴールの使い方</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero */
+.hero{background:linear-gradient(135deg,#0284C7 0%,#0EA5E9 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+/* Progress bar */
+.progress-wrap{position:sticky;top:0;background:rgba(255,255,255,0.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:50;border-bottom:1px solid var(--border-light);padding:12px 16px}
+.progress-inner{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:16px}
+.progress-track{flex:1;height:6px;background:var(--border-light);border-radius:99px;overflow:hidden;position:relative}
+.progress-fill{position:absolute;top:0;left:0;height:100%;width:0;background:linear-gradient(90deg,var(--em),var(--em-dark));transition:width .3s ease;border-radius:99px}
+.progress-text{font-size:12px;font-weight:700;color:var(--em-dark);white-space:nowrap;letter-spacing:0.04em}
+.progress-dots{display:flex;gap:8px}
+.progress-dot{width:10px;height:10px;border-radius:50%;background:var(--border);transition:all .3s;cursor:pointer}
+.progress-dot.done{background:var(--em-dark)}
+.progress-dot.current{background:var(--em);box-shadow:0 0 0 4px var(--em-pale)}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:80px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram (SVG) */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+
+/* Wanpoint (sticky-note callout) */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Compact step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card-title-num{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+
+/* Mock screen */
+.mock{margin-top:10px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:12px 16px}
+.mock-input{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:8px 11px;font-size:13px;font-family:inherit;color:var(--text);width:100%;margin-bottom:8px}
+.mock-btn{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:3px;display:block}
+
+/* Tab pills */
+.tab-pills{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+.tab-pill{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px 8px;text-align:center;font-size:12px;font-weight:700;color:var(--text);position:relative;transition:transform .15s}
+.tab-pill-icon{font-size:22px;margin-bottom:4px;line-height:1}
+.tab-pill.star{border-color:var(--star);background:linear-gradient(135deg,var(--star-bg),#fff);color:var(--star-deep);box-shadow:0 4px 12px rgba(245,158,11,0.2)}
+.tab-pill.star::after{content:"⭐";position:absolute;top:-8px;right:-6px;font-size:14px}
+
+/* Field hierarchy: must / recommended / optional */
+.fields{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.must-card{background:linear-gradient(135deg,#FFF7ED 0%,#fff 60%);border:2px solid var(--star);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:flex-start;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.18)}
+.must-card-icon{font-size:28px;line-height:1;flex-shrink:0}
+.must-card-body{flex:1;min-width:0}
+.must-card-tag{display:inline-block;font-size:10px;font-weight:800;letter-spacing:0.14em;color:#fff;background:var(--star);padding:2px 9px;border-radius:99px;margin-bottom:6px;text-transform:uppercase}
+.must-card h4{font-size:15px;font-weight:800;color:var(--star-deep);margin-bottom:4px}
+.must-card p{font-size:12.5px;color:#78350F;line-height:1.65}
+.must-card p strong{font-weight:800;background:rgba(245,158,11,0.2);padding:1px 5px;border-radius:3px}
+
+.reco-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.reco-label{font-size:11px;color:var(--text-muted);font-weight:700;letter-spacing:0.06em;flex-shrink:0}
+.reco-chip{display:inline-flex;align-items:center;gap:5px;background:var(--em-pale);color:var(--em-dark);font-size:12px;font-weight:600;padding:5px 11px;border-radius:99px;border:1px solid var(--em-light)}
+
+.opt-row{margin-top:6px;font-size:11px;color:#9ca3af;line-height:1.6}
+.opt-row strong{color:#6b7280;font-weight:600}
+
+/* Basic-info interactive explorer */
+.bie{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.bie-mock{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.bie-mock-title{font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.bie-mock-title::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#EF4444;box-shadow:14px 0 #F59E0B,28px 0 #10B981}
+.bie-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;background:#fafdfd}
+.bie-row:hover{background:var(--em-pale);border-color:var(--em-light)}
+.bie-row.selected{background:var(--em-pale);border-color:var(--em-dark);box-shadow:0 4px 12px rgba(43,184,180,0.18)}
+.bie-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#fff;border:2px solid var(--em-dark);color:var(--em-dark);font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.bie-row:hover .bie-num{transform:scale(1.1)}
+.bie-row.selected .bie-num{background:var(--em-dark);color:#fff}
+.bie-input-area{flex:1;min-width:0}
+.bie-label{font-size:11px;color:var(--text);font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:4px}
+.bie-mock-input{background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;color:#9ca3af;font-family:inherit;min-height:22px;display:flex;align-items:center}
+.bie-mock-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#A8EDEA,#3ECFCA);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bie-mock-input.disabled{background:#f5f5f5;color:#9ca3af}
+.bie-explain{background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px solid var(--star-border);border-radius:12px;padding:16px 18px;min-height:200px;position:relative}
+.bie-explain-prompt{font-size:12px;color:var(--star-deep);text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:center;height:100%;padding:12px}
+.bie-explain-prompt-arrow{font-size:24px;animation:bie-arrow 1.4s ease-in-out infinite}
+@keyframes bie-arrow{0%,100%{transform:translateX(0)}50%{transform:translateX(-6px)}}
+.bie-explain-content{display:none}
+.bie-explain-content.show{display:block;animation:bie-fade 0.25s ease-out}
+@keyframes bie-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.bie-explain-num{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--star);color:#fff;font-size:11px;font-weight:800;margin-right:6px}
+.bie-explain-title{font-size:14px;font-weight:800;color:var(--star-deep);margin-bottom:10px;display:flex;align-items:center}
+.bie-explain h5{font-size:11px;font-weight:800;color:var(--star);letter-spacing:0.06em;margin:10px 0 4px;text-transform:uppercase}
+.bie-explain h5::before{content:"";display:inline-block;width:4px;height:12px;background:var(--star);margin-right:6px;vertical-align:middle;border-radius:2px}
+.bie-explain p{font-size:12.5px;color:#78350F;line-height:1.7}
+.bie-explain-eg{margin-top:8px;background:#fff;border-radius:8px;padding:10px 12px;font-size:11.5px;color:#78350F;line-height:1.7;border-left:3px solid var(--star)}
+.bie-explain-eg b{color:#92400E;background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px}
+@media (max-width:768px){
+  .bie{grid-template-columns:1fr;gap:10px}
+  .bie-explain{min-height:auto}
+}
+
+/* Done banner (compact) */
+.done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
+.done-icon{font-size:24px;flex-shrink:0}
+.done-text{flex:1;font-size:13px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:2px}
+
+/* Next button */
+.next-btn-wrap{display:flex;justify-content:center;margin-top:18px}
+.next-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--em-dark);text-decoration:none;font-weight:700;font-size:13px;padding:11px 22px;border-radius:99px;border:2px solid var(--em);transition:all .2s;box-shadow:0 2px 8px rgba(43,184,180,0.15)}
+.next-btn:hover{background:var(--em-dark);color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(43,184,180,0.3)}
+.next-btn::after{content:"↓";font-weight:900}
+
+/* Final */
+.final{margin-top:56px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:32px 24px;text-align:center;position:relative;overflow:hidden}
+.final::before{content:"🎉";position:absolute;font-size:120px;opacity:0.06;top:50%;left:50%;transform:translate(-50%,-50%)}
+.final-icon{font-size:42px;margin-bottom:6px}
+.final h2{font-size:22px;font-weight:800;color:#92400E;margin-bottom:6px}
+.final p{font-size:13px;color:#78350F;line-height:1.85;max-width:480px;margin:0 auto 16px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35);transition:transform .15s,box-shadow .15s}
+.final-cta:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(43,184,180,0.45)}
+
+/* Trouble (compact, single block) */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .progress-dots{display:none}
+  .flow-row{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .tab-pills{grid-template-columns:repeat(2,1fr)}
+  .must-card{padding:14px 16px;gap:12px}
+  .must-card-icon{font-size:24px}
+  .must-card h4{font-size:14px}
+  .final{padding:24px 18px}
+  .final h2{font-size:18px}
+}
+</style>
+</head>
+
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">PERSONAL ／ 全員共通・あなた専用</span>
+    <h1>🎯 マイゴールで、自分の目標とタスクを回す<span>目標づくり・10 秒タスク登録・毎日の見方・スプレッドシート連携</span></h1>
+    <div class="hero-eta">⏱ 約 7 分</div>
+  </div>
+</header>
+
+<div class="progress-wrap">
+  <div class="progress-inner">
+    <div class="progress-text" id="progress-text">準備OK ／ 0 / 5</div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-dots">
+      <span class="progress-dot current" data-step="1"></span>
+      <span class="progress-dot" data-step="2"></span>
+      <span class="progress-dot" data-step="3"></span>
+      <span class="progress-dot" data-step="4"></span>
+      <span class="progress-dot" data-step="5"></span>
+    </div>
+  </div>
+</div>
+
+<main class="container">
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>マイゴールを開く（🔒 あなた専用）</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">🎯</div>
+      <div class="flow-step-label">ナビの「🎯 マイゴール」<br>（ホームのすぐ隣）</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔒</div>
+      <div class="flow-step-label">「あなた専用」の<br>ページが開く</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">✨</div>
+      <div class="flow-step-label">「🎯 最初の目標を作る」<br>から始める</div>
+    </div>
+  </div>
+
+  <div class="must-card">
+    <div class="must-card-icon">🔒</div>
+    <div class="must-card-body">
+      <span class="must-card-tag">いちばん大事</span>
+      <h4>他の人には、件数すら見えません</h4>
+      <p>マイゴールは<strong>完全に個人用</strong>のページです。目標もタスクも、<strong>管理者を含めて本人以外は一切見られません</strong>（「目標が何件あるか」も見えません）。仕事の目標だけでなく、勉強・副業・私生活の予定を書いても大丈夫です。</p>
+    </div>
+  </div>
+
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">画面の構成</div>
+    <p>ヘッダーのナビでは、目標意識を高めるために<b>ホームの隣（2 番目）</b>に「<b>🎯 マイゴール</b>」があります。全ロール共通です。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">右上のボタン</span>
+        <span class="reco-chip">📗 スプシを開く（連携後に出る）</span>
+        <span class="reco-chip">📊 スプシ連携</span>
+        <span class="reco-chip">＋ 目標を追加</span>
+        <span class="reco-chip">＋ タスクを追加</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">上段</span>
+        <span class="reco-chip">目標カード（進捗バー・カウントダウン）</span>
+        <span class="reco-chip">💪 今週 N件完了 ／ 🔥 N日連続</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">タブ</span>
+        <span class="reco-chip">📅 今週やること</span><span class="reco-chip">⏰ 期限順</span><span class="reco-chip">🌳 すべて</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">初めて開くと「マイゴールをはじめよう」の案内と「<b>🎯 最初の目標を作る</b>」ボタンだけが出ます。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step2" onclick="markStep(1)">STEP 2 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>目標を作る</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">「＋ 目標を追加」→「🎯 目標を追加」モーダル</div>
+    <div class="mock">
+      <div style="display:flex;gap:8px">
+        <div style="width:70px"><span class="mock-fieldlabel">絵文字</span><input class="mock-input" type="text" value="💪" readonly style="text-align:center"></div>
+        <div style="flex:1"><span class="mock-fieldlabel">目標 <span style="color:#E24B4A">*</span></span><input class="mock-input" type="text" value="例) 技術力向上、◯◯のスキル習得" readonly></div>
+      </div>
+      <div style="font-size:18px;letter-spacing:4px;margin-bottom:8px">💪 🎓 🎬 🎨 💰 🏃 📚 🌱 …</div>
+      <span class="mock-fieldlabel">なぜやるのか（任意）</span>
+      <input class="mock-input" type="text" value="例) ワンランク上の案件を任せてもらえるようになるため" readonly>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1"><span class="mock-fieldlabel">区分（任意）</span><input class="mock-input" type="text" value="短期目標 ／ 中期目標 ／ 長期目標 ▾" readonly></div>
+        <div style="flex:1"><span class="mock-fieldlabel">目標日（カウントダウン表示）</span><input class="mock-input" type="text" value="YYYY / MM / DD" readonly></div>
+        <div style="flex:1"><span class="mock-fieldlabel">ステータス</span><input class="mock-input" type="text" value="進行中 ▾" readonly></div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">▸ ⚙️ 詳細設定 — KPI（何を何回する？）</div>
+      <button class="mock-btn">保存</button>
+    </div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">必須</span>
+        <span class="reco-chip">目標（名前）だけ</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">あると便利</span>
+        <span class="reco-chip">絵文字（パレットから選ぶ／直接入力）</span>
+        <span class="reco-chip">区分：短期 / 中期 / 長期（カードがこの順に並ぶ）</span>
+        <span class="reco-chip">目標日 → カードに「⏳期限まで N日」「⏳今日が期限！」「⚠️N日超過」</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">ステータス</span>
+        <span class="reco-chip">進行中</span><span class="reco-chip">達成 🏆（カードに「🏆 達成！」）</span><span class="reco-chip">アーカイブ（非表示）</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">⚙️ 詳細設定 — KPI（しっかりやりたい人向け・任意）</div>
+    <p>目標モーダルの「⚙️ 詳細設定 — KPI（何を何回する？）」を開き「<b>＋ KPIを追加</b>」を押すと、<b>何をする？・何回？・単位（回 / 件 / 本 / 時間 …）・現在・期限</b> を決められます。設定すると目標カードに KPI ごとの進捗バーと「<b>＋1</b>」ボタンが出て、1 回やるたびに押すだけでカウントが進みます（100% で 🎉）。</p>
+    <div class="mock">
+      <div style="font-size:12px;display:flex;align-items:center;gap:8px">📌営業DMを送る <span style="flex:1;height:6px;background:var(--border-light);border-radius:99px;overflow:hidden"><span style="display:block;width:35%;height:100%;background:var(--em)"></span></span> 35/100回 <span class="mock-btn" style="padding:2px 8px;font-size:11px">＋1</span></div>
+    </div>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ワンポイント</div>
+    <p>目標カードはクリックで編集モーダルが開きます。<strong>目標を削除してもタスクは消えません</strong>（「関連する目標」が外れるだけ）。迷ったらまず <strong>短期目標を 1 つ</strong> 作り、タスクをぶら下げていくのがおすすめです。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step3" onclick="markStep(2)">STEP 3 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>タスクを 10 秒で登録する</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">✏️</div>
+      <div class="flow-step-label">タスク名を打つ</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📅</div>
+      <div class="flow-step-label">「今週末」「月末」など<br>期限をワンタップ</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">✅</div>
+      <div class="flow-step-label">「タスクを追加」<br>（または「追加して次を作成」）</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">「＋ タスクを追加」→「✅ タスクを追加」モーダル</div>
+    <div class="mock">
+      <span class="mock-fieldlabel">タスク名 <span style="color:#E24B4A">必須</span></span>
+      <input class="mock-input" type="text" value="例：提案資料を作成する" readonly>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1.2"><span class="mock-fieldlabel">期限</span><input class="mock-input" type="text" value="YYYY / MM / DD" readonly></div>
+        <div style="flex:1"><span class="mock-fieldlabel">担当者（自分のメモ）</span><input class="mock-input" type="text" value="👤 自分" readonly></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <span class="reco-chip">今日</span><span class="reco-chip">明日</span><span class="reco-chip">今週末</span><span class="reco-chip">来週末</span><span class="reco-chip">月末</span><span class="reco-chip">来月末</span><span class="reco-chip">再来月末</span>
+      </div>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1"><span class="mock-fieldlabel">ステータス</span><input class="mock-input" type="text" value="未着手 ▾" readonly></div>
+        <div style="flex:1"><span class="mock-fieldlabel">優先度</span><input class="mock-input" type="text" value="通常 ▾" readonly></div>
+      </div>
+      <span class="mock-fieldlabel">関連する目標（任意・進捗率つき）</span>
+      <input class="mock-input" type="text" value="💪 技術力向上（35%） ▾" readonly>
+      <span class="mock-fieldlabel">メモ（任意）</span>
+      <input class="mock-input" type="text" value="参考: https://…（URL は自動でリンクになります）" readonly>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">▸ ＋ 詳細設定を開く（分類・KPI・資料URLなど）</div>
+      <span class="mock-btn" style="background:#fff;color:var(--em-dark);border:1.5px solid var(--em)">追加して次を作成</span>
+      <button class="mock-btn" style="margin-left:6px">タスクを追加</button>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">各項目の意味</div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">期限</span>
+        <span class="reco-chip">日付を選ぶか、下のボタンでワンタップ（今日 / 明日 / 今週末 / 来週末 / 月末 / 来月末 / 再来月末）</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">ステータス</span>
+        <span class="reco-chip">未着手</span><span class="reco-chip">対応中</span><span class="reco-chip">相手待ち（クライアントや士業の回答待ち）</span><span class="reco-chip">予約済み</span><span class="reco-chip">完了</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">優先度</span>
+        <span class="reco-chip">通常 / 🚨 最優先 / 🔴 高 / 🟡 中 / ⚪ 低</span>
+        <span class="reco-chip">一覧に赤く出るのは「最優先」だけ</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">担当者（自分のメモ）</span>
+        <span class="reco-chip">「誰と一緒にやるか」の自分用メモ。選んだ相手には表示も通知もされない</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">メモ</span>
+        <span class="reco-chip">URL を書くと下にリンクが出て、そのまま開ける</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">＋ 詳細設定（整理したい人向け・任意）</div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">大分類・中分類</span>
+        <span class="reco-chip">自由入力＋「▼」で登録済みの値から選ぶコンボボックス（入力中は絞り込み）</span>
+        <span class="reco-chip">例：学習 › After Effects</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">その他</span>
+        <span class="reco-chip">KPIに紐付け（目標に KPI があるとき）</span>
+        <span class="reco-chip">詳細</span>
+        <span class="reco-chip">資料URL → 行の右端に「🔗資料」</span>
+        <span class="reco-chip">🏁 マイルストーン（会社設立日などの節目。一覧で「マイルストーン」チップ）</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">「関連する目標」を選ぶと、大分類に目標名が自動で入ります（変更可）。連続で登録するときは「<b>追加して次を作成</b>」を押すと、モーダルが閉じずに次のタスクを打てます。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step4" onclick="markStep(3)">STEP 4 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>毎日の見方（3 つのタブ）</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="tab-pills" style="grid-template-columns:repeat(3,1fr)">
+    <div class="tab-pill star"><div class="tab-pill-icon">📅</div>今週やること</div>
+    <div class="tab-pill"><div class="tab-pill-icon">⏰</div>期限順</div>
+    <div class="tab-pill"><div class="tab-pill-icon">🌳</div>すべて</div>
+  </div>
+  <p style="font-size:11px;color:var(--text-muted);text-align:center;margin-top:-6px">⭐ 朝いちばんは「📅 今週やること」を見るのがおすすめ</p>
+
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">タブごとの違い</div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">📅 今週やること</span>
+        <span class="reco-chip">「⚠️ 期限超過」→「📅 今週（月〜日）」の順に、今週期限のタスクだけ</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">⏰ 期限順</span>
+        <span class="reco-chip">日付を見出しにした時系列。今日は「今日」チップ、未完了が残る過去日は赤</span>
+        <span class="reco-chip">完了分は「✔ 完了済み N件を表示」で開く</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">🌳 すべて</span>
+        <span class="reco-chip">大分類 › 中分類のツリー。▼ / ▶ で畳む・開く、見出しに「done/total」と全部終わると ✅</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">絞り込み</span>
+        <span class="reco-chip">タブ右端の「すべての目標 ▾」で目標ごとに絞れる</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">タスク行の読み方</div>
+    <div class="mock">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px"><span style="color:var(--text-muted)">9/30</span><span class="reco-chip" style="padding:2px 8px">対応中</span><span>☐</span><span style="flex:1">提案資料を作成する</span><span style="color:var(--text-muted);font-size:11px">💪技術力向上 / 学習 › 資料作成</span><span style="font-size:11px">🔗資料</span></div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-top:6px;opacity:.6"><span style="color:var(--text-muted)">9/28</span><span class="reco-chip" style="padding:2px 8px">完了</span><span>☑</span><span style="flex:1;text-decoration:line-through">講座を 1 本見る</span></div>
+    </div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">左から</span>
+        <span class="reco-chip">期限（月/日）</span>
+        <span class="reco-chip">チップ：マイルストーン ＞ 完了 ＞ 期限超過 ＞ ステータス</span>
+        <span class="reco-chip">☐ チェックで完了</span>
+        <span class="reco-chip">タスク名</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">チェックを入れると、目標カードの進捗バーが伸び、上段の「💪 今週 N件完了」「🔥 N日連続」が更新されます。行をクリックすると編集モーダルが開きます（「🗑 削除」もそこから）。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step5" onclick="markStep(4)">STEP 5 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>スプレッドシートに出す・取り込む</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">📗</div>
+      <div class="flow-step-label">自分のドライブに<br>シートを作る</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔗</div>
+      <div class="flow-step-label">「📊 スプシ連携」に<br>URL を貼る</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔁</div>
+      <div class="flow-step-label">📤 出力 ／<br>📥 取り込み</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">初回セットアップ（「📊 スプシ連携」モーダルの手順どおり）</div>
+    <p>連携するのは<b>あなたの Google ドライブにあるシート</b>です。シートの持ち主はあなたなので、他の人からは見えません。</p>
+    <div class="step-card" style="margin-top:8px;background:var(--surface)">
+      <div class="step-card-title"><span class="step-card-title-num">1</span>sheets.new で新しいシートを作る</div>
+      <div class="step-card-title" style="margin-top:8px"><span class="step-card-title-num">2</span>シート右上の「共有」で、モーダルに表示されるシステム用メールアドレス（「コピー」ボタンあり）を「編集者」で追加（通知はオフで OK）</div>
+      <div class="step-card-title" style="margin-top:8px"><span class="step-card-title-num">3</span>シートの URL をコピーして「連携シートURL」に貼る</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📤 エクスポート／📥 インポート</div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">📤 スプシに出力</span>
+        <span class="reco-chip">タスク一覧をシートの 1 枚目のタブ（タブ名「目標一覧」）に上書き</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">📥 取り込み</span>
+        <span class="reco-chip">「🔍 差分をプレビュー」で確認 → 「📥 この内容で取り込む」</span>
+        <span class="reco-chip">ID 列あり＝更新 / ID 列が空＝新規作成 / シートに無いタスクは消さない</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">一度出力すると URL がこの端末に記憶され、右上に「<b>📗 スプシを開く</b>」ボタンが出ます。シート上でまとめて編集 → 取り込み、という使い方ができます。</p>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">マイゴール、セットアップ完了！<small>まずは目標を 1 つ、タスクを 3 つ登録してみましょう</small></div>
+  </div>
+</section>
+
+<!-- 完了 -->
+<section class="final" id="finished">
+  <div class="final-icon">🎯</div>
+  <h2>今日の 1 タスクから始めよう</h2>
+  <p>誰にも見られない自分だけの場所です。小さなタスクにチェックを入れるたびに、進捗バーと連続日数が伸びていきます。</p>
+  <a class="final-cta" href="/haruka.html" onclick="markStep(5)">システムを開く →</a>
+</section>
+
+<!-- 困ったら -->
+<section class="trouble">
+  <h3>💬 困ったら…</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">🔒</span>
+      <div><div class="trouble-q">本当に誰にも見えない？</div><div class="trouble-a">はい。管理者を含め本人以外は一切見られず、件数も出ません。「担当者（自分のメモ）」で選んだ相手にも表示・通知されません</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">📗</span>
+      <div><div class="trouble-q">「📗 スプシを開く」が出ない</div><div class="trouble-a">連携シートの URL は端末ごとに記憶されます。「📊 スプシ連携」で URL を貼って一度出力すると出ます</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">⚠️</span>
+      <div><div class="trouble-q">スプシに出力できない</div><div class="trouble-a">シートの「共有」で、モーダルに表示されるシステム用メールアドレスを「編集者」で追加したか、URL が正しいかを確認してください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🗑</span>
+      <div><div class="trouble-q">目標を消したらタスクはどうなる？</div><div class="trouble-a">タスクは残ります（「関連する目標」が外れるだけ）。非表示にしたいだけなら、目標のステータスを「アーカイブ（非表示）」にしてください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">📅</span>
+      <div><div class="trouble-q">「今週やること」に何も出ない</div><div class="trouble-a">期限が今週（月〜日）のタスクだけを表示します。期限なしのタスクは「🌳 すべて」か「⏰ 期限順」の末尾「期限なし」に出ます</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <p>HARUKA FILM SYSTEM ／ マイゴールの使い方 ／ 更新日 2026-09-26</p>
+</footer>
+
+<script>
+const TOTAL_STEPS = 5;
+const LS_KEY = 'haruka_guide_my_goals_progress';
+let completed = parseInt(localStorage.getItem(LS_KEY) || '0', 10);
+function updateProgress() {
+  const pct = Math.min(100, (completed / TOTAL_STEPS) * 100);
+  document.getElementById('progress-fill').style.width = pct + '%';
+  const label = completed === 0 ? '準備OK' : (completed >= TOTAL_STEPS ? '完了 🎉' : '進行中');
+  document.getElementById('progress-text').textContent = `${label} ／ ${completed} / ${TOTAL_STEPS}`;
+  document.querySelectorAll('.progress-dot').forEach((d, i) => {
+    const step = i + 1;
+    d.classList.toggle('done', step <= completed);
+    d.classList.toggle('current', step === completed + 1);
+  });
+}
+function markStep(n){ if(n>completed){ completed=n; localStorage.setItem(LS_KEY, String(completed)); updateProgress(); } }
+updateProgress();
+document.querySelectorAll('.progress-dot').forEach(d=>{
+  d.addEventListener('click',()=>document.getElementById('step'+d.dataset.step)?.scrollIntoView({behavior:'smooth',block:'start'}));
+});
+</script>
+
+</body>
+</html>

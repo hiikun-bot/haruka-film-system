@@ -147,7 +147,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ 秘書・管理者向け</span>
     <h1>権限・ロールの管理<span>「誰に・何を見せるか」を 7 つのロールでコントロール</span></h1>
-    <div class="hero-eta">⏱ 読了 約 6 分</div>
+    <div class="hero-eta">⏱ 読了 約 8 分</div>
   </div>
 </header>
 
@@ -181,7 +181,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="role-row">
       <span class="role-chip" style="background:#1A5276">🎬🎥 プロデューサー兼ディレクター</span>
-      <span class="role-desc">プロデューサーとディレクターの兼任。両方の権限を合わせて持ちます（producer_director）。</span>
+      <span class="role-desc">プロデューサーとディレクターの兼任。両方の権限を合わせて持ちます（producer_director）。権限マトリクスの「プロデューサー兼ディレクター」列は <b>両方のロールを持つ人にだけ</b> 適用され、プロデューサー単独・ディレクター単独の人には及びません。</span>
     </div>
     <div class="role-row">
       <span class="role-chip" style="background:#1E8449">🎥 ディレクター（director）</span>
@@ -194,6 +194,10 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="role-row">
       <span class="role-chip" style="background:#7E5109">🎨 デザイナー（designer）</span>
       <span class="role-desc">静止画・デザイン制作の担当。権限の既定は編集者とほぼ同じ構成。</span>
+    </div>
+    <div class="role-row">
+      <span class="role-chip" style="background:#6B7280">🌐 外部ディレクター（external_director）</span>
+      <span class="role-desc">番外。GND など代理店経由で D が HARUKA 外部にいる案件のために、案件モーダルの「🌐 外部ディレクター案件」から <b>名前だけ登録する擬似ユーザー</b> です。本人はログインしないので、ログイン後に使う権限は既定ですべて — のまま（権限マトリクスにも列が出ますが、基本は触りません）。</span>
     </div>
   </div>
 
@@ -274,6 +278,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <li><b>プロデューサー</b>：自分と、自分より下位ランクのメンバーのみ編集できます</li>
       <li><b>それ以外</b>：編集できるのは自分のプロフィールのみです</li>
     </ul>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 <b>退職処理</b>（メンバー無効化）は「メンバー無効化（退職処理）」権限（既定：管理者・秘書）で行えますが、退職者の「<b>復帰</b>」ボタンは <b>管理者だけ</b>（権限「退職メンバーの復帰」）です。退職者はチーム編集モーダルから自動で非表示になり、所属データは保持されます。</p>
     <div class="eg-box">📋 例：編集者として入った田中さんがディレクターに昇格 → 秘書がメンバー編集で権限を「ディレクター」に変更して保存。次の画面更新から見える範囲が変わる</div>
   </div>
 
@@ -307,14 +312,26 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
         <tr><td>クライアント単価の閲覧・編集</td><td>✅</td><td>✅</td><td>✅</td><td>—</td><td>—</td></tr>
         <tr><td class="perm-sec" colspan="6">メンバー管理</td></tr>
         <tr><td>メンバー編集・PW変更</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>退職メンバーの復帰</td><td>✅</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
         <tr><td class="perm-sec" colspan="6">請求管理</td></tr>
         <tr><td>自分の請求作成・確認</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
         <tr><td>全員の請求一覧閲覧</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>—</td></tr>
-        <tr><td class="perm-sec" colspan="6">チーム状況</td></tr>
+        <tr><td class="perm-sec" colspan="6">オンボーディング</td></tr>
+        <tr><td>オンボーディング管理ページ（新メンバー受け入れ）</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>オンボーディング参照のみ（全レコード閲覧・操作不可）</td><td>✅</td><td>—</td><td>✅</td><td>—</td><td>—</td></tr>
+        <tr><td class="perm-sec" colspan="6">マスター管理</td></tr>
+        <tr><td>マスター管理ページ</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>ファイル名テンプレート管理（マスター管理ページ権限なしでも単独で開放可）</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>—</td></tr>
+        <tr><td class="perm-sec" colspan="6">分析</td></tr>
+        <tr><td>分析・集計ページ閲覧（経営系・全集計）</td><td>✅</td><td>✅</td><td>✅</td><td>—</td><td>—</td></tr>
+        <tr><td>請求突合チェッカー（経理向け）</td><td>✅</td><td>✅</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td class="perm-sec" colspan="6">チーム状況・振込管理</td></tr>
         <tr><td>チーム状況（負荷ダッシュボード）閲覧</td><td>✅</td><td>—</td><td>✅</td><td>—</td><td>—</td></tr>
+        <tr><td>振込管理（月次振込の消し込み）閲覧</td><td>✅</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
       </table>
     </div>
-    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">実際の画面にはダッシュボード／案件管理／クリエイティブ／メンバー管理／チーム管理／請求管理／オンボーディング／マスター管理／システム／分析／チーム状況 の各セクションが並びます。管理者の列は常に ✅ 固定です。</p>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">実際の画面にはダッシュボード／案件管理／クリエイティブ／メンバー管理／チーム管理／請求管理／オンボーディング／マスター管理／システム／分析／チーム状況／振込管理 の各セクションが並びます。列はロールマスタから自動で作られるため、7 ロール以外の列（外部ディレクターなど）が並ぶことがあります（既定はすべて — のままで OK）。管理者の列は常に ✅ 固定です。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 2026 年夏以降に増えた権限：「案件・クライアントの新規追加」（ディレクターに開放。既存案件の編集・単価は含まない）、「通知連携先の設定（Slack/Chatwork）」（ディレクター以上）、「ファイル名テンプレート管理」（ディレクター以上）、「分析・集計ページ閲覧」（プロデューサー層に開放）、「請求突合チェッカー」（管理者・秘書）、「オンボーディング管理ページ／参照のみ」、「退職メンバーの復帰」（管理者のみ）、「振込管理」（管理者のみ）。</p>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 「チーム状況」はメンバーごとの進行中クリエイティブ・持ちボール・納期状況を自動集計する画面です。メンバー同士の比較材料にならないよう、既定では管理者とプロデューサー層（兼任含む）だけに開放されています。</p>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 「成果物グループ・単価の編集」はディレクターにも開放されています。「単価の承認・差し戻し」を持たない人が単価を保存すると、そのグループは <b>🕓 承認待ち</b> になります（単価自体はすぐ有効で、請求書の発行だけが承認後）。管理者はホームの「💴 単価の承認待ち」カードから承認・差し戻しができます。プロデューサーの変更を即確定にしたい場合は、プロデューサー列の「単価の承認・差し戻し」を ✅ にしてください。</p>
   </div>
@@ -340,9 +357,11 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="step-card">
     <div class="step-card-title">最高管理者だけの「ロールプレビュー」機能</div>
-    <p>ヘッダーの <b>VIEW AS</b> ボタンからロールを選ぶと、画面上部に「◯◯視点でプレビュー中」バナーが出て、<b>そのロールの見え方</b> でシステムを確認できます。</p>
+    <p>ヘッダーの <b>VIEW AS</b> ボタンを押すと「管理者／秘書／プロデューサー／P兼D／ディレクター／編集者／デザイナー」のボタンが並び、選ぶと画面上部に「<b>「◯◯」視点でプレビュー中</b>」バナーが出て、<b>そのロールの見え方</b> でシステムを確認できます。</p>
     <ul>
       <li>表示だけでなく <b>API の権限判定もプレビュー中のロール</b> になります（管理者でも編集者プレビュー中は編集者として扱われる）</li>
+      <li>「P兼D」を選ぶとプロデューサー＋ディレクターの両方を持つ人として扱われます</li>
+      <li>プレビュー中は最高管理者専用のメニュー（🔐 ロール権限・📊 利用状況・🔗 Slackワークスペース・🧪 通知テスト・⚙️ システム設定）が隠れます</li>
       <li>権限昇格には使えない安全設計。隠し忘れたボタンを誤って押しても弾かれます</li>
       <li>戻るときは VIEW AS から「管理者」を選び直します</li>
     </ul>
@@ -381,7 +400,15 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🆘</span>
-      <div><div class="trouble-q">「🔐 ロール権限」メニューが見えない</div><div class="trouble-a">最高管理者専用のメニューです。権限の変更が必要なときは管理者へ依頼を</div></div>
+      <div><div class="trouble-q">「🔐 ロール権限」メニューが見えない</div><div class="trouble-a">最高管理者専用のメニューです（VIEW AS でプレビュー中も隠れます）。権限の変更が必要なときは管理者へ依頼を</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🔁</span>
+      <div><div class="trouble-q">退職したメンバーを戻したい</div><div class="trouble-a">メンバー一覧の退職者に出る「復帰」ボタンは管理者だけが押せます。秘書の方は管理者へ依頼を</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🎥</span>
+      <div><div class="trouble-q">ディレクターなのに案件が編集できない</div><div class="trouble-a">ディレクターの既定は「案件・クライアントの新規追加」と「成果物グループ・単価の編集（承認待ち）」「通知連携先の設定」まで。案件本体の編集（案件作成・編集）はプロデューサー以上です</div></div>
     </div>
   </div>
 </section>

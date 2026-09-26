@@ -1432,6 +1432,13 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .dash-showcase-line .sc-line-sub{font-size:12px;color:var(--text-muted);white-space:nowrap}
 .dash-showcase-line .sc-line-sub b{color:#B7791F;font-weight:800}
 .dash-showcase-line .dash-tweets-actions{margin-left:auto;flex-wrap:wrap}
+/* 📖 はじめての方へ（新メンバー向けガイド導線）: 登録から 14 日以内の本人だけに出す 1 行バナー。× で以後非表示（localStorage） */
+.dash-section.dash-guide-banner{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:10px 16px;border-left:4px solid #0EA5E9;background:#F0F9FF;margin-bottom:14px}
+.dash-guide-banner .gb-title{font-size:13px;font-weight:700;color:#0369A1;white-space:nowrap}
+.dash-guide-banner .gb-sub{font-size:12px;color:var(--text-muted);flex:1;min-width:180px;line-height:1.5}
+.dash-guide-banner .gb-cta{font-size:12px;font-weight:700;padding:6px 12px;border-radius:8px;background:#0284C7;color:#fff;text-decoration:none;white-space:nowrap}
+.dash-guide-banner .gb-cta:hover{background:#0369A1}
+.dash-guide-banner .gb-close{background:none;border:none;font-size:18px;line-height:1;cursor:pointer;color:var(--text-muted);padding:2px 6px}
 .sc-layout{display:grid;grid-template-columns:minmax(0,1fr) 168px;gap:12px;align-items:start}
 .sc-stage{position:relative;height:250px;border-radius:12px;overflow:hidden;background:#0b0c0e;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .sc-stage img,.sc-stage video{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block}
@@ -4400,6 +4407,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   <!-- 🎯 マイフォーカス（本人専用・ADR 040）: いま自分にボールがあるクリエイティブ。
        ホームの最上段＝「今日、自分が何をするか」を実績カードより先に出す（ADR 036 決定6 の配置を改訂）。
        全ロール共通で loadDashboard() から renderMyFocusCard() が描画する。 -->
+  <!-- 📖 はじめての方へ（新メンバー向けガイド導線）: 登録から 14 日以内の本人だけに renderGuideWelcomeBanner() が描画。
+       初回ログイン時は maybeShowFirstLoginGuidePrompt() がモーダルでも案内する。ロールではなく実ユーザーの事実で判定（本人参照） -->
+  <div id="dash-guide-banner"></div>
   <div id="dash-my-focus"></div>
   <!-- 👥 自チームで気になるもの（ADR 042）: 自分が案件 D/P・チーム代表ディレクターの範囲で
        SOS / 期限超過 / 今週締切 の CR を出す。renderMyFocusCard() が同じ API レスポンスから描画。
@@ -11113,6 +11123,8 @@ async function init() {
   // ヒーロー統計・管理者グラフ）は loadDashboard() 内で対応する Promise の完了後に追い描画される。
   restoreInitialPage();
   applyDeepLinkOnLoad();
+  // 📖 初回ログインの人にだけ「新メンバー向けガイド」をモーダルで案内（?creative= 等のディープリンクがあるときは邪魔しない）
+  if (!window.location.search) { setTimeout(() => { try { maybeShowFirstLoginGuidePrompt(); } catch (e) { console.warn('[HFS] first-login guide prompt failed:', e); } }, 600); }
 
   await dataReady;
   // roles マスタが fallback 定数と異なる環境で、roles 到着前に描画された一覧を正で再描画
@@ -11143,6 +11155,149 @@ function restoreInitialPage() {
   const navBtn = document.querySelector(`.nav-btn[data-page="${saved}"]`)
               || document.querySelector(`.nav-drawer-btn[data-page="${saved}"]`);
   showPage(saved, navBtn || null);
+}
+
+// ==================== 📖 新メンバー向けガイドへの初回導線 ====================
+// 目的: 初めて HARUKA FILM に入った人が「何をすればいいか」を /guide.html で確認できるように、
+//   (1) 初回ログイン直後にウェルカムモーダルで案内し（1 回だけ）、
+//   (2) 登録から GUIDE_WELCOME_DAYS 日以内はホーム最上段に 1 行バナーを出す（× で以後非表示）。
+// 判定はロールではなく実ユーザーの事実（users.login_count / created_at）で行うため currentUser を
+// 直参照する（ADR 015 の例外: has_onboarding と同じ「本人参照」）。VIEW AS には追従しない（しなくてよい）。
+// 「閉じた」記録はブラウザ localStorage（ADR 041 の流儀・サーバー列は増やさない）。
+// 経過日数は epoch 差で出すので JST/UTC の影響を受けない。
+const GUIDE_WELCOME_DAYS = 14;
+const GUIDE_WELCOME_LS_KEY = 'hfs_guide_welcome_dismissed'; // { [userId]: { modal: true, banner: true } }
+const GUIDE_HUB_URL = '/guide.html';
+
+function _guideWelcomeState(userId) {
+  try { const all = JSON.parse(localStorage.getItem(GUIDE_WELCOME_LS_KEY) || '{}'); return all[userId] || {}; } catch (_) { return {}; }
+}
+function _guideWelcomeDismiss(userId, kind) {
+  try {
+    const all = JSON.parse(localStorage.getItem(GUIDE_WELCOME_LS_KEY) || '{}');
+    all[userId] = Object.assign({}, all[userId], { [kind]: true });
+    localStorage.setItem(GUIDE_WELCOME_LS_KEY, JSON.stringify(all));
+  } catch (_) {}
+}
+// 登録からの経過日数（created_at 不明なら null）
+function _guideDaysSinceJoin(user) {
+  const t = user && user.created_at ? new Date(user.created_at).getTime() : NaN;
+  if (!Number.isFinite(t)) return null;
+  return Math.floor((Date.now() - t) / 86400000);
+}
+function _guideIsNewMember(user) {
+  const days = _guideDaysSinceJoin(user);
+  return days !== null && days >= 0 && days <= GUIDE_WELCOME_DAYS;
+}
+
+// ホーム最上段の 1 行バナー（loadDashboard() から毎回呼ばれる・冪等）
+function renderGuideWelcomeBanner() {
+  const box = document.getElementById('dash-guide-banner');
+  if (!box) return;
+  const u = currentUser;
+  if (!u || !u.id || !_guideIsNewMember(u) || _guideWelcomeState(u.id).banner) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="dash-section dash-guide-banner" role="region" aria-label="新メンバー向けガイド">
+    <span style="font-size:20px" aria-hidden="true">📖</span>
+    <span class="gb-title">はじめての方へ</span>
+    <span class="gb-sub">役職ごとの「何をすればいい？」は <b>新メンバー向けガイド</b> にまとまっています。迷ったらまずここへ。</span>
+    <a class="gb-cta" href="${GUIDE_HUB_URL}" target="_blank" rel="noopener">ガイドを開く →</a>
+    <button type="button" class="gb-close" aria-label="このバナーを閉じる" title="今後表示しない" onclick="dismissGuideWelcomeBanner()">×</button>
+  </div>`;
+}
+function dismissGuideWelcomeBanner() {
+  if (currentUser && currentUser.id) _guideWelcomeDismiss(currentUser.id, 'banner');
+  const box = document.getElementById('dash-guide-banner');
+  if (box) box.innerHTML = '';
+}
+
+// 初回ログイン（users.login_count が 1 以下）かつ登録 GUIDE_WELCOME_DAYS 日以内の本人にだけ 1 回出すウェルカムモーダル。
+// login_count は /auth/login のたびに +1 されるので「初回」判定はこれで足りる。login_count 未記録（0/null）の
+// 古いアカウントに出ないよう created_at でもガードする。閉じたら localStorage に記録して二度と出さない。
+function maybeShowFirstLoginGuidePrompt() {
+  const u = currentUser;
+  if (!u || !u.id) return;
+  if (!_guideIsNewMember(u)) return;
+  if ((u.login_count || 0) > 1) return;
+  if (_guideWelcomeState(u.id).modal) return;
+  if (document.getElementById('modal-first-login-guide')) return;
+
+  const dismiss = () => {
+    _guideWelcomeDismiss(u.id, 'modal');
+    const el = document.getElementById('modal-first-login-guide');
+    if (el) el.remove();
+  };
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-first-login-guide';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'modal-first-login-guide-title');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:14px;max-width:460px;width:100%;box-shadow:0 12px 36px rgba(0,0,0,0.18);overflow:hidden;display:flex;flex-direction:column;';
+
+  const head = document.createElement('div');
+  head.style.cssText = 'padding:22px 22px 16px;background:linear-gradient(135deg,#0284C7,#0EA5E9);color:#fff;';
+  const badge = document.createElement('div');
+  badge.textContent = 'NEW MEMBER GUIDE';
+  badge.style.cssText = 'display:inline-block;font-size:10px;font-weight:700;letter-spacing:0.16em;padding:3px 10px;border-radius:999px;background:rgba(255,255,255,0.22);margin-bottom:8px;';
+  const title = document.createElement('div');
+  title.id = 'modal-first-login-guide-title';
+  title.style.cssText = 'font-size:18px;font-weight:800;line-height:1.35;';
+  title.textContent = '🎉 HARUKA FILM SYSTEM へようこそ！';
+  head.appendChild(badge);
+  head.appendChild(title);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:18px 22px 20px;display:flex;flex-direction:column;gap:12px;';
+  const lead = document.createElement('div');
+  lead.style.cssText = 'font-size:13.5px;color:var(--text);line-height:1.7;';
+  // XSS 防止のため textContent で組み立てる
+  const who = document.createElement('b');
+  who.textContent = `${u.nickname || u.name || u.email || ''} さん`;
+  lead.appendChild(who);
+  lead.appendChild(document.createTextNode('、はじめまして。まずは「新メンバー向けガイド」で、'));
+  const roleB = document.createElement('b');
+  roleB.textContent = (typeof roleLabel === 'function' ? roleLabel(u.role) : u.role) || '';
+  lead.appendChild(roleB);
+  lead.appendChild(document.createTextNode(' として最初にやることを確認しましょう。'));
+
+  const ul = document.createElement('ul');
+  ul.style.cssText = 'margin:0;padding-left:18px;font-size:13px;color:var(--text);line-height:1.8;';
+  ['📝 登録チュートリアル（プロフィール・口座情報）', '🧭 画面の歩き方（どのタブに何があるか）', '🎬 役職ごとの制作の進め方とチェックの受け方'].forEach(t => {
+    const li = document.createElement('li'); li.textContent = t; ul.appendChild(li);
+  });
+
+  const btnOpen = document.createElement('a');
+  btnOpen.href = GUIDE_HUB_URL;
+  btnOpen.target = '_blank';
+  btnOpen.rel = 'noopener';
+  btnOpen.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 14px;border-radius:10px;background:#0284C7;color:#fff;font-size:14px;font-weight:700;text-decoration:none;';
+  btnOpen.textContent = '📖 ガイドを開く（新しいタブ）';
+  btnOpen.addEventListener('click', () => { dismiss(); });
+
+  const btnLater = document.createElement('button');
+  btnLater.type = 'button';
+  btnLater.style.cssText = 'padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#fff;color:var(--text);font-size:13px;cursor:pointer;';
+  btnLater.textContent = 'あとで見る';
+  btnLater.addEventListener('click', dismiss);
+
+  const note = document.createElement('div');
+  note.style.cssText = 'font-size:11.5px;color:var(--text-muted);line-height:1.6;text-align:center;';
+  note.textContent = 'ガイドはいつでも右上の 📖 アイコンから開けます。ホームにも当面のあいだ案内を出しておきます。';
+
+  body.appendChild(lead);
+  body.appendChild(ul);
+  body.appendChild(btnOpen);
+  body.appendChild(btnLater);
+  body.appendChild(note);
+  box.appendChild(head);
+  box.appendChild(body);
+  overlay.appendChild(box);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(); });
+  document.body.appendChild(overlay);
+  try { if (window.__addBreadcrumb) window.__addBreadcrumb('modal_open', 'modal-first-login-guide'); } catch (_) {}
 }
 
 // 通知メール/チャットからの ?creative=<id> リンクで該当クリエイティブの詳細モーダルを開く
@@ -31358,6 +31513,8 @@ function loadDashboard() {
   // ヒーローの数字は複数ソースが書き込むため、開き直し / VIEW AS 切替のたびに一度ローダーへ戻す
   // （前ロールの「進行中案件」等が残らないようにする・ADR 015）
   resetDashHeroStats();
+  // 📖 はじめての方へ（登録 14 日以内の本人だけ）: 新メンバー向けガイドへの 1 行バナー。× で以後非表示
+  try { renderGuideWelcomeBanner(); } catch (e) { console.warn('[HFS] renderGuideWelcomeBanner failed:', e); }
   // 🎯 マイフォーカス（全ロール共通・本人専用 ADR 040）: 自前 fetch なので init のデータ待ちをしない。
   // ヒーローの「いま手元 / 期限超過 / 今週締切」もこの結果から setDashHeroStats() で入る。
   renderMyFocusCard();

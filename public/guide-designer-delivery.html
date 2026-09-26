@@ -148,7 +148,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="hero-inner">
     <span class="hero-badge">GUIDE ／ デザイナー向け</span>
     <h1>デザイン納品の方法<span>ファイル名は自動！アップロードとバージョン管理のコツ</span></h1>
-    <div class="hero-eta">⏱ 読了 約 5 分</div>
+    <div class="hero-eta">⏱ 読了 約 7 分</div>
   </div>
 </header>
 
@@ -181,6 +181,12 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <p>あなたがファイルをアップロードすると、システムが自動で <code>提出用ファイル名_v2.png</code> のように <b>バージョン番号＋元の拡張子</b> を付けた名前を生成します。</p>
     <div class="mock-kv"><span style="flex-shrink:0;color:var(--text-muted)">生成ファイル名：</span><b>007_あるる_1:1_ドラム_上地無_v2.png</b></div>
     <div class="eg-box">📋 例：手元のファイル名が「banner_final_fix2.png」でもOK。アップロードすると正式名にリネームされて Drive に保存されるので、<b>提出前に自分でリネームする作業は不要</b>です。</div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔢 先頭の連番は「案件の管理シート」と連動していることがある</div>
+    <p>ファイル名の先頭の連番（<code>007</code> など）は、案件の設定「<b>連番の採番元</b>」で決まり方が変わります。<b>案件カウンタ</b>（HARUKA 内で登録するたびに +1・既定）か、<b>スプレッドシート連動</b>（クライアントの管理シートの最終番号 +1）のどちらかです。連動している案件では、クリエイティブ登録画面に「<b>この案件の N 本目 ／ 連番はシート連動（最終 007 → 008）</b>」と表示されます。</p>
+    <p class="mock-note">💡 桁数（3 桁／4 桁など）も案件・テンプレート側の設定です。番号がシートとズレて見えるときは自分で直さず、ディレクターか管理者に連絡を。</p>
   </div>
 
   <div class="next-btn-wrap"><a class="next-btn" href="#step2">STEP 2 へ進む</a></div>
@@ -228,7 +234,17 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <ul>
       <li>アップロード時に<b>画像サイズ（幅 × 高さ）を自動検出</b>して表示。バナーの規定サイズどおりかその場で確認できます</li>
       <li>バージョン番号は自動計算済み（v1 = 初稿、v2 = 1回目修正…）</li>
-      <li>大きいファイルはブラウザから Google ドライブへ<b>直接送信</b>される仕組みなので、重い入稿データでも安心です</li>
+      <li>20MB を超えるファイルはブラウザから Google ドライブへ<b>直接送信</b>される仕組み（16MB ずつの分割送信）なので、重い入稿データでも安心です</li>
+    </ul>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔁 20MB 超のファイルは、途中で切れても自動で再送される</div>
+    <p>直送中に回線が切れても、Drive に届いた位置から<b>自動で再開</b>します（連続 8 回まで）。進捗の下に「<b>リトライ中… (2/8) 52% — ネットワークエラー（Drive 直送）</b>」と出ている間は、<b>何もせず待つ</b>のが正解です。Wi-Fi が落ちたときは「オフラインになりました。回線の復帰を待っています…」と出て復帰を待ちます。</p>
+    <p style="margin-top:6px">それでも最終的に失敗したときは、エラー文で原因が分かります。</p>
+    <ul>
+      <li>「<b>…回線が不安定な可能性があります。</b>Wi-Fi なら有線接続に切り替える／VPN やセキュリティソフトの Web 保護を一時的に無効にする／ブラウザを再起動する…」→ <b>回線側</b>。対処してからもう一度ドロップ</li>
+      <li>「<b>ファイルを読み取れませんでした（…）。</b>アップロード中にファイルが変更・移動されたか、書き出し途中のファイル／クラウド同期フォルダ（Google Drive・OneDrive・Dropbox）や外付け・ネットワークドライブ上のファイルの可能性があります。PC 内蔵ディスクにコピーしてから「クリックして選択」で再度お試しください」→ <b>ファイル側</b>。書き出し完了を待ち、内蔵ディスクにコピーしてから上げ直し</li>
     </ul>
   </div>
 
@@ -283,8 +299,18 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="step-card">
     <div class="step-card-title">🆚 過去バージョンとの比較ビュー</div>
-    <p>修正のやりとりが始まると、詳細モーダルは<b>左＝前回の提出物と指摘 ／ 右＝最新バージョン</b>の比較レイアウトになります。各ファイルカードの「▶ バージョン◯をチェックする」からプレビューできます。</p>
-    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 うっかり過去バージョンを開こうとすると「新しいバージョンが提出されています」と確認が入るので、取り違えの心配もありません。</p>
+    <p>修正のやりとりが始まると、詳細モーダルは<b>左＝前回の提出物と指摘 ／ 右＝最新バージョン</b>の比較レイアウトになります。各ファイルカードの「<b>▶ バージョン 2をチェックする</b>」からプレビューできます。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 うっかり過去バージョンを開こうとすると「<b>過去のバージョンを開こうとしています</b>」（新しいクリエイティブ（バージョン N）が提出されています）と確認が入るので、取り違えの心配もありません。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">⏪ プレビュー画面で「前回」と見比べる（静止画は特に便利）</div>
+    <p>チェック画面（プレビュー）のヘッダーに <b>「⬅️ 前へ」 v2/3 「次へ ➡️」</b> のナビが出ます（バージョンが 2 つ以上あるとき）。古い版を表示中は「<b>⚠️ 過去バージョン v1 を表示中 — 最新は v3 です</b>」と大きく出ます。</p>
+    <ul>
+      <li><b>「🆚 差分比較」</b>：今回（右）と前回（左）を<b>横並び</b>で表示。「✅ 今回 v3（最新）」「⏪ 前回 v2（参考・古い版）」のラベル付き。もう一度押す（「✕ 比較を終了」）と戻ります</li>
+      <li><b>「⏪ 長押しで前回」</b>：ズームツールバーのこのボタンを<b>押している間だけ</b>前回バージョンに切り替わる「ぱらぱら比較」。文字の 1px ズレや色味の違いが一瞬で分かります（静止画のみ）</li>
+    </ul>
+    <p class="mock-note">💡 ディレクターやWチェック担当も同じ画面で見比べています。修正版は「変えたところ」が視覚的に伝わるので、コメントの「↩ 引用」と合わせれば往復が減ります。</p>
   </div>
 
   <div class="done-banner">
@@ -323,11 +349,15 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">☁️</span>
-      <div><div class="trouble-q">「Drive未連携」と表示された</div><div class="trouble-a">記録はDBに残っていますがドライブ保存に失敗しています。秘書チームへ連絡してください</div></div>
+      <div><div class="trouble-q">「Drive未連携」と表示された</div><div class="trouble-a">記録はDBに残っていますがドライブ保存に失敗しています。ディレクターか管理者へ連絡してください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">⏸</span>
+      <div><div class="trouble-q">大きいファイルのアップロードが途中で止まる</div><div class="trouble-a">「リトライ中… (n/8)」の間は待つ。最終的に失敗したら文面で切り分け：「回線が不安定」→ 有線・VPN 停止のあと再ドロップ／「ファイルを読み取れませんでした」→ 内蔵ディスクにコピーして「クリックして選択」で上げ直し（STEP 2 参照）</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🆘</span>
-      <div><div class="trouble-q">それ以外</div><div class="trouble-a">秘書チームに気軽に連絡を。スクショを添えると早いです</div></div>
+      <div><div class="trouble-q">それ以外</div><div class="trouble-a">ディレクターか管理者に気軽に連絡を（<a href="/guide-sos.html" style="color:var(--em-dark);font-weight:700">SOS ガイド</a>）。スクショを添えると早いです</div></div>
     </div>
   </div>
 </section>

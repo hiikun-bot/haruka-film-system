@@ -140,9 +140,9 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 <header class="hero">
   <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
   <div class="hero-inner">
-    <span class="hero-badge">GUIDE ／ プロデューサー向け</span>
+    <span class="hero-badge">GUIDE ／ プロデューサー・ディレクター向け</span>
     <h1>案件の作り方<span>クライアントに案件をぶら下げて、制作の器を用意する</span></h1>
-    <div class="hero-eta">⏱ 読了 約 7 分</div>
+    <div class="hero-eta">⏱ 読了 約 8 分</div>
   </div>
 </header>
 
@@ -178,8 +178,14 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="step-card">
     <div class="step-card-title">🔑 だれが作れる？</div>
-    <p>案件の作成・編集ができるのは <b>管理者・秘書・プロデューサー（P兼D含む）</b> です。<b>ディレクター</b> は案件・クライアントの<b>新規追加</b>と、<b>成果物グループ・単価の設定</b>ができます（案件名や担当などの編集はP層に依頼します）。ディレクターが入れた単価は <b>管理者の承認待ち</b> になりますが、承認前でも集計にはそのまま反映されます。ボタンが表示されない場合は権限がない状態です（詳しくは <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">ロールと権限ガイド</a>）。</p>
-    <p style="margin-top:6px">案件は必ず <b>クライアントの下</b> にぶら下がります。クライアントがまだ登録されていない場合は、先にクライアントを登録してください。</p>
+    <p>案件の作成・編集がフルにできるのは <b>管理者・秘書・プロデューサー（P兼D含む）</b> です。<b>ディレクター</b> にも、次の3つが開放されています。</p>
+    <ul>
+      <li><b>案件・クライアントの新規追加</b>：案件タブの「＋ クライアント追加」／クライアント行の「＋ 案件追加」が押せます（新規追加のみ。案件名や担当など<b>既存案件の編集</b>はP層に依頼します）。</li>
+      <li><b>成果物グループ・単価の設定</b>：案件行の「💴 単価」ボタンから。入れた単価は <b>管理者の承認待ち</b> になりますが、承認前でも集計にはそのまま反映されます（STEP 4）。</li>
+      <li><b>通知連携先（Slack／Chatwork）の設定</b>：案件行・クライアント見出しの「🔔 通知」ボタンから（STEP 3）。</li>
+    </ul>
+    <p style="margin-top:6px">ボタンが表示されない場合は権限がない状態です（詳しくは <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">ロールと権限ガイド</a>）。</p>
+    <p style="margin-top:6px">案件は必ず <b>クライアントの下</b> にぶら下がります。クライアントがまだ登録されていない場合は、先に「＋ クライアント追加」で登録してください。ディレクターがクライアントを追加した場合は「クライアントを追加しました」と出てモーダルが閉じます（商材・訴求軸の登録はP層の担当なので、必要ならあとから依頼します）。</p>
   </div>
 
   <div class="wanpoint">
@@ -218,12 +224,24 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <input class="mock-input" type="text" value="提案中 ▾" readonly>
       <span class="mock-fieldlabel">カテゴリ <span style="color:#E24B4A">*</span>（マスタ駆動・カテゴリ管理から追加可能）</span>
       <input class="mock-input" type="text" value="ショート動画 ▾" readonly>
+      <span class="mock-fieldlabel">請求タイミング</span>
+      <input class="mock-input" type="text" value="納品時（既定） ▾" readonly>
       <span class="mock-fieldlabel">案件名 <span style="color:#E24B4A">*</span></span>
       <input class="mock-input" type="text" value="例：ARU公式 SNS動画制作" readonly>
       <span class="mock-fieldlabel">タグ（カンマ区切り・任意）</span>
       <input class="mock-input" type="text" value="例：急ぎ, 季節モノ, ABテスト" readonly>
     </div>
     <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 カテゴリの選択肢は「設定タブ → カテゴリ管理」で管理されています（<a href="/guide-master-settings.html" style="color:var(--em-dark);font-weight:700">マスター設定ガイド</a>）。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🧾 請求タイミング ── 「納品時」か「初稿提出時」か</div>
+    <p>カテゴリの下にある <b>「請求タイミング」</b> で、この案件のクリエイティブを<b>どの月の請求に計上するか</b>を決めます。</p>
+    <ul>
+      <li><b>納品時（既定）</b>：ステータスが「納品」になった月に計上。通常はこのままでOK。</li>
+      <li><b>初稿提出時</b>：「クライアントチェック中」に到達した月に計上。納品確定を待たずに初稿で請求する契約のクライアント向けです。</li>
+    </ul>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 「一式（分割請求あり）」の成果物グループがある案件では、分割請求の計上月のほうが優先されます。</p>
   </div>
 
   <div class="step-card">
@@ -260,7 +278,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <span class="reco-chip">👥 サブディレクター（Dチェック依頼可能者・複数）</span>
     </div>
     <p style="margin-top:10px;font-size:12.5px"><b>サブP／サブD</b> は「編集」ボタンからメンバーピッカーで複数選択します。ここに入れた人が、後で <b>Pチェック／Dチェックの担当者候補</b> として出てきます。秘書もサブPに入れられます。</p>
-    <p style="margin-top:6px;font-size:12.5px"><b>🌐 外部ディレクター案件</b> トグルもここにあります。GND等の代理店経由でディレクターがHARUKA外部の案件のとき ON にし、HARUKA側で督促・代理操作を担う <b>窓口担当（必須）</b> を1名選びます。</p>
+    <p style="margin-top:6px;font-size:12.5px"><b>🌐 外部ディレクター案件</b> トグルもここにあります。GND等の代理店経由でディレクターがHARUKA外部の案件のとき ON にし、HARUKA側で督促・代理操作を担う <b>窓口担当（必須）</b> を1名選びます。外部Dがまだメンバーに居なければ、ディレクター欄の「＋外部Dを新規登録」からその場で登録できます。</p>
   </div>
 
   <div class="wanpoint">
@@ -286,8 +304,28 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="step-card-title">⚙️ 設定タブ ── 締め切りとファイル名のルール</div>
     <p><b>締め切り単位</b>：「月単位」か「週単位」をボタンで選びます。週単位を選ぶと <b>締め切り曜日</b>（月〜日）のボタンが出ます。</p>
     <p style="margin-top:6px"><b>📝 管理者メモ</b>：社内向けの備考欄です。</p>
-    <p style="margin-top:6px"><b>📁 ファイル名テンプレート</b>：提出ファイル名の命名規約をテンプレから選びます。プレビューで実際のファイル名を確認でき、カスタム要素の上書き（案件固有の値）や、上級設定で <b>連番の起点・桁数</b> も調整できます。</p>
-    <p style="margin-top:6px"><b>📊 クリエイティブ管理シート同期</b>：案件のクリエイティブ＋修正サイクル履歴を Google Sheets に書き出せます（システム → シートの片方向）。</p>
+    <p style="margin-top:6px"><b>📁 ファイル名テンプレート</b>：提出ファイル名の命名規約をテンプレから選びます。プレビューで実際のファイル名を確認でき、「カスタム要素の上書き（案件固有の値）」で案件ごとの値を差し替えられます。テンプレに <b>「タイトル/内容」</b> トークンが含まれていると、クリエイティブ登録時に「タイトル/内容」の入力欄が現れてファイル名に埋め込まれます（「固定文字」トークンなど、テンプレ自体の設計はマスター → ファイル名テンプレートで行います）。</p>
+    <p style="margin-top:6px"><b>📊 クリエイティブ管理シート同期</b>：案件のクリエイティブ＋修正サイクル履歴を Google Sheets に書き出せます（「📊 Sheets に同期」・システム → シートの片方向）。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔢 ⚙️ 上級設定（連番カスタマイズ）── 管理シートと番号を合わせる</div>
+    <p>ファイル名テンプレートの下の「⚙️ 上級設定（連番カスタマイズ）」を開くと、ファイル名の<b>連番</b>を細かく制御できます。</p>
+    <div class="mock">
+      <span class="mock-fieldlabel">次のファイル名連番</span>
+      <input class="mock-input" type="text" value="12" readonly>
+      <span class="mock-fieldlabel">連番桁数</span>
+      <input class="mock-input" type="text" value="テンプレ既定 ▾（1〜7桁を選択可）" readonly>
+      <span class="mock-fieldlabel">連番の採番元</span>
+      <p style="font-size:12.5px;color:var(--text)">◉ 案件カウンタ（上の「次のファイル名連番」から採番）　○ スプレッドシート連動（管理シートの最終番号 +1 を次の連番にする）</p>
+      <span class="mock-fieldlabel">連動するスプレッドシート URL ／ タブ名（空欄＝1枚目） ／ 番号の列 ／ 使用中判定の列（任意）</span>
+      <input class="mock-input" type="text" value="https://docs.google.com/spreadsheets/d/…　［🔍 接続確認］" readonly>
+    </div>
+    <ul style="margin-top:8px">
+      <li><b>連番桁数</b>：「テンプレ既定」のままならテンプレ側（マスター → ファイル名テンプレート）の桁数に従います。案件だけ変えたいときに 1〜7 桁を指定（例：3 → 001）。</li>
+      <li><b>スプレッドシート連動</b>：クライアントの管理シートで番号を振っている案件向け。登録のたびに「番号の列」を読み、<b>先頭の数字の最大値 +1</b> を連番にします（例：最終 010 → 次は 011）。No が先まで振ってあるシートは「使用中判定の列」に CR名 の列（例：B）を指定すると、その列が埋まっている行だけ数えます。</li>
+      <li>シートはサービスアカウントに<b>「閲覧者」で共有</b>しておき、「🔍 接続確認」で読めるか試してから保存します。シートを読めないときは<b>登録を止めてエラー</b>になります（黙ってズレた番号を振りません）。</li>
+    </ul>
   </div>
 
   <div class="step-card">
@@ -300,7 +338,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       <span class="mock-fieldlabel">Slack チャンネルURL</span>
       <input class="mock-input" type="text" value="https://ワークスペース名.slack.com/archives/C..." readonly>
     </div>
-    <p style="margin-top:6px">Slack チャンネルURL は、Slack でチャンネル名をクリック →「<b>リンクをコピー</b>」で取得した URL（<code>.../archives/C…</code>）をそのまま貼れます。デスクトップアプリのアドレス（<code>app.slack.com/client/T…/C…</code>）でも構いません。この 2 つ以外の形式は保存時にエラーになります。</p>
+    <p style="margin-top:6px">Slack チャンネルURL は、Slack でチャンネル名をクリック →「<b>リンクをコピー</b>」で取得した URL（<code>.../archives/C…</code>）をそのまま貼れます。デスクトップアプリのアドレス（<code>app.slack.com/client/T…/C…</code>）でも構いません。この 2 つ以外の形式は保存時にエラーになります。Chatwork ルームID は数字のみです。</p>
+    <p style="margin-top:6px"><b>🎥 ディレクターの場合</b>：案件編集モーダルは開けませんが、案件一覧の各案件行とクライアント見出しに出る <b>「🔔 通知」</b> ボタンから、同じ2項目だけを設定する「🔔 通知連携先の設定」モーダルが開きます。通知の飛び先を自分で直せるので、「通知が来ない」ときはまずここを確認しましょう。</p>
   </div>
 
   <div class="wanpoint">
@@ -358,7 +397,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 
   <div class="step-card">
     <div class="step-card-title">💰 見積・費用 タブ ／ 📋 工程表 タブ</div>
-    <p><b>見積・費用</b>：成果物グループ（カテゴリ／ランク別の1本あたり単価）と、固定費・追加収入を設定します。ここは別ガイドでじっくり → <a href="/guide-budget-rates.html" style="color:var(--em-dark);font-weight:700">予算・単価の上書きガイド</a></p>
+    <p><b>見積・費用</b>：成果物グループ（カテゴリ／ランク別の1本あたり単価）と、固定費・追加収入を設定します。「📋 プリセットから一括生成」で定番の行をまとめて作れ、似た行は右端の <b>「⧉ 複製」</b> で内容ごとコピーして増やせます。ここは別ガイドでじっくり → <a href="/guide-budget-rates.html" style="color:var(--em-dark);font-weight:700">予算・単価の上書きガイド</a></p>
     <p style="margin-top:6px"><b>工程表</b>：案件開始日を起点に、テンプレからフェーズ・タスク・マイルストーンを展開できます（LP案件は専用のフェーズUIあり）。</p>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 これらのタブは案件のIDが確定してからしか操作できないため、<b>新規作成時は表示されません</b>。「タブがない！」と思ったら、まず保存を。</p>
   </div>
@@ -382,7 +421,8 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
       </div>
     </div>
     <p>ディレクターが案件を追加すると、続けて「💰 見積・費用」タブが <b>単価専用モード</b>（このタブだけが表示されます）で開きます。ここで成果物グループと単価を入れておくと、クリエイティブを登録した瞬間から単価が付いた状態になります。あとから開きたいときは、案件一覧の「<b>💴 単価</b>」ボタンからどうぞ。</p>
-    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 保存時に「保存しました（管理者の承認待ち）」と出ればOK。管理者が承認するまで <b>🕓 承認待ち</b> バッジが付きますが、集計・請求プレビューにはそのまま反映されます（請求書の発行だけは承認後）。詳しくは <a href="/guide-budget-rates.html" style="color:var(--em-dark);font-weight:700">予算・単価の上書きガイド</a>。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 保存時に「保存しました（管理者の承認待ち）」と出ればOK。管理者が承認するまで行に <b>🕓 承認待ち</b> バッジが付き、タブ上部にも「🕓 承認待ちの単価があります」と表示されますが、集計・請求プレビューにはそのまま反映されます（請求書の発行だけは承認後）。詳しくは <a href="/guide-budget-rates.html" style="color:var(--em-dark);font-weight:700">予算・単価の上書きガイド</a>。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 単価を入れ忘れたまま納品すると、分析タブのクリエイター別内訳に <b>「単価不明 ↗」</b> バッジが出ます。バッジをクリックすると、その案件の成果物グループが開いた状態でモーダルが立ち上がるので、その場で補えます。</p>
   </div>
 </section>
 
@@ -400,7 +440,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   <div class="trouble-list">
     <div class="trouble-item">
       <span class="trouble-icon">🚫</span>
-      <div><div class="trouble-q">「＋ 案件追加」ボタンが出ない</div><div class="trouble-a">案件の追加は 管理者・秘書・プロデューサー・ディレクター（ディレクターは新規追加のみ）。権限は <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">ロールと権限ガイド</a> を確認</div></div>
+      <div><div class="trouble-q">「＋ 案件追加」ボタンが出ない</div><div class="trouble-a">案件・クライアントの追加は 管理者・秘書・プロデューサー・ディレクター（ディレクターは新規追加のみ。編集者・デザイナー・外部ディレクターは不可）。権限は <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">ロールと権限ガイド</a> を確認</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🏷</span>
@@ -412,7 +452,11 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🔕</span>
-      <div><div class="trouble-q">通知がクライアントの共通チャンネルに流れてしまう</div><div class="trouble-a">🔗 連携タブで案件レベルの Chatwork ルームID／Slack チャンネルURL を設定すると、そちらが優先されます</div></div>
+      <div><div class="trouble-q">通知がクライアントの共通チャンネルに流れてしまう</div><div class="trouble-a">🔗 連携タブ（ディレクターは案件行の「🔔 通知」ボタン）で案件レベルの Chatwork ルームID／Slack チャンネルURL を設定すると、そちらが優先されます</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">✎</span>
+      <div><div class="trouble-q">納品済みのクリエイティブが別の案件に紐づいていた</div><div class="trouble-a">クリエイティブ詳細モーダルの「✎ 事後修正」→「紐づく案件」で付け替えられます。納品後でも<b>担当ディレクター／プロデューサー本人なら変更可</b>（変更理由が必須・確定済みの請求書に紐づいていると不可）。案件を変えると商材・訴求軸は選び直しになります</div></div>
     </div>
   </div>
 </section>

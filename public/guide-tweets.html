@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜つぶやきの使い方</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero */
+.hero{background:linear-gradient(135deg,#0284C7 0%,#0EA5E9 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+/* Progress bar */
+.progress-wrap{position:sticky;top:0;background:rgba(255,255,255,0.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:50;border-bottom:1px solid var(--border-light);padding:12px 16px}
+.progress-inner{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:16px}
+.progress-track{flex:1;height:6px;background:var(--border-light);border-radius:99px;overflow:hidden;position:relative}
+.progress-fill{position:absolute;top:0;left:0;height:100%;width:0;background:linear-gradient(90deg,var(--em),var(--em-dark));transition:width .3s ease;border-radius:99px}
+.progress-text{font-size:12px;font-weight:700;color:var(--em-dark);white-space:nowrap;letter-spacing:0.04em}
+.progress-dots{display:flex;gap:8px}
+.progress-dot{width:10px;height:10px;border-radius:50%;background:var(--border);transition:all .3s;cursor:pointer}
+.progress-dot.done{background:var(--em-dark)}
+.progress-dot.current{background:var(--em);box-shadow:0 0 0 4px var(--em-pale)}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:80px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram (SVG) */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+
+/* Wanpoint (sticky-note callout) */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Compact step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card-title-num{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+
+/* Mock screen */
+.mock{margin-top:10px;background:var(--surface);border:1.5px dashed var(--border);border-radius:10px;padding:12px 16px}
+.mock-input{background:#fff;border:1.5px solid var(--border);border-radius:6px;padding:8px 11px;font-size:13px;font-family:inherit;color:var(--text);width:100%;margin-bottom:8px}
+.mock-btn{background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:6px;border:none;display:inline-flex;align-items:center;gap:4px}
+.mock-fieldlabel{font-size:11px;color:var(--text-muted);margin-bottom:3px;display:block}
+
+/* Tab pills */
+.tab-pills{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+.tab-pill{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px 8px;text-align:center;font-size:12px;font-weight:700;color:var(--text);position:relative;transition:transform .15s}
+.tab-pill-icon{font-size:22px;margin-bottom:4px;line-height:1}
+.tab-pill.star{border-color:var(--star);background:linear-gradient(135deg,var(--star-bg),#fff);color:var(--star-deep);box-shadow:0 4px 12px rgba(245,158,11,0.2)}
+.tab-pill.star::after{content:"⭐";position:absolute;top:-8px;right:-6px;font-size:14px}
+
+/* Field hierarchy: must / recommended / optional */
+.fields{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.must-card{background:linear-gradient(135deg,#FFF7ED 0%,#fff 60%);border:2px solid var(--star);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:flex-start;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.18)}
+.must-card-icon{font-size:28px;line-height:1;flex-shrink:0}
+.must-card-body{flex:1;min-width:0}
+.must-card-tag{display:inline-block;font-size:10px;font-weight:800;letter-spacing:0.14em;color:#fff;background:var(--star);padding:2px 9px;border-radius:99px;margin-bottom:6px;text-transform:uppercase}
+.must-card h4{font-size:15px;font-weight:800;color:var(--star-deep);margin-bottom:4px}
+.must-card p{font-size:12.5px;color:#78350F;line-height:1.65}
+.must-card p strong{font-weight:800;background:rgba(245,158,11,0.2);padding:1px 5px;border-radius:3px}
+
+.reco-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.reco-label{font-size:11px;color:var(--text-muted);font-weight:700;letter-spacing:0.06em;flex-shrink:0}
+.reco-chip{display:inline-flex;align-items:center;gap:5px;background:var(--em-pale);color:var(--em-dark);font-size:12px;font-weight:600;padding:5px 11px;border-radius:99px;border:1px solid var(--em-light)}
+
+.opt-row{margin-top:6px;font-size:11px;color:#9ca3af;line-height:1.6}
+.opt-row strong{color:#6b7280;font-weight:600}
+
+/* Basic-info interactive explorer */
+.bie{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.bie-mock{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.bie-mock-title{font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.08em;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.bie-mock-title::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#EF4444;box-shadow:14px 0 #F59E0B,28px 0 #10B981}
+.bie-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;background:#fafdfd}
+.bie-row:hover{background:var(--em-pale);border-color:var(--em-light)}
+.bie-row.selected{background:var(--em-pale);border-color:var(--em-dark);box-shadow:0 4px 12px rgba(43,184,180,0.18)}
+.bie-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#fff;border:2px solid var(--em-dark);color:var(--em-dark);font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.bie-row:hover .bie-num{transform:scale(1.1)}
+.bie-row.selected .bie-num{background:var(--em-dark);color:#fff}
+.bie-input-area{flex:1;min-width:0}
+.bie-label{font-size:11px;color:var(--text);font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:4px}
+.bie-mock-input{background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;color:#9ca3af;font-family:inherit;min-height:22px;display:flex;align-items:center}
+.bie-mock-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#A8EDEA,#3ECFCA);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.bie-mock-input.disabled{background:#f5f5f5;color:#9ca3af}
+.bie-explain{background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px solid var(--star-border);border-radius:12px;padding:16px 18px;min-height:200px;position:relative}
+.bie-explain-prompt{font-size:12px;color:var(--star-deep);text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:center;height:100%;padding:12px}
+.bie-explain-prompt-arrow{font-size:24px;animation:bie-arrow 1.4s ease-in-out infinite}
+@keyframes bie-arrow{0%,100%{transform:translateX(0)}50%{transform:translateX(-6px)}}
+.bie-explain-content{display:none}
+.bie-explain-content.show{display:block;animation:bie-fade 0.25s ease-out}
+@keyframes bie-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.bie-explain-num{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--star);color:#fff;font-size:11px;font-weight:800;margin-right:6px}
+.bie-explain-title{font-size:14px;font-weight:800;color:var(--star-deep);margin-bottom:10px;display:flex;align-items:center}
+.bie-explain h5{font-size:11px;font-weight:800;color:var(--star);letter-spacing:0.06em;margin:10px 0 4px;text-transform:uppercase}
+.bie-explain h5::before{content:"";display:inline-block;width:4px;height:12px;background:var(--star);margin-right:6px;vertical-align:middle;border-radius:2px}
+.bie-explain p{font-size:12.5px;color:#78350F;line-height:1.7}
+.bie-explain-eg{margin-top:8px;background:#fff;border-radius:8px;padding:10px 12px;font-size:11.5px;color:#78350F;line-height:1.7;border-left:3px solid var(--star)}
+.bie-explain-eg b{color:#92400E;background:rgba(245,158,11,0.18);padding:1px 5px;border-radius:3px}
+@media (max-width:768px){
+  .bie{grid-template-columns:1fr;gap:10px}
+  .bie-explain{min-height:auto}
+}
+
+/* Done banner (compact) */
+.done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
+.done-icon{font-size:24px;flex-shrink:0}
+.done-text{flex:1;font-size:13px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:2px}
+
+/* Next button */
+.next-btn-wrap{display:flex;justify-content:center;margin-top:18px}
+.next-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--em-dark);text-decoration:none;font-weight:700;font-size:13px;padding:11px 22px;border-radius:99px;border:2px solid var(--em);transition:all .2s;box-shadow:0 2px 8px rgba(43,184,180,0.15)}
+.next-btn:hover{background:var(--em-dark);color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(43,184,180,0.3)}
+.next-btn::after{content:"↓";font-weight:900}
+
+/* Final */
+.final{margin-top:56px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:32px 24px;text-align:center;position:relative;overflow:hidden}
+.final::before{content:"🎉";position:absolute;font-size:120px;opacity:0.06;top:50%;left:50%;transform:translate(-50%,-50%)}
+.final-icon{font-size:42px;margin-bottom:6px}
+.final h2{font-size:22px;font-weight:800;color:#92400E;margin-bottom:6px}
+.final p{font-size:13px;color:#78350F;line-height:1.85;max-width:480px;margin:0 auto 16px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35);transition:transform .15s,box-shadow .15s}
+.final-cta:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(43,184,180,0.45)}
+
+/* Trouble (compact, single block) */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .progress-dots{display:none}
+  .flow-row{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .tab-pills{grid-template-columns:repeat(2,1fr)}
+  .must-card{padding:14px 16px;gap:12px}
+  .must-card-icon{font-size:24px}
+  .must-card h4{font-size:14px}
+  .final{padding:24px 18px}
+  .final h2{font-size:18px}
+}
+</style>
+</head>
+
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">COMMUNITY ／ 全員共通</span>
+    <h1>💭 つぶやきで、仲間の気配を感じよう<span>投稿・@メンション・返信・リアクションの使い方</span></h1>
+    <div class="hero-eta">⏱ 約 6 分</div>
+  </div>
+</header>
+
+<div class="progress-wrap">
+  <div class="progress-inner">
+    <div class="progress-text" id="progress-text">準備OK ／ 0 / 6</div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-dots">
+      <span class="progress-dot current" data-step="1"></span>
+      <span class="progress-dot" data-step="2"></span>
+      <span class="progress-dot" data-step="3"></span>
+      <span class="progress-dot" data-step="4"></span>
+      <span class="progress-dot" data-step="5"></span>
+      <span class="progress-dot" data-step="6"></span>
+    </div>
+  </div>
+</div>
+
+<main class="container">
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>つぶやきページを開く</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">🧭</div>
+      <div class="flow-step-label">ナビの<br>「つぶやき」を押す</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📜</div>
+      <div class="flow-step-label">タイムラインを<br>ながめる</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">➕</div>
+      <div class="flow-step-label">右下の「＋」で<br>自分も投稿</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">画面の構成</div>
+    <p>ヘッダーのナビ「<b>つぶやき</b>」（スマホのメニューでは「<b>💭 つぶやき</b>」）を押すと、リベシティ風のタイムラインが開きます。全ロール共通で、誰でも同じつぶやきが見えます。</p>
+    <div class="mock" style="margin-top:10px">
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <span class="mock-btn" style="padding:6px 12px">みんなのつぶやき</span>
+        <span class="mock-btn" style="padding:6px 12px;background:#fff;color:var(--em-dark);border:1.5px solid var(--em)">自分のつぶやき・返信</span>
+      </div>
+      <div style="font-size:12px;color:var(--text)">フィルター: <span class="reco-chip">☑ 全員</span> <span class="reco-chip">☐ 管理者</span> <span class="reco-chip">☐ 秘書</span> <span class="reco-chip">☐ プロデューサー</span> <span class="reco-chip">☐ ディレクター</span> <span class="reco-chip">☐ エディター</span> <span class="reco-chip">☐ デザイナー</span></div>
+    </div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">タブ</span>
+        <span class="reco-chip">みんなのつぶやき ＝ 全員の投稿</span>
+        <span class="reco-chip">自分のつぶやき・返信 ＝ 自分の投稿＋自分が返信した投稿</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">フィルター</span>
+        <span class="reco-chip">役職のチェックで投稿者を絞る（「全員」を外して選ぶ）</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">💡 フィルターの選択はこの端末に記憶されます。「自分のつぶやき・返信」タブではフィルターは効きません（自分の分は全部出ます）。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step2" onclick="markStep(1)">STEP 2 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>つぶやきを投稿する</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">投稿画面の開き方</div>
+    <p>つぶやきページの<b>右下に浮いている「＋」ボタン</b>、またはホームの「💭 みんなのつぶやき」カードにある「<b>＋ つぶやく</b>」を押すと「<b>💭 つぶやき投稿</b>」が開きます。</p>
+    <div class="mock">
+      <span class="mock-fieldlabel">写真（任意・4枚まで）</span>
+      <div class="mock-input" style="text-align:center;color:var(--text-muted)">写真を選択 / ドラッグ&amp;ドロップ / 貼り付け / タップで撮影（任意・4枚まで）</div>
+      <span class="mock-fieldlabel">一言 <span style="color:#E24B4A">*</span>　<span style="color:var(--text-muted)">0 / 280</span></span>
+      <input class="mock-input" type="text" value="例) 今日の現場、夕日がエモかった" readonly>
+      <div style="font-size:11px;color:var(--text-muted);margin:-4px 0 8px">「@」に続けて名前を打つとメンバー候補が出ます。選ぶと相手に通知が届きます</div>
+      <button class="mock-btn">投稿する</button>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">入力のルール</div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">一言</span>
+        <span class="reco-chip">必須・280 字まで（右上に「0 / 280」のカウンター）</span>
+        <span class="reco-chip">改行 OK</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">写真</span>
+        <span class="reco-chip">任意・最大 4 枚</span>
+        <span class="reco-chip">選択／ドラッグ&amp;ドロップ／貼り付け／スマホなら撮影も可</span>
+      </div>
+    </div>
+    <div class="opt-row" style="margin-top:10px">投稿後：自分の投稿には <strong>✏️（編集）</strong> と <strong>🗑️（削除）</strong> が出ます。編集すると「（編集済み）」が付きます。削除は本人のほか管理者・秘書もできます。</div>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">知っておくと安心</div>
+    <p>投稿は <strong>90 日後に自動で非表示</strong> になります（投稿画面にも書いてあります）。気軽な近況・現場の一コマ・ちょっとした学びなど、流れていってよいことを気楽に書く場所です。「📌 ピン」バッジが付いた投稿だけは先頭に固定され、90 日を過ぎても残ります。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step3" onclick="markStep(2)">STEP 3 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>@メンションで相手に届ける</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="flow-row">
+    <div class="flow-step">
+      <div class="flow-step-icon">＠</div>
+      <div class="flow-step-label">「@」に続けて<br>名前を打つ</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">📋</div>
+      <div class="flow-step-label">候補から<br>↑↓ で選ぶ</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-step-icon">🔔</div>
+      <div class="flow-step-label">相手のベルに<br>通知が届く</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">使い方</div>
+    <p>一言の欄で「<b>@</b>」（全角の「＠」でも OK）に続けて名前を打つと、メンバー候補がポップアップで出ます。<b>ニックネームでも本名でも</b>検索できます。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">キー操作</span>
+        <span class="reco-chip">↑ ↓ で候補を移動</span>
+        <span class="reco-chip">Enter または Tab で確定</span>
+        <span class="reco-chip">Esc で閉じる</span>
+      </div>
+    </div>
+    <p style="margin-top:8px">確定すると本文に <code>@名前</code> が入り、投稿後はその部分が色付きで表示されます。相手のヘッダー 🔔 ベルには「<b>◯◯さんがあなたをメンションしました</b>」と届きます。返信（コメント）欄でも同じように使えます。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">ワンポイント</div>
+    <p>候補に出るのは登録済みのメンバーです。<strong>ニックネームは各自がプロフィールの「基本情報」で設定したもの</strong>なので、呼び名で探せます。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step4" onclick="markStep(3)">STEP 4 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>返信する</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">返信欄の開き方</div>
+    <p>投稿の下にある「<b>💬 返信</b>」を押すと、その投稿の返信欄が開きます（数字は返信の件数）。もう一度押すと閉じます。</p>
+    <div class="mock">
+      <input class="mock-input" type="text" value="コメントを入力（500字・「@」で名前を選ぶとメンション・Cmd/Ctrl+Enterで送信）" readonly>
+      <button class="mock-btn" style="padding:6px 14px">送信</button>
+    </div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">ルール</span>
+        <span class="reco-chip">500 字まで</span>
+        <span class="reco-chip">Cmd / Ctrl ＋ Enter でも送信</span>
+        <span class="reco-chip">@メンション可</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">自分の返信には ✏️（編集）と 🗑️（削除）が出ます。削除は管理者・秘書もできます。返信すると、投稿した人のベルに「◯◯さんがコメントしました」と届きます。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step5" onclick="markStep(4)">STEP 5 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>リアクションを送る</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">基本の 5 種 ＋ 「＋」でほかの絵文字</div>
+    <p>投稿の下の「<b>➕</b>」を押すとピッカーが開きます。まず基本の 5 種が並び、右端の「<b>＋</b>」を押すとさらに多くの絵文字（拡張パレット）が開きます。</p>
+    <div class="mock">
+      <div style="font-size:20px;letter-spacing:6px">👍 ❤️ 👏 😊 😳 <span style="font-size:14px;color:var(--em-dark);font-weight:700">＋</span></div>
+      <div style="font-size:18px;letter-spacing:4px;margin-top:6px;opacity:.85">🤣 😂 😭 😍 🤩 🥰 😅 🤔 😎 😱 … 🙌 🙏 💪 👀 … 🔥 🎉 💯 ✨ 🚀 🏆 🎬 💡 ☕ 🍀</div>
+    </div>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">基本 5 種</span>
+        <span class="reco-chip">👍 いいね</span><span class="reco-chip">❤️ ハート</span><span class="reco-chip">👏 拍手</span><span class="reco-chip">😊 スマイル</span><span class="reco-chip">😳 びっくり</span>
+      </div>
+      <div class="reco-row"><span class="reco-label">拡張パレット</span>
+        <span class="reco-chip">🤣 爆笑・🔥 アツい・🎉 おめでとう！・💡 なるほど・☕ おつかれさま など 40 種以上</span>
+      </div>
+    </div>
+    <div class="opt-row" style="margin-top:10px">
+      <strong>もう一度押すと取り消し</strong>。押された絵文字は投稿の下に件数つきのピルで並び、ピルにマウスを乗せると <strong>誰が押したか</strong> が出ます。<strong>返信にも同じ「➕」</strong> があり、同じ絵文字が使えます。
+    </div>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">絵文字が動きます</div>
+    <p>絵文字は普段は止まっていて、<strong>マウスを乗せている間</strong>と<strong>自分が押した直後の数秒</strong>だけアニメーションします。常時動くわけではないので、タイムラインはうるさくなりません（OS の「視差効果を減らす」が ON の端末では動きません）。</p>
+  </div>
+
+  <div class="next-btn-wrap"><a class="next-btn" href="#step6" onclick="markStep(5)">STEP 6 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 6 ═══ -->
+<section class="step-section" id="step6">
+  <div class="step-section-head">
+    <div class="step-section-num">6</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 6</div>
+      <h2>ホームの「💭 みんなのつぶやき」と未読バッジ・通知</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">ホームのカード</div>
+    <p>ホームには「<b>💭 みんなのつぶやき</b>」カードがあり、最新 3 件が並びます。最後に見たあとに増えた分は「<b>新着 N件</b>」チップと「<b>NEW</b>」で分かります。カードの行を押すとその投稿へジャンプします。</p>
+    <div class="mock">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:700;font-size:13px">💭 みんなのつぶやき <span class="reco-chip" style="background:#FEE2E2;color:#B91C1C;border-color:#FCA5A5">新着 2件</span><span style="margin-left:auto;display:flex;gap:6px"><span class="mock-btn" style="padding:4px 10px;font-size:11px">＋ つぶやく</span><span class="mock-btn" style="padding:4px 10px;font-size:11px">すべて見る →</span></span></div>
+      <div style="font-size:12px;margin-top:8px;color:var(--text)">🧑 たろ <span style="color:var(--text-muted)">ディレクター・5分前</span> <b style="color:#B91C1C;font-size:10px">NEW</b><br>今日の現場、夕日がエモかった 📷 2 👍 3 💬 1</div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">ナビの赤いバッジ（未読）</div>
+    <p>ナビ「つぶやき」の右に出る赤い数字は、<b>最後に「みんなのつぶやき」を見てから増えた、他の人の投稿の数</b>です。「みんなのつぶやき」タブを開くと消えます。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">仕組み</span>
+        <span class="reco-chip">「見た」の記録はこの端末（ブラウザ）に保存</span>
+        <span class="reco-chip">別の端末では直近 24 時間分から数え直し</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">つぶやきページを開いている最中に新着が来ると、一覧を勝手に入れ替えずに先頭へ「🆕 新しいつぶやきが N 件あります — タップして表示」が出ます（書きかけの返信が消えないため）。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🔔 ベル通知との関係</div>
+    <p>つぶやき関連でヘッダーの 🔔 ベルに届く通知は次の 3 種類です。どれも「メンバー編集モーダル → 🔔 通知タブ」で自分だけ ON / OFF できます（既定はすべて ON）。</p>
+    <div class="fields">
+      <div class="reco-row"><span class="reco-label">届く通知</span>
+        <span class="reco-chip">@ つぶやきで @メンションされたとき</span>
+        <span class="reco-chip">💬 つぶやきへの返信</span>
+        <span class="reco-chip">❤️ つぶやきへのリアクション（同じ人からは 24 時間分まとめて 1 件）</span>
+      </div>
+    </div>
+    <p style="margin-top:8px;font-size:12px;color:var(--text-muted)">通知を押すと、その投稿までスクロールしてハイライトされます。自分の投稿に自分でリアクション・返信しても通知は来ません。設定の詳しい手順は <a href="/guide-notification-settings.html" style="color:var(--em-dark);font-weight:700">通知設定ガイド</a> を見てください。</p>
+  </div>
+
+  <div class="done-banner">
+    <span class="done-icon">✅</span>
+    <div class="done-text">つぶやきの使い方、マスター！<small>まずは「はじめまして」の一言から投稿してみましょう</small></div>
+  </div>
+</section>
+
+<!-- 完了 -->
+<section class="final" id="finished">
+  <div class="final-icon">💭</div>
+  <h2>さっそく一言、つぶやいてみよう</h2>
+  <p>リモートでも「仲間がいる」と感じられる場所です。現場の一コマ、今日の学び、ちょっとした相談。気軽にどうぞ。</p>
+  <a class="final-cta" href="/haruka.html" onclick="markStep(6)">システムを開く →</a>
+</section>
+
+<!-- 困ったら -->
+<section class="trouble">
+  <h3>💬 困ったら…</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">🙈</span>
+      <div><div class="trouble-q">自分の投稿が一覧に見当たらない</div><div class="trouble-a">「自分のつぶやき・返信」タブを開くか、フィルターを「全員」に戻してください。投稿から 90 日を過ぎた分は自動で非表示です</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">📷</span>
+      <div><div class="trouble-q">写真が 5 枚目から選べない</div><div class="trouble-a">1 投稿あたり 4 枚までです。分けて投稿してください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">＠</span>
+      <div><div class="trouble-q">メンション候補が出ない</div><div class="trouble-a">「@」の直後に空白を入れずに名前を打ってください。候補は登録済みメンバーのニックネーム・本名で探せます</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">✨</span>
+      <div><div class="trouble-q">「この絵文字はまだ使えません（システム更新待ち）」と出る</div><div class="trouble-a">拡張パレットの絵文字だけ一時的に使えない状態です。基本の 5 種はそのまま使えます。しばらくしてから試してください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🔕</span>
+      <div><div class="trouble-q">返信やメンションの通知が来ない</div><div class="trouble-a">メンバー編集モーダルの「🔔 通知」タブで、該当の種類が OFF になっていないか確認してください</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <p>HARUKA FILM SYSTEM ／ つぶやきの使い方 ／ 更新日 2026-09-26</p>
+</footer>
+
+<script>
+const TOTAL_STEPS = 6;
+const LS_KEY = 'haruka_guide_tweets_progress';
+let completed = parseInt(localStorage.getItem(LS_KEY) || '0', 10);
+function updateProgress() {
+  const pct = Math.min(100, (completed / TOTAL_STEPS) * 100);
+  document.getElementById('progress-fill').style.width = pct + '%';
+  const label = completed === 0 ? '準備OK' : (completed >= TOTAL_STEPS ? '完了 🎉' : '進行中');
+  document.getElementById('progress-text').textContent = `${label} ／ ${completed} / ${TOTAL_STEPS}`;
+  document.querySelectorAll('.progress-dot').forEach((d, i) => {
+    const step = i + 1;
+    d.classList.toggle('done', step <= completed);
+    d.classList.toggle('current', step === completed + 1);
+  });
+}
+function markStep(n){ if(n>completed){ completed=n; localStorage.setItem(LS_KEY, String(completed)); updateProgress(); } }
+updateProgress();
+document.querySelectorAll('.progress-dot').forEach(d=>{
+  d.addEventListener('click',()=>document.getElementById('step'+d.dataset.step)?.scrollIntoView({behavior:'smooth',block:'start'}));
+});
+</script>
+
+</body>
+</html>
