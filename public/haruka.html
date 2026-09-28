@@ -8971,7 +8971,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <input type="date" id="pf-from" class="form-select" style="width:140px" onchange="pfOnFilterChange()" aria-label="納品日（開始）">
       <span style="font-size:12px;color:var(--text-muted)">〜</span>
       <input type="date" id="pf-to" class="form-select" style="width:140px" onchange="pfOnFilterChange()" aria-label="納品日（終了）">
-      <label class="pf-check"><input type="checkbox" id="pf-latest-only" checked onchange="pfOnFilterChange()">最新の納品物のみ</label>
+      <label class="pf-check"><input type="checkbox" id="pf-latest-only" checked autocomplete="off" onchange="pfOnFilterChange()">最新の納品物のみ</label>
       <label class="pf-check" title="納品物のファイルがシステムに登録されていない作品（外部リンクのみで納品されたもの）も表示します"><input type="checkbox" id="pf-include-nofile" onchange="pfOnFilterChange()">ファイル未登録も表示</label>
       <label class="pf-check" title="まだ納品完了していない制作途中のクリエイティブ（初稿・修正中など）も表示します。既定は納品済みのみ"><input type="checkbox" id="pf-include-wip" onchange="pfOnFilterChange()">🚧 制作途中も表示</label>
       <label class="pf-check" title="カードを選んでまとめてダウンロードします"><input type="checkbox" id="pf-select-mode" onchange="pfToggleSelectMode(this.checked)">選択モード</label>
@@ -25379,6 +25379,10 @@ async function loadPortfolioPage() {
   if (!pfInitialized) {
     pfInitialized = true;
     if (currentUser?.id) pfAssigneeIds = new Set([currentUser.id]);
+    // 「最新の納品物のみ」は毎回 ON で始める。リロード／戻る時にブラウザが前回の OFF を
+    // フォーム状態として復元し、過去版（v1/v2…）まで納品済みに見えていたため明示的に戻す
+    const latestOnly = document.getElementById('pf-latest-only');
+    if (latestOnly) latestOnly.checked = true;
   }
   pfLoadPrefs();
   pfApplySizeClass();
