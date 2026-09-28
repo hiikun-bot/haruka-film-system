@@ -15327,11 +15327,14 @@ function driveFolderUrl(folderId) {
 
 // 指定フォルダ配下に trashed=false のアイテムが1個以上あるかを返す
 // エラー時は false（UIブロックしない・ログ警告のみ）
+// ADR 046: 請求書の下書き（Google スプレッドシート）は「提出済み」に数えない。
+//   同じフォルダに下書きシートを作るため、スプレッドシートを除外しないと未提出でも緑（提出済み）表示になる。
+//   振込管理の Drive スキャンも Google ネイティブ形式は対象外（PDF 等の実ファイルのみ）で揃っている。
 async function checkFolderHasFiles(drive, folderId) {
   if (!folderId) return false;
   try {
     const r = await drive.files.list({
-      q: `'${folderId}' in parents and trashed=false`,
+      q: `'${folderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.spreadsheet'`,
       fields: 'files(id)',
       pageSize: 1,
       supportsAllDrives: true,
@@ -15357,6 +15360,93 @@ async function mapLimit(items, limit, fn) {
   });
   await Promise.all(workers);
   return results;
+}
+
+// 「氏名」フォルダ名（同姓同名が他にいれば「氏名 (emailローカル部)」）。
+// POST /members/:id/invoice-folders/generate から切り出し（ADR 046 の請求書下書きでも使う・挙動同一）。
+async function resolveInvoiceMemberFolderLabel(user, targetId) {
+  const baseName = buildInvoiceMemberFolderName(user);
+  const emailLocal = (user.email || '').split('@')[0];
+  let folderName = baseName;
+  const { data: clashUsers } = await supabase
+    .from('users')
+    .select('id, full_name, nickname, email, is_active')
+    .neq('id', targetId);
+  const clashes = (clashUsers || []).filter(u => {
+    const b = buildInvoiceMemberFolderName(u);
+    return b === baseName;
+  });
+  if (clashes.length > 0) folderName = `${baseName} (${emailLocal})`;
+  return folderName;
+}
+
+// 請求書ルート/YYYY年/MM月/「氏名 YYYY年MM月」フォルダを用意し、本人＋管理者群に writer を付与する。
+// POST /members/:id/invoice-folders/generate の 1 か月分の処理を切り出したもの（挙動同一）。
+// ADR 046 の請求書下書き（POST /invoices/draft-sheet）もこれで置き場所を確保する。
+// @returns {Promise<{ folderId: string, created: boolean, permsGranted: number }>}
+async function ensureMemberInvoiceMonthFolder(drive, { yearFolderId, user, targetId, year, month, folderName, createdBy }) {
+  let permsGranted = 0;
+  const monthLabel = `${String(month).padStart(2, '0')}月`;
+  const monthFolderId = await getOrCreateFolder(drive, yearFolderId, monthLabel);
+
+  // 既存マッピングがあれば再利用、なければ Drive 上に getOrCreate
+  const { data: existing } = await supabase
+    .from('member_invoice_folders')
+    .select('folder_id, folder_url')
+    .eq('user_id', targetId).eq('year', year).eq('month', month)
+    .maybeSingle();
+
+  // 個人フォルダ名は「氏名 YYYY年MM月」形式で生成する
+  // （Drive 直開きで月が分からない問題への対応）
+  const memberFolderNameWithMonth = buildMemberFolderName(folderName, year, month);
+
+  let memberFolderId;
+  let created = false;
+  if (existing && existing.folder_id) {
+    memberFolderId = existing.folder_id;
+  } else {
+    memberFolderId = await getOrCreateFolder(drive, monthFolderId, memberFolderNameWithMonth);
+    // upsert
+    const { error: upErr } = await supabase
+      .from('member_invoice_folders')
+      .upsert({
+        user_id: targetId,
+        year,
+        month,
+        folder_id: memberFolderId,
+        folder_url: driveFolderUrl(memberFolderId),
+        created_by: createdBy,
+      }, { onConflict: 'user_id,year,month' });
+    if (upErr) throw new Error(`member_invoice_folders upsert 失敗: ${upErr.message}`);
+    created = true;
+  }
+
+  // 本人に writer 権限を付与（既にあれば skip）
+  try {
+    const granted = await ensureUserDrivePermission(drive, memberFolderId, user.email, 'writer');
+    if (granted) permsGranted++;
+  } catch (e) {
+    console.warn('[invoice-folders] permission grant 失敗:', e.message);
+  }
+
+  // 管理者群 (+ secretary 群、target が secretary でない場合のみ) にも writer 付与。
+  // 親フォルダ「請求書」ルートには admin のみが writer なので、個人フォルダ単位で明示的に付与する。
+  try {
+    const managerEmails = await getInvoiceFolderManagerEmails(targetId);
+    for (const em of managerEmails) {
+      if (em === (user.email || '').toLowerCase()) continue; // 本人は別途処理済み
+      try {
+        const g = await ensureUserDrivePermission(drive, memberFolderId, em, 'writer');
+        if (g) permsGranted++;
+      } catch (e2) {
+        console.warn('[invoice-folders] manager permission grant 失敗:', em, e2.message);
+      }
+    }
+  } catch (e) {
+    console.warn('[invoice-folders] getInvoiceFolderManagerEmails 失敗:', e.message);
+  }
+
+  return { folderId: memberFolderId, created, permsGranted };
 }
 
 // 一括取得（自分の行は view_own / 全員分は view_any）
@@ -15639,84 +15729,17 @@ router.post('/members/:id/invoice-folders/generate', requireAuth, async (req, re
     const yearFolderId = await getOrCreateFolder(drive, invoiceRootId, yearLabel);
 
     // メンバー名衝突回避（同姓同名チェック）
-    const baseName = buildInvoiceMemberFolderName(user);
-    const emailLocal = (user.email || '').split('@')[0];
-    let folderName = baseName;
-    {
-      const { data: clashUsers } = await supabase
-        .from('users')
-        .select('id, full_name, nickname, email, is_active')
-        .neq('id', targetId);
-      const clashes = (clashUsers || []).filter(u => {
-        const b = buildInvoiceMemberFolderName(u);
-        return b === baseName;
-      });
-      if (clashes.length > 0) folderName = `${baseName} (${emailLocal})`;
-    }
+    const folderName = await resolveInvoiceMemberFolderLabel(user, targetId);
 
     const result = [];
     for (const m of months) {
-      const monthLabel = `${String(m).padStart(2, '0')}月`;
-      const monthFolderId = await getOrCreateFolder(drive, yearFolderId, monthLabel);
-
-      // 既存マッピングがあれば再利用、なければ Drive 上に getOrCreate
-      const { data: existing } = await supabase
-        .from('member_invoice_folders')
-        .select('folder_id, folder_url')
-        .eq('user_id', targetId).eq('year', year).eq('month', m)
-        .maybeSingle();
-
-      // 個人フォルダ名は「氏名 YYYY年MM月」形式で生成する
-      // （Drive 直開きで月が分からない問題への対応）
-      const memberFolderNameWithMonth = buildMemberFolderName(folderName, year, m);
-
-      let memberFolderId;
-      let created = false;
-      if (existing && existing.folder_id) {
-        memberFolderId = existing.folder_id;
-        auditFoldersSkipped++;
-      } else {
-        memberFolderId = await getOrCreateFolder(drive, monthFolderId, memberFolderNameWithMonth);
-        // upsert
-        const { error: upErr } = await supabase
-          .from('member_invoice_folders')
-          .upsert({
-            user_id: targetId,
-            year,
-            month: m,
-            folder_id: memberFolderId,
-            folder_url: driveFolderUrl(memberFolderId),
-            created_by: req.user.id,
-          }, { onConflict: 'user_id,year,month' });
-        if (upErr) throw new Error(`member_invoice_folders upsert 失敗: ${upErr.message}`);
-        auditFoldersCreated++;
-        created = true;
-      }
-
-      // 本人に writer 権限を付与（既にあれば skip）
-      try {
-        const granted = await ensureUserDrivePermission(drive, memberFolderId, user.email, 'writer');
-        if (granted) auditPermsGranted++;
-      } catch (e) {
-        console.warn('[invoice-folders] permission grant 失敗:', e.message);
-      }
-
-      // 管理者群 (+ secretary 群、target が secretary でない場合のみ) にも writer 付与。
-      // 親フォルダ「請求書」ルートには admin のみが writer なので、個人フォルダ単位で明示的に付与する。
-      try {
-        const managerEmails = await getInvoiceFolderManagerEmails(targetId);
-        for (const em of managerEmails) {
-          if (em === (user.email || '').toLowerCase()) continue; // 本人は別途処理済み
-          try {
-            const g = await ensureUserDrivePermission(drive, memberFolderId, em, 'writer');
-            if (g) auditPermsGranted++;
-          } catch (e2) {
-            console.warn('[invoice-folders] manager permission grant 失敗:', em, e2.message);
-          }
-        }
-      } catch (e) {
-        console.warn('[invoice-folders] getInvoiceFolderManagerEmails 失敗:', e.message);
-      }
+      const r = await ensureMemberInvoiceMonthFolder(drive, {
+        yearFolderId, user, targetId, year, month: m, folderName, createdBy: req.user.id,
+      });
+      if (r.created) auditFoldersCreated++; else auditFoldersSkipped++;
+      auditPermsGranted += r.permsGranted;
+      const memberFolderId = r.folderId;
+      const created = r.created;
 
       result.push({
         month: m,
@@ -15921,26 +15944,20 @@ async function buildPendingLinesPayload(pendingLineIds, linesByProject, projectN
     });
 }
 
-// 請求書プレビュー：自分のクリエイティブ一覧＋単価を返す（:idより前に定義必須）
-// ADR 037: 承認待ち（pricing_approval='pending'）の line を単価根拠に含む明細は止めずに返し、
-//   - 各 item に pricing_pending: true|false を付ける
-//   - ?with_meta=1 のときだけ { items, pending_lines } の形で承認待ち line 一覧を添える
-//     （既定は従来どおり配列を返す。既存フロント loadInvoicePreview は配列前提のため後方互換を維持）
-router.get('/invoices/preview-items', async (req, res) => {
-  const uid = req.user?.id;
-  const year  = parseInt(req.query.year);
-  const month = parseInt(req.query.month);
-  if (!uid || !year || !month) return res.status(400).json({ error: 'パラメータ不足' });
-
-  // Stage 5: 旧 project_rates / director_rates / producer_rates の参照を撤去し、
-  // project_estimate_lines + project_estimate_line_costs (ADR 002+003+004+005) を read する。
-  const { resolveCreativeRoleCost } = require('../utils/pricing');
-
-  // 自分がアサインされたクリエイティブを取得（月フィルタなし、全部取得してJS側でフィルタ）
-  // Issue #192: ディレクター本人（projects.director_id = uid）のクリエイティブも対象に含める。
-  // 加えてプロデューサー本人（projects.producer_id = uid）の案件もUNIONで取得する。
-  // creative_assignments に居ないケースを救うため、自分が担当する案件をUNIONで取得する。
-  const CREATIVE_SELECT = `
+// ─────────────────────────────────────────────────────────────────────────
+// 請求書プレビューの「対象クリエイティブ候補の収集 → 当月判定」部分（ADR 026/034）。
+// /invoices/preview-items と ADR 046 の請求書下書き（POST /invoices/draft-sheet）で共有する。
+// preview-items から処理をそのまま切り出したもの（挙動は従来と同一。変更するときは両方への影響を確認）。
+//   - 候補: 自分のアサイン / 自分が D・P の案件 / 納品時スナップショット D（ADR 009）
+//   - 判定: isCreativeOfUser かつ resolveBillingMonth === 対象月
+// @param {{ uid: string, year: number, month: number, select?: string }} p
+// @returns {Promise<{ error: object|null, creatives: object[] }>}
+// ─────────────────────────────────────────────────────────────────────────
+// 自分がアサインされたクリエイティブを取得（月フィルタなし、全部取得してJS側でフィルタ）
+// Issue #192: ディレクター本人（projects.director_id = uid）のクリエイティブも対象に含める。
+// 加えてプロデューサー本人（projects.producer_id = uid）の案件もUNIONで取得する。
+// creative_assignments に居ないケースを救うため、自分が担当する案件をUNIONで取得する。
+const INVOICE_PREVIEW_CREATIVE_SELECT = `
     id, file_name, status, creative_type, final_deadline, draft_deadline, delivered_at,
     first_draft_submitted_at,
     delivered_director_ids, delivered_producer_ids,
@@ -15949,6 +15966,7 @@ router.get('/invoices/preview-items', async (req, res) => {
     creative_assignments(user_id, role, rank_applied, users(id, full_name, role))
   `;
 
+async function collectInvoiceCandidateCreatives({ uid, year, month, select = INVOICE_PREVIEW_CREATIVE_SELECT }) {
   // 当月範囲（DB側絞り込みと下のJS側フィルタの両方で同じ値を使う）
   const startDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
   const endDate   = new Date(year, month, 0).toISOString().slice(0, 10);
@@ -15980,13 +15998,13 @@ router.get('/invoices/preview-items', async (req, res) => {
   // 返却データの形（全アサイン入り配列）を旧実装と同一に保つ。
   const [{ data: assignedCreatives, error: cErr }, { data: directedProjects }, { data: producedProjects }] = await Promise.all([
     supabase.from('creatives')
-      .select(`${CREATIVE_SELECT}, assignee_filter:creative_assignments!inner(user_id)`)
+      .select(`${select}, assignee_filter:creative_assignments!inner(user_id)`)
       .eq('assignee_filter.user_id', uid)
       .or(MONTH_RANGE_OR),
     supabase.from('projects').select('id').eq('director_id', uid),
     supabase.from('projects').select('id').eq('producer_id', uid),
   ]);
-  if (cErr) return res.status(500).json({ error: cErr.message });
+  if (cErr) return { error: cErr, creatives: [] };
 
   // ディレクター/プロデューサー本人の案件にぶら下がる creatives を別途取得（assignment 無しでも拾えるように）
   const leaderProjectIds = Array.from(new Set([
@@ -15997,7 +16015,7 @@ router.get('/invoices/preview-items', async (req, res) => {
   if (leaderProjectIds.length) {
     const { data: lc } = await supabase
       .from('creatives')
-      .select(CREATIVE_SELECT)
+      .select(select)
       .in('project_id', leaderProjectIds)
       .or(MONTH_RANGE_OR);
     leaderCreatives = lc || [];
@@ -16008,7 +16026,7 @@ router.get('/invoices/preview-items', async (req, res) => {
   try {
     const { data: sc } = await supabase
       .from('creatives')
-      .select(CREATIVE_SELECT)
+      .select(select)
       .contains('delivered_director_ids', [uid])
       .or(MONTH_RANGE_OR);
     snapshotCreatives = sc || [];
@@ -16034,6 +16052,28 @@ router.get('/invoices/preview-items', async (req, res) => {
     if (!isCreativeOfUser(c, uid)) return false;
     return resolveBillingMonth(c, c.projects) === targetYm;
   });
+
+  return { error: null, creatives: myCreatives };
+}
+
+// 請求書プレビュー：自分のクリエイティブ一覧＋単価を返す（:idより前に定義必須）
+// ADR 037: 承認待ち（pricing_approval='pending'）の line を単価根拠に含む明細は止めずに返し、
+//   - 各 item に pricing_pending: true|false を付ける
+//   - ?with_meta=1 のときだけ { items, pending_lines } の形で承認待ち line 一覧を添える
+//     （既定は従来どおり配列を返す。既存フロント loadInvoicePreview は配列前提のため後方互換を維持）
+router.get('/invoices/preview-items', async (req, res) => {
+  const uid = req.user?.id;
+  const year  = parseInt(req.query.year);
+  const month = parseInt(req.query.month);
+  if (!uid || !year || !month) return res.status(400).json({ error: 'パラメータ不足' });
+
+  // Stage 5: 旧 project_rates / director_rates / producer_rates の参照を撤去し、
+  // project_estimate_lines + project_estimate_line_costs (ADR 002+003+004+005) を read する。
+  const { resolveCreativeRoleCost } = require('../utils/pricing');
+
+  // 候補収集〜当月判定は collectInvoiceCandidateCreatives に切り出し（ADR 046 の請求書下書きと共有・挙動は従来同一）
+  const { error: cErr, creatives: myCreatives } = await collectInvoiceCandidateCreatives({ uid, year, month });
+  if (cErr) return res.status(500).json({ error: cErr.message });
 
   // 対象案件の単価を新スキーマ (lines + line_costs) からまとめて取得
   // ADR 002 (見積行統合) + ADR 005 (status filter) + Stage 5 (旧 rates テーブル参照撤去)
@@ -16190,6 +16230,139 @@ router.get('/invoices/preview-items', async (req, res) => {
   const withMeta = ['1', 'true'].includes(String(req.query.with_meta || '').toLowerCase());
   if (withMeta) return res.json({ items: result, pending_lines: pendingLines });
   res.json(result);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 📄 請求書テンプレ（スプレッドシート）へ納品済み分を下書き出力 — ADR 046
+// POST /api/haruka/invoices/draft-sheet  body: { year, month, force? }
+//   - 本人専用（req.user.id 固定。他人の分は作らない）。権限 invoice_folder.generate_own（実効ロールで判定）
+//   - 本人の「氏名 YYYY年MM月」請求書フォルダ（無ければ既存の生成ロジックで作成）にテンプレのコピーを作り、
+//     当月計上（preview-items と同じ判定）のうち実際に納品済み（on_first_draft は初稿提出済み）の分を書き込む
+//   - 税抜単価は空欄・源泉区分は「対象」・発行者区分は空欄（ADR 046 の決定）
+//   - 同名ファイルが既にあれば作らずにそのリンクを返す（existing: true）。force: true のときだけ別名で新規作成
+//     （既存ファイルは上書きも削除もしない）
+// レスポンス: { url, file_id, existing, groups, creatives }
+// ─────────────────────────────────────────────────────────────────────────
+const INVOICE_DRAFT_CREATIVE_SELECT = INVOICE_PREVIEW_CREATIVE_SELECT
+  .replace('clients(name, client_code)', 'clients(name, client_code, billing_org)');
+
+router.post('/invoices/draft-sheet', requireAuth, async (req, res) => {
+  const draft = require('../utils/invoice-sheet-draft');
+  try {
+    const codes = await getEffectiveRoleCodes(req);
+    const { roleCodesHavePermission } = require('../utils/roles');
+    const ok = codes.length > 0
+      ? await roleCodesHavePermission(codes, 'invoice_folder.generate_own')
+      : await userHasPermission(getEffectiveRole(req), 'invoice_folder.generate_own');
+    if (!ok) return res.status(403).json({ error: '請求書の下書きを作る権限がありません' });
+
+    const uid = req.user.id; // 本人固定（VIEW AS でも他人の分は作らない）
+    const year = parseInt(req.body?.year, 10);
+    const month = parseInt(req.body?.month, 10);
+    if (!Number.isFinite(year) || year < 2000 || year > 2100 || !Number.isFinite(month) || month < 1 || month > 12) {
+      return res.status(400).json({ error: '対象の年月が正しくありません' });
+    }
+    const force = req.body?.force === true;
+
+    const { data: user, error: userErr } = await supabase
+      .from('users')
+      .select('id, email, full_name, nickname, is_active, postal_code, address, phone, invoice_registration_number, bank_name, bank_code, branch_name, branch_code, account_type, account_number, account_holder_kana')
+      .eq('id', uid)
+      .maybeSingle();
+    if (userErr) throw new Error(`users 取得失敗: ${userErr.message}`);
+    if (!user) return res.status(404).json({ error: 'メンバー情報が見つかりません' });
+    if (!user.email) return res.status(400).json({ error: 'メールアドレスが未登録のため請求書フォルダを用意できません' });
+
+    // 1. 置き場所（本人の請求書フォルダ）を用意 — 既存の請求書フォルダ生成ロジックを共用
+    const drive = await getDriveService();
+    const invoiceRootId = await getInvoiceRootFolderId(drive);
+    const yearFolderId = await getOrCreateFolder(drive, invoiceRootId, `${year}年`);
+    const folderName = await resolveInvoiceMemberFolderLabel(user, uid);
+    const folder = await ensureMemberInvoiceMonthFolder(drive, {
+      yearFolderId, user, targetId: uid, year, month, folderName, createdBy: uid,
+    });
+    if (folder.created) {
+      try {
+        await supabase.from('invoice_folder_audit_log').insert({
+          approved_by_user_id: uid,
+          command_args: { target_user_id: uid, year, months: [month], is_self: true, source: 'invoice_draft_sheet' },
+          folders_created_count: 1,
+          folders_skipped_count: 0,
+          permissions_granted_count: folder.permsGranted,
+          permissions_revoked_count: 0,
+          duration_ms: 0,
+          status: 'success',
+        });
+      } catch (e) {
+        console.warn('[invoice-draft-sheet] audit log insert 失敗:', e.message);
+      }
+    }
+
+    // 2. 同名ファイルがあれば作らずに返す（本人の追記を上書きしない）
+    const displayName = (user.full_name && user.full_name.trim()) || (user.nickname && user.nickname.trim()) || user.email.split('@')[0];
+    const baseFileName = draft.buildDraftFileName(year, month, displayName);
+    const existing = await draft.findExistingDraft(drive, folder.folderId, baseFileName);
+    if (existing && !force) {
+      return res.json({ url: draft.sheetUrl(existing.id), file_id: existing.id, existing: true, groups: null, creatives: null });
+    }
+
+    // 3. 対象クリエイティブ（preview-items と同じ候補収集・当月判定 → 実際に納品済みだけ）
+    let collected = await collectInvoiceCandidateCreatives({ uid, year, month, select: INVOICE_DRAFT_CREATIVE_SELECT });
+    if (collected.error && /billing_org/.test(collected.error.message || '')) {
+      // clients.billing_org 未適用環境のフォールバック（区分は空欄になる）
+      console.warn('[invoice-draft-sheet] billing_org 列なし → fallback:', collected.error.message);
+      collected = await collectInvoiceCandidateCreatives({ uid, year, month });
+    }
+    if (collected.error) throw new Error(`クリエイティブ取得失敗: ${collected.error.message}`);
+    const { groups, creativeCount } = draft.groupCreativesForDraft(collected.creatives, uid);
+
+    // マスタ（案件名プルダウン）に足す進行中案件名
+    let activeProjectNames = [];
+    {
+      const { data: projs, error: pErr } = await supabase
+        .from('projects').select('name').eq('status', '進行中').eq('is_hidden', false);
+      if (pErr) console.warn('[invoice-draft-sheet] 進行中案件の取得失敗:', pErr.message);
+      activeProjectNames = (projs || []).map(p => p.name).filter(Boolean);
+    }
+
+    // 4. テンプレをコピーして書き込む
+    const { data: tplSetting } = await supabase
+      .from('system_settings').select('value').eq('key', 'invoice_sheet_template_id').maybeSingle();
+    const templateId = (tplSetting && String(tplSetting.value || '').trim()) || draft.DEFAULT_TEMPLATE_ID;
+    let fileName = baseFileName;
+    if (existing) {
+      // 作り直し: 既存は残し、JST の作成日時を付けた別名で作る
+      const stamp = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 16).replace(/[-:]/g, '').replace(' ', '-');
+      fileName = `${baseFileName}（再作成 ${stamp}）`;
+    }
+    const copied = await draft.copyTemplate(drive, templateId, folder.folderId, fileName);
+    const auth = new google.auth.GoogleAuth({
+      credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY),
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    const sheets = google.sheets({ version: 'v4', auth });
+    try {
+      await draft.writeDraftToSpreadsheet(sheets, copied.id, {
+        groups,
+        user,
+        year,
+        month,
+        extraProjectNames: activeProjectNames,
+        meta: { user_id: uid, generated_at: new Date().toISOString() },
+      });
+    } catch (e) {
+      // 書き込みに失敗した中途半端なコピーはゴミ箱へ（完全削除はしない）
+      try {
+        await drive.files.update({ fileId: copied.id, requestBody: { trashed: true }, supportsAllDrives: true });
+      } catch (_) { /* noop */ }
+      throw e;
+    }
+
+    res.json({ url: draft.sheetUrl(copied.id), file_id: copied.id, existing: false, groups: groups.length, creatives: creativeCount });
+  } catch (e) {
+    console.error('[invoice-draft-sheet][POST /invoices/draft-sheet]', e);
+    res.status(500).json({ error: `請求書の下書き作成に失敗しました: ${e.message}` });
+  }
 });
 
 // 請求書詳細（PDF印刷用）― preview-items より後に定義
