@@ -11705,10 +11705,8 @@ router.post('/creatives/bulk-deliver', requireAuth, async (req, res) => {
     return res.status(403).json({ error: '一括納品は管理者・秘書・プロデューサー・ディレクターのみ実行できます' });
   }
 
-  const reason = String(req.body?.reason || '').trim();
-  if (!reason) {
-    return res.status(400).json({ error: '一括納品には理由が必須です' });
-  }
+  // 理由は任意（2026-09-30 PD要望で必須を外した）。未入力でも実行者・時刻・batch は監査に残る。
+  const reason = String(req.body?.reason || '').trim() || '理由未入力';
   const items = req.body?.items;
   if (!Array.isArray(items) || items.length < 1) {
     return res.status(400).json({ error: 'items は1件以上指定してください' });
@@ -12682,7 +12680,7 @@ router.post('/creatives/:id/share-client-review', requireAuth, requirePermission
 //
 // セキュリティ:
 //   - 管理者のみ実行可（VIEW AS の偽装を許さないため effectiveRole で判定）
-//   - 理由必須
+//   - 理由は任意（未入力なら「理由未入力」で監査ログに記録。実行者・時刻は常に残る）
 //
 // 統計の整合性ガード:
 //   - 該当 creative が請求書明細に紐づいている場合:
@@ -12695,9 +12693,8 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
   if (role !== 'admin') return res.status(403).json({ error: '管理者のみ実行できます' });
 
   const { status: newStatus, reason } = req.body || {};
-  const r = String(reason || '').trim();
+  const r = String(reason || '').trim() || '理由未入力';
   if (!newStatus) return res.status(400).json({ error: 'status は必須です' });
-  if (!r)         return res.status(400).json({ error: '理由は必須です' });
 
   // ADR 011 補足: 遷移 audit log のためコメント3種も同時取得しておく。
   // ADR 034: 初稿提出日時の未設定判定のため first_draft_submitted_at も取得（列未適用環境は fallback）。
