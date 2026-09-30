@@ -4844,6 +4844,16 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <div class="sec-label">請求書（マイページ）</div>
         <button class="btn-primary" onclick="openGenerateInvoiceModal()">＋ 今月の請求書を作成</button>
       </div>
+      <!-- 📄 請求書テンプレ（スプレッドシート）の下書き — ADR 046。invoice_folder.generate_own（実効ロール）で表示 -->
+      <div id="inv-draft-sheet-card" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px">
+        <div style="font-weight:600;font-size:14px;margin-bottom:8px">📄 請求書テンプレ（スプレッドシート）の下書き</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <select id="inv-draft-month" class="form-select" style="width:auto;min-width:130px;font-size:13px;padding:6px 10px" aria-label="下書きを作る月"></select>
+          <button type="button" id="inv-draft-btn" class="btn-primary" onclick="createInvoiceDraftSheet(false)" style="font-size:13px">📄 請求書の下書きを作る（納品済みを自動入力）</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:8px;line-height:1.6">単価は入っていません。単価の入力と、HFSにない分の追記をしてからPDFで提出してください</div>
+        <div id="inv-draft-result" style="display:none;margin-top:10px;font-size:12px;line-height:1.6"></div>
+      </div>
       <div id="inv-my-list"><div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div></div></div>
     </div>
 
@@ -35182,8 +35192,83 @@ function renderEditorDash(today) {
 }
 
 async function loadInvoices() {
+  try { renderInvoiceDraftSheetCard(); } catch (e) { console.warn('[invoice-draft-sheet] render failed', e); }
   await Promise.all([loadMyInvoices(), hasPermission('invoice.all_view') ? loadAdminInvoices() : Promise.resolve()]);
   document.getElementById('inv-admin-section').style.display = hasPermission('invoice.all_view') ? '' : 'none';
+}
+
+// ==================== 📄 請求書テンプレの下書き（ADR 046） ====================
+// 本人の請求書フォルダに、請求書テンプレ（スプレッドシート）のコピーを作って当月の納品済み分を書き込む。
+// 表示は実効ロールの hasPermission('invoice_folder.generate_own')（VIEW AS 準拠・ADR 015）。
+// API は本人固定（req.user.id）なので、VIEW AS 中でも作られるのは自分の分だけ。
+function renderInvoiceDraftSheetCard() {
+  const card = document.getElementById('inv-draft-sheet-card');
+  if (!card) return;
+  const can = hasPermission('invoice_folder.generate_own');
+  card.style.display = can ? '' : 'none';
+  if (!can) return;
+  const sel = document.getElementById('inv-draft-month');
+  if (sel && !sel.options.length) {
+    // 既定は今月（JST）。前月以前も選べるよう 12 か月分を並べる
+    const now = _invoiceFolderJstNow();
+    for (let i = 0; i < 12; i++) {
+      let y = now.year, m = now.month - i;
+      while (m <= 0) { m += 12; y -= 1; }
+      const opt = document.createElement('option');
+      opt.value = `${y}-${m}`;
+      opt.textContent = `${y}年${m}月分`;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+async function createInvoiceDraftSheet(force) {
+  const sel = document.getElementById('inv-draft-month');
+  const btn = document.getElementById('inv-draft-btn');
+  const out = document.getElementById('inv-draft-result');
+  const [year, month] = String(sel?.value || '').split('-').map(n => parseInt(n, 10));
+  if (!year || !month) { showToast('対象の月を選んでください', 'error'); return; }
+  if (force && !window.confirm(`${year}年${month}月分の下書きを作り直します。\n今ある下書きはそのまま残し、新しい下書きを別名で作ります。よろしいですか？`)) return;
+  // ポップアップブロック回避: クリック直後に空タブを開き、完了後に URL を入れる
+  let win = null;
+  try { win = window.open('', '_blank'); } catch (_) { win = null; }
+  if (btn) { btn.disabled = true; btn.textContent = '📄 作成中…（10〜30秒ほどかかります）'; }
+  if (out) { out.style.display = 'none'; out.innerHTML = ''; }
+  try {
+    const res = await apiFetch(`${API}/invoices/draft-sheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ year, month, force: !!force }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || '下書きの作成に失敗しました');
+    const url = json.url;
+    if (win && url) { try { win.location.href = url; } catch (_) { window.open(url, '_blank', 'noopener'); } }
+    else if (url) window.open(url, '_blank', 'noopener');
+    const link = url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="color:var(--em-dark);font-weight:600">📄 下書きを開く</a>` : '';
+    if (json.existing) {
+      showToast(`${year}年${month}月分の下書きは作成済みです。今ある下書きを開きます`, 'info');
+      if (out) {
+        out.style.display = '';
+        out.innerHTML = `<div style="padding:8px 10px;border-radius:8px;background:#FFF8E1;border:1px solid #FFE082;color:#6D4C00">この月の下書きはすでにあります（書き込み済みの内容を消さないよう、新しくは作っていません）。 ${link}
+          <button type="button" class="btn-sm" onclick="createInvoiceDraftSheet(true)" style="margin-left:6px">🔁 作り直す</button></div>`;
+      }
+    } else {
+      const msg = json.groups
+        ? `${year}年${month}月分の下書きを作りました（納品済み ${json.creatives} 本・${json.groups} 明細）`
+        : `${year}年${month}月分の下書きを作りました（この月の納品済みは見つかりませんでした）`;
+      showToast(msg, 'success');
+      if (out) {
+        out.style.display = '';
+        out.innerHTML = `<div style="padding:8px 10px;border-radius:8px;background:#E8F5E9;border:1px solid #A5D6A7;color:#1B5E20">${esc(msg)} ${link}</div>`;
+      }
+    }
+  } catch (e) {
+    if (win) { try { win.close(); } catch (_) { /* noop */ } }
+    showToast(e.message || '下書きの作成に失敗しました', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📄 請求書の下書きを作る（納品済みを自動入力）'; }
+  }
 }
 
 async function loadMyInvoices() {
