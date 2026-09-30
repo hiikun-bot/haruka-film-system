@@ -30098,7 +30098,7 @@ function renderPayout() {
     // メモ（未振込=入力・送信時にPOST／振込済=テキスト表示のみ）
     const memoCell = paid
       ? `<span style="font-size:12px;color:var(--text-muted)">${esc(r.memo || '')}</span>`
-      : `<input class="form-input" id="po-memo-${rid}" value="${esc(r.memo || '')}" placeholder="メモ" style="width:120px;padding:4px 8px;font-size:12px">`;
+      : `<input class="form-input" id="po-memo-${rid}" value="${esc(poMemoValue(r))}" placeholder="メモ" style="width:120px;padding:4px 8px;font-size:12px" oninput="poMemoDraft('${rid}',this.value)" onchange="poSaveMemo('${rid}',this)" onkeydown="if(event.key==='Enter'&&!event.isComposing){this.blur()}">`;
 
     // チャット（個別チャットを開く）— Chatwork がある人は Chatwork、無い人は Slack を表示
     // （Slack の人は送信ボタンの自動送信対象外なので 📋 文面コピーを添える）
@@ -30158,6 +30158,38 @@ function renderPayout() {
         `<div style="font-size:12px;margin-bottom:3px">・<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)}</a></div>`
       ).join('');
   }
+}
+
+// メモのインライン保存（入力確定時に PATCH）。保存前の入力は下書きとして保持し、
+// バックグラウンドの Drive スキャン等で一覧が再描画されても消えないようにする。
+const _poMemoDrafts = {};
+function poMemoValue(r) {
+  const k = String(r.id);
+  return Object.prototype.hasOwnProperty.call(_poMemoDrafts, k) ? _poMemoDrafts[k] : (r.memo || '');
+}
+function poMemoDraft(id, value) {
+  _poMemoDrafts[String(id)] = value;
+}
+async function poSaveMemo(id, input) {
+  const r = poRecord(id);
+  if (!r) return;
+  const memo = String(input.value || '').trim();
+  if (memo === (r.memo || '')) { delete _poMemoDrafts[String(id)]; return; }
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'メモの保存に失敗しました');
+    // 入力中に上書きされていなければ下書きを破棄（保存後にさらに打ち直した分は残す）
+    if ((_poMemoDrafts[String(id)] || '').trim() === memo) delete _poMemoDrafts[String(id)];
+    // 再描画はせずローカルの record だけ更新（Tab 移動中のフォーカスを奪わない）
+    const cur = poRecord(id);
+    if (cur) cur.memo = data.record ? data.record.memo : (memo || null);
+    showToast('メモを保存しました', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // 請求額のインライン手入力（prompt → PATCH）
