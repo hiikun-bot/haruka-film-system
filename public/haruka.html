@@ -29858,7 +29858,7 @@ function renderTeamLoad() {
 //   ナビは applyRoleBasedUI、ページ内は loadPayoutPage 冒頭の二重ガード（ADR 015）。
 // - GET は呼ぶたびにサーバー側で Drive を再スキャンする（新PDFがある月は数十秒かかりうる）ため、
 //   ロード中スケルトンを必ず表示する。
-// - 月の既定値は JST の現在月（sv-SE + Asia/Tokyo。サーバーローカル時刻に依存しない・CLAUDE.md 共通ルール）。
+// - 月の既定値は未振込が残る一番古い月（GET /admin/payouts/default-month・直近6か月）。全員済みなら JST の現在月。
 // - 名前表示は NameDisplay.full（「ニックネーム（名前）」標準・PR #502）＋ esc()。
 
 let _poYear = null, _poMonth = null;
@@ -29895,10 +29895,30 @@ function loadPayoutPage() {
     return;
   }
   if (_poYear == null) {
-    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD（JST）
-    _poYear = parseInt(today.slice(0, 4), 10);
-    _poMonth = parseInt(today.slice(5, 7), 10);
+    poInitDefaultMonth();
+    return;
   }
+  poFetch();
+}
+
+// 初回表示の月: 未振込が残っている一番古い月（全員振込済みなら JST の現在月）。
+// 月が替わっても前月の振込が終わるまでは前月を開く（毎回「◀ 前月」で戻す手間をなくす）。
+let _poDefaultMonthLoading = false;
+async function poInitDefaultMonth() {
+  if (_poDefaultMonthLoading) return;
+  _poDefaultMonthLoading = true;
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD（JST）
+  let y = parseInt(today.slice(0, 4), 10), m = parseInt(today.slice(5, 7), 10);
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/default-month`);
+    const data = await res.json();
+    if (res.ok && data.year && data.month) { y = data.year; m = data.month; }
+  } catch (e) {
+    console.warn('[payout][default-month]', e); // 取れなければ現在月のまま
+  } finally {
+    _poDefaultMonthLoading = false;
+  }
+  if (_poYear == null) { _poYear = y; _poMonth = m; }
   poFetch();
 }
 

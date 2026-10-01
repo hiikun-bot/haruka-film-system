@@ -27249,6 +27249,41 @@ router.get('/admin/payouts', requireAuth, requirePermission('payout.page'), asyn
   }
 });
 
+// GET /api/haruka/admin/payouts/default-month — 画面を開いたときの既定月
+// 未振込（在籍者）が残っている一番古い月を返す。全員振込済みなら JST の現在月。
+// 直近 PAYOUT_DEFAULT_LOOKBACK_MONTHS か月より古い取り残しは対象外（いつまでも過去月に固定されないように）。
+const PAYOUT_DEFAULT_LOOKBACK_MONTHS = 6;
+router.get('/admin/payouts/default-month', requireAuth, requirePermission('payout.page'), async (req, res) => {
+  try {
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD（JST）
+    const curY = parseInt(today.slice(0, 4), 10);
+    const curM = parseInt(today.slice(5, 7), 10);
+    const curIdx = curY * 12 + (curM - 1);
+    const minIdx = curIdx - PAYOUT_DEFAULT_LOOKBACK_MONTHS;
+    const minY = Math.floor(minIdx / 12);
+
+    const { data: recs, error } = await supabase
+      .from('payout_records')
+      .select('year, month, users!inner(is_active)')
+      .neq('status', 'paid')
+      .gte('year', minY)
+      .eq('users.is_active', true);
+    if (error) throw new Error(error.message);
+
+    let best = null;
+    for (const r of (recs || [])) {
+      const idx = Number(r.year) * 12 + (Number(r.month) - 1);
+      if (idx < minIdx || idx > curIdx) continue;
+      if (best == null || idx < best) best = idx;
+    }
+    const idx = best == null ? curIdx : best;
+    res.json({ year: Math.floor(idx / 12), month: (idx % 12) + 1, has_unpaid: best != null });
+  } catch (e) {
+    console.error('[payouts][GET default-month]', e);
+    res.status(500).json({ error: e.message || '既定月の取得に失敗しました' });
+  }
+});
+
 // POST /api/haruka/admin/payouts/scan { year, month } — Drive スキャンを実行して最新一覧を返す
 // （画面はまず scan=0 で即描画し、このエンドポイントをバックグラウンドで叩いて差分反映する）
 router.post('/admin/payouts/scan', requireAuth, requirePermission('payout.page'), async (req, res) => {
