@@ -18806,10 +18806,9 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     if (detErr) return res.status(500).json({ error: detErr.message });
   }
 
-  // ADR 047: 作成した請求書の PDF を本人の Drive 請求書フォルダへ自動保存（失敗しても作成は成功扱い）
-  const driveSync = await tryAutoSyncInvoicePdf(invoice.id, req.user?.id, 'generate');
-
-  res.json({ ok: true, id: invoice.id, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: itemRows.length, ...driveSync });
+  // ADR 047: Drive への PDF 自動保存は「提出時」に行う（下書きを請求書フォルダに置くと
+  // 振込管理のスキャンが承認状態を見ずに合算してしまうため、作成時には保存しない）
+  res.json({ ok: true, id: invoice.id, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: itemRows.length });
 });
 
 // 請求書発行（draft → issued）
@@ -18876,6 +18875,13 @@ router.post('/invoices/:id/reject', requireAuth, requireLevel('admin'), async (r
     .eq('id', req.params.id)
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
+  // ADR 047: 差し戻した請求書は支払対象ではないので、提出時に置いた Drive の PDF をゴミ箱へ
+  // （残すと振込管理のスキャンが合算してしまう。再提出で再び保存される）
+  try {
+    await trashInvoicePdfOnDrive(data);
+  } catch (e) {
+    console.warn('[invoice-pdf] 差戻時の Drive PDF ゴミ箱送り失敗:', e.message);
+  }
   res.json(data);
 });
 
@@ -19105,13 +19111,17 @@ async function trashInvoicePdfOnDrive(inv) {
 router.post('/invoices/:id/drive-pdf', requireAuth, async (req, res) => {
   try {
     const { data: inv, error } = await supabase
-      .from('invoices').select('id, issuer_id, invoice_type').eq('id', req.params.id).maybeSingle();
+      .from('invoices').select('id, issuer_id, invoice_type, status').eq('id', req.params.id).maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
     if (!inv) return res.status(404).json({ error: '請求書が見つかりません' });
     if (inv.issuer_id !== req.user?.id && !(await isStaffRequester(req))) {
       return res.status(403).json({ error: 'アクセス権限がありません' });
     }
     if (inv.invoice_type === 'client') return res.status(400).json({ error: 'クライアント請求書は対象外です' });
+    // 下書き・差し戻し中の PDF を請求書フォルダに置くと振込管理が合算してしまうので、提出済み以降だけ
+    if (!['submitted', 'approved'].includes(inv.status)) {
+      return res.status(400).json({ error: '下書き・差し戻し中の請求書は Drive に保存できません（提出すると自動で保存されます）' });
+    }
     if (!invoicePdfDriveSyncEnabled()) return res.status(503).json({ error: '請求書PDFのDrive保存は現在無効化されています' });
     const r = await syncInvoicePdfToDrive(inv.id, { actorId: req.user.id });
     res.json({ ok: true, drive_pdf: r });
@@ -27405,6 +27415,21 @@ async function scanPayoutDriveMonth(year, month) {
     }
     if (nextFiles.length !== prevFiles.length) changed = true;
     upserts.set(scan.user_id, { pdf_files: nextFiles, is_new: changed, write: changed || !existing });
+  }
+
+  // フォルダは見つかったが PDF が 1 枚も無いメンバー: 前回スキャンの pdf_files が残っていれば空にする
+  // （最後の 1 枚を削除・ゴミ箱送りしたあとも旧 PDF の金額が残り、過払いになるのを防ぐ。
+  //   手入力金額（amount_source='manual'）は下の upsert で従来どおり尊重される）
+  {
+    const scannedUserIds = new Set(scans.map(s => s.user_id));
+    for (const mf of matchedFolders) {
+      if (scannedUserIds.has(mf.user_id) || upserts.has(mf.user_id)) continue;
+      const existing = recByUser.get(mf.user_id);
+      const prevFiles = Array.isArray(existing && existing.pdf_files) ? existing.pdf_files : [];
+      if (!prevFiles.length) continue;
+      upserts.set(mf.user_id, { pdf_files: [], is_new: false, write: true });
+      console.log(`[payouts] ${year}/${month} user=${mf.user_id} のフォルダから PDF が無くなったため pdf_files を空にします（旧 ${prevFiles.length} 件）`);
+    }
   }
 
   // 新規/更新ファイル＋抽出未確定ファイルの金額抽出（並列3）
