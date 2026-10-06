@@ -2647,6 +2647,8 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- 共通: ユーザー名表示ヘルパー（システム標準）— 全画面でこのヘルパー経由で名前を表示。インラインJSより先に読み込む -->
 <script src="/js/name-display.js"></script>
 <script src="/js/mention-resolve.js"></script>
+<!-- #️⃣ つぶやきの「#ハッシュタグ」切り出し（utils/hashtags.js を server.js が配信）。本文のタグリンク化・タグ検索でサーバーと同じ切り出しを使う -->
+<script src="/js/hashtags.js"></script>
 <!-- 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js を server.js が配信）。インラインJSが参照するため defer なし -->
 <script src="/js/personal-goals.js"></script>
 <!-- リアクションの定義（基本 5 種 👍 ❤️ 👏 😊 😳 ＋ つぶやき用の拡張パレット 🤣 🔥 🎉 …。utils/reactions.js を server.js が配信）。つぶやき・作品ギャラリーで共通。インラインJSが参照するため defer なし -->
@@ -3422,7 +3424,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div class="form-group" style="margin-bottom:8px">
       <label class="form-label">一言 <span style="color:#C0392B">*</span> <span id="tw-body-counter" style="font-weight:400;font-size:11px;color:var(--text-muted);margin-left:6px">0 / 280</span></label>
       <textarea class="form-input" id="tw-body" rows="4" maxlength="280" placeholder="例) 今日の現場、夕日がエモかった" style="resize:vertical;font-family:inherit" oninput="updateTweetCounter()"></textarea>
-      <div class="tw-mention-hint">「@」に続けて名前を打つとメンバー候補が出ます。選ぶと相手に通知が届きます</div>
+      <div class="tw-mention-hint">「@」に続けて名前を打つとメンバー候補が出ます。選ぶと相手に通知が届きます。「#」に続けて言葉を書くとハッシュタグになり、あとからタグで探せます</div>
+      <div class="tw-compose-tags" id="tw-compose-tags" hidden></div>
     </div>
     <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">投稿は 90 日後に自動で非表示になります</div>
     <div class="modal-footer">
@@ -8526,6 +8529,15 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           デザイナー
         </label>
       </div>
+      <!-- #️⃣ ハッシュタグ検索: 入力欄 ＋ いま使われているタグのチップ。本文中の #タグ クリックでもここに入る -->
+      <div class="tweets-tagbar" id="tweets-tagbar">
+        <form class="tweets-tag-search" onsubmit="event.preventDefault();setTweetsTag(document.getElementById('tweets-tag-input').value)">
+          <span class="tweets-tag-search-hash" aria-hidden="true">#</span>
+          <input type="text" id="tweets-tag-input" placeholder="タグで検索（例: 勝ちクリエイティブ）" autocomplete="off" enterkeyhint="search">
+          <button type="submit" class="tweets-tag-search-btn" title="このタグで絞り込む">🔍</button>
+        </form>
+        <div class="tweets-tag-chips" id="tweets-tag-chips"></div>
+      </div>
     </header>
     <div id="tweets-list" class="tweets-list">
       <div class="skel-card-body" aria-hidden="true" style="padding:12px 4px"><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:70%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:55%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:80%"></span></div><div class="skel-row"><span class="skel-circle"></span><span class="skel-line" style="max-width:65%"></span></div></div>
@@ -11431,6 +11443,13 @@ async function applyDeepLinkOnLoad() {
     if (tweetParam) {
       stripQueryParam('tweet');
       try { openTweetsPage(tweetParam); } catch (e) { console.warn('[deepLink tweet]', e); }
+      return;
+    }
+    // ?tweet_tag=<タグ> : つぶやきページを「#タグ」で絞り込んだ状態で開く（タグ検索の共有用）
+    const tweetTagParam = params.get('tweet_tag');
+    if (tweetTagParam) {
+      stripQueryParam('tweet_tag');
+      try { twSearchTag(tweetTagParam); } catch (e) { console.warn('[deepLink tweet_tag]', e); }
       return;
     }
 
@@ -33013,6 +33032,8 @@ function openTweetCompose(preset) {
   renderTweetImagePreview();
   updateTweetCounter();
   TwMention.attach(ta); // 「@」メンション補完
+  _twRenderComposeTagChips();
+  if (!_twTagsCache.length) _twLoadTags().then(_twRenderComposeTagChips); // ホームから開いたときはまだ未取得
   openModal('modal-tweet-compose');
   if (preset && preset.body) {
     // 先頭にカーソルを置く（一言を書き足すのは先頭が自然）
@@ -33386,7 +33407,9 @@ const _twPageState = {
   tab: 'all',
   staffOnly: false,
   roleGroups: new Set(),
+  tag: '',          // #️⃣ ハッシュタグ絞り込み（正規化済みキー。空なら絞り込みなし）
 };
+let _twTagsCache = [];      // GET /tweets/tags の直近結果 [{ tag, key, count }]
 const _twPageOpenComments = new Set();
 // 返信（コメント）の最新データ（id → comment）。返信リアクションの楽観的更新で使う。
 // 返信一覧は _twPageList に載らず fetch のたびに描画するだけなので、行単位の状態をここに持つ。
@@ -33516,11 +33539,12 @@ async function focusTweetOnPage(tweetId) {
 // focusTweetOnPage 用: 対象が隠れうるフィルター（mine タブ / ロール絞り込み）が効いていれば
 // 「みんなのつぶやき」＋「全員」に戻して true を返す。何も効いていなければ false（再読込不要）。
 function _twResetFiltersForFocus() {
-  const filtered = _twPageState.tab === 'mine' || _twPageState.staffOnly || (_twPageState.roleGroups && _twPageState.roleGroups.size > 0);
+  const filtered = _twPageState.tab === 'mine' || _twPageState.staffOnly || !!_twPageState.tag || (_twPageState.roleGroups && _twPageState.roleGroups.size > 0);
   if (!filtered) return false;
   _twPageState.tab = 'all';
   _twPageState.staffOnly = false;
   _twPageState.roleGroups = new Set();
+  _twPageState.tag = '';
   document.querySelectorAll('.tweets-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'all'));
   const filtersEl = document.getElementById('tweets-filters');
   if (filtersEl) filtersEl.dataset.activeTab = 'all';
@@ -33528,6 +33552,126 @@ function _twResetFiltersForFocus() {
   if (allCb) allCb.checked = true;
   document.querySelectorAll('#tweets-filters input[data-role-group]:not([data-role-group="all"])').forEach(cb => { cb.checked = false; });
   return true;
+}
+
+// ==================== #️⃣ ハッシュタグ（本文の #タグ をリンク化し、タグで探せるように） ====================
+// 切り出しルールは utils/hashtags.js（サーバーの ?tag= 絞り込みと同じ）。
+// 表示用: 正規化キー（小文字）ではなく、一覧に出ている初出の表記で見せる（「#Hertech」を「#hertech」にしない）
+function _twTagDisplay(key) {
+  const hit = _twTagsCache.find(x => x.key === key);
+  return hit ? hit.tag : key;
+}
+async function _twLoadTags() {
+  try {
+    const res = await apiFetch(`${API}/tweets/tags?limit=30`);
+    if (res.ok) {
+      const list = await res.json();
+      if (Array.isArray(list)) _twTagsCache = list;
+    }
+  } catch (e) { console.warn('[tweets-tags] load failed（チップを省略）', e); }
+  _twRenderTagBar();
+}
+// 「#タグ」で絞り込む（本文のタグクリック / 検索欄 / チップ / ?tweet_tag= 深リンク）。
+// つぶやきページ以外（通知など）から呼ばれたらページを開いてから絞り込む。
+function twSearchTag(tag) {
+  const H = window.Hashtags;
+  const key = H ? H.normalizeHashtag(tag) : String(tag || '').replace(/^[#＃]/, '').trim().toLowerCase();
+  const onPage = document.getElementById('page-tweets')?.classList.contains('active');
+  _twPageState.tag = key;
+  if (!onPage) {
+    openTweetsPage(); // showPage 側で loadTweetsPage が走る（tag は state に入れてあるので反映される）
+    return;
+  }
+  window._twPageLoadPromise = loadTweetsPage();
+}
+window.twSearchTag = twSearchTag;
+function setTweetsTag(tag) {
+  const H = window.Hashtags;
+  const key = H ? H.normalizeHashtag(tag) : String(tag || '').replace(/^[#＃]/, '').trim().toLowerCase();
+  if (key === _twPageState.tag) {
+    // 同じタグをもう一度押したら解除（チップのトグル）
+    if (key) { clearTweetsTag(); }
+    return;
+  }
+  _twPageState.tag = key;
+  window._twPageLoadPromise = loadTweetsPage();
+}
+function clearTweetsTag() {
+  _twPageState.tag = '';
+  const input = document.getElementById('tweets-tag-input');
+  if (input) input.value = '';
+  window._twPageLoadPromise = loadTweetsPage();
+}
+// タグバー（検索欄の値・チップの選択状態）を state に合わせて描き直す
+function _twRenderTagBar() {
+  const input = document.getElementById('tweets-tag-input');
+  if (input && document.activeElement !== input) input.value = _twPageState.tag ? _twTagDisplay(_twPageState.tag) : '';
+  const chipsEl = document.getElementById('tweets-tag-chips');
+  if (!chipsEl) return;
+  const MAX_CHIPS = 12;
+  const cur = _twPageState.tag;
+  let items = _twTagsCache.slice(0, MAX_CHIPS);
+  // 絞り込み中のタグが上位に無くても、チップとして見えるように先頭に足す
+  if (cur && !items.some(x => x.key === cur)) items = [{ tag: _twTagDisplay(cur), key: cur, count: 0 }, ...items];
+  chipsEl.innerHTML = items.map(x => `
+    <button type="button" class="tweets-tag-chip ${x.key === cur ? 'active' : ''}" data-tag-key="${esc(x.key)}"
+      onclick="setTweetsTag(this.dataset.tagKey)" title="${x.key === cur ? '絞り込みを解除' : `#${esc(x.tag)} で絞り込む`}">
+      #${esc(x.tag)}${x.count > 0 ? `<span class="count">${x.count}</span>` : ''}
+    </button>`).join('');
+  chipsEl.hidden = items.length === 0;
+}
+// 一覧の先頭に出す「#タグ の投稿 N件 ✕ 解除」バー（絞り込み中だけ）
+function _twTagResultBarHtml(n) {
+  if (!_twPageState.tag) return '';
+  const disp = esc(_twTagDisplay(_twPageState.tag));
+  return `<div class="tweets-tag-result">
+    <span class="tweets-tag-result-label">#${disp}</span> の投稿 <b>${n}</b> 件
+    <button type="button" class="tweets-tag-result-clear" onclick="clearTweetsTag()">✕ 絞り込みを解除</button>
+    <button type="button" class="tweets-tag-result-share" onclick="copyTweetTagSearchLink(this)" title="このタグ検索のリンクをコピー">🔗 共有</button>
+  </div>`;
+}
+// タグ検索結果へのリンク（?tweet_tag=）をコピー。🔗 共有（カード）と同じ流儀
+async function copyTweetTagSearchLink(btn) {
+  if (!_twPageState.tag) return;
+  const disp = _twTagDisplay(_twPageState.tag);
+  const text = `#️⃣ つぶやき「#${disp}」の一覧\n${location.origin}/haruka.html?tweet_tag=${encodeURIComponent(_twPageState.tag)}`;
+  const restore = () => { if (btn) { btn.textContent = '🔗 共有'; btn.disabled = false; } };
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) { btn.textContent = '✅ コピー済み'; btn.disabled = true; }
+    showToast('🔗 タグ検索のリンクをコピーしました', 'success');
+    setTimeout(restore, 2000);
+  } catch (e) {
+    try { window.prompt('この内容をコピーして共有してください', text); } catch (_) {}
+  }
+}
+// 投稿フォームの「最近のタグ」チップ（押すとカーソル位置に #タグ␣ を差し込む）
+function _twRenderComposeTagChips() {
+  const el = document.getElementById('tw-compose-tags');
+  if (!el) return;
+  const items = _twTagsCache.slice(0, 8);
+  if (!items.length) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  el.innerHTML = `<span class="tw-compose-tags-label">最近のタグ:</span>` + items.map(x =>
+    `<button type="button" class="tweets-tag-chip sm" data-tag="${esc(x.tag)}" onclick="twInsertTagIntoCompose(this.dataset.tag)">#${esc(x.tag)}</button>`
+  ).join('');
+}
+function twInsertTagIntoCompose(tag) {
+  const ta = document.getElementById('tw-body');
+  if (!ta) return;
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? start;
+  const before = ta.value.slice(0, start);
+  const after = ta.value.slice(end);
+  // 前後に空白が無ければ補う（「文章#タグ」だとタグとして切り出されないため）
+  const lead = (before && !/[\s\u3000]$/.test(before)) ? ' ' : '';
+  const trail = (after && !/^[\s\u3000]/.test(after)) ? ' ' : (after ? '' : ' ');
+  const ins = `${lead}#${tag}${trail}`;
+  if (ta.maxLength > 0 && (ta.value.length + ins.length) > ta.maxLength) { showToast('文字数の上限に達しています', 'warn'); return; }
+  ta.value = before + ins + after;
+  const pos = start + ins.length;
+  try { ta.focus(); ta.setSelectionRange(pos, pos); } catch (_) {}
+  if (typeof updateTweetCounter === 'function') updateTweetCounter();
 }
 
 // ==================== 🔗 共有（このつぶやきを、見ていない人にも届ける） ====================
@@ -33779,15 +33923,17 @@ async function loadTweetsPage() {
     // 後方互換: 旧 staff_only=1 経路は残す（過去URLで来た場合に動く）
     params.set('staff_only', '1');
   }
+  if (_twPageState.tag) params.set('tag', _twPageState.tag);
   const qs = params.toString();
   const url = qs ? `${API}/tweets?${qs}` : `${API}/tweets`;
 
   el.innerHTML = '<div class="tweets-loading">読み込み中…</div>';
+  _twRenderTagBar(); // 入力欄・チップの選択状態を先に同期（読み込み中もどのタグで絞っているか分かるように）
 
   let list = [];
   try {
-    // メンション候補（本文の @ハイライト・「@」補完用）は一覧と並列で先読み。失敗しても一覧は出す
-    const [res] = await Promise.all([apiFetch(url), _twLoadMentionUsers()]);
+    // メンション候補（本文の @ハイライト・「@」補完用）とタグ一覧（チップ用）は一覧と並列で先読み。失敗しても一覧は出す
+    const [res] = await Promise.all([apiFetch(url), _twLoadMentionUsers(), _twLoadTags()]);
     if (res.ok) list = await res.json();
     else {
       el.innerHTML = '<div class="tweets-empty">読み込みに失敗しました</div>';
@@ -33818,15 +33964,17 @@ async function loadTweetsPage() {
   }
 
   if (!list || list.length === 0) {
-    const msg = _twPageState.tab === 'mine'
-      ? 'まだ自分のつぶやき・返信はありません。'
-      : 'まだ投稿はありません。最初のつぶやきを投稿してみよう ✨';
-    el.innerHTML = `<div class="tweets-empty">${msg}</div>`;
+    const msg = _twPageState.tag
+      ? `「#${esc(_twTagDisplay(_twPageState.tag))}」の付いた投稿はまだありません。`
+      : _twPageState.tab === 'mine'
+        ? 'まだ自分のつぶやき・返信はありません。'
+        : 'まだ投稿はありません。最初のつぶやきを投稿してみよう ✨';
+    el.innerHTML = `${_twTagResultBarHtml(0)}<div class="tweets-empty">${msg}</div>`;
     return;
   }
 
   _twPageList = list;
-  el.innerHTML = list.map(renderTweetCard).join('');
+  el.innerHTML = _twTagResultBarHtml(list.length) + list.map(renderTweetCard).join('');
 
   // 開いていたコメント欄を再ロード
   _twPageOpenComments.forEach(id => loadTweetCommentsPage(id));
@@ -33958,17 +34106,35 @@ function _twLinkifyPlain(text) {
 }
 function _twFormatBody(body) {
   const text = String(body ?? '');
-  const MR = window.MentionResolve;
-  if (!MR || !_twMentionUsers || !_twMentionUsers.length || !/[@＠]/.test(text)) return _twLinkifyPlain(text);
+  // @メンション（名簿に解決できたもの）と #ハッシュタグ を位置つきで集め、重ならないように並べて置換する。
+  // メンション優先（「@たごん#朝活」のような境界は hashtags 側が拾わないが、念のため重なりは捨てる）
   let spans = [];
-  try { spans = MR.resolveMentions(text, _twMentionUsers); } catch (_) { return _twLinkifyPlain(text); }
+  const MR = window.MentionResolve;
+  if (MR && _twMentionUsers && _twMentionUsers.length && /[@＠]/.test(text)) {
+    try { spans = (MR.resolveMentions(text, _twMentionUsers) || []).map(sp => ({ ...sp, kind: 'mention' })); } catch (_) { spans = []; }
+  }
+  const H = window.Hashtags;
+  if (H && /[#＃]/.test(text)) {
+    try {
+      for (const h of H.extractHashtags(text)) {
+        if (spans.some(sp => h.start < sp.end && sp.start < h.end)) continue;
+        spans.push({ start: h.start, end: h.end, kind: 'hashtag', tag: h.tag, key: h.key });
+      }
+    } catch (_) {}
+  }
   if (!spans.length) return _twLinkifyPlain(text);
+  spans.sort((a, b) => a.start - b.start);
   let out = '';
   let pos = 0;
   for (const sp of spans) {
     out += _twLinkifyPlain(text.slice(pos, sp.start));
-    const names = (sp.users || []).map(u => NameDisplay.full(u)).join(' / ');
-    out += `<span class="tw-mention" title="${esc(names)}">${esc(text.slice(sp.start, sp.end))}</span>`;
+    const raw = esc(text.slice(sp.start, sp.end));
+    if (sp.kind === 'hashtag') {
+      out += `<a href="${location.pathname}?tweet_tag=${encodeURIComponent(sp.key)}" class="tw-hashtag" data-tag-key="${esc(sp.key)}" title="#${esc(sp.tag)} の投稿を探す" onclick="event.preventDefault();event.stopPropagation();twSearchTag(this.dataset.tagKey)">${raw}</a>`;
+    } else {
+      const names = (sp.users || []).map(u => NameDisplay.full(u)).join(' / ');
+      out += `<span class="tw-mention" title="${esc(names)}">${raw}</span>`;
+    }
     pos = sp.end;
   }
   out += _twLinkifyPlain(text.slice(pos));

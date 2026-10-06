@@ -129,6 +129,116 @@
   display: none;
 }
 
+/* ---------- #️⃣ ハッシュタグ検索（検索欄 ＋ いま使われているタグのチップ） ---------- */
+.tweets-tagbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.tweets-tag-search {
+  display: inline-flex;
+  align-items: center;
+  max-width: 360px;
+  border: 1px solid #E5E7EB;
+  border-radius: 999px;
+  background: #fff;
+  padding: 2px 4px 2px 12px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.tweets-tag-search:focus-within {
+  border-color: #3ECFCA;
+  box-shadow: 0 0 0 3px rgba(62, 207, 202, 0.18);
+}
+.tweets-tag-search-hash {
+  color: #1F8F8B;
+  font-weight: 700;
+  margin-right: 4px;
+}
+.tweets-tag-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 16px; /* iOS のフォーカス時自動ズームを避ける */
+  padding: 6px 0;
+  font-family: inherit;
+}
+@media (min-width: 769px) {
+  .tweets-tag-search input { font-size: 13px; }
+}
+.tweets-tag-search-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+.tweets-tag-search-btn:hover { background: #F3F4F6; }
+.tweets-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tweets-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  color: #1F8F8B;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.tweets-tag-chip:hover { background: rgba(62, 207, 202, 0.12); border-color: #3ECFCA; }
+.tweets-tag-chip.active { background: #3ECFCA; border-color: #3ECFCA; color: #fff; }
+.tweets-tag-chip .count { font-weight: 400; font-size: 11px; opacity: 0.8; }
+.tweets-tag-chip.sm { padding: 2px 8px; font-size: 11px; }
+
+/* 絞り込み中に一覧の先頭へ出す「#タグ の投稿 N件」バー */
+.tweets-tag-result {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(62, 207, 202, 0.12);
+  border: 1px solid rgba(62, 207, 202, 0.5);
+  font-size: 13px;
+  color: #0F766E;
+}
+.tweets-tag-result-label { font-weight: 700; }
+.tweets-tag-result-clear,
+.tweets-tag-result-share {
+  border: 1px solid #3ECFCA;
+  background: #fff;
+  color: #0F766E;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tweets-tag-result-clear { margin-left: auto; }
+.tweets-tag-result-clear:hover,
+.tweets-tag-result-share:hover { background: rgba(62, 207, 202, 0.18); }
+
+/* 投稿フォームの「最近のタグ」チップ */
+.tw-compose-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.tw-compose-tags-label { font-size: 11px; color: #9CA3AF; }
+
 /* ---------- リスト ---------- */
 .tweets-list {
   display: flex;
@@ -970,6 +1080,15 @@
   border-radius: 4px;
   padding: 0 3px;
 }
+/* 本文中の #ハッシュタグ（クリックでそのタグの投稿に絞り込む） */
+.tw-hashtag {
+  color: #1F8F8B;
+  font-weight: 700;
+  text-decoration: none;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+.tw-hashtag:hover { background: rgba(62, 207, 202, 0.14); text-decoration: underline; }
 .tw-mention-hint {
   font-size: 11px;
   color: #9CA3AF;
