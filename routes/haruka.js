@@ -19061,7 +19061,7 @@ async function trashDriveFile(drive, fileId) {
 
 // 同名 PDF のうち「改訂（hfs_rev）が最も新しい 1 枚」だけ残し、他をゴミ箱へ送る。
 // rev が同じなら modifiedTime が新しい方を残す（同じ内容の保存し直し）。
-// @returns {object|null} 残したファイル
+// @returns {{ kept: object, failed: object[] }|null} 残したファイルと、ゴミ箱送りに失敗した旧版
 async function keepNewestInvoicePdf(drive, folderId, fileName) {
   const files = await listInvoicePdfsInFolder(drive, folderId, fileName);
   if (!files.length) return null;
@@ -19070,11 +19070,21 @@ async function keepNewestInvoicePdf(drive, folderId, fileName) {
     if (ra !== rb) return rb.localeCompare(ra);
     return String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || ''));
   });
+  const failed = [];
   for (const d of sorted.slice(1)) {
-    try { await trashDriveFile(drive, d.id); } catch (e) { console.warn(`[invoice-pdf] 旧版PDFのゴミ箱送り失敗 ${d.id}: ${e.message}`); }
+    // 1 回失敗しても少し待って再試行（Drive の一時エラー対策）。それでも駄目なら failed に積む
+    let ok = false;
+    for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      try { await trashDriveFile(drive, d.id); ok = true; }
+      catch (e) {
+        console.warn(`[invoice-pdf] 旧版PDFのゴミ箱送り失敗 (${attempt + 1}/3) ${d.id}: ${e.message}`);
+        if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
+    if (!ok) failed.push(d);
   }
-  if (sorted.length > 1) console.log(`[invoice-pdf] 同名 PDF ${sorted.length} 枚 → rev=${driveFileRev(sorted[0]) || '(なし)'} の 1 枚に整理: ${fileName}`);
-  return sorted[0];
+  if (sorted.length > 1) console.log(`[invoice-pdf] 同名 PDF ${sorted.length} 枚 → rev=${driveFileRev(sorted[0]) || '(なし)'} の 1 枚に整理: ${fileName}${failed.length ? `（${failed.length} 枚は削除失敗）` : ''}`);
+  return { kept: sorted[0], failed };
 }
 
 // 請求書 1 件を PDF 化して Drive の本人フォルダへ保存する。
@@ -19148,17 +19158,24 @@ async function syncInvoicePdfToDrive(invoiceId, { actorId } = {}) {
 
   // 4) 同名ファイルを改訂順で整理（最も新しい rev の 1 枚だけ残す）。
   //    自分より新しい rev が既にあれば自分の方がゴミ箱に行く（それが正しい）。
+  //    旧版のゴミ箱送りに失敗したときは「保存成功」にしない（同じ請求書の PDF が 2 枚残る）。
+  //    新しい版（正しい内容）は残したままエラーを返す。集計側（振込管理スキャン）は同じ請求書の
+  //    PDF を最新改訂の 1 枚だけ数えるので二重計上にはならず、次回スキャン／再保存で旧版は片付く。
   let replaced = false;
+  let all;
   try {
-    const all = await listInvoicePdfsInFolder(drive, folderId, fileName);
-    replaced = all.some(f => f.id !== fileId);
-    const kept = await keepNewestInvoicePdf(drive, folderId, fileName);
-    if (kept && kept.id !== fileId) {
-      console.log(`[invoice-pdf] より新しい改訂（rev=${driveFileRev(kept)}）が既にあるため今回の保存は破棄: ${fileName}`);
-      return { skipped: 'superseded', file_id: kept.id, url: kept.webViewLink, file_name: fileName, folder_id: folderId, folder_url: folderUrl };
-    }
+    all = await listInvoicePdfsInFolder(drive, folderId, fileName);
   } catch (e) {
-    console.warn(`[invoice-pdf] 同名PDFの整理失敗 ${fileName}: ${e.message}`);
+    throw new Error(`PDF は保存しましたが、同名ファイルの確認に失敗しました（旧版が残っている可能性があります。「📁 Driveへ保存」でやり直してください）: ${e.message}`);
+  }
+  replaced = all.some(f => f.id !== fileId);
+  const tidy = await keepNewestInvoicePdf(drive, folderId, fileName);
+  if (tidy && tidy.kept && tidy.kept.id !== fileId) {
+    console.log(`[invoice-pdf] より新しい改訂（rev=${driveFileRev(tidy.kept)}）が既にあるため今回の保存は破棄: ${fileName}`);
+    return { skipped: 'superseded', file_id: tidy.kept.id, url: tidy.kept.webViewLink, file_name: fileName, folder_id: folderId, folder_url: folderUrl };
+  }
+  if (tidy && tidy.failed.length) {
+    throw new Error(`PDF は保存しましたが、古い版 ${tidy.failed.length} 枚のゴミ箱送りに失敗しました。「📁 Driveへ保存」でやり直してください`);
   }
 
   console.log(`[invoice-pdf] ${replaced ? '差し替え' : '新規'} ${fileName} rev=${rev || '(なし)'} → ${folderUrl} (${pdf.length} bytes)`);
@@ -27166,7 +27183,7 @@ async function payoutListChildren(drive, parentId) {
   do {
     const r = await drive.files.list({
       q: `'${parentId}' in parents and trashed=false`,
-      fields: 'nextPageToken, files(id, name, mimeType, size, modifiedTime)',
+      fields: 'nextPageToken, files(id, name, mimeType, size, modifiedTime, appProperties)',
       pageSize: 1000,
       pageToken,
       supportsAllDrives: true,
@@ -27376,6 +27393,7 @@ async function payoutResolveMonthFolderId(drive, year, month, { skipCache = fals
 
 // ---------- Drive スキャン本体（新PDF検出→金額抽出→payout_records upsert） ----------
 async function scanPayoutDriveMonth(year, month) {
+  const { dedupeInvoicePdfFiles } = require('../utils/payout');
   const { normalizeFolderPersonName, normalizePersonName } = require('../utils/payout');
   const result = {
     month_folder_found: false,
@@ -27434,9 +27452,18 @@ async function scanPayoutDriveMonth(year, month) {
           }
         }
         // 請求書PDF等の実ファイルのみ（Googleドキュメント等のネイティブ形式・一時ファイルは除外）
-        const files = kids.filter(f =>
+        const rawFiles = kids.filter(f =>
           !(f.mimeType || '').startsWith('application/vnd.google-apps')
           && !(f.name || '').startsWith('_payout_tmp_'));
+        // ADR 047: 請求書システムが置いた PDF は appProperties.hfs_invoice_id / hfs_rev を持つ。
+        // 旧版のゴミ箱送りが失敗して同じ請求書の PDF が複数残っていても、最新改訂の 1 枚だけを数える
+        // （二重計上の防止）。余った旧版はここでゴミ箱へ送って自己修復する（失敗しても集計には影響しない）。
+        const { kept: files, dropped: staleDup } = dedupeInvoicePdfFiles(rawFiles);
+        for (const d of staleDup) {
+          try { await drive.files.update({ fileId: d.id, requestBody: { trashed: true }, supportsAllDrives: true }); }
+          catch (e) { console.warn(`[payouts] 旧版PDF（同一請求書）のゴミ箱送り失敗 ${d.name}: ${e.message}`); }
+        }
+        if (staleDup.length) console.log(`[payouts] ${sf.name}: 同一請求書の旧版 PDF ${staleDup.length} 枚を除外`);
         const uid = userIdByFolderId.get(sf.id)
           || userIdByNorm.get(normalizeFolderPersonName(sf.name))
           || null;

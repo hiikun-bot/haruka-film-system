@@ -130,7 +130,32 @@ function extractCreativeKeys(text) {
   return { tails: Array.from(tails), names: Array.from(names) };
 }
 
+// 同じ請求書（appProperties.hfs_invoice_id）の PDF が複数あるとき、最新改訂（hfs_rev 降順、同点は
+// modifiedTime 降順）の 1 枚だけ残す。ADR 047: 請求書システムは PDF を上書きせず新規作成し、旧版の
+// ゴミ箱送りが失敗すると同じ請求書の PDF が 2 枚残り得る。その場合でも支払額を二重に数えないための保険。
+// hfs_invoice_id の無いファイル（手動アップロード等）はそのまま通す。
+// @returns {{ kept: object[], dropped: object[] }}
+function dedupeInvoicePdfFiles(files) {
+  const kept = [];
+  const dropped = [];
+  const bestById = new Map(); // hfs_invoice_id -> file
+  const rev = (f) => String((f && f.appProperties && f.appProperties.hfs_rev) || '');
+  const mod = (f) => String((f && f.modifiedTime) || '');
+  for (const f of files || []) {
+    const invId = f && f.appProperties && f.appProperties.hfs_invoice_id;
+    if (!invId) { kept.push(f); continue; }
+    const cur = bestById.get(invId);
+    if (!cur) { bestById.set(invId, f); continue; }
+    const newer = rev(f) !== rev(cur) ? rev(f) > rev(cur) : mod(f) > mod(cur);
+    if (newer) { dropped.push(cur); bestById.set(invId, f); }
+    else dropped.push(f);
+  }
+  for (const f of bestById.values()) kept.push(f);
+  return { kept, dropped };
+}
+
 module.exports = {
+  dedupeInvoicePdfFiles,
   buildPayoutMessage,
   extractInvoiceAmount,
   evaluatePayoutDiff,
