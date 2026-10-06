@@ -56327,6 +56327,10 @@ function renderVerupList() {
     const hideBtn = isAdmin
       ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='toggleVerupVisibility(${JSON.stringify(r.id)}, ${!r.is_hidden})'>${r.is_hidden ? '表示する' : '非表示にする'}</button>` : '';
     const adminBtns = `${editBtn} ${hideBtn}`;
+    // 🔗 共有: この改善への deep link（?verup=<revision_no>）をコピーして Slack/Chatwork に貼る用。
+    // 非表示の行はメンバー側で開けない（「見つかりません」になる）ので出さない。
+    const shareBtn = !r.is_hidden
+      ? `<button class="btn" style="padding:2px 8px;font-size:11px" data-verup-share="1" onclick='copyVerupShareLink(${JSON.stringify(r.id)}, this)' title="この改善のリンクをコピー（Slack/Chatworkに貼ってメンバーへ共有）">🔗 共有</button>` : '';
 
     return `
     <div data-vid="${_verupEsc(r.id)}" style="border:1px solid var(--border);border-radius:8px;padding:12px;background:${r.is_read ? '#fff' : '#F0FDFA'};transition:background .2s">
@@ -56339,6 +56343,7 @@ function renderVerupList() {
         <span style="font-size:11px;color:var(--text-muted)">${_verupEsc(_verupFmtDate(r.released_at))}</span>
         ${reporterBadge}
         <span style="flex:1"></span>
+        ${shareBtn}
         ${!r.is_read ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick='markVerupRead(${JSON.stringify(r.id)})'>既読</button>` : ''}
         ${adminBtns}
       </div>
@@ -56356,6 +56361,40 @@ function renderVerupList() {
     </div>`;
   }).join('') + loadMoreHtml;
 }
+
+// 「🔗 共有」: この改善の deep link をクリップボードへ。
+// 起動時の deep link 処理（?verup=<revision_no> → openVerupModalAtRevision）が既にあるので、
+// 受け取った側はログイン後に修正履歴モーダルが開き、該当カードがハイライトされる。
+// コピー内容は「種別 #番号｜画面 / 機能」＋URL の2行（Slack/Chatwork に貼ってそのまま伝わる形）。
+function buildVerupShareText(r) {
+  const url = `${location.origin}/haruka.html?verup=${encodeURIComponent(r.revision_no)}`;
+  const catLabel = VERUP_CATEGORY_LABEL[r.category] || r.category || '';
+  const title = [r.screen, r.feature].filter(Boolean).join(' / ');
+  const head = [catLabel, _verupRevisionLabel(r.revision_no)].filter(Boolean).join(' ');
+  return `${head}｜${title}\n${url}`;
+}
+async function copyVerupShareLink(id, btn) {
+  const r = (Array.isArray(_verupCache) ? _verupCache : []).find(x => x.id === id);
+  if (!r) { showToast('この改善が見つかりませんでした', 'warn'); return; }
+  const text = buildVerupShareText(r);
+  const restore = () => { if (btn) { btn.textContent = '🔗 共有'; btn.disabled = false; } };
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) { btn.textContent = '✅ コピー済み'; btn.disabled = true; }
+    showToast('🔗 共有リンクをコピーしました（Slack/Chatworkに貼ってください）', 'success');
+    setTimeout(restore, 2000);
+  } catch (e) {
+    // clipboard API が使えない環境（http / 権限なし）向けフォールバック
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showToast('🔗 共有リンクをコピーしました', 'success'); }
+    catch (_) { try { window.prompt('この内容をコピーして共有してください', text); } catch (__) {} }
+    finally { ta.remove(); }
+  }
+}
+window.copyVerupShareLink = copyVerupShareLink;
 
 async function markVerupRead(id) {
   try {
