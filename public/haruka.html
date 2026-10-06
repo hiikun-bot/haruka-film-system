@@ -33495,12 +33495,80 @@ async function focusTweetOnPage(tweetId) {
   if (!tweetId) return;
   try { await window._twPageLoadPromise; } catch (_) {}
   const sel = (window.CSS && CSS.escape) ? CSS.escape(String(tweetId)) : String(tweetId).replace(/[^0-9a-zA-Z-]/g, '');
-  const card = document.querySelector(`article.tweet-card[data-tweet-id="${sel}"]`);
-  if (!card) return; // ロールフィルターで非表示・期限切れ等。ページは開いているので静かに終える
+  let card = document.querySelector(`article.tweet-card[data-tweet-id="${sel}"]`);
+  if (!card && _twResetFiltersForFocus()) {
+    // 「自分のつぶやき」タブやロール絞り込みで隠れているだけなら、全員表示に戻して探し直す。
+    // 🔗 共有リンクで飛んできた人のフィルター状態は投稿者と無関係なので、ここで一度だけ解除する
+    // （localStorage の保存値は触らない＝次回は本人の設定に戻る）。
+    try { window._twPageLoadPromise = loadTweetsPage(); await window._twPageLoadPromise; } catch (_) {}
+    card = document.querySelector(`article.tweet-card[data-tweet-id="${sel}"]`);
+  }
+  if (!card) {
+    // 期限切れ（ピン以外は expires_at を過ぎると一覧に載らない）・削除済み。ページは開いているので一言だけ
+    showToast('このつぶやきは見つかりませんでした（期限切れか削除済みの可能性があります）', 'warn');
+    return;
+  }
   card.scrollIntoView({ behavior: 'smooth', block: 'center' });
   card.classList.add('tweet-focus');
   setTimeout(() => card.classList.remove('tweet-focus'), 2500);
 }
+
+// focusTweetOnPage 用: 対象が隠れうるフィルター（mine タブ / ロール絞り込み）が効いていれば
+// 「みんなのつぶやき」＋「全員」に戻して true を返す。何も効いていなければ false（再読込不要）。
+function _twResetFiltersForFocus() {
+  const filtered = _twPageState.tab === 'mine' || _twPageState.staffOnly || (_twPageState.roleGroups && _twPageState.roleGroups.size > 0);
+  if (!filtered) return false;
+  _twPageState.tab = 'all';
+  _twPageState.staffOnly = false;
+  _twPageState.roleGroups = new Set();
+  document.querySelectorAll('.tweets-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'all'));
+  const filtersEl = document.getElementById('tweets-filters');
+  if (filtersEl) filtersEl.dataset.activeTab = 'all';
+  const allCb = document.getElementById('tweets-filter-all');
+  if (allCb) allCb.checked = true;
+  document.querySelectorAll('#tweets-filters input[data-role-group]:not([data-role-group="all"])').forEach(cb => { cb.checked = false; });
+  return true;
+}
+
+// ==================== 🔗 共有（このつぶやきを、見ていない人にも届ける） ====================
+// カード下部の「🔗 共有」。deep link（?tweet=<id>）入りの文面をクリップボードへ。
+// 受け取った側はログイン後につぶやきページが開き、該当カードがハイライトされる（既存の ?tweet= 深リンク）。
+// 文面は「誰のつぶやきか」＋本文の冒頭＋URL の 3 行（Slack/Chatwork/LINE に貼ってそのまま伝わる形）。
+function buildTweetShareText(t) {
+  const url = `${location.origin}/haruka.html?tweet=${encodeURIComponent(t.id)}`;
+  const u = t.users || {};
+  // 受け取る側はニックネームだけだと誰か分からないことがあるので「ニックネーム（名前）」の標準表記で
+  const name = u.id ? NameDisplay.full(u) : '';
+  const head = name ? `💭 ${name}さんのつぶやき` : '💭 つぶやき';
+  // 改行・連続空白を潰して冒頭だけ（長文は「…」）。本文なし（画像だけ）なら行ごと省く
+  const flat = String(t.body || '').replace(/\s+/g, ' ').trim();
+  const MAX = 60;
+  const excerpt = flat ? `「${flat.length > MAX ? flat.slice(0, MAX) + '…' : flat}」` : '';
+  return [head, excerpt, url].filter(Boolean).join('\n');
+}
+async function copyTweetShareLink(tweetId, btn) {
+  const t = (Array.isArray(_twPageList) ? _twPageList : []).find(x => x.id === tweetId);
+  if (!t) { showToast('このつぶやきが見つかりませんでした', 'warn'); return; }
+  const text = buildTweetShareText(t);
+  const label = '<span>🔗</span><span>共有</span>';
+  const restore = () => { if (btn) { btn.innerHTML = label; btn.disabled = false; } };
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) { btn.innerHTML = '<span>✅</span><span>コピー済み</span>'; btn.disabled = true; }
+    showToast('🔗 共有リンクをコピーしました（Slack/Chatwork/LINEに貼ってください）', 'success');
+    setTimeout(restore, 2000);
+  } catch (e) {
+    // clipboard API が使えない環境（http / 権限なし）向けフォールバック（修正履歴の 🔗 共有と同じ）
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showToast('🔗 共有リンクをコピーしました', 'success'); }
+    catch (_) { try { window.prompt('この内容をコピーして共有してください', text); } catch (__) {} }
+    finally { ta.remove(); }
+  }
+}
+window.copyTweetShareLink = copyTweetShareLink;
 
 // つぶやきページを開いている最中に他人の新着が来たら、一覧を勝手に入れ替えず
 // 先頭に「N 件あります」バーを出す（入力中の返信を消さないため）。タップで再読込。
@@ -34126,6 +34194,12 @@ function renderTweetCard(t) {
     <span>💬</span><span>返信</span>${commentCount > 0 ? `<span class="count">${commentCount}</span>` : ''}
   </button>`;
 
+  // 🔗 共有: このつぶやきへの deep link（?tweet=<id>）をコピーして Slack/Chatwork/LINE に貼る用。
+  // 嬉しい報告・良い知らせを、つぶやきを見ていない人にも届けられるように（修正履歴の 🔗 共有 #1216 と同じ流儀）。
+  const shareBtn = `<button class="tweet-action-btn tweet-share-btn" onclick="copyTweetShareLink('${t.id}', this)" title="このつぶやきのリンクをコピー（Slack/Chatwork/LINEに貼って共有）">
+    <span>🔗</span><span>共有</span>
+  </button>`;
+
   // ブックマーク（Phase 2 — 今は非表示）
   // 必要なら以下を有効化:
   // const bookmarkBtn = `<button class="tweet-action-btn" onclick="" title="保存（Phase 2）"><span>🔖</span></button>`;
@@ -34166,6 +34240,7 @@ function renderTweetCard(t) {
       <div class="tweet-reaction-summary">${summaryPills}</div>
       ${addReactionWrap}
       ${commentBtn}
+      ${shareBtn}
     </div>
     <div id="tw-page-comments-${t.id}" class="tweet-comments-wrap" style="display:${open ? 'block' : 'none'}"></div>
   </article>`;
