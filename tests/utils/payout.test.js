@@ -4,6 +4,7 @@ const {
   evaluatePayoutDiff,
   normalizeFolderPersonName,
   normalizePersonName,
+  dedupeInvoicePdfFiles,
 } = require('../../utils/payout');
 
 describe('buildPayoutMessage', () => {
@@ -128,5 +129,45 @@ describe('extractCreativeKeys', () => {
   });
   test('空テキストは空配列', () => {
     expect(extractCreativeKeys('')).toEqual({ tails: [], names: [] });
+  });
+});
+
+describe('dedupeInvoicePdfFiles（ADR 047: 同一請求書の PDF は最新改訂 1 枚だけ数える）', () => {
+  const f = (id, invId, rev, mod) => ({ id, name: `inv_${id}.pdf`, modifiedTime: mod, appProperties: invId ? { hfs_invoice_id: invId, hfs_rev: rev } : undefined });
+
+  test('hfs_invoice_id の無い手動アップロードはそのまま通す', () => {
+    const files = [{ id: 'a', name: 'x.pdf' }, { id: 'b', name: 'y.pdf', appProperties: {} }];
+    const r = dedupeInvoicePdfFiles(files);
+    expect(r.kept.map(x => x.id)).toEqual(['a', 'b']);
+    expect(r.dropped).toEqual([]);
+  });
+
+  test('同じ請求書は hfs_rev が新しい方を残す（保存時刻が古くても）', () => {
+    const files = [
+      f('old', 'inv1', '2026-10-06T01:00:00.000Z', '2026-10-06T01:00:20.000Z'), // 古い提出版だが保存は遅い
+      f('new', 'inv1', '2026-10-06T01:00:07.000Z', '2026-10-06T01:00:10.000Z'),
+    ];
+    const r = dedupeInvoicePdfFiles(files);
+    expect(r.kept.map(x => x.id)).toEqual(['new']);
+    expect(r.dropped.map(x => x.id)).toEqual(['old']);
+  });
+
+  test('hfs_rev が同じなら modifiedTime が新しい方（保存し直し）', () => {
+    const files = [
+      f('a', 'inv1', 'R', '2026-10-06T01:00:00.000Z'),
+      f('b', 'inv1', 'R', '2026-10-06T01:00:05.000Z'),
+    ];
+    expect(dedupeInvoicePdfFiles(files).kept.map(x => x.id)).toEqual(['b']);
+  });
+
+  test('rev 無し（#1214 以前の PDF）は最も古い扱い', () => {
+    const files = [f('legacy', 'inv1', '', '2026-10-06T09:00:00.000Z'), f('rev', 'inv1', '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:01.000Z')];
+    expect(dedupeInvoicePdfFiles(files).kept.map(x => x.id)).toEqual(['rev']);
+  });
+
+  test('別の請求書同士は両方残る（1 人が月に 2 枚出すケース）', () => {
+    const files = [f('a', 'inv1', 'R1', 'T1'), f('b', 'inv2', 'R1', 'T1'), { id: 'c', name: 'manual.pdf' }];
+    const r = dedupeInvoicePdfFiles(files);
+    expect(r.kept.map(x => x.id).sort()).toEqual(['a', 'b', 'c']);
   });
 });
