@@ -44,7 +44,10 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .logo-main{font-family:'Montserrat',sans-serif;font-size:18px;font-weight:900;color:#fff;letter-spacing:0.10em;text-shadow:0 2px 10px rgba(0,0,0,0.30);line-height:1.15;white-space:nowrap}
 .logo-line{display:none}
 .logo-sub{font-family:'Noto Sans JP',sans-serif;font-size:9px;font-weight:400;color:rgba(255,255,255,0.78);letter-spacing:0.06em;text-shadow:0 1px 4px rgba(0,0,0,0.25);white-space:nowrap;line-height:1}
-.header-nav{display:flex;gap:1px;z-index:1;flex:1;justify-content:center;flex-wrap:nowrap}
+/* min-width:0 が無いと flex 子要素は中身の幅（≈20タブ分）より縮めず、ノートPC幅では
+   ナビがヘッダー外へ溢れて右側のベル・アバター・ログアウトが押し出される（2026-10-06 報告）。
+   入り切らない末尾タブは layoutHeaderNav() が「その他 ▾」(.nav-more-wrap) へ移す。 */
+.header-nav{display:flex;gap:1px;z-index:1;flex:1;min-width:0;justify-content:center;flex-wrap:nowrap}
 .nav-btn{font-size:13px;color:rgba(255,255,255,0.92);padding:5px 11px;border-radius:6px;cursor:pointer;border:none;background:transparent;text-shadow:0 1px 3px rgba(0,0,0,0.35);white-space:nowrap;transition:background .15s,color .15s,transform .3s cubic-bezier(.34,1.56,.64,1);transform-origin:50% 85%}
 .nav-btn.active{background:rgba(255,255,255,0.24);color:#fff;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
 .nav-btn:hover{background:rgba(255,255,255,0.16);color:#fff;transform:translateY(-2px) scale(1.05);animation:nav-boing .5s cubic-bezier(.22,1,.36,1) both}
@@ -52,6 +55,17 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 /* ナビのホバー時に「ポヨン」と跳ねる（縦に潰れて横に伸びる→反動で縦に伸びる→落ち着く） */
 @keyframes nav-boing{0%{transform:translateY(0) scale(1)}30%{transform:translateY(-4px) scale(1.12,.9)}55%{transform:translateY(-1px) scale(.96,1.08)}75%{transform:translateY(-3px) scale(1.04,.98)}100%{transform:translateY(-2px) scale(1.05)}}
 @media (prefers-reduced-motion:reduce){.nav-btn,.nav-btn:hover,.nav-btn:active{animation:none;transform:none;transition:background .15s,color .15s}}
+/* ナビ溢れ対策（Priority+）: 入り切らないタブの受け皿。通常は非表示、溢れた時だけ .on */
+.nav-more-wrap{position:relative;display:none;flex-shrink:0;align-items:center}
+.nav-more-wrap.on{display:inline-flex}
+.nav-more-toggle{font-size:13px;color:rgba(255,255,255,0.92);padding:5px 11px;border-radius:6px;cursor:pointer;border:0.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.08);text-shadow:0 1px 3px rgba(0,0,0,0.35);white-space:nowrap;transition:background .15s,color .15s}
+.nav-more-toggle:hover{background:rgba(255,255,255,0.16);color:#fff}
+.nav-more-toggle.active{background:rgba(255,255,255,0.24);color:#fff;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
+.nav-more-pop{position:absolute;top:calc(100% + 6px);right:0;background:#fff;border-radius:8px;padding:6px;box-shadow:0 12px 36px rgba(0,0,0,0.22);display:none;flex-direction:column;gap:2px;min-width:180px;max-height:calc(100vh - 80px);overflow-y:auto;z-index:200}
+.nav-more-pop.open{display:flex}
+.nav-more-pop .nav-btn{color:var(--text);text-shadow:none;text-align:left;padding:7px 12px;border-radius:6px;width:100%}
+.nav-more-pop .nav-btn:hover{background:var(--em-pale);color:var(--em-dark);transform:none;animation:none}
+.nav-more-pop .nav-btn.active{background:var(--em);color:#fff;font-weight:600;text-shadow:none}
 /* ナビ「つぶやき」の未読バッジ（ADR 041）: 最終閲覧以降の他人の投稿数。0 件は hidden */
 .nav-unread-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;margin-left:5px;border-radius:9px;background:#EF4444;color:#fff;font-size:10.5px;font-weight:700;line-height:1;text-shadow:none;vertical-align:middle;box-shadow:0 0 0 1.5px rgba(255,255,255,.85)}
 .nav-unread-badge[hidden]{display:none}
@@ -4242,6 +4256,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" id="nav-contract-admin" data-page="contract-admin" onclick="showPage('contract-admin',this)" style="display:none">📝 契約管理</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
     <button class="nav-btn" id="nav-material-square" data-page="material-square" onclick="showPage('material-square',this)" style="display:none">素材広場</button>
+    <!-- 入り切らないタブの受け皿（layoutHeaderNav() がボタン要素ごと移動する）。通常は非表示 -->
+    <div id="nav-more-wrap" class="nav-more-wrap">
+      <button type="button" id="nav-more-toggle" class="nav-more-toggle" onclick="toggleNavMorePop(event)" title="画面幅に入り切らないメニュー" aria-haspopup="true" aria-expanded="false" aria-controls="nav-more-pop">その他 ▾</button>
+      <div id="nav-more-pop" class="nav-more-pop" role="menu"></div>
+    </div>
   </div>
   <div class="header-right">
     <!-- ロールプレビュー（管理者のみ）。ヘッダー幅圧迫を避けるためポップオーバーに圧縮 -->
@@ -19377,6 +19396,90 @@ document.addEventListener('click', (e) => {
   if (!wrap.contains(e.target)) pop.classList.remove('open');
 });
 
+// ===== ヘッダーナビの溢れ対策（Priority+ パターン） =====
+// 管理者は 20 タブ近くあり、ノート PC 幅（〜1440px）では .header-nav が横に溢れて
+// 右側のベル・アバター・ログアウトがヘッダー外（ページ背景の上）へ押し出されていた。
+// 入り切らない末尾のタブは「その他 ▾」(#nav-more-pop) へ移し、幅が戻れば元の位置へ戻す。
+// ボタン要素そのものを移動するので id / data-page / inline display（権限ゲート）は維持され、
+// showPage() の active 同期や restoreInitialPage() の権限判定（style.display）はそのまま動く。
+// 発火: 初期表示 / ヘッダー幅の変化(ResizeObserver) / ナビの inline style 変化(権限適用・VIEW AS) / Web フォント読込完了
+function layoutHeaderNav() {
+  const nav = document.querySelector('.header-nav');
+  const wrap = document.getElementById('nav-more-wrap');
+  const pop = document.getElementById('nav-more-pop');
+  const toggle = document.getElementById('nav-more-toggle');
+  if (!nav || !wrap || !pop || !toggle) return;
+  // 開いている最中に再配置が走っても（バッジ更新・フォント読込など）勝手に閉じない
+  const wasOpen = pop.classList.contains('open');
+  // 1) 全タブを元の並び順でナビへ戻す（初回に並び順を data-nav-order として記録）
+  const all = Array.from(nav.querySelectorAll('.nav-btn[data-page]'));
+  if (all.length && all[0].dataset.navOrder === undefined) all.forEach((b, i) => { b.dataset.navOrder = String(i); });
+  all.sort((a, b) => Number(a.dataset.navOrder) - Number(b.dataset.navOrder)).forEach(b => nav.insertBefore(b, wrap));
+  wrap.classList.remove('on');
+  closeNavMorePop();
+  // スマホ（.header-nav が display:none）では何もしない
+  if (nav.clientWidth === 0) return;
+  const fits = () => nav.scrollWidth <= nav.clientWidth;
+  if (fits()) return;
+  // 2) 「その他 ▾」を出した状態で、収まるまで末尾の表示中タブを pop へ移す（先頭に挿して順序維持）
+  wrap.classList.add('on');
+  let guard = all.length + 1;
+  while (!fits() && guard-- > 0) {
+    const visible = Array.from(nav.children).filter(el => el !== wrap && el.classList.contains('nav-btn') && el.style.display !== 'none');
+    if (!visible.length) break;
+    pop.insertBefore(visible[visible.length - 1], pop.firstChild);
+  }
+  syncNavMoreActive();
+  if (wasOpen && pop.childElementCount) { pop.classList.add('open'); toggle.setAttribute('aria-expanded', 'true'); }
+}
+// pop 内に現在ページのタブがあるときは「その他 ▾」自体をアクティブ表示にする
+function syncNavMoreActive() {
+  const toggle = document.getElementById('nav-more-toggle');
+  const pop = document.getElementById('nav-more-pop');
+  if (!toggle || !pop) return;
+  toggle.classList.toggle('active', !!pop.querySelector('.nav-btn.active'));
+}
+function toggleNavMorePop(ev) {
+  if (ev) ev.stopPropagation();
+  const pop = document.getElementById('nav-more-pop');
+  const toggle = document.getElementById('nav-more-toggle');
+  if (!pop || !toggle) return;
+  const open = !pop.classList.contains('open');
+  pop.classList.toggle('open', open);
+  toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function closeNavMorePop() {
+  const pop = document.getElementById('nav-more-pop');
+  const toggle = document.getElementById('nav-more-toggle');
+  if (pop) pop.classList.remove('open');
+  if (toggle) toggle.setAttribute('aria-expanded', 'false');
+  syncNavMoreActive();
+}
+// 外側クリックで閉じる
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('nav-more-wrap');
+  if (wrap && !wrap.contains(e.target)) closeNavMorePop();
+});
+// 連続発火を 1 フレームにまとめる
+let _navLayoutRaf = 0;
+function scheduleHeaderNavLayout() {
+  if (_navLayoutRaf) return;
+  _navLayoutRaf = requestAnimationFrame(() => { _navLayoutRaf = 0; try { layoutHeaderNav(); } catch (_) {} });
+}
+(function initHeaderNavOverflow() {
+  const nav = document.querySelector('.header-nav');
+  if (!nav) return;
+  if (typeof ResizeObserver === 'function') new ResizeObserver(scheduleHeaderNavLayout).observe(nav);
+  else window.addEventListener('resize', scheduleHeaderNavLayout);
+  // 権限適用（applyRoleBasedUI）や VIEW AS 切替でタブの inline display が変わったら再配置
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(scheduleHeaderNavLayout).observe(nav, { attributes: true, attributeFilter: ['style'], subtree: true });
+  }
+  // Web フォント（Noto Sans JP）読込でタブ幅が変わるので完了時にも再配置
+  try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleHeaderNavLayout); } catch (_) {}
+  scheduleHeaderNavLayout();
+})();
+
 function setPreviewRole(role) {
   previewRole = role;
   // ボタンのアクティブ状態を更新
@@ -25267,6 +25370,7 @@ function showPage(name, btn) {
   document.querySelectorAll(`.nav-btn[data-page="${name}"],.nav-drawer-btn[data-page="${name}"]`).forEach(b=>b.classList.add('active'));
   if(btn && !btn.dataset.page) btn.classList.add('active'); // 後方互換
   closeNavDrawer();
+  if (typeof closeNavMorePop === 'function') closeNavMorePop(); // 「その他 ▾」内から選んだ時に閉じる＋アクティブ表示同期
   if(name==='dashboard') loadDashboard();
   if(name==='projects') { loadProjects(); }
   if(name==='members') loadMembers();
