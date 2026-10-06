@@ -19034,11 +19034,50 @@ async function findInvoicePdfInFolder(drive, folderId, fileName) {
 
 // 請求書 1 件を PDF 化して Drive の本人フォルダへ保存（同名があれば上書き）。
 // @returns {Promise<{file_id, url, file_name, folder_id, folder_url, replaced}|null>} 対象外（client 請求書等）は null
+// Drive に PDF を置いてよい請求書の状態（下書き・差戻中は振込管理が合算してしまうので不可）
+const INVOICE_PDF_DRIVE_STATUSES = ['submitted', 'approved'];
+
+// 請求書の現在の status を読む（削除済みなら null）
+async function fetchInvoiceStatus(invoiceId) {
+  const { data, error } = await supabase.from('invoices').select('status').eq('id', invoiceId).maybeSingle();
+  if (error) throw new Error(`請求書の状態確認に失敗: ${error.message}`);
+  return data ? data.status : null;
+}
+
+// 同名の PDF（trashed=false）を全部返す（競合で 2 枚できたときの自己修復用）
+async function listInvoicePdfsInFolder(drive, folderId, fileName) {
+  const r = await drive.files.list({
+    q: `name='${escapeDriveQueryValue(fileName)}' and '${folderId}' in parents and trashed=false`,
+    fields: 'files(id, name, webViewLink, modifiedTime)',
+    pageSize: 20,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  return r.data.files || [];
+}
+
+async function trashDriveFile(drive, fileId) {
+  await drive.files.update({ fileId, requestBody: { trashed: true }, supportsAllDrives: true });
+}
+
+// 請求書 1 件を PDF 化して Drive の本人フォルダへ保存（同名があれば上書き）。
+//
+// 提出（status を submitted にする）→ PDF 描画 → Drive アップロードの間に管理者が差し戻す
+// （reject がゴミ箱送りを先に実行し、その後にアップロードが完了して差戻済みの PDF が残る）競合を防ぐため、
+//   1) アップロード直前に status を読み直し、submitted/approved でなければ保存しない
+//   2) アップロード完了後にもう一度 status を読み直し、submitted/approved でなくなっていれば
+//      今アップロードしたファイルをその場でゴミ箱へ送る（削除済み＝行が無い場合も同様）
+//   3) 同名ファイルが 2 枚以上あれば（再提出の重なり等）最新 1 枚だけ残して他をゴミ箱へ
+// DB は status 更新が先に確定するので、reject 側のゴミ箱送りとどちらが先でも最終状態は一致する。
+// @returns {Promise<object|null>} 保存結果。状態により保存しなかった／取り消したときは { skipped: '...' }
 async function syncInvoicePdfToDrive(invoiceId, { actorId } = {}) {
   const { buildInvoicePdfModel, buildInvoicePdfFileName, renderInvoicePdf } = require('../utils/invoice-pdf');
   const inv = await fetchInvoiceForPdf(invoiceId);
   if (!inv) throw new Error('請求書が見つかりません');
   if (inv.invoice_type === 'client') return null;
+  if (!INVOICE_PDF_DRIVE_STATUSES.includes(inv.status)) {
+    return { skipped: `status=${inv.status}（提出済み・承認済みのみ Drive に保存します）` };
+  }
   const issuer = inv.issuer;
   if (!issuer || !issuer.id) throw new Error('請求者（issuer）が見つかりません');
   const year = parseInt(inv.year, 10), month = parseInt(inv.month, 10);
@@ -19049,6 +19088,13 @@ async function syncInvoicePdfToDrive(invoiceId, { actorId } = {}) {
 
   const drive = await getDriveService();
   const { folderId, folderUrl } = await ensureInvoiceMonthFolderForUser(drive, issuer, year, month, actorId);
+
+  // 1) アップロード直前の状態確認（描画・フォルダ確保の間に差し戻されていれば保存しない）
+  const statusBefore = await fetchInvoiceStatus(invoiceId);
+  if (!INVOICE_PDF_DRIVE_STATUSES.includes(statusBefore)) {
+    console.log(`[invoice-pdf] 保存中止（アップロード前に status=${statusBefore}）: ${fileName}`);
+    return { skipped: `status=${statusBefore}` };
+  }
 
   const { PassThrough } = require('stream');
   const body = new PassThrough();
@@ -19072,6 +19118,31 @@ async function syncInvoicePdfToDrive(invoiceId, { actorId } = {}) {
     });
     fileId = r.data.id; url = r.data.webViewLink;
   }
+
+  // 2) アップロード後の状態確認（アップロード中に差し戻し・削除されていれば今置いた PDF を取り消す）
+  const statusAfter = await fetchInvoiceStatus(invoiceId);
+  if (!INVOICE_PDF_DRIVE_STATUSES.includes(statusAfter)) {
+    try { await trashDriveFile(drive, fileId); }
+    catch (e) { console.warn(`[invoice-pdf] 取り消しのゴミ箱送り失敗 ${fileName}: ${e.message}`); throw e; }
+    console.log(`[invoice-pdf] 保存を取り消し（アップロード後に status=${statusAfter ?? '削除済み'}）: ${fileName}`);
+    return { skipped: `status=${statusAfter ?? 'deleted'}` };
+  }
+
+  // 3) 同名が 2 枚以上なら最新 1 枚だけ残す（再提出が重なって両方 create した場合の自己修復）
+  try {
+    const dups = await listInvoicePdfsInFolder(drive, folderId, fileName);
+    if (dups.length > 1) {
+      const sorted = dups.slice().sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')));
+      for (const d of sorted.slice(1)) {
+        try { await trashDriveFile(drive, d.id); } catch (e) { console.warn(`[invoice-pdf] 重複PDFのゴミ箱送り失敗 ${d.id}: ${e.message}`); }
+      }
+      if (sorted[0].id !== fileId) { fileId = sorted[0].id; url = sorted[0].webViewLink || url; }
+      console.log(`[invoice-pdf] 同名 PDF ${dups.length} 枚 → 最新 1 枚に整理: ${fileName}`);
+    }
+  } catch (e) {
+    console.warn(`[invoice-pdf] 重複チェック失敗 ${fileName}: ${e.message}`);
+  }
+
   console.log(`[invoice-pdf] ${existing ? '上書き' : '新規'} ${fileName} → ${folderUrl} (${pdf.length} bytes)`);
   return { file_id: fileId, url: url || `https://drive.google.com/file/d/${fileId}/view`, file_name: fileName, folder_id: folderId, folder_url: folderUrl, replaced: !!existing };
 }
@@ -19081,6 +19152,7 @@ async function tryAutoSyncInvoicePdf(invoiceId, actorId, where) {
   if (!invoicePdfDriveSyncEnabled()) return { drive_pdf: null, drive_pdf_error: null };
   try {
     const r = await syncInvoicePdfToDrive(invoiceId, { actorId });
+    if (r && r.skipped) return { drive_pdf: null, drive_pdf_error: null, drive_pdf_skipped: r.skipped };
     return { drive_pdf: r, drive_pdf_error: null };
   } catch (e) {
     console.warn(`[invoice-pdf] ${where} 自動保存失敗 invoice=${invoiceId}: ${e.message}`);
@@ -19124,6 +19196,10 @@ router.post('/invoices/:id/drive-pdf', requireAuth, async (req, res) => {
     }
     if (!invoicePdfDriveSyncEnabled()) return res.status(503).json({ error: '請求書PDFのDrive保存は現在無効化されています' });
     const r = await syncInvoicePdfToDrive(inv.id, { actorId: req.user.id });
+    if (r && r.skipped) {
+      // 保存処理の最中に差し戻し・削除された（競合）。置いた PDF は取り消し済み
+      return res.status(409).json({ error: `保存を取り消しました（処理中に請求書の状態が変わりました: ${r.skipped}）` });
+    }
     res.json({ ok: true, drive_pdf: r });
   } catch (e) {
     console.error('[invoice-pdf][POST /invoices/:id/drive-pdf]', e);
