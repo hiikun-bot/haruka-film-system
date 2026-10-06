@@ -17245,6 +17245,9 @@ const { normalizeTweetBody } = require('../utils/tweet-body');
 //   一覧に base64 を載せると 200 件で数 MB になり、転送・JSON パース・<img> デコードが
 //   重かった上、`loading="lazy"` も data URL には効かず全画像が即デコードされていた。
 //   一覧は has_image フラグだけ返し、本体は GET /tweets/:id/image から遅延取得する。
+// #️⃣ ハッシュタグ切り出し（フロントと同じ utils/hashtags.js）
+const Hashtags = require('../utils/hashtags');
+
 const TWEET_LIST_COLUMNS =
   'id, user_id, body, expires_at, is_pinned, created_at, edited_at, mentioned_user_ids, reaction_count, comment_count, users!user_id(id, full_name, avatar_url, role)';
 
@@ -17323,6 +17326,13 @@ router.get('/tweets', requireAuth, async (req, res) => {
   const limitRaw = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 200;
   const recentOnly = req.query.order === 'recent';
+  // tag=<タグ>: 本文に「#タグ」を含む投稿だけ（#1219）。
+  //   NFKC + 小文字で正規化し、DB は ilike で候補を引いてから utils/hashtags で「タグとして」含むか再判定する
+  //   （ilike だけだと「#勝ち」で「#勝ちクリエイティブ」や URL 中の文字列まで拾うため）。
+  //   全角「＃」で書かれた本文も、ilike はタグ本体（# 抜き）で引くので候補に入る。
+  const tagKey = Hashtags.normalizeHashtag(req.query.tag || '');
+  const tagLike = tagKey ? `%${Hashtags.escapeLikePattern(tagKey)}%` : null;
+  const matchesTag = (t) => !tagKey || Hashtags.hasHashtag(t.body, tagKey);
   // roles=admin,secretary,producer,producer_director,director,editor,designer
   //   フロントの roleGroups → users.role 値の集合（producer_director を含む）
   //   後方互換: staff_only=1 は roles=admin,secretary に変換
@@ -17343,6 +17353,7 @@ router.get('/tweets', requireAuth, async (req, res) => {
     // ため、tweets.user_id を介した埋め込みであることを明示する。
     .select(TWEET_LIST_COLUMNS)
     .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`);
+  if (tagLike) q = q.ilike('body', tagLike);
 
   // ロール絞り込み（運営のみ / 個別ロール）:
   //   user_roles JOIN roles ベースで対象 user_id 集合を取得（dual-read: 旧 users.role も並走）
@@ -17377,10 +17388,14 @@ router.get('/tweets', requireAuth, async (req, res) => {
     //     を並列取得（これまでは (a)+(b) が逐次だった分の round trip を 1 段削減）。
     const [myCommentsRes, ownAndMentionRes] = await Promise.all([
       supabase.from('tweet_comments').select('tweet_id').eq('user_id', meId).is('deleted_at', null),
-      supabase.from('tweets')
-        .select(TWEET_LIST_COLUMNS)
-        .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
-        .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`),
+      (() => {
+        let oq = supabase.from('tweets')
+          .select(TWEET_LIST_COLUMNS)
+          .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
+          .or(`user_id.eq.${meId},mentioned_user_ids.cs.{${meId}}`);
+        if (tagLike) oq = oq.ilike('body', tagLike);
+        return oq;
+      })(),
     ]);
     if (myCommentsRes.error) return res.status(500).json({ error: myCommentsRes.error.message });
     if (ownAndMentionRes.error) return res.status(500).json({ error: ownAndMentionRes.error.message });
@@ -17392,15 +17407,17 @@ router.get('/tweets', requireAuth, async (req, res) => {
 
     // (c) コメント参加対象 — 取得したコメント tweet_id があるときだけ追加クエリ
     if (commentedTweetIds.length > 0) {
-      const { data: commentTweets, error: ctErr } = await supabase.from('tweets')
+      let cq = supabase.from('tweets')
         .select(TWEET_LIST_COLUMNS)
         .or(`is_pinned.eq.true,expires_at.gt.${nowIso}`)
         .in('id', commentedTweetIds);
+      if (tagLike) cq = cq.ilike('body', tagLike);
+      const { data: commentTweets, error: ctErr } = await cq;
       if (ctErr) return res.status(500).json({ error: ctErr.message });
       for (const t of (commentTweets || [])) if (!merged.has(t.id)) merged.set(t.id, t);
     }
 
-    let list = Array.from(merged.values());
+    let list = Array.from(merged.values()).filter(matchesTag);
 
     // ロール絞り込み（roles=... or 後方互換 staff_only=1）併用時のフィルター
     if (rolesFilter.length > 0) {
@@ -17424,12 +17441,32 @@ router.get('/tweets', requireAuth, async (req, res) => {
   // hardcoded .limit(50) → 200 に拡張（2026-05-08）
   // ページネーション UI が無く、active tweet 総数 > 50 で 51件目以降が永遠に見えない silent miss だった
   if (!recentOnly) q = q.order('is_pinned', { ascending: false });
-  const { data: list, error } = await q
+  const { data: rawList, error } = await q
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) return res.status(500).json({ error: error.message });
-  if (!list || list.length === 0) return res.json([]);
+  const list = (rawList || []).filter(matchesTag);
+  if (list.length === 0) return res.json([]);
   res.json(await enrichTweetList(list, req.user.id));
+});
+
+// #️⃣ いま使われているハッシュタグ（有効な投稿＝期限内 or ピン留め の本文から集計）
+//   GET /tweets/tags?limit=30 → [{ tag, key, count }]（件数降順）
+//   つぶやきページの「タグで絞り込み」チップと、投稿フォームの「最近のタグ」候補に使う。
+//   本文は 280 字以内・有効投稿は多くても数百件なので、id と body だけ引いてサーバーで数える（テーブル追加なし）。
+router.get('/tweets/tags', requireAuth, async (req, res) => {
+  const limitRaw = parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 30;
+  const { data, error } = await supabase
+    .from('tweets')
+    .select('body')
+    .or(`is_pinned.eq.true,expires_at.gt.${new Date().toISOString()}`)
+    .or('body.ilike.%#%,body.ilike.%＃%')
+    .order('created_at', { ascending: false })
+    .limit(1000);
+  if (error) return res.status(500).json({ error: error.message });
+  const counts = Hashtags.countHashtags((data || []).map(t => t.body));
+  res.json(counts.slice(0, limit));
 });
 
 // つぶやきの未読件数（ナビ「つぶやき」の赤バッジ用・ADR 041）

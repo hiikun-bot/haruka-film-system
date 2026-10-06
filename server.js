@@ -366,6 +366,9 @@ app.use('/js/personal-goals.js', express.static(path.join(__dirname, 'utils/pers
 // 💭 つぶやきの「@メンション」解決（utils/mention-resolve.js・UMD形式）を
 //   フロントの「@」補完・本文ハイライトと共有する（サーバーの通知先解決と同じロジック）
 app.use('/js/mention-resolve.js', express.static(path.join(__dirname, 'utils/mention-resolve.js')));
+// #️⃣ つぶやきの「#ハッシュタグ」切り出し（utils/hashtags.js・UMD形式）を
+//   フロントの本文タグリンク化・タグ検索と共有する（サーバーの ?tag= 絞り込みと同じ切り出し）
+app.use('/js/hashtags.js', express.static(path.join(__dirname, 'utils/hashtags.js')));
 // 📡 通知 Realtime 用 supabase-js（ブラウザ UMD ビルド）を自オリジンから配信する。
 // 以前は notification-realtime.js が https://esm.sh/@supabase/supabase-js@2 を動的 import していたが、
 //   ・iPhone Safari で別オリジン script 内の例外が「Script error.」に伏せられ原因を追えない（#haruka-error-report 4件）
