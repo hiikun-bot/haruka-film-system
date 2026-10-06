@@ -35239,6 +35239,7 @@ async function loadMyInvoices() {
         ${['draft','rejected'].includes(inv.status) ? `<button class="btn btn-sm" onclick="editInvoice('${inv.id}')">修正</button>` : ''}
         ${['draft','rejected'].includes(inv.status) ? `<button class="btn btn-sm" style="color:#A32D2D" onclick="deleteInvoice('${inv.id}')">削除</button>` : ''}
         <button class="btn btn-sm" onclick="printInvoice('${inv.id}')">🖨 PDF出力</button>
+        ${inv.invoice_type !== 'client' ? `<button class="btn btn-sm" onclick="saveInvoicePdfToDrive('${inv.id}')" title="PDFを自分の請求書フォルダ（Drive）に保存し直して開く">📁 Driveへ保存</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -35388,6 +35389,7 @@ function _renderAdminMonthTable(key, invs) {
           ` : ''}
           <button class="btn btn-sm" style="font-size:11px;padding:3px 10px;margin-left:4px" onclick="editInvoice('${inv.id}')" title="明細を表示">明細</button>
           <button class="btn btn-sm" style="font-size:11px;padding:3px 10px;margin-left:4px" onclick="printInvoice('${inv.id}')">🖨</button>
+          ${inv.invoice_type !== 'client' ? `<button class="btn btn-sm" style="font-size:11px;padding:3px 10px;margin-left:4px" onclick="saveInvoicePdfToDrive('${inv.id}')" title="PDFを本人の請求書フォルダ（Drive）に保存し直して開く">📁</button>` : ''}
         </td>
       </tr>`;
     }).join('');
@@ -35853,7 +35855,30 @@ async function generateMyInvoice() {
   }
   closeModal('modal-gen-invoice');
   showToast(`請求書 ${data.invoice_number} を作成しました（¥${(data.total_amount||0).toLocaleString()}）`, 'success');
+  notifyInvoiceDrivePdfResult(data);
   await loadMyInvoices();
+}
+
+// ADR 047: 作成・提出のレスポンスに載る Drive 自動保存の結果をトーストで知らせる
+function notifyInvoiceDrivePdfResult(data) {
+  if (!data) return;
+  if (data.drive_pdf && data.drive_pdf.url) {
+    showToast(`📁 PDFを請求書フォルダ（Drive）に${data.drive_pdf.replaced ? '上書き保存' : '保存'}しました：${data.drive_pdf.file_name || ''}`, 'success', 7000);
+  } else if (data.drive_pdf_error) {
+    showToast(`PDFのDrive自動保存に失敗しました（請求書自体は保存済み）。「📁 Driveへ保存」でやり直せます：${data.drive_pdf_error}`, 'warn', 10000);
+  }
+}
+
+// ADR 047: 手動で Drive へ PDF を保存し直す（本人 or スタッフ）。成功したら Drive のファイルを開く
+async function saveInvoicePdfToDrive(id) {
+  return btnBusy(busyBtnFrom(), async () => {
+    const res = await apiFetch(`${API}/invoices/${id}/drive-pdf`, { method: 'POST' });
+    let data = {};
+    try { data = await res.json(); } catch {}
+    if (!res.ok) { showToast(data.error || 'Driveへの保存に失敗しました', 'error'); return; }
+    notifyInvoiceDrivePdfResult(data);
+    if (data.drive_pdf && data.drive_pdf.url) window.open(data.drive_pdf.url, '_blank', 'noopener');
+  }, '保存中…');
 }
 
 let _pendingSubmitId = null;
@@ -35890,6 +35915,7 @@ async function submitInvoice(id) {
     showToast(`提出に失敗しました: ${detail}`, 'error');
     return;
   }
+  try { notifyInvoiceDrivePdfResult(await res.json()); } catch {}
   await loadMyInvoices();
   }, '確認中…');
 }
@@ -35919,6 +35945,7 @@ async function confirmDuplicateSubmit() {
     return;
   }
   _pendingSubmitId = null;
+  try { notifyInvoiceDrivePdfResult(await res.json()); } catch {}
   await loadMyInvoices();
   });
 }
@@ -36365,7 +36392,7 @@ async function printInvoice(id) {
 
   // 内税計算：total_amount が税込最大金額
   const total    = inv.total_amount || 0;
-  const subtotal = Math.floor(total / 1.1);
+  const subtotal = Math.floor((total * 10) / 11); // 整数演算（27,500 / 1.1 が浮動小数で 24,999 になる問題を回避）
   const tax      = total - subtotal;
 
   const now = new Date();
@@ -36576,7 +36603,7 @@ function printClientInvoice(inv) {
     : now.toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric'});
 
   const total = inv.total_amount || 0;
-  const subtotal = Math.floor(total / 1.1);
+  const subtotal = Math.floor((total * 10) / 11); // 整数演算（27,500 / 1.1 が浮動小数で 24,999 になる問題を回避）
   const tax = total - subtotal;
 
   const costLabel = { base_fee:'制作費', script_fee:'台本作成', ai_fee:'AI生成', other_fee:'その他', director_fee:'ディレクション費', producer_fee:'プロデュース費' };

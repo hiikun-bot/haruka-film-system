@@ -18806,7 +18806,10 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     if (detErr) return res.status(500).json({ error: detErr.message });
   }
 
-  res.json({ ok: true, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: itemRows.length });
+  // ADR 047: 作成した請求書の PDF を本人の Drive 請求書フォルダへ自動保存（失敗しても作成は成功扱い）
+  const driveSync = await tryAutoSyncInvoicePdf(invoice.id, req.user?.id, 'generate');
+
+  res.json({ ok: true, id: invoice.id, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: itemRows.length, ...driveSync });
 });
 
 // 請求書発行（draft → issued）
@@ -18848,7 +18851,9 @@ router.post('/invoices/:id/submit', requireAuth, async (req, res) => {
     return res.status(500).json({ error: `更新失敗: ${error.message}` });
   }
   if (!data) return res.status(500).json({ error: '更新後の取得に失敗しました' });
-  res.json(data);
+  // ADR 047: 提出時点の内容で Drive の PDF を上書き（下書き中の明細修正を反映）
+  const driveSync = await tryAutoSyncInvoicePdf(id, req.user?.id, 'submit');
+  res.json({ ...data, ...driveSync });
 });
 
 // 請求書承認（submitted → approved）管理者のみ
@@ -18879,7 +18884,8 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
   const invId = req.params.id;
 
   // 明細の存在確認 + オーナーチェック
-  const { data: inv } = await supabase.from('invoices').select('issuer_id, status').eq('id', invId).single();
+  const { data: inv } = await supabase.from('invoices')
+    .select('issuer_id, status, invoice_number, year, month, invoice_type').eq('id', invId).single();
   if (!inv) return res.status(404).json({ error: '請求書が見つかりません' });
   if (!['draft','rejected'].includes(inv.status)) return res.status(400).json({ error: '下書き・差し戻し以外は削除できません' });
   if (inv.issuer_id !== req.user?.id && !(await isStaffRequester(req)))
@@ -18900,7 +18906,219 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
   // 3. invoice を削除
   const { error } = await supabase.from('invoices').delete().eq('id', invId);
   if (error) return res.status(500).json({ error: error.message });
+
+  // ADR 047: Drive に自動保存した PDF が残ると振込管理のスキャンが拾ってしまうのでゴミ箱へ
+  // （完全削除はしない・失敗しても削除自体は成功扱い）
+  try {
+    await trashInvoicePdfOnDrive(inv);
+  } catch (e) {
+    console.warn('[invoice-pdf] 削除時の Drive PDF ゴミ箱送り失敗:', e.message);
+  }
   res.json({ ok: true });
+});
+
+// ==================== 請求書 PDF の Drive 自動保存（ADR 047） ====================
+//
+// 「＋ 今月の請求書を作成」で作った請求書を pdfkit で PDF 化し、本人の請求書フォルダ
+// （請求書/YYYY年/MM月/氏名 YYYY年MM月 = member_invoice_folders）へ置く。
+//   - 作成時（POST /invoices/generate）と提出時（POST /invoices/:id/submit）に自動で保存（上書き）
+//   - 削除時（DELETE /invoices/:id）はゴミ箱送り
+//   - 手動のやり直しは POST /invoices/:id/drive-pdf
+// 失敗しても請求書の作成・提出は止めない（ログ警告＋レスポンスに drive_pdf_error）。
+// 無効化は環境変数 INVOICE_PDF_DRIVE_SYNC=off。
+// DB 列は増やさない。同じ請求書は同名ファイル（utils/invoice-pdf.js buildInvoicePdfFileName）で
+// Drive 上を name 検索して上書きするので、作り直しても PDF が増殖しない。
+// クライアント請求書（invoice_type='client'）は対象外（フォルダ体系が違う）。
+
+function invoicePdfDriveSyncEnabled() {
+  const v = String(process.env.INVOICE_PDF_DRIVE_SYNC || '').trim().toLowerCase();
+  return !['off', '0', 'false', 'no'].includes(v);
+}
+
+function escapeDriveQueryValue(s) {
+  return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+// GET /invoices/:id と同じ展開で請求書を取得（PDF 用に issuer の連絡先列も含める）。
+// invoice_registration_number 列が未反映の環境でも落ちないようフォールバックする。
+async function fetchInvoiceForPdf(invoiceId) {
+  const buildSelect = (withRegNo) => `
+      *,
+      projects(id, name, clients(id, name, client_code)),
+      issuer:issuer_id(
+        id, full_name, nickname, email, phone, postal_code, address,
+        bank_name, bank_code, branch_name, branch_code,
+        account_type, account_number, account_holder_kana${withRegNo ? ',\n        invoice_registration_number' : ''}
+      ),
+      invoice_items(
+        id, total_amount, label, quantity, unit, unit_price, sort_order, created_at,
+        cost_type, creative_label, creative_id,
+        creatives(id, file_name, project_id, creative_type, final_deadline, draft_deadline, updated_at,
+          projects(id, name, clients(id, name, client_code))
+        )
+      )
+    `;
+  let { data, error } = await supabase.from('invoices').select(buildSelect(true)).eq('id', invoiceId).maybeSingle();
+  if (error && /invoice_registration_number/.test(error.message || '')) {
+    ({ data, error } = await supabase.from('invoices').select(buildSelect(false)).eq('id', invoiceId).maybeSingle());
+  }
+  if (error) throw new Error(`請求書の取得に失敗: ${error.message}`);
+  return data || null;
+}
+
+// 本人の「氏名 YYYY年MM月」フォルダ ID を返す。member_invoice_folders に無ければ
+// POST /members/:id/invoice-folders/generate と同じ手順で作る（年/月フォルダ・同姓同名回避・
+// 本人＋管理者群への writer 付与・member_invoice_folders へ upsert）。
+// NOTE: PR #1202（ADR 046）で同等の ensureMemberInvoiceMonthFolder が切り出される予定。
+//       マージ後はそちらに寄せる（挙動は同じ）。
+async function ensureInvoiceMonthFolderForUser(drive, user, year, month, createdBy) {
+  const { data: existing } = await supabase
+    .from('member_invoice_folders')
+    .select('folder_id, folder_url')
+    .eq('user_id', user.id).eq('year', year).eq('month', month)
+    .maybeSingle();
+  if (existing && existing.folder_id) return { folderId: existing.folder_id, folderUrl: existing.folder_url, created: false };
+
+  if (!user.email) throw new Error('メンバーに email が設定されていないため請求書フォルダを作れません');
+  const invoiceRootId = await getInvoiceRootFolderId(drive);
+  const yearFolderId = await getOrCreateFolder(drive, invoiceRootId, `${year}年`);
+  const monthFolderId = await getOrCreateFolder(drive, yearFolderId, `${String(month).padStart(2, '0')}月`);
+
+  const baseName = buildInvoiceMemberFolderName(user);
+  let folderName = baseName;
+  {
+    const { data: clashUsers } = await supabase
+      .from('users').select('id, full_name, nickname, email').neq('id', user.id);
+    if ((clashUsers || []).some(u => buildInvoiceMemberFolderName(u) === baseName)) {
+      folderName = `${baseName} (${(user.email || '').split('@')[0]})`;
+    }
+  }
+  const memberFolderId = await getOrCreateFolder(drive, monthFolderId, buildMemberFolderName(folderName, year, month));
+  const folderUrl = driveFolderUrl(memberFolderId);
+  const { error: upErr } = await supabase
+    .from('member_invoice_folders')
+    .upsert({ user_id: user.id, year, month, folder_id: memberFolderId, folder_url: folderUrl, created_by: createdBy || null },
+      { onConflict: 'user_id,year,month' });
+  if (upErr) throw new Error(`member_invoice_folders upsert 失敗: ${upErr.message}`);
+
+  try { await ensureUserDrivePermission(drive, memberFolderId, user.email, 'writer'); }
+  catch (e) { console.warn('[invoice-pdf] 本人 writer 付与失敗:', e.message); }
+  try {
+    const managerEmails = await getInvoiceFolderManagerEmails(user.id);
+    for (const em of managerEmails) {
+      if (em === (user.email || '').toLowerCase()) continue;
+      try { await ensureUserDrivePermission(drive, memberFolderId, em, 'writer'); }
+      catch (e2) { console.warn('[invoice-pdf] 管理者 writer 付与失敗:', em, e2.message); }
+    }
+  } catch (e) { console.warn('[invoice-pdf] 管理者メール取得失敗:', e.message); }
+  return { folderId: memberFolderId, folderUrl, created: true };
+}
+
+// フォルダ内の同名 PDF（trashed=false）を 1 件返す（無ければ null）
+async function findInvoicePdfInFolder(drive, folderId, fileName) {
+  const r = await drive.files.list({
+    q: `name='${escapeDriveQueryValue(fileName)}' and '${folderId}' in parents and trashed=false`,
+    fields: 'files(id, name, webViewLink)',
+    pageSize: 5,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  return (r.data.files || [])[0] || null;
+}
+
+// 請求書 1 件を PDF 化して Drive の本人フォルダへ保存（同名があれば上書き）。
+// @returns {Promise<{file_id, url, file_name, folder_id, folder_url, replaced}|null>} 対象外（client 請求書等）は null
+async function syncInvoicePdfToDrive(invoiceId, { actorId } = {}) {
+  const { buildInvoicePdfModel, buildInvoicePdfFileName, renderInvoicePdf } = require('../utils/invoice-pdf');
+  const inv = await fetchInvoiceForPdf(invoiceId);
+  if (!inv) throw new Error('請求書が見つかりません');
+  if (inv.invoice_type === 'client') return null;
+  const issuer = inv.issuer;
+  if (!issuer || !issuer.id) throw new Error('請求者（issuer）が見つかりません');
+  const year = parseInt(inv.year, 10), month = parseInt(inv.month, 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) throw new Error('請求書の年月が不正です');
+
+  const pdf = await renderInvoicePdf(buildInvoicePdfModel(inv));
+  const fileName = buildInvoicePdfFileName(inv, issuer);
+
+  const drive = await getDriveService();
+  const { folderId, folderUrl } = await ensureInvoiceMonthFolderForUser(drive, issuer, year, month, actorId);
+
+  const { PassThrough } = require('stream');
+  const body = new PassThrough();
+  body.end(pdf);
+  const existing = await findInvoicePdfInFolder(drive, folderId, fileName);
+  let fileId, url;
+  if (existing) {
+    const r = await drive.files.update({
+      fileId: existing.id,
+      media: { mimeType: 'application/pdf', body },
+      fields: 'id, webViewLink',
+      supportsAllDrives: true,
+    });
+    fileId = r.data.id; url = r.data.webViewLink || existing.webViewLink;
+  } else {
+    const r = await drive.files.create({
+      requestBody: { name: fileName, parents: [folderId], mimeType: 'application/pdf' },
+      media: { mimeType: 'application/pdf', body },
+      fields: 'id, webViewLink',
+      supportsAllDrives: true,
+    });
+    fileId = r.data.id; url = r.data.webViewLink;
+  }
+  console.log(`[invoice-pdf] ${existing ? '上書き' : '新規'} ${fileName} → ${folderUrl} (${pdf.length} bytes)`);
+  return { file_id: fileId, url: url || `https://drive.google.com/file/d/${fileId}/view`, file_name: fileName, folder_id: folderId, folder_url: folderUrl, replaced: !!existing };
+}
+
+// 自動保存の共通ラッパー: 無効時は null、失敗時は { error } を返し例外を外に出さない
+async function tryAutoSyncInvoicePdf(invoiceId, actorId, where) {
+  if (!invoicePdfDriveSyncEnabled()) return { drive_pdf: null, drive_pdf_error: null };
+  try {
+    const r = await syncInvoicePdfToDrive(invoiceId, { actorId });
+    return { drive_pdf: r, drive_pdf_error: null };
+  } catch (e) {
+    console.warn(`[invoice-pdf] ${where} 自動保存失敗 invoice=${invoiceId}: ${e.message}`);
+    return { drive_pdf: null, drive_pdf_error: e.message || String(e) };
+  }
+}
+
+// 削除された請求書の PDF を Drive 上でゴミ箱へ（同名検索。見つからなければ何もしない）
+async function trashInvoicePdfOnDrive(inv) {
+  if (!invoicePdfDriveSyncEnabled()) return false;
+  if (!inv || inv.invoice_type === 'client' || !inv.issuer_id) return false;
+  const { buildInvoicePdfFileName } = require('../utils/invoice-pdf');
+  const { data: folder } = await supabase
+    .from('member_invoice_folders').select('folder_id')
+    .eq('user_id', inv.issuer_id).eq('year', inv.year).eq('month', inv.month).maybeSingle();
+  if (!folder || !folder.folder_id) return false;
+  const { data: issuer } = await supabase.from('users').select('id, full_name').eq('id', inv.issuer_id).maybeSingle();
+  const fileName = buildInvoicePdfFileName(inv, issuer || {});
+  const drive = await getDriveService();
+  const existing = await findInvoicePdfInFolder(drive, folder.folder_id, fileName);
+  if (!existing) return false;
+  await drive.files.update({ fileId: existing.id, requestBody: { trashed: true }, supportsAllDrives: true });
+  console.log(`[invoice-pdf] 削除に伴いゴミ箱へ: ${fileName}`);
+  return true;
+}
+
+// POST /invoices/:id/drive-pdf — 手動で Drive へ保存し直す（本人 or スタッフ）
+router.post('/invoices/:id/drive-pdf', requireAuth, async (req, res) => {
+  try {
+    const { data: inv, error } = await supabase
+      .from('invoices').select('id, issuer_id, invoice_type').eq('id', req.params.id).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!inv) return res.status(404).json({ error: '請求書が見つかりません' });
+    if (inv.issuer_id !== req.user?.id && !(await isStaffRequester(req))) {
+      return res.status(403).json({ error: 'アクセス権限がありません' });
+    }
+    if (inv.invoice_type === 'client') return res.status(400).json({ error: 'クライアント請求書は対象外です' });
+    if (!invoicePdfDriveSyncEnabled()) return res.status(503).json({ error: '請求書PDFのDrive保存は現在無効化されています' });
+    const r = await syncInvoicePdfToDrive(inv.id, { actorId: req.user.id });
+    res.json({ ok: true, drive_pdf: r });
+  } catch (e) {
+    console.error('[invoice-pdf][POST /invoices/:id/drive-pdf]', e);
+    res.status(500).json({ error: e.message || 'Driveへの保存に失敗しました' });
+  }
 });
 
 // ==================== ボール保持者判定 ====================
