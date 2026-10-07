@@ -54,7 +54,7 @@ Supabase の Security Advisor（2026-10-03 診断、10-07 03:24 JST にメール
 
 ## 適用手順
 
-1. Supabase SQL Editor で `migrations/2026-10-07_enable_rls_all_public_tables.sql` を実行（NOTICE に有効化したテーブル名が並ぶ）。
+1. Supabase SQL Editor で `migrations/2026-10-07_enable_rls_all_public_tables.sql` の **STEP 1（DO ブロック）だけを単独で実行**（1 テーブルごとに COMMIT。NOTICE に有効化したテーブル名が並ぶ）。初版は 1 トランザクションで全テーブルをロックして稼働中アプリと deadlock したため、この形に変更した。続けて STEP 2（DROP POLICY）を実行。
 2. 同ファイル末尾の確認クエリで 0 行を確認。
 3. 本番サイトでログイン → 一覧・詳細・つぶやき・通知ベルが従来どおり動くことを確認。
 4. PR に `db-migration-applied` ラベルを付けてマージ。
