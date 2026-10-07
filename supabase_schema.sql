@@ -1478,16 +1478,16 @@ AFTER INSERT OR UPDATE ON tweet_comments
 FOR EACH ROW EXECUTE FUNCTION update_tweet_comment_count();
 
 ALTER TABLE tweet_reactions ENABLE ROW LEVEL SECURITY;
+-- ADR 048: 「誰でも SELECT 可」ポリシー (tweet_reactions_select_all) は廃止。anon キーからは読めない。
 DROP POLICY IF EXISTS tweet_reactions_select_all ON tweet_reactions;
-CREATE POLICY tweet_reactions_select_all ON tweet_reactions FOR SELECT USING (true);
 DROP POLICY IF EXISTS tweet_reactions_insert_own ON tweet_reactions;
 CREATE POLICY tweet_reactions_insert_own ON tweet_reactions FOR INSERT WITH CHECK (user_id = auth.uid());
 DROP POLICY IF EXISTS tweet_reactions_delete_own ON tweet_reactions;
 CREATE POLICY tweet_reactions_delete_own ON tweet_reactions FOR DELETE USING (user_id = auth.uid());
 
 ALTER TABLE tweet_comments ENABLE ROW LEVEL SECURITY;
+-- ADR 048: 「誰でも SELECT 可」ポリシー (tweet_comments_select_visible) は廃止。anon キーからは読めない。
 DROP POLICY IF EXISTS tweet_comments_select_visible ON tweet_comments;
-CREATE POLICY tweet_comments_select_visible ON tweet_comments FOR SELECT USING (deleted_at IS NULL);
 DROP POLICY IF EXISTS tweet_comments_insert_own ON tweet_comments;
 CREATE POLICY tweet_comments_insert_own ON tweet_comments FOR INSERT WITH CHECK (user_id = auth.uid());
 DROP POLICY IF EXISTS tweet_comments_update_own ON tweet_comments;
@@ -2109,9 +2109,8 @@ CREATE POLICY notification_settings_update_own ON notification_settings
   FOR UPDATE USING (user_id = auth.uid());
 
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+-- ADR 048: 「誰でも SELECT 可」ポリシー (posts_select_all) は廃止。anon キーからは読めない。
 DROP POLICY IF EXISTS posts_select_all ON posts;
-CREATE POLICY posts_select_all ON posts
-  FOR SELECT USING (deleted_at IS NULL);
 DROP POLICY IF EXISTS posts_insert_own ON posts;
 CREATE POLICY posts_insert_own ON posts
   FOR INSERT WITH CHECK (user_id = auth.uid());
@@ -2120,9 +2119,8 @@ CREATE POLICY posts_update_own ON posts
   FOR UPDATE USING (user_id = auth.uid());
 
 ALTER TABLE post_reactions ENABLE ROW LEVEL SECURITY;
+-- ADR 048: 「誰でも SELECT 可」ポリシー (post_reactions_select_all) は廃止。anon キーからは読めない。
 DROP POLICY IF EXISTS post_reactions_select_all ON post_reactions;
-CREATE POLICY post_reactions_select_all ON post_reactions
-  FOR SELECT USING (true);
 DROP POLICY IF EXISTS post_reactions_insert_own ON post_reactions;
 CREATE POLICY post_reactions_insert_own ON post_reactions
   FOR INSERT WITH CHECK (user_id = auth.uid());
@@ -2131,9 +2129,8 @@ CREATE POLICY post_reactions_delete_own ON post_reactions
   FOR DELETE USING (user_id = auth.uid());
 
 ALTER TABLE post_comments ENABLE ROW LEVEL SECURITY;
+-- ADR 048: 「誰でも SELECT 可」ポリシー (post_comments_select_all) は廃止。anon キーからは読めない。
 DROP POLICY IF EXISTS post_comments_select_all ON post_comments;
-CREATE POLICY post_comments_select_all ON post_comments
-  FOR SELECT USING (deleted_at IS NULL);
 DROP POLICY IF EXISTS post_comments_insert_own ON post_comments;
 CREATE POLICY post_comments_insert_own ON post_comments
   FOR INSERT WITH CHECK (user_id = auth.uid());
@@ -3124,3 +3121,35 @@ NOTIFY pgrst, 'reload schema';
 -- ============================================================
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS showcase_hidden BOOLEAN NOT NULL DEFAULT false;
 COMMENT ON COLUMN projects.showcase_hidden IS 'true ならホームの🎬新着納品ショーケースに出さない（機密案件向け・ADR 042 追補）';
+
+-- ============================================================
+-- ADR 048: public スキーマの全テーブルで RLS を有効化（migrations/2026-10-07_enable_rls_all_public_tables.sql）
+-- 本ファイル途中（「セキュリティ：全 public テーブルで RLS 有効化」）にも同じループがあるが、
+-- それより後に CREATE TABLE したテーブルには効かないため、ファイル末尾でもう一度総なめする。
+-- 再構築時はこのファイルを一括実行するので COMMIT は挟まない（本番の稼働中適用は migration 側の
+-- COMMIT 入り版を使う）。anon/authenticated 向けポリシーは作らない = 全拒否。service_role は影響なし。
+-- ============================================================
+DO $rls_enable_all$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT c.relname
+    FROM pg_class c
+    JOIN pg_namespace ns ON ns.oid = c.relnamespace
+    WHERE ns.nspname = 'public'
+      AND c.relkind IN ('r', 'p')
+      AND NOT c.relrowsecurity
+    ORDER BY c.relname
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', r.relname);
+  END LOOP;
+END
+$rls_enable_all$;
+
+-- ADR 048: Supabase Auth 前提で置かれていた「誰でも SELECT 可」ポリシーを念のため再度撤去
+DROP POLICY IF EXISTS posts_select_all              ON posts;
+DROP POLICY IF EXISTS post_reactions_select_all     ON post_reactions;
+DROP POLICY IF EXISTS post_comments_select_all      ON post_comments;
+DROP POLICY IF EXISTS tweet_reactions_select_all    ON tweet_reactions;
+DROP POLICY IF EXISTS tweet_comments_select_visible ON tweet_comments;
