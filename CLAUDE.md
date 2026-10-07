@@ -258,6 +258,7 @@ claude/feat-<機能>-<説明>  = 機能別chat作業用（例: claude/feat-proje
 - このラベルが付いている PR は、**本番Supabaseで適用 → `db-migration-applied` ラベルを手動付与** して初めて `migration-applied` チェックが pass します
 - `auto-merge` を併用しても、`db-migration-applied` が無い限り auto-merge は止まります（安全装置）
 - 適用手順・全体像: [`docs/db-migration-workflow.md`](docs/db-migration-workflow.md)
+- **新しいテーブルを作る migration には、同じファイルで必ず `ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;` を書く**（ADR 048）。アプリは service_role キーだけで DB にアクセスするので anon 向けポリシーは不要。RLS を書き忘れると Supabase Security Advisor の `rls_disabled_in_public` が再発し、anon キー保持者（＝全メンバー）がそのテーブルを PostgREST から直接読み書きできてしまう
 
 ## マージ手順（旧・参考）
 ```bash
