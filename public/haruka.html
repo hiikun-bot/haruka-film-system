@@ -144,6 +144,11 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .alert-chip{background:#fff;border:0.5px solid #F09595;border-radius:6px;padding:3px 8px;color:#A32D2D;cursor:pointer;font-size:12px;line-height:1.5;display:inline-flex;align-items:center;gap:4px;transition:background .12s}
 .alert-chip:hover{background:#FFE7E7}
 .alert-chip small{color:#B86A6A;font-size:11px}
+.alert-toggle{background:none;border:none;padding:3px 6px;margin:-3px 0 -3px -6px;border-radius:6px;font:inherit;color:#A32D2D;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:background .12s}
+.alert-toggle:hover{background:#FFE7E7}
+.alert-toggle-caret{display:inline-block;font-size:10px;transition:transform .12s}
+.alert-bar.is-collapsed .alert-toggle-caret{transform:rotate(-90deg)}
+.alert-bar.is-collapsed .alert-names{display:none}
 .alert-filter-btn{margin-left:auto;background:#fff;border:0.5px solid #F09595;border-radius:6px;padding:3px 10px;color:#A32D2D;cursor:pointer;font-size:12px;font-weight:500}
 .alert-filter-btn:hover{background:#FFE7E7}
 .alert-client-note{background:#FCF6E8;border:0.5px solid #EBDCC0;border-radius:6px;padding:3px 9px;color:#8A6D3B;cursor:pointer;font-size:12px;white-space:nowrap}
@@ -161,6 +166,7 @@ body::before{content:'';position:fixed;inset:0;background:url('HARUKAFILM背景.
 .table-wrap::after{content:'';position:sticky;right:0;top:0;display:block;width:48px;height:100%;background:linear-gradient(to right,transparent,rgba(245,252,252,0.95));pointer-events:none;float:right;margin-left:-48px;z-index:2;transition:opacity .2s}
 .table-wrap.scrolled-end::after{opacity:0}
 @media(max-width:768px){
+.alert-toggle{min-height:32px;padding:4px 8px;margin:-4px 0 -4px -8px}
   .table-wrap::after{width:36px;margin-left:-36px}
 }
 table{width:100%;border-collapse:collapse;font-size:14px}
@@ -16923,14 +16929,34 @@ function renderAlerts(rows) {
     ? `<button type="button" class="alert-filter-btn" style="margin-left:6px" onclick="openBulkDeadlineModal(_cvAlertLateIds)" title="提出遅れ中のクリエイティブの初稿締切・最終納品日をまとめて変更します（遅延ではなく日付変更になったケースの是正用）">📅 予定日をまとめて変更</button>`
     : '';
   // 制作側遅延が無く、クライアント待ちのみの場合は文言を切り替える
-  const headText = lateOurs.length
-    ? `提出遅れ ${lateOurs.length}件：`
-    : `制作側の提出遅れはありません`;
+  // 制作側遅延がある場合、見出しをチップ一覧の折りたたみトグルにする（件数が多いと一覧が画面を圧迫するため）。
+  // 開閉はユーザーの操作を localStorage に記憶。未操作なら 10件超のときだけ既定で畳む
+  // localStorage が使えない環境（Safari プライベート等）でも同一セッション内は _cvAlertChipsOpen で保持する
+  const chipsOpen = (() => {
+    if (_cvAlertChipsOpen !== null) return _cvAlertChipsOpen;
+    try {
+      const v = localStorage.getItem('cv_alert_chips_open');
+      return v === null ? lateOurs.length <= 10 : v === '1';
+    } catch(_) { return lateOurs.length <= 10; }
+  })();
+  const headHtml = lateOurs.length
+    ? `<button type="button" class="alert-toggle" onclick="cvAlertToggleChips(this)" aria-expanded="${chipsOpen}" aria-controls="cv-alert-names" title="クリックで一覧を開閉します"><span class="alert-toggle-caret">▼</span>提出遅れ ${lateOurs.length}件</button>`
+    : `<span class="alert-text">制作側の提出遅れはありません</span>`;
   const clientNoteHtml = lateClient.length
     ? `<span class="alert-client-note" onclick="cvSpShowAllDelayed()" title="クライアントにボールがあり締切超過の案件。制作側は返答待ちです。クリックで遅延を全件表示します">⏳ クライアント確認待ち ${lateClient.length}件</span>`
     : '';
   const dotHtml = lateOurs.length ? `<div class="alert-dot"></div>` : '';
-  el.innerHTML = `<div class="alert-bar${lateOurs.length?'':' is-calm'}">${dotHtml}<span class="alert-text">${headText}</span><span class="alert-names">${chips}</span>${clientNoteHtml}<button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button>${dlBtnHtml}${bdNavBtnHtml}</div>`;
+  el.innerHTML = `<div class="alert-bar${lateOurs.length?'':' is-calm'}${lateOurs.length && !chipsOpen?' is-collapsed':''}">${dotHtml}${headHtml}${lateOurs.length ? `<span class="alert-names" id="cv-alert-names">${chips}</span>` : ''}${clientNoteHtml}<button type="button" class="alert-filter-btn" onclick="cvSpShowAllDelayed()">遅延のみで絞り込み</button>${dlBtnHtml}${bdNavBtnHtml}</div>`;
+}
+
+// 提出遅れアラートのチップ一覧を開閉（状態は localStorage に記憶し、再描画・再訪問でも維持）
+function cvAlertToggleChips(btn) {
+  const bar = btn.closest('.alert-bar');
+  if (!bar) return;
+  const open = !bar.classList.toggle('is-collapsed');
+  _cvAlertChipsOpen = open;
+  btn.setAttribute('aria-expanded', String(open));
+  try { localStorage.setItem('cv_alert_chips_open', open ? '1' : '0'); } catch(_) {}
 }
 
 function setClient(btn, id) {
@@ -55984,6 +56010,7 @@ async function applyBulkStatusChange() {
 // 入口: ①リスト表示のチェック選択バー（選択中の行が対象） ②提出遅れアラートバー（制作側遅延 lateOurs が対象）。
 // 実行は cvEditDate と同じ PUT /creatives/:id { draft_deadline / final_deadline } を1件ずつ叩くクライアント側バルク。
 let _cvAlertLateIds = [];
+let _cvAlertChipsOpen = null; // 提出遅れチップ一覧の開閉（セッション内フォールバック。null = 未操作）
 let _bulkDlCtx = null;
 
 function openBulkDeadlineModal(ids) {
