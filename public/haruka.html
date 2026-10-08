@@ -15095,18 +15095,23 @@ function renderCreatives() {
       if (!isAssignee && !isProjectDirector && !isProjectProducer) return false;
     }
     if (currentView === 'ball') {
-      // ball_holder.user_ids[] を優先的に判定（Dチェック/Pチェック は複数アサイン可）。
+      // ball_holder.user_ids[] で判定（Dチェック/Pチェック は複数アサイン可）。
       // 旧 user_id（代表1人）も後方互換でチェック。
-      // producer タイプは role でも判定（admin/producer をプロデューサーと見なす）。
+      // Pチェックは「自分が P としてアサインされている／案件の producer_id が自分」のときだけ自分のボール。
+      // 以前は admin/producer ロールなら他人の P 案件まで全部拾っていた（PR #136 当時は Pチェックが
+      // 特定ユーザーに紐づかなかった名残）が、いまは getBallHolder が P の user_ids を解決するので
+      // ホーム🎯（computeMyFocus）と同じ「本人判定」に揃える。
+      // ただし P を解決できない（user_ids 空）Pチェックだけは、誰の一覧からも消えないよう
+      // 従来どおり admin/producer ロールに見せる（受け皿）。
       const bh = c.ball_holder || {};
       const myId = currentUser?.id;
       const myRole = effectiveRole();
       const isProducerLike = ['producer','admin'].includes(myRole);
-      const myIdsHit = !!myId && Array.isArray(bh.user_ids) && bh.user_ids.includes(myId);
+      const ids = Array.isArray(bh.user_ids) ? bh.user_ids : [];
+      const myIdsHit = !!myId && (ids.includes(myId) || bh.user_id === myId);
       let hasBall = false;
-      if (bh.type === 'editor' || bh.type === 'director' || bh.type === 'wcheck') hasBall = myIdsHit || (!!myId && bh.user_id === myId);
-      else if (bh.type === 'producer') hasBall = myIdsHit || isProducerLike;
-      else if (bh.type === 'all') hasBall = myIdsHit || isProducerLike;
+      if (bh.type === 'editor' || bh.type === 'director' || bh.type === 'wcheck') hasBall = myIdsHit;
+      else if (bh.type === 'producer') hasBall = myIdsHit || (ids.length === 0 && !bh.user_id && isProducerLike);
       if (!hasBall) return false;
     }
     return true;
