@@ -765,6 +765,13 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] contract-reminder 起動失敗:', e.message);
     }
+    // 提出遅れ（ADR 049）: 最終納品日超過のクリエイティブを担当 D/P へ平日 JST 10時台に日次まとめ通知
+    try {
+      const { startOverdueNotifier } = require('./workers/overdue-notifier');
+      startOverdueNotifier();
+    } catch (e) {
+      console.error('[startup] overdue-notifier 起動失敗:', e.message);
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
@@ -795,6 +802,12 @@ const runSchemaSync = require('./db/migrate');
       stopBugTriageSlaChecker();
     } catch (e) {
       console.error('[shutdown] bug-triage-sla-checker 停止失敗:', e.message);
+    }
+    try {
+      const { stopOverdueNotifier } = require('./workers/overdue-notifier');
+      stopOverdueNotifier();
+    } catch (e) {
+      console.error('[shutdown] overdue-notifier 停止失敗:', e.message);
     }
     try {
       const { stopR2EvictionSweep } = require('./workers/r2-eviction-sweep');

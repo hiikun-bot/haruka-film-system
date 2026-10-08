@@ -10929,6 +10929,14 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     }
   }
 
+  // ADR 049: SOS（help_flag）が false → true に立った瞬間だけ管理者・担当 D/P へ通知する。
+  // 更新前の値を見ないと「SOS のまま別項目を保存」でも鳴ってしまうので、ここで取得しておく。
+  let sosWasOn = null;
+  if (updateData.help_flag === true) {
+    const { data: prevSos } = await supabase.from('creatives').select('help_flag').eq('id', req.params.id).maybeSingle();
+    sosWasOn = !!(prevSos && prevSos.help_flag);
+  }
+
   let { data, error } = await supabase
     .from('creatives')
     .update(updateData)
@@ -11437,6 +11445,13 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     } catch (e) {
       console.warn('[notif] enqueue failed:', e.message);
     }
+  }
+
+  // ADR 049: SOS が立った → 管理者（admin）と担当ディレクター／プロデューサーへ通知ベル＋Chatwork/Slack DM。
+  // 提出遅れの日次まとめで「問題があれば SOS を立てて報告」と案内している受け皿。本人（立てた人）には送らない。
+  if (updateData.help_flag === true && sosWasOn === false) {
+    notifySosRaised({ creativeId: req.params.id, actorUserId: req.user?.id || null, comment: req.body.editor_comment || req.body.note || null })
+      .catch(e => console.warn('[sos-notify] failed:', e.message));
   }
 
   // 納品遷移時: 再生用 R2 複製を即時排出（Drive 原本は残る＝バックアップ）。
@@ -19285,6 +19300,74 @@ router.post('/invoices/:id/drive-pdf', requireAuth, async (req, res) => {
 });
 
 // ==================== ボール保持者判定 ====================
+
+// ==================== SOS 通知（ADR 049） ====================
+// help_flag が false → true になったとき、管理者（admin ロール）とそのクリエイティブを管理する
+// ディレクター／プロデューサー（utils/overdue-notify.js resolveManagerIds と同じ優先順）へ
+// 通知ベル（type=sos）と Chatwork / Slack DM を送る。立てた本人は除く。失敗しても本体更新は巻き込まない。
+async function notifySosRaised({ creativeId, actorUserId, comment }) {
+  const { resolveManagerIds, buildSosMessage } = require('../utils/overdue-notify');
+  const { createBulkNotifications } = require('../utils/notification');
+  const { notifyMember, NOTIFY_USER_COLUMNS } = require('../utils/member-notify');
+  const { getUsersRolesMap } = require('../utils/roles');
+  const notif = require('../notifications');
+
+  const { data: c, error } = await supabase
+    .from('creatives')
+    .select(`id, file_name, status, project_id,
+      projects(id, name, director_id, producer_id, clients(id, name)),
+      creative_assignments(role, user_id, users(id, full_name, nickname, team_id))`)
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (error || !c) { if (error) console.warn('[sos-notify] creative select failed:', error.message); return; }
+
+  // チーム代表 D フォールバック用（制作担当の team_id → teams.director_id）
+  const editor = (c.creative_assignments || []).find(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
+  const ctx = { directorIdByTeamId: new Map(), directorIdByUserId: new Map() };
+  if (editor?.users?.team_id) {
+    const { data: team } = await supabase.from('teams').select('id, director_id').eq('id', editor.users.team_id).maybeSingle();
+    if (team?.director_id) ctx.directorIdByTeamId.set(team.id, team.director_id);
+  }
+  const managers = resolveManagerIds(c, ctx).all;
+
+  // admin ロール（user_roles 集合。無ければ users.role で代替）
+  const { data: actives } = await supabase.from('users').select(`${NOTIFY_USER_COLUMNS}, role`).eq('is_active', true);
+  const rolesMap = await getUsersRolesMap((actives || []).map(u => u.id));
+  const adminIds = (actives || []).filter(u => {
+    const codes = (rolesMap.get(u.id) || []).map(r => (typeof r === 'string' ? r : r.code)).filter(Boolean);
+    const effective = codes.length ? codes : (u.role ? [u.role] : []);
+    return effective.includes('admin');
+  }).map(u => u.id);
+
+  const recipientIds = Array.from(new Set([...adminIds, ...managers])).filter(id => id && id !== actorUserId);
+  if (recipientIds.length === 0) return;
+  const userById = new Map((actives || []).map(u => [u.id, u]));
+
+  // 立てた本人はログイン中＝有効ユーザーなので actives から引ける
+  const actor = actorUserId ? userById.get(actorUserId) : null;
+  const actorName = actor?.nickname || actor?.full_name || '担当者';
+  const url = notif.buildCreativeUrl(c.id);
+  const msg = buildSosMessage({
+    actorName, clientName: c.projects?.clients?.name, projectName: c.projects?.name,
+    fileName: c.file_name, status: c.status, comment, url,
+  });
+
+  await createBulkNotifications(recipientIds.map(uid => ({
+    user_id: uid,
+    notification_type: 'sos',
+    title: msg.title,
+    body: `${actorName}さんが SOS を立てました。状況を確認してください`,
+    link_url: `/creatives/${c.id}`,
+    meta: { creative_id: c.id, actor_user_id: actorUserId },
+    sender_id: actorUserId,
+  })));
+  for (const uid of recipientIds) {
+    const u = userById.get(uid);
+    if (!u) continue;
+    const r = await notifyMember(u, { chatwork: msg.chatwork, slack: msg.slack });
+    if (!r.ok) console.log(`[sos-notify] DM 未送信 user=${uid}: ${r.reason}`);
+  }
+}
 
 function getBallHolder(status, assignments, directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId, projectDirector, projectProducer, opts = {}) {
   const editor   = assignments?.find(a => ['editor','designer','director_as_editor'].includes(a.role));

@@ -11468,6 +11468,16 @@ async function applyDeepLinkOnLoad() {
       return;
     }
 
+    // ?delayed=1 : 提出遅れの日次通知（ADR 049・Chatwork / Slack / 通知ベル）から
+    // 進行ボードを「遅延のみ」で開く。openDelayedCreativesView は notification-card.js からも呼ばれる。
+    if (params.get('delayed')) {
+      stripQueryParam('delayed');
+      await (window._initDataReady || Promise.resolve());
+      try { if (typeof openDelayedCreativesView === 'function') openDelayedCreativesView(); }
+      catch (e) { console.warn('[deepLink delayed]', e); }
+      return;
+    }
+
     const creativeId = params.get('creative');
     if (!creativeId) return;
     if (typeof openCreativeDetail === 'function') {
@@ -16889,6 +16899,16 @@ function cvSpShowAllDelayed() {
   if (chk) { chk.checked = true; onCvAdvFilterChange(); }
   toggleCreativeAdvFilters(true);
 }
+// 提出遅れ通知（ADR 049）の着地点: クリエイティブページへ切り替えてから「遅延のみ」で絞る。
+// 権限で非表示のナビ（editor 等）なら何もしない（ADR 015: inline display で判定）。
+function openDelayedCreativesView() {
+  const navBtn = document.querySelector('.nav-btn[data-page="creatives"]');
+  if (!navBtn || navBtn.style.display === 'none') return false;
+  if (typeof showPage === 'function') showPage('creatives', navBtn);
+  cvSpShowAllDelayed();
+  return true;
+}
+window.openDelayedCreativesView = openDelayedCreativesView;
 
 function renderAlerts(rows) {
   // 旧 c.deadline は creatives テーブルに存在しないため常に空判定だった。
