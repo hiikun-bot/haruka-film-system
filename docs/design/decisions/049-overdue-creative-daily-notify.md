@@ -49,11 +49,21 @@
 
 `deadline` / `sos` は `notification_settings` に列はあるが UI（`utils/notification-settings.js` の CATALOG）には出さない（ADR 043 §3「本人が止めた結果、業務が止まる種別は本人の裁量に委ねない」と同じ扱い）。
 
+### 7. 追補（2026-10-08）: 共有ルームへは絶対に流さない。届かなければ管理者のマイチャットへ
+
+マージ後のレビューで、`notifyMember()` の既定チェーンが「Chatwork 個別チャットに送れない → `[To:]` 付きで全体チャット（契約・振込の既定ルーム）」に落ちることが分かった。提出遅れ・SOS の本文には案件名・担当者・遅延状況が入るので、この経路は使わない。
+
+- `notifyMember(user, msg, { privateOnly: true })` を追加。送信順は **本人がトークン名義人（管理者）→ マイチャット** → Chatwork 個別チャット → Slack DM → どれも届かなければ **管理者のマイチャットへ「【転送依頼】◯◯さんへ届けられませんでした」として全文**。共有ルームには出さない。契約・振込の既定挙動は変えない。
+- 管理者本人の判定は `GET /v2/me` の account_id と `users.chatwork_dm_id` の一致（キャッシュ）。マイチャットは `ADMIN_MYCHAT_CHATWORK_ROOM_ID` → `BUG_REPORT_NOTIFY_CHATWORK_ROOM_ID` → 自動検出（type='my'）。
+- 日次ワーカは **DM を先に送ってからベルを作る**（ベルの meta に `dm_channel` / `dm_ok` を残す）。`lastRunDay` は **成功したときだけ**立てる。途中で失敗したら 30 分後の tick で再試行し、送信済みの受信者は `meta.digest_date` で守る。
+- SOS 通知は、リクエストにコメントが無ければ保存済みの `editor_comment` → `note` を状況として載せる（SOS ボタンは `{ help_flag: true }` しか送らないため）。チーム代表 D のフォールバックは `users.team_id` に加えて `team_members(user_id)` 経由も見る（`getBallHolder` と同じ 2 経路）。
+
 ## Consequences
 
 - 提出遅れが D/P の手元（Chatwork / Slack）に毎朝届くので、画面を開かなくても気づける。28 件の棚卸しは「日付を直す／ステータスを進める／SOS」のどれかで減っていく。
 - 件数が減らない人には毎朝同じ内容が届く。これは仕様（残っている間だけ鳴る）。うるさくなりすぎる場合は「N 日ごと」に間引く設定を足す（未実装）。
 - 「提出遅れ」の名前は画面のまま。Dチェック／Pチェック中（制作担当は提出済み）も含まれる点は変えていない。チップにステータスを添える・社内チェック滞留を分ける案は別 PR の候補。
+- 個別通知の送信先決定は `tests/utils/member-notify.test.js` で検証（共有ルームへ落ちないこと・マイチャット転送）。
 - 通知の文面・判定・受信者解決は純関数（`utils/overdue-notify.js`）に置き、jest で UTC / JST 両方で検証している（`tests/utils/overdue-notify.test.js` / `tests/overdue-notifier.test.js`）。
 
 ## Alternatives

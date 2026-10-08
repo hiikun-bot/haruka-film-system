@@ -130,6 +130,7 @@ async function runOnce(now = new Date()) {
   const boardUrl = appUrl('haruka.html?delayed=1');
   const creativeUrl = id => appUrl(`haruka.html?creative=${id}`);
   let sent = 0;
+  let forwarded = 0;
   let unassigned = 0;
 
   for (const [userId, items] of byRecipient) {
@@ -138,6 +139,12 @@ async function runOnce(now = new Date()) {
     if (alreadySent.has(userId)) continue;
 
     const msg = buildOverdueDigest({ recipient: user, items, todayYmd: today, creativeUrl, boardUrl });
+    // 個別 DM（privateOnly: 共有ルームへは送らない。届かなければ管理者マイチャットへ転送依頼）。
+    // ベルより先に送り、DM の結果を meta に残す（ADR 049 追補）。
+    const r = await notifyMember(user, { chatwork: msg.chatwork, slack: msg.slack }, { privateOnly: true });
+    if (r.ok && !r.forwarded) sent++;
+    else if (r.ok) { forwarded++; console.log(`[overdue-notifier] 管理者マイチャットへ転送依頼 user=${userId} 件数=${items.length}: ${r.reason}`); }
+    else console.log(`[overdue-notifier] DM 未送信 user=${userId} 件数=${items.length}: ${r.reason}`);
     // 通知ベル（遅延一覧へのリンク。1 日 1 件・meta.digest_date で再送ガード）
     await createNotification({
       userId,
@@ -145,12 +152,8 @@ async function runOnce(now = new Date()) {
       title: msg.title,
       body: `${items.length}件。日付の変更・ステータス更新・SOS のいずれかで対応してください`,
       linkUrl: '/haruka.html?delayed=1',
-      meta: { digest_date: today, creative_ids: items.map(c => c.id).slice(0, 100), count: items.length },
+      meta: { digest_date: today, creative_ids: items.map(c => c.id).slice(0, 100), count: items.length, dm_channel: r.channel, dm_ok: !!r.ok },
     });
-    // Chatwork / Slack DM（連絡先未登録なら ok=false で戻るだけ）
-    const r = await notifyMember(user, { chatwork: msg.chatwork, slack: msg.slack });
-    if (r.ok) sent++;
-    else console.log(`[overdue-notifier] DM 未送信 user=${userId} 件数=${items.length}: ${r.reason}`);
   }
 
   // 管理者が誰も解決できなかったクリエイティブは件数だけログに残す（担当未設定の洗い出し用）
@@ -158,20 +161,21 @@ async function runOnce(now = new Date()) {
     const hit = recipientIds.some(id => (byRecipient.get(id) || []).includes(c));
     if (!hit) unassigned++;
   }
-  console.log(`[overdue-notifier] ${today}: 提出遅れ ${overdue.length}件 / 受信者 ${byRecipient.size}人 / DM 送信 ${sent}件 / D・P 未解決 ${unassigned}件`);
-  return { today, overdue: overdue.length, recipients: byRecipient.size, sent, unassigned };
+  console.log(`[overdue-notifier] ${today}: 提出遅れ ${overdue.length}件 / 受信者 ${byRecipient.size}人 / DM 送信 ${sent}件 / マイチャット転送 ${forwarded}件 / D・P 未解決 ${unassigned}件`);
+  return { today, overdue: overdue.length, recipients: byRecipient.size, sent, forwarded, unassigned };
 }
 
-async function tick() {
+async function tick(now = new Date()) {
   if (isRunning) return;
   isRunning = true;
   try {
-    const now = new Date();
     if (!shouldRunNow({ now, lastRunDay })) return;
-    lastRunDay = jstToday(now);
     await runOnce(now);
+    // 成功したときだけ「今日は実行済み」にする。途中で失敗したら次の tick（30 分後）で再試行する。
+    // 送信済みの受信者は notification_logs.meta.digest_date で守られるので二重送信にはならない。
+    lastRunDay = jstToday(now);
   } catch (e) {
-    console.error('[overdue-notifier] 実行失敗:', e.message);
+    console.error('[overdue-notifier] 実行失敗（次の tick で再試行）:', e.message);
   } finally {
     isRunning = false;
   }
@@ -200,6 +204,11 @@ module.exports = {
   startOverdueNotifier,
   stopOverdueNotifier,
   runOnce,
+  tick,
   shouldRunNow,
-  __test: { loadOverdueCreatives, loadTeamContext, loadAlreadySentToday },
+  __test: {
+    loadOverdueCreatives, loadTeamContext, loadAlreadySentToday,
+    getLastRunDay: () => lastRunDay,
+    setLastRunDay: (v) => { lastRunDay = v; },
+  },
 };
