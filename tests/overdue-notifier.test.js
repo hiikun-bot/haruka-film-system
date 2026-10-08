@@ -30,7 +30,7 @@ jest.mock('../utils/member-notify', () => ({
 }));
 jest.mock('../notifications', () => ({ buildAppUrl: (p) => `https://app.example/${p}` }));
 
-const { shouldRunNow, runOnce } = require('../workers/overdue-notifier');
+const { shouldRunNow, runOnce, tick, __test } = require('../workers/overdue-notifier');
 
 describe('shouldRunNow', () => {
   test('平日 JST 10 時台・未実行なら true', () => {
@@ -86,7 +86,10 @@ describe('runOnce', () => {
     expect(prod.type).toBe('deadline');
     expect(prod.title).toBe('⏰ 提出遅れのクリエイティブ 2件（10/8時点）');
     expect(prod.linkUrl).toBe('/haruka.html?delayed=1');
-    expect(prod.meta).toEqual({ digest_date: '2026-10-08', creative_ids: ['c1', 'c2'], count: 2 });
+    expect(prod.meta).toMatchObject({ digest_date: '2026-10-08', creative_ids: ['c1', 'c2'], count: 2 });
+    // 個別送信モード（共有ルームへ落とさない）で呼ぶこと
+    mockNotifyMember.mock.calls.forEach(c => expect(c[2]).toEqual({ privateOnly: true }));
+    expect(prod.meta).toMatchObject({ dm_channel: 'chatwork_direct', dm_ok: true });
     const dm = mockNotifyMember.mock.calls.find(c => c[0].id === 'prod-1')[1];
     expect(dm.chatwork).toContain('[info][title]⏰ 提出遅れのクリエイティブ 2件');
     expect(dm.chatwork).toContain('■ hertech / a.mp4');
@@ -102,6 +105,38 @@ describe('runOnce', () => {
     const r = await runOnce(new Date('2026-10-08T01:10:00Z'));
     expect(r.sent).toBe(2);
     expect(mockCreateNotification.mock.calls.map(c => c[0].userId)).not.toContain('prod-1');
+  });
+
+  test('マイチャットへ転送依頼になった分は sent に数えず forwarded に数える', async () => {
+    mockNotifyMember.mockImplementation(async (u) => u.id === 'dir-team'
+      ? { ok: true, forwarded: true, channel: 'chatwork_mychat_fallback', reason: '未登録' }
+      : { ok: true, channel: 'chatwork_direct' });
+    const r = await runOnce(new Date('2026-10-08T01:10:00Z'));
+    expect(r).toMatchObject({ sent: 2, forwarded: 1 });
+    mockNotifyMember.mockImplementation(async () => ({ ok: true, channel: 'chatwork_direct' }));
+  });
+
+  test('tick: 実行が失敗した日は lastRunDay を立てず、次の tick で再試行する', async () => {
+    __test.setLastRunDay(null);
+    const sbFrom = require('../supabase').from;
+    const orig = sbFrom.getMockImplementation();
+    let first = true;
+    sbFrom.mockImplementation((table) => {
+      if (first) { first = false; throw new Error('db down'); }
+      return orig(table);
+    });
+    try {
+      await tick(new Date('2026-10-08T01:10:00Z'));
+      expect(__test.getLastRunDay()).toBeNull();       // 失敗 → 当日未実行のまま
+      await tick(new Date('2026-10-08T01:40:00Z'));
+      expect(__test.getLastRunDay()).toBe('2026-10-08'); // 次の tick で成功 → 実行済み
+      expect(mockCreateNotification).toHaveBeenCalled();
+      await tick(new Date('2026-10-08T02:10:00Z'));
+      expect(mockCreateNotification).toHaveBeenCalledTimes(3); // 同日 3 回目は走らない
+    } finally {
+      sbFrom.mockImplementation(orig);
+      __test.setLastRunDay(null);
+    }
   });
 
   test('提出遅れが無ければ何も送らない', async () => {

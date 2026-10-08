@@ -347,6 +347,39 @@ async function resolveChatworkMyRoomId(token) {
   }
 }
 
+// CHATWORK_API_TOKEN 名義人（= 管理者本人）の account_id（GET /v2/me）。トークンごとにキャッシュ。
+// 「本人宛の個別通知はマイチャットへ」（ADR 049 追補）の判定に使う。
+let _chatworkMyAccountCache = null; // { token, accountId }
+
+async function resolveChatworkMyAccountId(token) {
+  if (!token) return null;
+  if (_chatworkMyAccountCache && _chatworkMyAccountCache.token === token) return _chatworkMyAccountCache.accountId;
+  try {
+    const res = await axios.get('https://api.chatwork.com/v2/me', {
+      headers: { 'X-ChatWorkToken': token },
+      timeout: 10000,
+      validateStatus: () => true,
+    });
+    if (res.status !== 200 || !res.data || res.data.account_id == null) {
+      console.warn(`[notif/chatwork] me lookup failed: HTTP ${res.status}`);
+      return null;
+    }
+    const accountId = String(res.data.account_id);
+    _chatworkMyAccountCache = { token, accountId };
+    return accountId;
+  } catch (e) {
+    console.warn('[notif/chatwork] me lookup failed:', e.message);
+    return null;
+  }
+}
+
+// 管理者のマイチャット room_id。env ADMIN_MYCHAT_CHATWORK_ROOM_ID → BUG_REPORT_NOTIFY_CHATWORK_ROOM_ID → 自動検出（type='my'）。
+async function resolveAdminMyChatRoomId(token = process.env.CHATWORK_API_TOKEN) {
+  const explicit = String(process.env.ADMIN_MYCHAT_CHATWORK_ROOM_ID || process.env.BUG_REPORT_NOTIFY_CHATWORK_ROOM_ID || '').trim();
+  if (explicit) return explicit;
+  return resolveChatworkMyRoomId(token);
+}
+
 const BUG_REPORT_SEVERITY_LABEL = { low: '🟢 低', normal: '🟡 通常', high: '🔴 高', critical: '🚨 致命的' };
 
 // Chatwork 本文（純関数・テスト対象）
@@ -1626,6 +1659,8 @@ module.exports = {
   // バグ報告の新規登録 → 管理者 Chatwork マイチャットへ一報
   notifyBugReportCreated,
   resolveChatworkMyRoomId,
+  resolveChatworkMyAccountId,
+  resolveAdminMyChatRoomId,
   _formatBugReportCreatedText,   // テスト用
   // 自動エラー通知（PR ?: routes と server.js の両方から呼ぶ）
   notifyAutoError,

@@ -11,8 +11,13 @@
 // メールは送らない（基盤なし）。
 //
 // 公開API:
-//   notifyMember(user, { chatwork, slack }) → { ok, channel, reason, body }
-//     channel: 'chatwork_direct' | 'chatwork_room' | 'slack_dm' | 'none'
+//   notifyMember(user, { chatwork, slack }, opts?) → { ok, channel, reason, body }
+//     channel: 'chatwork_direct' | 'chatwork_room' | 'slack_dm' | 'chatwork_mychat' | 'chatwork_mychat_fallback' | 'none'
+//     opts.privateOnly=true（ADR 049 追補）: 共有ルームへは絶対に送らない個別通知モード。
+//       送信順: 本人が CHATWORK_API_TOKEN 名義人（管理者）→ マイチャット
+//               → Chatwork 個別チャット → Slack DM
+//               → どれも届かなければ管理者のマイチャットへ「【転送依頼】◯◯さんへ」として全文を送る
+//       案件名・担当者・遅延状況を含む通知（提出遅れ・SOS）で使う。全体チャットに [To:] で流すと内容が全員に見えるため。
 //   notifyAdmins({ chatwork, slack }, { permissionKey }) → [{ user_id, ok, channel, reason }]
 //   loadContractNotifyRoomId() / loadSlackUserToken()
 // =============================================================
@@ -51,12 +56,13 @@ function isSlackUserId(v) { return /^[UW][A-Z0-9]+$/i.test(String(v || '').trim(
  * @param {{chatwork:string, slack:string}} message
  * @returns {Promise<{ok:boolean, channel:string, reason:string|null, body:string|null, sender?:string}>}
  */
-async function notifyMember(user, message) {
+async function notifyMember(user, message, opts = {}) {
   const text = message || {};
   const chatworkText = text.chatwork || text.slack || '';
   const slackText = text.slack || text.chatwork || '';
   if (!user) return { ok: false, channel: 'none', reason: 'メンバーが見つからないため送信していません', body: null };
   if (!chatworkText && !slackText) return { ok: false, channel: 'none', reason: '送信本文が空です', body: null };
+  if (opts && opts.privateOnly) return notifyMemberPrivate(user, { chatworkText, slackText });
 
   const { sendChatworkRoom, sendSlackDm, sendSlackDmAsUser } = require('../notifications');
   const dm = String(user.chatwork_dm_id || '').trim();
@@ -88,6 +94,70 @@ async function notifyMember(user, message) {
     reasons.push(`Slack DM 送信に失敗（${r.reason || r.status}）`);
   }
   if (reasons.length === 0) reasons.push('Chatwork・Slack とも未登録のため送信していません');
+  return { ok: false, channel: 'none', reason: reasons.join(' / '), body: null };
+}
+
+/**
+ * 共有ルームへ送らない個別通知（ADR 049 追補）。届かなければ管理者のマイチャットへ転送依頼として送る。
+ * @returns {Promise<{ok:boolean, channel:string, reason:string|null, body:string|null, forwarded?:boolean}>}
+ */
+async function notifyMemberPrivate(user, { chatworkText, slackText }) {
+  const notif = require('../notifications');
+  const token = process.env.CHATWORK_API_TOKEN || '';
+  const dm = String(user.chatwork_dm_id || '').trim();
+  const directRoom = String(user.chatwork_direct_room_id || '').trim();
+  const slackId = String(user.slack_dm_id || '').trim();
+  const reasons = [];
+
+  // 1) 本人がトークン名義人（管理者）→ マイチャット
+  if (token && isDigits(dm)) {
+    const myAccountId = await notif.resolveChatworkMyAccountId(token);
+    if (myAccountId && myAccountId === dm) {
+      const myRoom = await notif.resolveAdminMyChatRoomId(token);
+      if (myRoom) {
+        const r = await notif.sendChatworkRoom(myRoom, chatworkText, { token });
+        if (r.ok) return { ok: true, channel: 'chatwork_mychat', reason: null, body: chatworkText };
+        reasons.push(`マイチャット送信に失敗（${r.reason || r.status}）`);
+      } else {
+        reasons.push('マイチャットの room_id を解決できません');
+      }
+    }
+  }
+  // 2) Chatwork 個別チャット
+  if (isDigits(directRoom)) {
+    const r = await notif.sendChatworkRoom(directRoom, chatworkText);
+    if (r.ok) return { ok: true, channel: 'chatwork_direct', reason: null, body: chatworkText };
+    reasons.push(`Chatwork DM 送信に失敗（${r.reason || r.status}）`);
+  }
+  // 3) Slack DM（本人名義 → bot 名義）
+  if (isSlackUserId(slackId)) {
+    const userToken = await loadSlackUserToken();
+    if (userToken) {
+      const r = await notif.sendSlackDmAsUser(userToken, slackId, slackText);
+      if (r.ok) return { ok: true, channel: 'slack_dm', sender: 'user', reason: null, body: slackText };
+    }
+    const r = await notif.sendSlackDm(slackId, slackText);
+    if (r.ok) return { ok: true, channel: 'slack_dm', sender: 'bot', reason: null, body: slackText };
+    reasons.push(`Slack DM 送信に失敗（${r.reason || r.status}）`);
+  }
+  if (reasons.length === 0) reasons.push('Chatwork 個別チャット・Slack とも未登録');
+
+  // 4) 届かない → 管理者のマイチャットへ転送依頼（共有ルームには出さない）
+  const reason = reasons.join(' / ');
+  const name = (user.nickname || user.full_name || '').trim() || '該当メンバー';
+  if (token) {
+    const myRoom = await notif.resolveAdminMyChatRoomId(token);
+    if (myRoom) {
+      const body = `[info][title]【転送依頼】${name}さんへ届けられませんでした[/title]理由: ${reason}\n本人に伝えてください。[/info]\n${chatworkText}`;
+      const r = await notif.sendChatworkRoom(myRoom, body, { token });
+      if (r.ok) return { ok: true, forwarded: true, channel: 'chatwork_mychat_fallback', reason, body };
+      reasons.push(`マイチャット転送にも失敗（${r.reason || r.status}）`);
+    } else {
+      reasons.push('マイチャットの room_id を解決できません');
+    }
+  } else {
+    reasons.push('CHATWORK_API_TOKEN 未設定');
+  }
   return { ok: false, channel: 'none', reason: reasons.join(' / '), body: null };
 }
 
@@ -131,6 +201,7 @@ async function notifyAdmins(message, opts = {}) {
 
 module.exports = {
   notifyMember,
+  notifyMemberPrivate,
   notifyAdmins,
   loadContractNotifyRoomId,
   loadSlackUserToken,

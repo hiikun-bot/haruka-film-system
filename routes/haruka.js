@@ -19314,19 +19314,28 @@ async function notifySosRaised({ creativeId, actorUserId, comment }) {
 
   const { data: c, error } = await supabase
     .from('creatives')
-    .select(`id, file_name, status, project_id,
+    .select(`id, file_name, status, project_id, editor_comment, note,
       projects(id, name, director_id, producer_id, clients(id, name)),
       creative_assignments(role, user_id, users(id, full_name, nickname, team_id))`)
     .eq('id', creativeId)
     .maybeSingle();
   if (error || !c) { if (error) console.warn('[sos-notify] creative select failed:', error.message); return; }
+  // SOS ボタンは { help_flag: true } だけ送るので、リクエストに無ければ保存済みの編集者コメント／備考を状況として載せる
+  const sosComment = String(comment || '').trim() || String(c.editor_comment || '').trim() || String(c.note || '').trim() || null;
 
-  // チーム代表 D フォールバック用（制作担当の team_id → teams.director_id）
+  // チーム代表 D フォールバック用（getBallHolder / loadTeamContext と同じ 2 経路）:
+  //   制作担当の users.team_id → teams.director_id、無ければ team_members(user_id) 経由の所属チーム
   const editor = (c.creative_assignments || []).find(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
   const ctx = { directorIdByTeamId: new Map(), directorIdByUserId: new Map() };
+  const editorId = editor?.user_id || editor?.users?.id || null;
   if (editor?.users?.team_id) {
     const { data: team } = await supabase.from('teams').select('id, director_id').eq('id', editor.users.team_id).maybeSingle();
     if (team?.director_id) ctx.directorIdByTeamId.set(team.id, team.director_id);
+  }
+  if (editorId && ctx.directorIdByTeamId.size === 0) {
+    const { data: tms } = await supabase.from('team_members').select('team_id, teams(director_id)').eq('user_id', editorId).limit(5);
+    const hit = (tms || []).find(tm => tm.teams?.director_id);
+    if (hit) ctx.directorIdByUserId.set(editorId, hit.teams.director_id);
   }
   const managers = resolveManagerIds(c, ctx).all;
 
@@ -19349,7 +19358,7 @@ async function notifySosRaised({ creativeId, actorUserId, comment }) {
   const url = notif.buildCreativeUrl(c.id);
   const msg = buildSosMessage({
     actorName, clientName: c.projects?.clients?.name, projectName: c.projects?.name,
-    fileName: c.file_name, status: c.status, comment, url,
+    fileName: c.file_name, status: c.status, comment: sosComment, url,
   });
 
   await createBulkNotifications(recipientIds.map(uid => ({
@@ -19364,8 +19373,10 @@ async function notifySosRaised({ creativeId, actorUserId, comment }) {
   for (const uid of recipientIds) {
     const u = userById.get(uid);
     if (!u) continue;
-    const r = await notifyMember(u, { chatwork: msg.chatwork, slack: msg.slack });
+    // privateOnly: 共有ルームへは送らない（案件・担当・状況が全員に見えるため）。届かなければ管理者マイチャットへ転送依頼
+    const r = await notifyMember(u, { chatwork: msg.chatwork, slack: msg.slack }, { privateOnly: true });
     if (!r.ok) console.log(`[sos-notify] DM 未送信 user=${uid}: ${r.reason}`);
+    else if (r.forwarded) console.log(`[sos-notify] 管理者マイチャットへ転送依頼 user=${uid}: ${r.reason}`);
   }
 }
 
