@@ -239,6 +239,16 @@ async function activateCard(cardEl, options = {}) {
     return;
   }
 
+  // 提出遅れの日次まとめ（ADR 049）: /haruka.html?delayed=1 → リロード無しで進行ボードを「遅延のみ」で開く。
+  if (/^\/haruka\.html\?delayed=/.test(linkUrl) && typeof window.openDelayedCreativesView === 'function') {
+    document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
+    try {
+      if (window.openDelayedCreativesView()) return;
+    } catch (e) {
+      console.warn('[notification-card] openDelayedCreativesView 失敗', e);
+    }
+  }
+
   // つぶやき通知: /haruka.html?tweet=<id> 形式。
   // haruka.html 内なら openTweetsPage(id) でタブ切替＋該当カードへスクロール（ADR 041・リロード不要）。
   // 旧環境（openTweetsPage 未定義）は showPage('tweets') でタブだけ切り替える。
