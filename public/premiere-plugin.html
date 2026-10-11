@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Premiere 投稿前チェック | HARUKA FILM</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--surface:#F5FCFC;--white:#fff;
+  --danger:#EF4444;--danger-bg:#FEE2E2;--success:#10B981;--success-bg:#D1FAE5;
+}
+body{background:var(--surface);color:var(--text);line-height:1.7;padding:24px 16px 64px}
+main{max-width:720px;margin:0 auto}
+h1{font-size:22px;margin-bottom:6px}
+.lead{color:var(--text-muted);font-size:14px;margin-bottom:24px}
+.step{background:var(--white);border:1.5px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+.step h2{font-size:16px;margin-bottom:8px;display:flex;gap:10px;align-items:center}
+.num{background:var(--em);color:#fff;border-radius:50%;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;flex:none}
+.step p,.step li{font-size:14px}
+.step ol{padding-left:20px;margin-top:6px}
+code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+.btn{display:inline-block;background:var(--em);color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;margin-top:10px}
+.btn:hover{background:var(--em-dark)}
+.btn.sub{background:var(--white);color:var(--em-dark);border:1.5px solid var(--em)}
+.token{display:none;margin-top:12px}
+.token textarea{width:100%;height:84px;border:1.5px solid var(--border);border-radius:8px;padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--text);resize:none;word-break:break-all}
+.msg{font-size:13px;margin-top:8px}
+.msg.ok{color:var(--success)}
+.msg.ng{color:var(--danger)}
+.wanpoint{background:var(--em-pale);border-radius:8px;padding:10px 12px;font-size:13px;margin-top:10px}
+</style>
+</head>
+<body>
+<main>
+  <h1>🎬 Premiere 投稿前チェック</h1>
+  <p class="lead">Premiere Pro の中で、書き出す前に「以前クライアントから指摘されたこと」をチェックできるパネルです。Premiere Pro 2026（バージョン 26.0 以上）で使えます。</p>
+
+  <section class="step">
+    <h2><span class="num">1</span>パネルを Premiere に入れる</h2>
+    <ol>
+      <li>下のボタンから <code>haruka-precheck.ccx</code> をダウンロードします</li>
+      <li>ダウンロードしたファイルをダブルクリックします（Creative Cloud が開き、インストールされます）</li>
+      <li>Premiere Pro を開き、メニューの <code>ウィンドウ</code> → <code>UXP プラグイン</code> → <code>HARUKA 投稿前チェック</code> を選びます</li>
+    </ol>
+    <a class="btn" href="/downloads/haruka-precheck.ccx" download>⬇ パネルをダウンロード</a>
+  </section>
+
+  <section class="step">
+    <h2><span class="num">2</span>自分用のトークンを発行する</h2>
+    <p>パネルが「あなた」として HARUKA FILM につながるための合言葉です。人に渡さないでください。有効期限は 180 日です。</p>
+    <button class="btn" id="issue">🔑 トークンを発行する</button>
+    <div class="token" id="tokenBox">
+      <textarea id="token" readonly></textarea>
+      <button class="btn sub" id="copy">📋 コピーする</button>
+    </div>
+    <p class="msg" id="msg"></p>
+  </section>
+
+  <section class="step">
+    <h2><span class="num">3</span>パネルに貼る</h2>
+    <p>パネルの「トークン」欄にコピーしたトークンを貼り、<code>接続する</code> を押します。あなたの名前が出れば準備完了です。</p>
+    <div class="wanpoint">💡 発行し直すと、新しいトークンが使えるようになります（古いトークンも期限までは使えます）。パソコンを替えたときは、もう一度発行して貼ってください。</div>
+  </section>
+</main>
+<script>
+const msg = document.getElementById('msg');
+document.getElementById('issue').addEventListener('click', async () => {
+  msg.textContent = '';
+  msg.className = 'msg';
+  try {
+    const res = await fetch('/api/precheck/token', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } });
+    if (res.status === 401) {
+      msg.innerHTML = 'ログインが必要です。<a href="/login.html">ログイン</a>してから、このページを開き直してください。';
+      msg.className = 'msg ng';
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '発行に失敗しました');
+    document.getElementById('token').value = data.token;
+    document.getElementById('tokenBox').style.display = 'block';
+    msg.textContent = `発行しました（有効期限 ${data.expires_in_days} 日）。コピーしてパネルに貼ってください。`;
+    msg.className = 'msg ok';
+  } catch (e) {
+    msg.textContent = e.message;
+    msg.className = 'msg ng';
+  }
+});
+document.getElementById('copy').addEventListener('click', async () => {
+  const el = document.getElementById('token');
+  try { await navigator.clipboard.writeText(el.value); } catch (_) { el.select(); document.execCommand('copy'); }
+  msg.textContent = 'コピーしました';
+  msg.className = 'msg ok';
+});
+</script>
+</body>
+</html>
