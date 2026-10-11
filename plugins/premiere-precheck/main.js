@@ -6,7 +6,7 @@
 const ppro = require('premierepro');
 const { parseTelopValue, looksLikeTextParam, flattenTranscript } = require('./telop-parse.js');
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.2';
 const MARKER_PREFIX = '[投稿前チェック]';
 const $ = id => document.getElementById(id);
 
@@ -54,12 +54,14 @@ async function connect() {
     $('who').className = 'ok';
     const sel = $('set');
     sel.innerHTML = '';
+    // UXP の select は value の代入が効かないことがあるため、option.selected で選ぶ
+    if (!me.sets.some(s => s.id === state.set)) state.set = me.sets[0] ? me.sets[0].id : '';
     for (const s of me.sets) {
       const o = document.createElement('option');
       o.value = s.id; o.textContent = s.name;
+      if (s.id === state.set) o.selected = true;
       sel.appendChild(o);
     }
-    if (state.set && me.sets.some(s => s.id === state.set)) sel.value = state.set;
     $('run').disabled = false;
     $('setup').open = false;
   } catch (e) {
@@ -92,6 +94,21 @@ async function forEachVideoClip(sequence, fn) {
 }
 
 // テロップ（文字を持つクリップ）を全部集める。diag=true なら読み取りの手がかりも残す
+//   読み方は 3 段: ① getStartValue ② getValueAtTime（クリップの開始時刻） ③ クリップ名
+//   Premiere 26.5 では ① が null を返すことを実機で確認（2026-10-11）。グラフィックのクリップ名は
+//   既定で 1 つ目のテキストの中身になるので、③ を最後の手段にする（source: 'clip_name'）。
+const SKIP_COMPONENTS = /ADBE (Opacity|Motion)$/;
+const GENERIC_CLIP_NAMES = /^(グラフィック|Graphic|テキスト|Text)\s*\d*$/i;
+
+async function readParam(param, atTime) {
+  let value = null;
+  try { value = await param.getStartValue(); } catch (_) { /* 読めないパラメータ */ }
+  if (value == null || (value.value && value.value.value == null)) {
+    try { value = await param.getValueAtTime(atTime); } catch (_) { /* 版によって無い */ }
+  }
+  return value;
+}
+
 async function collectTelops(sequence, { diag = false } = {}) {
   const telops = [];
   const diagnostics = [];
@@ -99,35 +116,73 @@ async function collectTelops(sequence, { diag = false } = {}) {
     let disabled = false;
     try { disabled = await item.isDisabled(); } catch (_) { /* 古い版 */ }
     if (disabled) return;
-    const start = (await item.getStartTime()).seconds;
+    const startTime = await item.getStartTime();
+    const start = startTime.seconds;
     const end = (await item.getEndTime()).seconds;
+    const name = await item.getName().catch(() => '');
     const chain = await item.getComponentChain();
     const count = chain.getComponentCount();
-    const clipDiag = diag ? { track: trackIndex, start, end, name: await item.getName().catch(() => ''), components: [] } : null;
+    const clipDiag = diag ? { track: trackIndex, start, end, name, components: [] } : null;
+    let hasText = false;
+    let readAny = false;
     for (let ci = 0; ci < count; ci += 1) {
       const comp = chain.getComponentAtIndex(ci);
       const matchName = await comp.getMatchName().catch(() => '');
+      if (SKIP_COMPONENTS.test(matchName)) continue;
+      const isTextComp = /ADBE (Text|Capsule)|Graphic/i.test(matchName);
+      if (isTextComp) hasText = true;
       const compDiag = clipDiag ? { matchName, displayName: await comp.getDisplayName().catch(() => ''), params: [] } : null;
-      if (/ADBE (Opacity|Motion)$/.test(matchName) && !diag) continue;
       const paramCount = comp.getParamCount();
       for (let pi = 0; pi < paramCount; pi += 1) {
         const param = comp.getParam(pi);
-        let value = null;
-        try { value = await param.getStartValue(); } catch (_) { /* 読めないパラメータ */ }
-        const textish = looksLikeTextParam(param.displayName) || /Capsule|Text|Graphic/i.test(matchName);
-        const telop = parseTelopValue(value, { plainStringIsText: textish });
-        if (compDiag) compDiag.params.push(describeValue(param.displayName, value, telop));
+        const textish = looksLikeTextParam(param.displayName) || isTextComp;
+        if (!textish && !diag) continue;
+        const value = await readParam(param, startTime);
+        const telop = parseTelopValue(value, { plainStringIsText: looksLikeTextParam(param.displayName) });
+        if (compDiag && (textish || compDiag.params.length < 4)) {
+          const d = describeValue(param.displayName, value, telop);
+          if (looksLikeTextParam(param.displayName)) d.probe = await probeParam(param, startTime);
+          compDiag.params.push(d);
+        }
         if (telop) {
-          telops.push({ index: telops.length, start, end, track: trackIndex, ...telop });
+          readAny = true;
+          telops.push({ index: telops.length, start, end, track: trackIndex, source: 'param', ...telop });
         }
       }
-      if (clipDiag) clipDiag.components.push(compDiag);
+      if (clipDiag && compDiag.params.length) clipDiag.components.push(compDiag);
     }
-    if (clipDiag && diagnostics.length < 60) diagnostics.push(clipDiag);
+    if (hasText && !readAny && name && !GENERIC_CLIP_NAMES.test(name.trim())) {
+      telops.push({ index: telops.length, start, end, track: trackIndex, source: 'clip_name', text: name.trim(), font_size: null, font: null, color: null });
+    }
+    if (clipDiag && clipDiag.components.length && diagnostics.length < 40) diagnostics.push(clipDiag);
   });
   telops.sort((a, b) => a.start - b.start || a.track - b.track);
   telops.forEach((t, i) => { t.index = i; });
   return { telops, diagnostics };
+}
+
+// 文字のパラメータについて、読めそうな手段を全部試して結果を残す（診断用）
+async function probeParam(param, startTime) {
+  const out = {};
+  const tryIt = async (key, fn) => {
+    try {
+      const v = await fn();
+      out[key] = v == null ? 'null' : (typeof v === 'object' ? `${(v.constructor && v.constructor.name) || 'object'}:${safeJson(v)}` : `${typeof v}:${String(v)}`).slice(0, 300);
+    } catch (e) { out[key] = `throw:${String(e && e.message).slice(0, 120)}`; }
+  };
+  await tryIt('valueAtStart', () => param.getValueAtTime(startTime));
+  await tryIt('valueAtZero', () => param.getValueAtTime(ppro.TickTime.TIME_ZERO));
+  await tryIt('isTimeVarying', () => param.isTimeVarying());
+  await tryIt('keyframes', () => (param.getKeyframeListAsTickTimes() || []).length);
+  await tryIt('keyframesSupported', () => param.areKeyframesSupported());
+  return out;
+}
+
+function safeJson(v) {
+  try {
+    const keys = Object.getOwnPropertyNames(Object.getPrototypeOf(v) || {}).concat(Object.keys(v));
+    return `${JSON.stringify(v)} keys=${keys.slice(0, 20).join(',')}`;
+  } catch (_) { return '(json不可)'; }
 }
 
 function describeValue(name, value, telop) {
@@ -192,7 +247,8 @@ async function runCheck() {
       return;
     }
     setStatus(`テロップ ${telops.length} 件・話した言葉 ${transcript.length} 件をチェック中…（10 秒ほど）`);
-    state.set = $('set').value;
+    state.set = $('set').value || state.set;
+    if (!state.set) throw new Error('案件を選んでください');
     localStorage.setItem('precheck.set', state.set);
     const result = await api('/api/precheck/check', {
       method: 'POST',
@@ -390,7 +446,7 @@ $('connect').addEventListener('click', connect);
 $('run').addEventListener('click', runCheck);
 $('summary').addEventListener('click', copySummary);
 $('diag').addEventListener('click', sendDiagnostic);
-$('set').addEventListener('change', () => localStorage.setItem('precheck.set', $('set').value));
+$('set').addEventListener('change', () => { state.set = $('set').value || state.set; localStorage.setItem('precheck.set', state.set); });
 if (state.token) {
   connect().then(async () => {
     // 手元テストでは、開いた瞬間に診断とチェックを流してサーバーのログで確かめる
