@@ -62,7 +62,7 @@ logEnvCredentialsHealth('server:start');
 console.info('[video-org] gemini-env', JSON.stringify({
   google_cloud_project: process.env.GOOGLE_CLOUD_PROJECT || null,
   google_cloud_location: process.env.GOOGLE_CLOUD_LOCATION || 'asia-northeast1',
-  gemini_model: process.env.GEMINI_MODEL || 'gemini-1.5-pro',
+  gemini_model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
 }));
 
 // ==================== ミドルウェア ====================

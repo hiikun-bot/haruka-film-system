@@ -48,7 +48,7 @@ async function main() {
     vertexai_version: getPackageVersion('@google-cloud/vertexai'),
     google_cloud_project: process.env.GOOGLE_CLOUD_PROJECT || null,
     google_cloud_location: process.env.GOOGLE_CLOUD_LOCATION || 'asia-northeast1',
-    gemini_model: process.env.GEMINI_MODEL || 'gemini-1.5-pro',
+    gemini_model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
   }));
 
   logEnvCredentialsHealth('script:raw-env');

@@ -203,3 +203,10 @@ Gemini API 公開単価（2026-09 時点、Vertex も同水準）:
 - 手動 `POST /analyze` は自動解析と同じ `triggerAutoAnalyzeIfEligible` に集約（重複 200 行を削除）。
 - 本番 env（Railway）: `MONTHLY_ANALYSIS_BUDGET_JPY=3000` / `GEMINI_MODEL=gemini-3-flash-preview` / `GEMINI_MODEL_MANUAL=gemini-3.1-pro-preview`。
   `DAILY_ANALYSIS_LIMIT=5` は予算モード中は参照されない（残しておけば予算を外した時に従来動作へ戻る）。
+- **追補 2026-10-11（自動解析のモデルを gemini-3.8-flash へ）**: `gemini-3-flash-preview` は 1 月時点の preview で、
+  その後 Flash の正式版が 3.5 → 3.6 → 3.7 → 3.8 と出た（3.8 は 2026-09-02 GA）。本番と同じ認証・`global` で
+  3.8 Flash を呼び、JSON が崩れず返ることを確認したうえで `GEMINI_MODEL=gemini-3.8-flash` に切替（さとるさん判断）。
+  手動（`GEMINI_MODEL_MANUAL`）は Pro の最新が今も `gemini-3.1-pro-preview` のため据え置き。
+  3.8 Flash の単価は 2026 年末まで入力 $0.75 / 出力 $3.75、**2027-01-01 から倍額（$1.50 / $7.50）**。
+  単価表は `from`（適用開始日・JST）で年明けに自動で切り替わる。音声単価は公式未掲載のため入力の 2 倍で安全側に見積もる。
+  月 100 本・映像＋音声 5 分の見立てで、2026 年中は月 ¥340 前後、2027 年から月 ¥680 前後（予算 ¥3,000 に収まる）。
