@@ -10,9 +10,13 @@ const VERSION = '0.1.0';
 const MARKER_PREFIX = '[投稿前チェック]';
 const $ = id => document.getElementById(id);
 
+// 手元テスト用（scripts/build-premiere-plugin.sh --dev が dev.json を同梱する。配布物には入らない）
+let DEV = null;
+try { DEV = require('./dev.json'); } catch (_) { DEV = null; }
+
 const state = {
-  server: localStorage.getItem('precheck.server') || 'https://app.harukafilm.com',
-  token: localStorage.getItem('precheck.token') || '',
+  server: (DEV && DEV.server) || localStorage.getItem('precheck.server') || 'https://app.harukafilm.com',
+  token: (DEV && DEV.token) || localStorage.getItem('precheck.token') || '',
   set: localStorage.getItem('precheck.set') || '',
   result: null,
   dismissed: new Set(),
@@ -375,6 +379,11 @@ async function sendDiagnostic() {
 }
 
 // ==================== 起動 ====================
+if (DEV && DEV.server) {
+  const o = document.createElement('option');
+  o.value = DEV.server; o.textContent = `手元テスト（${DEV.server}）`;
+  $('server').appendChild(o);
+}
 $('token').value = state.token;
 $('server').value = state.server;
 $('connect').addEventListener('click', connect);
@@ -382,4 +391,14 @@ $('run').addEventListener('click', runCheck);
 $('summary').addEventListener('click', copySummary);
 $('diag').addEventListener('click', sendDiagnostic);
 $('set').addEventListener('change', () => localStorage.setItem('precheck.set', $('set').value));
-if (state.token) connect(); else $('setup').open = true;
+if (state.token) {
+  connect().then(async () => {
+    // 手元テストでは、開いた瞬間に診断とチェックを流してサーバーのログで確かめる
+    if (DEV && DEV.autorun && !$('run').disabled) {
+      await sendDiagnostic();
+      await runCheck();
+    }
+  });
+} else {
+  $('setup').open = true;
+}

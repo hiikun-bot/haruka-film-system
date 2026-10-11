@@ -4,9 +4,10 @@
   "name": "HARUKA 投稿前チェック",
   "version": "0.1.0",
   "main": "index.html",
-  "host": [
-    { "app": "premierepro", "minVersion": "26.0.0" }
-  ],
+  "host": {
+    "app": "premierepro",
+    "minVersion": "26.0.0"
+  },
   "requiredPermissions": {
     "clipboard": "readAndWrite",
     "network": {
@@ -20,11 +21,56 @@
     {
       "type": "panel",
       "id": "precheckPanel",
-      "label": { "default": "HARUKA 投稿前チェック" },
-      "minimumSize": { "width": 260, "height": 360 },
-      "maximumSize": { "width": 2000, "height": 3000 },
-      "preferredDockedSize": { "width": 340, "height": 640 },
-      "preferredFloatingSize": { "width": 380, "height": 680 }
+      "label": {
+        "default": "HARUKA 投稿前チェック"
+      },
+      "minimumSize": {
+        "width": 260,
+        "height": 360
+      },
+      "maximumSize": {
+        "width": 2000,
+        "height": 3000
+      },
+      "preferredDockedSize": {
+        "width": 340,
+        "height": 640
+      },
+      "preferredFloatingSize": {
+        "width": 380,
+        "height": 680
+      },
+      "icons": [
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/icon-23.png",
+          "scale": [
+            1,
+            2
+          ],
+          "theme": [
+            "all"
+          ]
+        }
+      ]
+    }
+  ],
+  "icons": [
+    {
+      "width": 48,
+      "height": 48,
+      "path": "icons/icon-48.png",
+      "scale": [
+        1,
+        2
+      ],
+      "theme": [
+        "all"
+      ],
+      "species": [
+        "pluginList"
+      ]
     }
   ]
 }
