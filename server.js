@@ -432,6 +432,98 @@ app.post('/auth/login', (req, res, next) => {
   })(req, res, next);
 });
 
+// ==================== Google でログイン（招待済みメンバーのみ） ====================
+// 詳細は utils/google-login.js の先頭コメント。users.email と Google の確認済みメールが一致した
+// 有効ユーザーだけをログインさせる。新規作成・ロール付与はしない（招待フローが唯一の入口）。
+const googleLogin = require('./utils/google-login');
+const { google } = require('googleapis');
+
+function googleLoginFail(res, code) {
+  return res.redirect(`/login.html?error=${encodeURIComponent(code)}`);
+}
+
+// ブラウザが開いているホスト（Railway は Host ヘッダをそのまま渡す）。許可リスト外は resolveCallbackUrl が弾く
+function googleLoginHost(req) {
+  return String(req.get('host') || '').split(',')[0].trim();
+}
+
+// ログイン画面がボタンを出すかどうか
+app.get('/auth/google/status', (req, res) => {
+  const enabled = googleLogin.isEnabled() && !!googleLogin.resolveCallbackUrl(googleLoginHost(req));
+  res.json({ enabled });
+});
+
+app.get('/auth/google', (req, res) => {
+  if (!googleLogin.isEnabled()) return googleLoginFail(res, 'google_disabled');
+  const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
+  if (!callbackUrl) return googleLoginFail(res, 'google_host');
+  const { id, secret } = googleLogin.getClientConfig();
+  const { nonce, state } = googleLogin.newState({
+    secret: SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
+    next: req.query.next,
+  });
+  // state をこのブラウザのセッションに結びつける（他人が用意したログインリンクを踏ませる攻撃の対策）
+  req.session.googleLoginNonce = nonce;
+  const client = new google.auth.OAuth2(id, secret, callbackUrl);
+  const url = client.generateAuthUrl({
+    scope: ['openid', 'email', 'profile'],
+    prompt: 'select_account',
+    state,
+  });
+  req.session.save(() => res.redirect(url));
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  if (!googleLogin.isEnabled()) return googleLoginFail(res, 'google_disabled');
+  if (req.query.error) return googleLoginFail(res, req.query.error === 'access_denied' ? 'google_cancel' : 'google_failed');
+  const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
+  if (!callbackUrl) return googleLoginFail(res, 'google_host');
+  const payload = googleLogin.verifyState(String(req.query.state || ''), SESSION_SECRET || 'video-ops-dev-secret-change-in-production');
+  const expectedNonce = req.session?.googleLoginNonce;
+  if (req.session) delete req.session.googleLoginNonce;
+  if (!payload || !expectedNonce || payload.nonce !== expectedNonce) return googleLoginFail(res, 'google_state');
+  if (!req.query.code) return googleLoginFail(res, 'google_failed');
+
+  try {
+    const { id, secret } = googleLogin.getClientConfig();
+    const client = new google.auth.OAuth2(id, secret, callbackUrl);
+    const { tokens } = await client.getToken(String(req.query.code));
+    if (!tokens?.id_token) return googleLoginFail(res, 'google_failed');
+    // 署名・発行者・宛先（自分のクライアントID）・期限を Google の公開鍵で検証
+    const ticket = await client.verifyIdToken({ idToken: tokens.id_token, audience: id });
+    const em = googleLogin.extractVerifiedEmail(ticket.getPayload());
+    if (em.error) return googleLoginFail(res, em.error);
+
+    const { data: rows, error } = await supabase
+      .from('users').select('*').ilike('email', googleLogin.escapeLike(em.email)).limit(5);
+    if (error) {
+      console.warn('[auth/google] supabase error:', error.message);
+      return googleLoginFail(res, 'google_failed');
+    }
+    const picked = googleLogin.pickLoginUser(rows, em.email);
+    if (picked.error) {
+      console.log(`[auth/google] rejected: ${picked.error}`);
+      return googleLoginFail(res, picked.error);
+    }
+    const user = picked.user;
+    req.logIn(user, async err => {
+      if (err) { console.warn('[auth/google] login error:', err.message); return googleLoginFail(res, 'google_failed'); }
+      // 手動ログインしたので自動ログイン抑止クッキーをクリア（/auth/login と同じ）
+      res.setHeader('Set-Cookie', `auto_login_off=; Max-Age=0; Path=/`);
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+      const ua = req.headers['user-agent'] || '';
+      try {
+        await supabase.from('user_activity_logs').insert({ user_id: user.id, action: 'login', ip_address: ip, user_agent: ua });
+        await supabase.from('users').update({ login_count: (user.login_count || 0) + 1, last_seen_at: new Date().toISOString() }).eq('id', user.id);
+      } catch (e) { console.warn('[auth/google] login log failed:', e?.message); }
+      res.redirect(googleLogin.safeNext(payload.next));
+    });
+  } catch (e) {
+    console.warn('[auth/google] callback failed:', e?.message);
+    return googleLoginFail(res, 'google_failed');
+  }
+});
+
 // ログアウト
 app.post('/auth/logout', (req, res) => {
   // 自動ログイン抑止（1時間）。再度ログイン画面で手動ログインすると無効化される
