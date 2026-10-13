@@ -47577,7 +47577,7 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
       //   ・プロキシ側も CORS ヘッダを返していないので fallback もエラーになる
       //   ・ペイント機能の canvas drawImage は same-origin プロキシ経由でしか使わない設計
       const proxyUrl = `${API}/files/${driveFileId}/stream`;
-      player.innerHTML = `<video id="fp-video" preload="metadata" style="width:100%;height:100%;object-fit:contain;background:#000;display:block"></video>`;
+      player.innerHTML = `<video id="fp-video" preload="auto" style="width:100%;height:100%;object-fit:contain;background:#000;display:block"></video>`;
       ctrlBar.style.display = '';
       fpShowLoading('動画を読み込み中...');
       // 直リンク取得を試みる（失敗・遅延しても fallback でプロキシ URL を使えるよう保険セット）
@@ -47607,6 +47607,12 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
         v.addEventListener('pause',    () => document.getElementById('fp-play-btn').textContent = '▶');
         v.addEventListener('ended',    () => document.getElementById('fp-play-btn').textContent = '▶');
         v.addEventListener('timeupdate', fpUpdateSeekbar);
+        // 再生位置が進んでいるのに「読み込み中」が残る取りこぼし対策（canplay/playing が再発火しないケース）
+        let _fpLastT = -1;
+        v.addEventListener('timeupdate', () => {
+          if (!v.paused && _fpLastT >= 0 && v.currentTime > _fpLastT) fpHideLoading();
+          _fpLastT = v.currentTime;
+        });
         v.addEventListener('loadedmetadata', () => { fpUpdateSeekbar(); fpRenderLikeMarkers(_fpLikes); });
         // ローディング制御
         v.addEventListener('loadstart',     () => fpShowLoading('動画を読み込み中...'));
@@ -47656,7 +47662,12 @@ function openFilePreview(driveFileId, filename, driveUrl, fileRecordId, creative
           }
           fpShowLoadingError(code === 4 ? '動画を再生できません（アップロード直後の場合は1分ほど待って開き直してください）' : '動画の読み込みに失敗しました');
         });
-        v.addEventListener('stalled',       () => fpShowLoading('接続が遅くなっています...'));
+        // stalled は「ダウンロードが一時停止した」だけでも発火する（先読み済みで再生は続けられる）。
+        // 手元に 2 秒以上の先読みがある／再生できる状態なら覆いを出さない。
+        v.addEventListener('stalled', () => {
+          if (v.readyState >= 3 || fpBufferedAhead(v) >= 2) return;
+          fpShowLoading('接続が遅くなっています...');
+        });
       }, 100);
     } else if (isImage) {
       ctrlBar.style.display = 'none';
@@ -47823,12 +47834,24 @@ function fpHideLoading() {
   ov.classList.add('hidden');
   setTimeout(() => { if (ov && ov.classList.contains('hidden')) ov.style.display = 'none'; }, 280);
 }
+// 現在の再生位置から先に何秒ぶん読み込めているか（現在位置を含む buffered 区間の終端まで）
+function fpBufferedAhead(video) {
+  try {
+    const b = video.buffered, t = video.currentTime;
+    for (let i = 0; i < b.length; i++) {
+      if (b.start(i) <= t + 0.1 && t <= b.end(i)) return b.end(i) - t;
+    }
+  } catch (_) {}
+  return 0;
+}
 function fpUpdateLoadingProgress(video) {
   if (!video || !video.buffered || !video.buffered.length || !video.duration || !isFinite(video.duration)) return;
   const bar = document.getElementById('fp-loading-progress');
   const fill = bar && bar.firstElementChild;
   if (!bar || !fill) return;
-  const end = video.buffered.end(video.buffered.length - 1);
+  // 以前は最後の buffered 区間の終端で%を出していたため、シーク後や末尾だけ読めている状態で
+  // 「100%」なのに止まって見えた。いま見ている位置から先がどこまで読めているかで出す。
+  const end = video.currentTime + fpBufferedAhead(video);
   const pct = Math.max(0, Math.min(100, (end / video.duration) * 100));
   bar.style.display = '';
   fill.style.width = pct.toFixed(1) + '%';
