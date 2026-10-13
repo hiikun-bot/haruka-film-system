@@ -4755,6 +4755,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <button id="btn-add-client" class="btn-primary" onclick="openNewClientModal()">＋ クライアント追加</button>
       </div>
     </div>
+    <!-- 案件への参加申請（ADR 051）: 自分宛ての申請中があるときだけ表示 -->
+    <div id="join-request-inbox" style="display:none"></div>
     <!-- カテゴリ・タグ絞り込み -->
     <div id="proj-filters" style="margin-bottom:14px;padding:12px 14px;background:var(--em-pale, #f6f0ff);border-radius:10px;display:flex;flex-direction:column;gap:10px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -6664,6 +6666,22 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <button class="btn" onclick="closeModal('modal-project-fixed-item-delete')">キャンセル</button>
       <button class="btn-primary" id="pfi-del-execute-btn" onclick="executeProjectFixedItemDelete()" style="background:#A32D2D;border-color:#A32D2D">削除する</button>
     </div>
+  </div>
+</div>
+
+<!-- 案件への参加申請（ADR 051）: 申請フォーム / 申請の確認・承認。中身は JS（openJoinRequestModal / openJoinRequestById）が描画 -->
+<div class="modal-overlay" id="modal-join-request">
+  <div class="modal-card" style="width:520px">
+    <div class="modal-title">🙋 案件への参加申請<button class="modal-close" onclick="closeModal('modal-join-request')">×</button></div>
+    <div id="jr-body"></div>
+    <div class="modal-footer" id="jr-footer"></div>
+  </div>
+</div>
+<div class="modal-overlay" id="modal-join-review">
+  <div class="modal-card" style="width:560px">
+    <div class="modal-title"><span id="jrv-title">📨 参加申請</span><button class="modal-close" onclick="closeModal('modal-join-review')">×</button></div>
+    <div id="jrv-body"></div>
+    <div class="modal-footer" id="jrv-footer"></div>
   </div>
 </div>
 
@@ -11394,6 +11412,14 @@ async function applyDeepLinkOnLoad() {
       } catch (e) { console.warn('[deepLink video]', e); }
       return;
     }
+    // 案件への参加申請 deep link（ADR 051）— 自前 fetch で完結 → 即時
+    const joinRequestId = params.get('join_request');
+    if (joinRequestId) {
+      stripQueryParam('join_request');
+      try { await openJoinRequestById(joinRequestId); }
+      catch (e) { console.warn('[deepLink join_request]', e); }
+      return;
+    }
     // バグ報告 deep link（24h SLA 通知のリンクから開く）— 自前 fetch で完結 → 即時
     const bugReportId = params.get('bug-report');
     if (bugReportId) {
@@ -12323,6 +12349,8 @@ let _projectsLoadSeq = 0;
 
 async function loadProjects() {
   const seq = ++_projectsLoadSeq;
+  // 参加申請（ADR 051）の受信箱・自分の申請中は並行で取得し、届いたら再描画する
+  loadJoinRequestState();
   // SWR: 手元に既存データがあれば即描画（「読み込み中...」を見せない）→ 裏で再fetch → 確定データで再描画
   if ((Array.isArray(allProjects) && allProjects.length) || (Array.isArray(allClients) && allClients.length)) {
     try { renderProjectsView(); } catch (e) { console.warn('[loadProjects] stale render failed', e); }
@@ -12460,6 +12488,7 @@ function renderProjectsView() {
             </div>
             ${p.sheet_url ? `<a href="${p.sheet_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">シート ↗</a>` : ''}
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
+            ${joinRequestRowButtonsHtml(p)}
             <span class="status-chip ${statusClass(p.status)}">${p.status}</span>
             ${canEditProject() ? `<button class="btn-sm" onclick="event.stopPropagation();openEditProjectById('${p.id}')">編集</button>` : ''}
             ${!canEditProject() && canEditProjectPricing() ? `<button class="btn-sm" onclick="event.stopPropagation();openProjectPricing('${p.id}')" title="成果物グループ・単価の設定（承認権限が無ければ管理者の承認待ちになります）">💴 単価</button>` : ''}
@@ -12514,6 +12543,338 @@ function toggleClient(id) {
   body.style.display = isOpen ? 'none' : '';
   arrow.style.transform = isOpen ? 'rotate(-90deg)' : '';
 }
+
+// ==================== 案件への参加申請（ADR 051） ====================
+// 支払先を直接登録できない人（案件編集・単価編集の権限なし）が、案件の P・D・管理者から宛先を選んで
+// 理由つきで参加を申請する。宛先（または管理者）は承認と同時に成果物グループの支払先メンバーへ登録できる。
+// 申請できるか・承認できるかの最終判定はサーバー（実効ロールで集合判定）。フロントは出し分けだけ。
+let _joinReqInbox = [];                 // 自分宛ての申請中（scope=inbox）
+let _joinReqMinePending = new Map();    // project_id -> 自分が出した申請中
+let _joinReqLoadSeq = 0;
+
+function canRequestProjectJoinUI() {
+  // 支払先を直接登録できる人には申請ボタンを出さない（サーバーも同じ条件で 400）
+  return !projectLinesCanEdit();
+}
+
+async function loadJoinRequestState() {
+  const seq = ++_joinReqLoadSeq;
+  try {
+    const [inRes, mineRes] = await Promise.all([
+      apiFetch(`${API}/project-join-requests?scope=inbox`),
+      apiFetch(`${API}/project-join-requests?scope=mine`),
+    ]);
+    if (seq !== _joinReqLoadSeq) return;
+    _joinReqInbox = inRes.ok ? await inRes.json() : [];
+    const mine = mineRes.ok ? await mineRes.json() : [];
+    _joinReqMinePending = new Map((Array.isArray(mine) ? mine : []).filter(r => r.status === 'pending').map(r => [r.project_id, r]));
+  } catch (e) {
+    console.warn('[join-request] load failed', e);
+    return;
+  }
+  renderJoinRequestInbox();
+  try { renderProjectsView(); } catch (e) { console.warn('[join-request] rerender failed', e); }
+}
+
+// 案件タブ上部の「📨 参加申請が N 件届いています」帯（自分宛てが 0 件なら出さない）
+function renderJoinRequestInbox() {
+  const el = document.getElementById('join-request-inbox');
+  if (!el) return;
+  const list = Array.isArray(_joinReqInbox) ? _joinReqInbox : [];
+  if (!list.length) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML = `
+    <div style="margin-bottom:14px;padding:12px 16px;background:#FFF8EC;border:1px solid #F5C77E;border-radius:10px">
+      <div style="font-size:14px;font-weight:700;color:#8A5300;margin-bottom:8px">📨 参加申請が ${list.length} 件届いています</div>
+      ${list.map(r => `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 0;border-top:1px dashed #F5DDB0;font-size:13px">
+          <b>${esc(r.requester_name || 'メンバー')}</b>
+          <span style="color:var(--text-muted)">→ ${esc(r.client_name)} / ${esc(r.project_name)}</span>
+          <span style="color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">「${esc(r.message)}」</span>
+          <button class="btn-sm" onclick="openJoinRequestById('${esc(r.id)}')">確認する</button>
+        </div>`).join('')}
+    </div>`;
+}
+
+// 案件行のボタン（宛先なら「📨 参加申請 N」、申請できる人なら「🙋 参加申請」か「⏳ 参加申請中」）
+function joinRequestRowButtonsHtml(p) {
+  let html = '';
+  const inbox = (Array.isArray(_joinReqInbox) ? _joinReqInbox : []).filter(r => r.project_id === p.id);
+  if (inbox.length) {
+    html += `<button class="btn-sm" style="background:#FFF4E5;border-color:#F5B971;color:#9A5B00;font-weight:600;white-space:nowrap" onclick="event.stopPropagation();openJoinRequestById('${esc(inbox[0].id)}')" title="この案件への参加申請が届いています">📨 参加申請 ${inbox.length}</button>`;
+  }
+  if (canRequestProjectJoinUI()) {
+    const mine = _joinReqMinePending.get(p.id);
+    html += mine
+      ? `<button class="btn-sm" style="color:var(--em-dark);white-space:nowrap" onclick="event.stopPropagation();openJoinRequestById('${esc(mine.id)}')" title="承認待ちです。クリックで内容の確認・取り下げ">⏳ 参加申請中</button>`
+      : `<button class="btn-sm" style="white-space:nowrap" onclick="event.stopPropagation();openJoinRequestModal('${esc(p.id)}')" title="この案件のプロデューサー・ディレクター・管理者に参加を申請します">🙋 参加申請</button>`;
+  }
+  return html;
+}
+
+function _jrFmtDateTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  } catch (_) { return ''; }
+}
+
+async function openJoinRequestModal(projectId) {
+  let data;
+  try {
+    const res = await apiFetch(`${API}/projects/${encodeURIComponent(projectId)}/join-request-candidates`);
+    data = await res.json();
+    if (!res.ok) { showToast('エラー: ' + translateError(data?.error), 'error'); return; }
+  } catch (e) {
+    showToast('参加申請の準備に失敗しました', 'error');
+    return;
+  }
+  if (data.pending) { openJoinRequestById(data.pending.id); return; }
+  if (data.reason === 'can_register') { showToast('あなたは案件の支払先を直接登録できます（案件の「編集」か「💴 単価」から追加してください）', 'ok'); return; }
+  if (data.reason === 'already_member') { showToast('すでにこの案件のメンバー（支払先）に登録されています', 'ok'); return; }
+
+  const recips = Array.isArray(data.recipients) ? data.recipients : [];
+  const body = document.getElementById('jr-body');
+  body.innerHTML = `
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+      案件: <b style="color:var(--text)">${esc(data.project?.client_name)} / ${esc(data.project?.name)}</b>
+    </div>
+    <div class="form-group">
+      <label class="form-label">通知先 <span style="color:#C0392B">*</span> <span style="color:var(--text-muted);font-weight:400;font-size:11px">（1人以上・複数可）</span></label>
+      ${recips.length ? recips.map(c => `
+        <label style="display:flex;align-items:center;gap:8px;padding:5px 2px;font-size:13px;cursor:pointer">
+          <input type="checkbox" class="jr-recipient" value="${esc(c.user_id)}" ${c.is_default ? 'checked' : ''}>
+          <span>${esc(c.name)}</span>
+          <span style="font-size:11px;padding:1px 7px;border-radius:5px;background:var(--em-pale);color:var(--em-dark)">${esc(c.label)}</span>
+        </label>`).join('')
+      : '<div style="font-size:13px;color:#C0392B">通知先にできる人がいません（案件のプロデューサー・ディレクター・管理者が未設定です）</div>'}
+    </div>
+    <div class="form-group" style="margin-bottom:6px">
+      <label class="form-label">申請理由 <span style="color:#C0392B">*</span> <span id="jr-msg-counter" style="font-weight:400;font-size:11px;color:var(--text-muted);margin-left:6px">0 / 1000</span></label>
+      <textarea class="form-input" id="jr-message" rows="4" maxlength="1000" placeholder="例) 編集担当として参加したいです。〇〇さんから声をかけてもらいました" style="resize:vertical;font-family:inherit" oninput="document.getElementById('jr-msg-counter').textContent = this.value.length + ' / 1000'"></textarea>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted)">選んだ人に通知ベルと Chatwork（個別チャット）で届きます。承認されると、あなたにも通知が届きます。</div>`;
+  document.getElementById('jr-footer').innerHTML = `
+    <button class="btn" onclick="closeModal('modal-join-request')">キャンセル</button>
+    <button class="btn-primary" id="jr-submit" ${recips.length ? '' : 'disabled'} onclick="submitJoinRequest('${esc(projectId)}')">申請する</button>`;
+  openModal('modal-join-request');
+  setTimeout(() => document.getElementById('jr-message')?.focus(), 50);
+}
+
+async function submitJoinRequest(projectId) {
+  const recipient_ids = Array.from(document.querySelectorAll('#jr-body .jr-recipient:checked')).map(el => el.value);
+  const message = (document.getElementById('jr-message')?.value || '').trim();
+  if (!recipient_ids.length) { showToast('通知先を1人以上選んでください', 'error'); return; }
+  if (!message) { showToast('申請理由を入力してください', 'error'); document.getElementById('jr-message')?.focus(); return; }
+  const btn = document.getElementById('jr-submit');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/projects/${encodeURIComponent(projectId)}/join-requests`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient_ids, message }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('エラー: ' + translateError(data?.error), 'error'); return; }
+    closeModal('modal-join-request');
+    showToast('参加を申請しました。承認されると通知が届きます', 'ok');
+    loadJoinRequestState();
+  } catch (e) {
+    showToast('申請に失敗しました', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+const _JR_STATUS_LABEL = { pending: '⏳ 承認待ち', approved: '✅ 承認済み', rejected: '↩️ 見送り', cancelled: '取り下げ済み' };
+let _jrvCurrent = null;
+
+// 申請の確認（宛先・管理者は承認／見送り、申請者は取り下げ）。通知のディープリンクからも開く。
+async function openJoinRequestById(id) {
+  let r;
+  try {
+    const res = await apiFetch(`${API}/project-join-requests/${encodeURIComponent(id)}`);
+    r = await res.json();
+    if (!res.ok) { showToast('エラー: ' + translateError(r?.error), 'error'); return; }
+  } catch (e) {
+    showToast('申請の取得に失敗しました', 'error');
+    return;
+  }
+  _jrvCurrent = r;
+  document.getElementById('jrv-title').textContent = `📨 参加申請 — ${r.project_name || ''}`;
+  const info = `
+    <div style="display:grid;grid-template-columns:84px 1fr;gap:6px 10px;font-size:13px;margin-bottom:14px">
+      <div style="color:var(--text-muted)">申請者</div><div><b>${esc(r.requester_name)}</b></div>
+      <div style="color:var(--text-muted)">案件</div><div>${esc(r.client_name)} / ${esc(r.project_name)}</div>
+      <div style="color:var(--text-muted)">申請日時</div><div>${esc(_jrFmtDateTime(r.created_at))}</div>
+      <div style="color:var(--text-muted)">通知先</div><div>${(r.recipients || []).map(x => esc(x.name)).join('、')}</div>
+      <div style="color:var(--text-muted)">状態</div><div>${esc(_JR_STATUS_LABEL[r.status] || r.status)}${r.decided_by_name ? `（${esc(r.decided_by_name)}・${esc(_jrFmtDateTime(r.decided_at))}）` : ''}</div>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">申請理由</div>
+    <div style="white-space:pre-wrap;word-break:break-word;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:14px">${esc(r.message)}</div>
+    ${r.decision_note ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">ひとこと</div><div style="white-space:pre-wrap;font-size:13px;margin-bottom:14px">${esc(r.decision_note)}</div>` : ''}`;
+  const body = document.getElementById('jrv-body');
+  const footer = document.getElementById('jrv-footer');
+
+  if (r.can_decide) {
+    body.innerHTML = info + `
+      <div style="border-top:1px solid var(--border);padding-top:12px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:10px;cursor:pointer">
+          <input type="checkbox" id="jrv-register" checked onchange="_jrvSyncRegisterUI()"> 承認と同時に支払先メンバーとして登録する
+        </label>
+        <div id="jrv-register-fields">
+          <div class="form-group"><label class="form-label">成果物グループ <span style="color:#C0392B">*</span></label>
+            <select class="form-input" id="jrv-line"><option value="">読み込み中…</option></select></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:150px"><label class="form-label">役割 <span style="color:#C0392B">*</span></label>
+              <select class="form-input" id="jrv-role">${_jrvRoleOptionsHtml(r.requester_role)}</select></div>
+            <div class="form-group" style="flex:1;min-width:150px"><label class="form-label">課金方式</label>
+              <select class="form-input" id="jrv-ptype" onchange="_jrvSyncRegisterUI()">
+                ${Object.entries(PRICING_TYPE_LABELS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}
+              </select></div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:150px" id="jrv-price-wrap"><label class="form-label"><span id="jrv-price-label">単価（円）</span> <span style="color:#C0392B">*</span></label>
+              <input type="number" class="form-input" id="jrv-price" min="0" step="1" placeholder="例) 15000"></div>
+            <div class="form-group" style="flex:1;min-width:150px;display:none" id="jrv-pct-wrap"><label class="form-label">割合（%） <span style="color:#C0392B">*</span></label>
+              <input type="number" class="form-input" id="jrv-pct" min="0" max="100" step="0.1"></div>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin:-4px 0 10px">管理者以外が登録した単価は、これまでどおり管理者の承認待ちになります。</div>
+        </div>
+        <div class="form-group" style="margin-bottom:4px"><label class="form-label">ひとこと <span style="color:var(--text-muted);font-weight:400;font-size:11px">（任意・申請者に届きます）</span></label>
+          <textarea class="form-input" id="jrv-note" rows="2" maxlength="1000" style="resize:vertical;font-family:inherit"></textarea></div>
+      </div>`;
+    footer.innerHTML = `
+      <button class="btn" onclick="closeModal('modal-join-review')">閉じる</button>
+      <button class="btn" id="jrv-reject" style="color:#C0392B" onclick="decideJoinRequest(false)">見送る</button>
+      <button class="btn-primary" id="jrv-approve" onclick="decideJoinRequest(true)">承認する</button>`;
+    openModal('modal-join-review');
+    _jrvSyncRegisterUI();
+    _jrvLoadLines(r.project_id);
+    return;
+  }
+
+  let note = '';
+  if (r.status === 'pending' && !r.can_cancel) {
+    note = '<div style="font-size:12px;color:#9A5B00;background:#FFF8EC;border-radius:8px;padding:8px 10px">承認には案件の支払先を登録する権限が必要です。管理者に対応を依頼してください。</div>';
+  }
+  body.innerHTML = info + note;
+  footer.innerHTML = `
+    ${r.can_cancel ? `<button class="btn" style="color:#C0392B" id="jrv-cancel" onclick="cancelJoinRequest()">申請を取り下げる</button>` : ''}
+    <button class="btn-primary" onclick="closeModal('modal-join-review')">閉じる</button>`;
+  openModal('modal-join-review');
+}
+
+function _jrvRoleOptionsHtml(requesterRole) {
+  const rows = (Array.isArray(_rolesMasterRows) ? _rolesMasterRows : [])
+    .filter(r => r && r.id && !['admin', 'secretary', 'client'].includes(r.code));
+  if (!rows.length) return '<option value="">（役割マスタを読み込めませんでした）</option>';
+  const want = requesterRole === 'producer_director' ? 'director' : requesterRole;
+  return rows.map(r => `<option value="${esc(r.id)}" ${r.code === want ? 'selected' : ''}>${esc(r.label || r.code)}</option>`).join('');
+}
+
+async function _jrvLoadLines(projectId) {
+  const sel = document.getElementById('jrv-line');
+  if (!sel) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${encodeURIComponent(projectId)}/lines`);
+    const lines = res.ok ? await res.json() : [];
+    if (!Array.isArray(lines) || !lines.length) {
+      sel.innerHTML = '<option value="">成果物グループがありません</option>';
+      const reg = document.getElementById('jrv-register');
+      if (reg) { reg.checked = false; _jrvSyncRegisterUI(); }
+      showToast('この案件には成果物グループがありません。「登録せずに承認」するか、案件編集で作成してから登録してください', 'ok');
+      return;
+    }
+    sel.innerHTML = lines.map(l => {
+      const name = [l.category?.name, l.name, l.rank ? `ランク${l.rank}` : ''].filter(Boolean).join(' / ') || '成果物グループ';
+      return `<option value="${esc(l.id)}">${esc(name)}</option>`;
+    }).join('');
+  } catch (e) {
+    sel.innerHTML = '<option value="">読み込みに失敗しました</option>';
+  }
+}
+
+function _jrvSyncRegisterUI() {
+  const reg = document.getElementById('jrv-register')?.checked;
+  const fields = document.getElementById('jrv-register-fields');
+  if (fields) fields.style.display = reg ? '' : 'none';
+  const approve = document.getElementById('jrv-approve');
+  if (approve) approve.textContent = reg ? '承認して登録' : '登録せずに承認';
+  const pt = document.getElementById('jrv-ptype')?.value;
+  const pctWrap = document.getElementById('jrv-pct-wrap');
+  const priceWrap = document.getElementById('jrv-price-wrap');
+  if (pctWrap) pctWrap.style.display = pt === 'percentage' ? '' : 'none';
+  if (priceWrap) priceWrap.style.display = pt === 'percentage' ? 'none' : '';
+  const label = document.getElementById('jrv-price-label');
+  if (label) label.textContent = pt === 'hourly' ? '時給（円）' : pt === 'fixed_total' ? '固定額（円）' : '1本あたり（円）';
+}
+
+async function decideJoinRequest(approve) {
+  const r = _jrvCurrent;
+  if (!r) return;
+  const payload = { note: document.getElementById('jrv-note')?.value || '' };
+  if (approve) {
+    const register = !!document.getElementById('jrv-register')?.checked;
+    payload.register = register;
+    if (register) {
+      const pt = document.getElementById('jrv-ptype')?.value || 'fixed_per_unit';
+      payload.line_id = document.getElementById('jrv-line')?.value || '';
+      payload.role_id = document.getElementById('jrv-role')?.value || '';
+      payload.pricing_type = pt;
+      if (!payload.line_id) { showToast('成果物グループを選んでください', 'error'); return; }
+      if (!payload.role_id) { showToast('役割を選んでください', 'error'); return; }
+      if (pt === 'percentage') {
+        const pct = Number(document.getElementById('jrv-pct')?.value);
+        if (!(pct > 0 && pct <= 100)) { showToast('割合（%）を入力してください', 'error'); return; }
+        payload.percentage = pct;
+        payload.unit_price = 0;
+      } else {
+        const price = parseInt(document.getElementById('jrv-price')?.value, 10);
+        // ¥0 のまま登録すると 0 円で請求・支払いされるので必須（ADR 037 の ¥0 納品の教訓）
+        if (!(price > 0)) { showToast('単価を入力してください', 'error'); return; }
+        payload.unit_price = price;
+      }
+    }
+  }
+  const btns = ['jrv-approve', 'jrv-reject'].map(i => document.getElementById(i)).filter(Boolean);
+  btns.forEach(b => { b.disabled = true; });
+  try {
+    const res = await apiFetch(`${API}/project-join-requests/${encodeURIComponent(r.id)}/${approve ? 'approve' : 'reject'}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('エラー: ' + translateError(data?.error), 'error'); return; }
+    closeModal('modal-join-review');
+    if (!approve) showToast('申請を見送りました。申請者に通知しました', 'ok');
+    else if (data.line_cost?.line_pricing_approval === 'pending') showToast('承認して登録しました（単価は管理者の承認待ちです）', 'ok');
+    else showToast(data.line_cost ? '承認して支払先メンバーに登録しました' : '承認しました', 'ok');
+    loadJoinRequestState();
+  } catch (e) {
+    showToast('処理に失敗しました', 'error');
+  } finally {
+    btns.forEach(b => { b.disabled = false; });
+  }
+}
+
+async function cancelJoinRequest() {
+  const r = _jrvCurrent;
+  if (!r) return;
+  const btn = document.getElementById('jrv-cancel');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/project-join-requests/${encodeURIComponent(r.id)}/cancel`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('エラー: ' + translateError(data?.error), 'error'); return; }
+    closeModal('modal-join-review');
+    showToast('参加申請を取り下げました', 'ok');
+    loadJoinRequestState();
+  } catch (e) {
+    showToast('取り下げに失敗しました', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+window.openJoinRequestById = openJoinRequestById;
 
 // クライアント編集モーダルで選択中のチームID（順序保持）
 let _editingClientTeamIds = [];

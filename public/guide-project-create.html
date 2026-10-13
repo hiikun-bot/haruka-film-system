@@ -424,6 +424,17 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 保存時に「保存しました（管理者の承認待ち）」と出ればOK。管理者が承認するまで行に <b>🕓 承認待ち</b> バッジが付き、タブ上部にも「🕓 承認待ちの単価があります」と表示されますが、集計・請求プレビューにはそのまま反映されます（請求書の発行だけは承認後）。詳しくは <a href="/guide-budget-rates.html" style="color:var(--em-dark);font-weight:700">予算・単価の上書きガイド</a>。</p>
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 単価を入れ忘れたまま納品すると、分析タブのクリエイター別内訳に <b>「単価不明 ↗」</b> バッジが出ます。バッジをクリックすると、その案件の成果物グループが開いた状態でモーダルが立ち上がるので、その場で補えます。</p>
   </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🙋 メンバーから届く「参加申請」</div>
+    <p>案件の登録権限がない <b>編集者・デザイナー・外部ディレクター</b> は、案件タブの各案件行にある <b>「🙋 参加申請」</b> から、その案件に入りたいと申請できます。</p>
+    <ul>
+      <li><b>申請する人</b>：通知先を <b>案件のディレクター・プロデューサー・管理者</b> から選び（1人以上）、<b>申請理由（必須）</b> を書いて「申請する」。申請中は行に「⏳ 参加申請中」と出て、クリックすると内容の確認・取り下げができます。</li>
+      <li><b>届いた人</b>：通知ベルと Chatwork（個別チャット）に届きます。案件タブの上部に「📨 参加申請が N 件届いています」、案件行に「📨 参加申請」が出るので、「確認する」から開きます。</li>
+      <li><b>承認する</b>：成果物グループ・役割・課金方式・単価を入れて <b>「承認して登録」</b> を押すと、申請者がそのまま <b>支払先メンバー</b> に登録されます（管理者以外が入れた単価は、いつもどおり管理者の承認待ちになります）。支払先をすでに別の方法で入れた場合などは、チェックを外して「登録せずに承認」もできます。</li>
+      <li><b>見送る</b>：「見送る」を押すと申請者に通知されます。ひとことを添えられます。</li>
+    </ul>
+  </div>
 </section>
 
 <!-- 完了 -->
@@ -441,6 +452,10 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <div class="trouble-item">
       <span class="trouble-icon">🚫</span>
       <div><div class="trouble-q">「＋ 案件追加」ボタンが出ない</div><div class="trouble-a">案件・クライアントの追加は 管理者・秘書・プロデューサー・ディレクター（ディレクターは新規追加のみ。編集者・デザイナー・外部ディレクターは不可）。権限は <a href="/guide-roles-permissions.html" style="color:var(--em-dark);font-weight:700">ロールと権限ガイド</a> を確認</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🙋</span>
+      <div><div class="trouble-q">「🙋 参加申請」ボタンが出ない／押すと「直接登録できます」と出る</div><div class="trouble-a">参加申請は、案件の支払先を登録する権限がない人（編集者・デザイナー・外部ディレクター）向けの機能です。ディレクター以上は案件の「💴 単価」または「編集」から自分で支払先を追加できます。すでに支払先に入っている案件で押すと「すでにこの案件のメンバー（支払先）に登録されています」と表示されます</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🏷</span>

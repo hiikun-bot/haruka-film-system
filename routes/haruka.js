@@ -17,6 +17,7 @@ const { shareForClientReview } = require('../lib/drive-share');
 const { createNotification, extractMentions, loadMentionDirectory } = require('../utils/notification');
 const { resolveUnreadSince } = require('../utils/tweets-unread');
 const { renderFilename } = require('../utils/filename');
+const JOIN_REQ = require('../utils/project-join-request');
 const {
   getUserRoleCodes,
   invalidateUserRolesCache,
@@ -5171,13 +5172,21 @@ router.get('/projects/:project_id/lines/:line_id/costs', requireAuth, async (req
 // body: { role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours }
 router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const { project_id: projectId, line_id: lineId } = req.params;
-  const verify = await _verifyLineBelongsToProject(lineId, projectId);
-  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+  const r = await createLineCostForProject(req, projectId, lineId, req.body || {});
+  res.status(r.status).json(r.body);
+});
 
-  const body = req.body || {};
+// 支払先（line_cost）1 行の作成本体。POST /costs と参加申請の承認（ADR 051）で共用する。
+// 呼び出し側で project.create_edit / project.pricing_edit を確認済みであること。
+// ADR 037 の単価承認（承認権限なし → line を pending ＋管理者通知）もここで効く。
+// 戻り値: { status, body }（body は成功時 line_cost 行＋line_pricing_approval）
+async function createLineCostForProject(req, projectId, lineId, body) {
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return { status: verify.error.status, body: { error: verify.error.message } };
+
   const { role_id, user_id } = body;
 
-  if (!role_id) return res.status(400).json({ error: 'role_id は必須です' });
+  if (!role_id) return { status: 400, body: { error: 'role_id は必須です' } };
 
   // role_id が roles マスタに存在するか
   const { data: role, error: roleErr } = await supabase
@@ -5185,8 +5194,8 @@ router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requireAn
     .select('id')
     .eq('id', role_id)
     .maybeSingle();
-  if (roleErr) return res.status(500).json({ error: roleErr.message });
-  if (!role) return res.status(400).json({ error: '指定された role_id がマスタに存在しません' });
+  if (roleErr) return { status: 500, body: { error: roleErr.message } };
+  if (!role) return { status: 400, body: { error: '指定された role_id がマスタに存在しません' } };
 
   // user_id が users に存在するか（指定された場合のみ）
   if (user_id) {
@@ -5195,12 +5204,12 @@ router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requireAn
       .select('id')
       .eq('id', user_id)
       .maybeSingle();
-    if (uErr) return res.status(500).json({ error: uErr.message });
-    if (!u) return res.status(400).json({ error: '指定された user_id がユーザーに存在しません' });
+    if (uErr) return { status: 500, body: { error: uErr.message } };
+    if (!u) return { status: 400, body: { error: '指定された user_id がユーザーに存在しません' } };
   }
 
   const v = _validatePricingFields(body, false);
-  if (v.error) return res.status(400).json({ error: v.error });
+  if (v.error) return { status: 400, body: { error: v.error } };
 
   const insertRow = {
     line_id: lineId,
@@ -5222,16 +5231,332 @@ router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requireAn
     .single();
   if (error) {
     if (isMissingPelcTable(error)) {
-      return res.status(503).json({ error: 'project_estimate_line_costs テーブルが未作成です。migrations/2026-05-06_estimate_lines_and_fixed_items.sql を本番Supabaseに適用してください。' });
+      return { status: 503, body: { error: 'project_estimate_line_costs テーブルが未作成です。migrations/2026-05-06_estimate_lines_and_fixed_items.sql を本番Supabaseに適用してください。' } };
     }
     if (isUniqueViolation(error)) {
-      return res.status(409).json({ error: '同じロール×担当者の組み合わせは既に登録されています' });
+      return { status: 409, body: { error: '同じロール×担当者の組み合わせは既に登録されています' } };
     }
-    return res.status(500).json({ error: error.message });
+    return { status: 500, body: { error: error.message } };
   }
   const pr = await applyPricingApprovalAfterWrite(req, [lineId], { projectId, snapshots: pricingSnapshots });
-  res.json({ ...data, line_pricing_approval: pr.canApprove ? 'approved' : 'pending' });
+  return { status: 200, body: { ...data, line_pricing_approval: pr.canApprove ? 'approved' : 'pending' } };
+}
+
+// ==================== 案件への参加申請（ADR 051） ====================
+// 案件の支払先を登録する権限が無いメンバー（project.create_edit も project.pricing_edit も持たない人）が、
+// 案件の P・D・管理者から宛先を選び、理由つきで「この案件に参加したい」と申請する。
+// 宛先（または管理者）が承認すると、同時に成果物グループの支払先メンバー（line_cost）へ登録できる。
+// - 申請者・宛先の判定は実ユーザー（req.user.id）で行う（自己データ判定 / ADR 015）。
+//   「申請できるか」「承認できるか」の権限は実効ロール（getEffectiveRoleCodes）で集合判定する。
+// - 通知は通知ベル（type=project_join_request・受信設定で止めない）＋ Chatwork/Slack の個別 DM のみ。
+//   共有ルームには流さない（ADR 049 §7・notifyMember privateOnly）。
+const JOIN_REQUEST_SELECT = 'id, project_id, requester_id, recipient_ids, message, status, decided_by, decided_at, decision_note, created_line_cost_id, created_at, updated_at';
+const joinRequestLink = (id) => `/haruka.html?join_request=${id}`;
+
+async function actorCanRegisterLineCosts(req) {
+  const codes = await getEffectiveRoleCodes(req);
+  for (const key of JOIN_REQ.DIRECT_REGISTER_PERMISSIONS) {
+    if (await roleCodesHavePermission(codes, key)) return true;
+  }
+  return false;
+}
+
+async function actorIsEffectiveAdmin(req) {
+  const codes = await getEffectiveRoleCodes(req);
+  return codes.includes('admin');
+}
+
+// 有効ユーザーのうち admin ロールを持つ人（user_roles 集合。無ければ users.role で代替 / SOS 通知と同じ）
+async function loadActiveAdminIds(activeUsers) {
+  const rolesMap = await getUsersRolesMap((activeUsers || []).map(u => u.id));
+  return (activeUsers || []).filter(u => {
+    const codes = (rolesMap.get(u.id) || []).map(r => (typeof r === 'string' ? r : r.code)).filter(Boolean);
+    const effective = codes.length ? codes : (u.role ? [u.role] : []);
+    return effective.includes('admin');
+  }).map(u => u.id);
+}
+
+async function loadJoinRequestContext(projectId) {
+  const { NOTIFY_USER_COLUMNS } = require('../utils/member-notify');
+  const [projRes, usersRes] = await Promise.all([
+    supabase.from('projects').select('id, name, producer_id, director_id, clients(name)').eq('id', projectId).maybeSingle(),
+    supabase.from('users').select(`${NOTIFY_USER_COLUMNS}, role`).eq('is_active', true),
+  ]);
+  if (projRes.error) throw new Error(projRes.error.message);
+  if (usersRes.error) throw new Error(usersRes.error.message);
+  const activeUsers = usersRes.data || [];
+  const usersById = new Map(activeUsers.map(u => [u.id, u]));
+  const adminIds = await loadActiveAdminIds(activeUsers);
+  return { project: projRes.data || null, usersById, adminIds };
+}
+
+async function isAlreadyLineCostPayee(projectId, userId) {
+  const { data, error } = await supabase
+    .from('project_estimate_line_costs')
+    .select('id, line:project_estimate_lines!inner(project_id)')
+    .eq('user_id', userId)
+    .eq('line.project_id', projectId)
+    .limit(1);
+  if (error) return false;
+  return (data || []).length > 0;
+}
+
+// 通知（ベル＋個別 DM）。失敗しても本体は巻き込まない（呼び出し側で catch）
+async function sendJoinRequestNotifications(recipientIds, usersById, msg, { linkUrl, meta, senderId }) {
+  const { createBulkNotifications } = require('../utils/notification');
+  const { notifyMember } = require('../utils/member-notify');
+  const ids = [...new Set(recipientIds)].filter(Boolean);
+  if (!ids.length) return;
+  await createBulkNotifications(ids.map(uid => ({
+    user_id: uid,
+    notification_type: 'project_join_request',
+    title: msg.title,
+    body: msg.body,
+    link_url: linkUrl,
+    meta,
+    sender_id: senderId || null,
+  })));
+  for (const uid of ids) {
+    const u = usersById.get(uid);
+    if (!u) continue;
+    const r = await notifyMember(u, { chatwork: msg.chatwork, slack: msg.slack }, { privateOnly: true });
+    if (!r.ok) console.log(`[join-request] DM 未送信 user=${uid}: ${r.reason}`);
+  }
+}
+
+function shapeJoinRequest(r, usersById, project) {
+  const nameOf = (id) => {
+    const u = id ? usersById.get(id) : null;
+    return u ? (formatUserLabel(u) || '') : '';
+  };
+  return {
+    ...r,
+    requester_name: nameOf(r.requester_id),
+    decided_by_name: nameOf(r.decided_by),
+    recipients: (r.recipient_ids || []).map(id => ({ user_id: id, name: nameOf(id) })),
+    project_name: project?.name || r.projects?.name || '',
+    client_name: project?.clients?.name || r.projects?.clients?.name || '',
+  };
+}
+
+// GET /projects/:project_id/join-request-candidates
+// 申請モーダル用: 申請できるか・宛先候補・自分の申請中の申請
+router.get('/projects/:project_id/join-request-candidates', requireAuth, async (req, res) => {
+  const projectId = req.params.project_id;
+  try {
+    const ctx = await loadJoinRequestContext(projectId);
+    if (!ctx.project) return res.status(404).json({ error: '案件が見つかりません' });
+    const [canRegister, alreadyPayee, pendingRes] = await Promise.all([
+      actorCanRegisterLineCosts(req),
+      isAlreadyLineCostPayee(projectId, req.user.id),
+      supabase.from('project_join_requests').select(JOIN_REQUEST_SELECT)
+        .eq('project_id', projectId).eq('requester_id', req.user.id).eq('status', 'pending').maybeSingle(),
+    ]);
+    if (pendingRes.error) return res.status(500).json({ error: pendingRes.error.message });
+    const recipients = JOIN_REQ.buildRecipientCandidates({
+      project: ctx.project, users: ctx.usersById, adminIds: ctx.adminIds, excludeUserId: req.user.id,
+    });
+    let reason = null;
+    if (canRegister) reason = 'can_register';
+    else if (alreadyPayee) reason = 'already_member';
+    res.json({
+      can_request: !reason && !pendingRes.data,
+      reason,
+      project: { id: ctx.project.id, name: ctx.project.name, client_name: ctx.project.clients?.name || '' },
+      recipients,
+      pending: pendingRes.data ? shapeJoinRequest(pendingRes.data, ctx.usersById, ctx.project) : null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
+
+// POST /projects/:project_id/join-requests  body: { recipient_ids: uuid[], message }
+router.post('/projects/:project_id/join-requests', requireAuth, async (req, res) => {
+  const projectId = req.params.project_id;
+  const msgV = JOIN_REQ.normalizeJoinMessage(req.body?.message);
+  if (msgV.error) return res.status(400).json({ error: msgV.error });
+  try {
+    if (await actorCanRegisterLineCosts(req)) {
+      return res.status(400).json({ error: 'あなたは案件の支払先を直接登録できます（案件の「編集」または「💴 単価」から追加してください）' });
+    }
+    const ctx = await loadJoinRequestContext(projectId);
+    if (!ctx.project) return res.status(404).json({ error: '案件が見つかりません' });
+    if (await isAlreadyLineCostPayee(projectId, req.user.id)) {
+      return res.status(409).json({ error: 'すでにこの案件のメンバー（支払先）に登録されています' });
+    }
+    const candidates = JOIN_REQ.buildRecipientCandidates({
+      project: ctx.project, users: ctx.usersById, adminIds: ctx.adminIds, excludeUserId: req.user.id,
+    });
+    const rv = JOIN_REQ.validateRecipientIds(req.body?.recipient_ids, candidates);
+    if (rv.error) return res.status(400).json({ error: rv.error });
+
+    const { data, error } = await supabase.from('project_join_requests').insert({
+      project_id: projectId,
+      requester_id: req.user.id,
+      recipient_ids: rv.value,
+      message: msgV.value,
+    }).select(JOIN_REQUEST_SELECT).single();
+    if (error) {
+      if (isUniqueViolation(error)) return res.status(409).json({ error: 'この案件にはすでに申請中です。承認をお待ちください' });
+      if (error.code === '42P01') return res.status(503).json({ error: 'project_join_requests テーブルが未作成です。migrations/2026-10-13_project_join_requests.sql を本番Supabaseに適用してください。' });
+      return res.status(500).json({ error: error.message });
+    }
+
+    const { buildAppUrl } = require('../notifications');
+    const requester = ctx.usersById.get(req.user.id) || req.user;
+    const msg = JOIN_REQ.buildJoinRequestMessage({
+      requesterName: formatUserLabel(requester),
+      clientName: ctx.project.clients?.name,
+      projectName: ctx.project.name,
+      message: msgV.value,
+      url: buildAppUrl(joinRequestLink(data.id)),
+    });
+    sendJoinRequestNotifications(rv.value, ctx.usersById, msg, {
+      linkUrl: joinRequestLink(data.id),
+      meta: { join_request_id: data.id, project_id: projectId, kind: 'requested' },
+      senderId: req.user.id,
+    }).catch(e => console.warn('[join-request] notify failed:', e?.message));
+
+    res.json(shapeJoinRequest(data, ctx.usersById, ctx.project));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /project-join-requests?scope=inbox|mine
+//   inbox: 自分宛て（recipient_ids に自分）の申請中 / mine: 自分が出した申請（直近 50 件）
+router.get('/project-join-requests', requireAuth, async (req, res) => {
+  const scope = req.query.scope === 'mine' ? 'mine' : 'inbox';
+  let q = supabase.from('project_join_requests')
+    .select(`${JOIN_REQUEST_SELECT}, projects(name, clients(name))`)
+    .order('created_at', { ascending: false });
+  q = scope === 'mine'
+    ? q.eq('requester_id', req.user.id).limit(50)
+    : q.eq('status', 'pending').contains('recipient_ids', [req.user.id]).limit(200);
+  const { data, error } = await q;
+  if (error) {
+    if (error.code === '42P01') return res.json([]);
+    return res.status(500).json({ error: error.message });
+  }
+  const ids = new Set();
+  for (const r of data || []) { ids.add(r.requester_id); if (r.decided_by) ids.add(r.decided_by); (r.recipient_ids || []).forEach(id => ids.add(id)); }
+  const { data: us } = ids.size
+    ? await supabase.from('users').select('id, full_name, nickname').in('id', [...ids])
+    : { data: [] };
+  const usersById = new Map((us || []).map(u => [u.id, u]));
+  res.json((data || []).map(r => shapeJoinRequest(r, usersById, null)));
+});
+
+// GET /project-join-requests/:id  申請者・宛先・管理者のみ。承認モーダル/ディープリンク用
+router.get('/project-join-requests/:id', requireAuth, async (req, res) => {
+  const { data: r, error } = await supabase.from('project_join_requests')
+    .select(`${JOIN_REQUEST_SELECT}, projects(id, name, clients(name))`).eq('id', req.params.id).maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!r) return res.status(404).json({ error: '申請が見つかりません' });
+  const isAdmin = await actorIsEffectiveAdmin(req);
+  const isRequester = r.requester_id === req.user.id;
+  const canDecide = JOIN_REQ.canDecideJoinRequest({ request: r, userId: req.user.id, isAdmin });
+  if (!isRequester && !canDecide) return res.status(403).json({ error: 'この申請を見られるのは、申請者と通知先・管理者のみです' });
+  const ids = [r.requester_id, r.decided_by, ...(r.recipient_ids || [])].filter(Boolean);
+  const { data: us } = await supabase.from('users').select('id, full_name, nickname, role').in('id', ids);
+  const usersById = new Map((us || []).map(u => [u.id, u]));
+  const canRegister = canDecide && r.status === 'pending' && await actorCanRegisterLineCosts(req);
+  res.json({
+    ...shapeJoinRequest(r, usersById, null),
+    requester_role: usersById.get(r.requester_id)?.role || null,
+    can_decide: canDecide && r.status === 'pending' && canRegister,
+    can_cancel: isRequester && r.status === 'pending',
+  });
+});
+
+// POST /project-join-requests/:id/cancel  申請者本人が取り下げ
+router.post('/project-join-requests/:id/cancel', requireAuth, async (req, res) => {
+  const { data, error } = await supabase.from('project_join_requests')
+    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .eq('id', req.params.id).eq('requester_id', req.user.id).eq('status', 'pending')
+    .select(JOIN_REQUEST_SELECT).maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(409).json({ error: '取り下げできる申請がありません（すでに承認・却下済みの可能性があります）' });
+  res.json(data);
+});
+
+// 承認・却下の共通処理
+async function decideJoinRequest(req, res, approve) {
+  const noteV = JOIN_REQ.normalizeJoinMessage(req.body?.note, { required: false });
+  if (noteV.error) return res.status(400).json({ error: noteV.error });
+  const { data: r, error } = await supabase.from('project_join_requests')
+    .select(JOIN_REQUEST_SELECT).eq('id', req.params.id).maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!r) return res.status(404).json({ error: '申請が見つかりません' });
+  if (r.status !== 'pending') return res.status(409).json({ error: 'この申請はすでに対応済みです' });
+  const isAdmin = await actorIsEffectiveAdmin(req);
+  if (!JOIN_REQ.canDecideJoinRequest({ request: r, userId: req.user.id, isAdmin })) {
+    return res.status(403).json({ error: 'この申請を承認・却下できるのは、通知先に選ばれた人と管理者のみです' });
+  }
+  if (!(await actorCanRegisterLineCosts(req))) {
+    return res.status(403).json({ error: '案件の支払先を登録する権限がありません（管理者に依頼してください）' });
+  }
+
+  // 承認＋支払先登録（register=false なら登録せずに承認だけ）
+  let lineCost = null;
+  const register = approve && req.body?.register !== false;
+  if (register) {
+    const b = req.body || {};
+    if (!b.line_id) return res.status(400).json({ error: '登録先の成果物グループを選んでください' });
+    // 送られてきた項目だけ渡す（undefined のキーがあると _validatePricingFields が数値エラーにする）
+    const costBody = { role_id: b.role_id, user_id: r.requester_id, unit_price: b.unit_price ?? 0 };
+    for (const k of ['currency', 'pricing_type', 'percentage', 'actual_hours']) {
+      if (b[k] !== undefined) costBody[k] = b[k];
+    }
+    const cr = await createLineCostForProject(req, r.project_id, b.line_id, costBody);
+    if (cr.status !== 200) return res.status(cr.status).json(cr.body);
+    lineCost = cr.body;
+  }
+
+  const { data: updated, error: upErr } = await supabase.from('project_join_requests')
+    .update({
+      status: approve ? 'approved' : 'rejected',
+      decided_by: req.user.id,
+      decided_at: new Date().toISOString(),
+      decision_note: noteV.value || null,
+      created_line_cost_id: lineCost?.id || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', r.id).eq('status', 'pending')
+    .select(JOIN_REQUEST_SELECT).maybeSingle();
+  if (upErr) return res.status(500).json({ error: upErr.message });
+  if (!updated) return res.status(409).json({ error: 'この申請はすでに対応済みです' });
+
+  // 申請者へ結果を通知（best-effort）
+  (async () => {
+    const ctx = await loadJoinRequestContext(r.project_id);
+    const { buildAppUrl } = require('../notifications');
+    const decider = ctx.usersById.get(req.user.id) || req.user;
+    const msg = JOIN_REQ.buildJoinDecisionMessage({
+      approved: approve,
+      deciderName: formatUserLabel(decider),
+      clientName: ctx.project?.clients?.name,
+      projectName: ctx.project?.name,
+      note: noteV.value,
+      registered: !!lineCost,
+      url: buildAppUrl(joinRequestLink(r.id)),
+    });
+    await sendJoinRequestNotifications([r.requester_id], ctx.usersById, msg, {
+      linkUrl: joinRequestLink(r.id),
+      meta: { join_request_id: r.id, project_id: r.project_id, kind: approve ? 'approved' : 'rejected' },
+      senderId: req.user.id,
+    });
+  })().catch(e => console.warn('[join-request] decision notify failed:', e?.message));
+
+  res.json({ ...updated, line_cost: lineCost });
+}
+
+// POST /project-join-requests/:id/approve
+//   body: { register?: boolean(既定 true), line_id, role_id, pricing_type, unit_price, percentage, actual_hours, note }
+router.post('/project-join-requests/:id/approve', requireAuth, (req, res) => decideJoinRequest(req, res, true));
+// POST /project-join-requests/:id/reject  body: { note? }
+router.post('/project-join-requests/:id/reject', requireAuth, (req, res) => decideJoinRequest(req, res, false));
 
 // PUT /api/projects/:project_id/lines/:line_id/costs/:cost_id  部分更新
 router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {

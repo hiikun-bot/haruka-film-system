@@ -35,6 +35,8 @@ const ICON_BY_TYPE = {
   portfolio_comment:   '💬',
   // クリエイティブへのコメント・返信（つぶやきの post_comment から分離・ADR 043）
   creative_comment:    '💬',
+  // 案件への参加申請 / 承認・見送りの結果（ADR 051）
+  project_join_request: '🙋',
 };
 
 // HTMLエスケープ — ユーザー入力を安全に埋め込むための関数
@@ -270,6 +272,23 @@ async function activateCard(cardEl, options = {}) {
         return;
       } catch (e) {
         console.warn('[notification-card] showPage(tweets) 失敗', e);
+      }
+    }
+    window.location.href = linkUrl;
+    return;
+  }
+
+  // 案件への参加申請（ADR 051）: /haruka.html?join_request=<id> → リロード無しで申請モーダルを開く。
+  // 無ければ通常遷移（applyDeepLinkOnLoad が ?join_request= を処理する）。
+  const joinReqMatch = /^\/haruka\.html\?join_request=([^&#]+)/.exec(linkUrl);
+  if (joinReqMatch) {
+    document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
+    if (typeof window.openJoinRequestById === 'function') {
+      try {
+        window.openJoinRequestById(decodeURIComponent(joinReqMatch[1]));
+        return;
+      } catch (e) {
+        console.warn('[notification-card] openJoinRequestById 失敗', e);
       }
     }
     window.location.href = linkUrl;
