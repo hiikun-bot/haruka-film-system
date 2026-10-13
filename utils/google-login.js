@@ -3,7 +3,9 @@
 // 純関数＋ OAuth クライアント生成。DB・セッション操作は server.js の /auth/google* が担う。
 //
 // 方針（2026-10-13 さとるさん依頼。2026-04 に削除した旧実装の「未登録メールを admin で自動作成」は復活させない）:
-//   - Google が「確認済み」と返したメールアドレスが、有効な users.email と一致した人だけログインできる
+//   - Google が「確認済み」と返し、かつ Google が持ち主を保証できるメール（@gmail.com、または hd が一致する
+//     Google Workspace）が、有効な users.email と一致した人だけログインできる。Yahoo!・独自ドメイン等で作った
+//     Google アカウントは、アドレスが別人に引き継がれても古いアカウントが残るため使わない（2026-10-13 レビュー指摘）
 //   - 新規ユーザーの自動作成・ロール付与はしない（招待フローが唯一の入口）
 //   - 戻り先（redirect_uri）は「今開いているドメイン」に合わせる（ログインのクッキーはドメイン単位のため）。
 //     ただし許可したホストだけ（Host ヘッダ偽装で別ドメインへ code を流させない）
@@ -91,11 +93,28 @@ function newState({ secret, next, now = Date.now() }) {
  * Google の ID トークン（検証済み payload）からログイン用メールを取り出す。
  * email_verified が true でないものは使わない（未確認メールでのなりすまし防止）。
  */
+const GMAIL_DOMAINS = ['gmail.com', 'googlemail.com'];
+
+/**
+ * Google がそのメールアドレスの「正当な持ち主」を保証できるか（Google 公式: Verify the Google ID token）。
+ *   - @gmail.com / @googlemail.com → Google 自身がメールを管理しているので保証できる
+ *   - hd（Google Workspace のドメイン）があり、メールのドメインと一致 → Workspace 管理者が管理しているので保証できる
+ *   - それ以外（Yahoo!・独自ドメイン等で作った Google アカウント）→ email_verified は「作成時に一度確認した」だけで、
+ *     そのアドレスが後で別人に引き継がれても古い Google アカウントは残る。保証できないのでログインに使わない
+ */
+function isGoogleAuthoritative(email, hd) {
+  const domain = String(email || '').split('@')[1] || '';
+  if (GMAIL_DOMAINS.includes(domain)) return true;
+  const h = String(hd || '').trim().toLowerCase();
+  return !!h && h === domain;
+}
+
 function extractVerifiedEmail(payload) {
   if (!payload || typeof payload !== 'object') return { error: 'no_email' };
   const email = String(payload.email || '').trim().toLowerCase();
   if (!email) return { error: 'no_email' };
   if (payload.email_verified !== true && payload.email_verified !== 'true') return { error: 'unverified' };
+  if (!isGoogleAuthoritative(email, payload.hd)) return { error: 'not_authoritative' };
   return { email };
 }
 
@@ -123,6 +142,7 @@ const ERROR_MESSAGES = {
   google_failed: 'Googleログインに失敗しました。少し時間をおいてもう一度お試しください。',
   no_email: 'Googleアカウントのメールアドレスを取得できませんでした。',
   unverified: 'Googleアカウントのメールアドレスが確認済みではありません。',
+  not_authoritative: 'このメールアドレスはGoogleでログインできません（Gmail と Google Workspace のアドレスのみ対応）。メールアドレスとパスワードでログインしてください。',
   not_registered: 'このGoogleアカウントのメールアドレスはHARUKA FILMに登録されていません。招待されたメールアドレスのGoogleアカウントでログインしてください。',
   ambiguous: '同じメールアドレスのアカウントが複数あります。管理者に連絡してください。',
   inactive: 'このアカウントは無効化されています。',
@@ -142,6 +162,7 @@ module.exports = {
   verifyState,
   newState,
   extractVerifiedEmail,
+  isGoogleAuthoritative,
   escapeLike,
   pickLoginUser,
 };
