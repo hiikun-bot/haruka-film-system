@@ -5499,34 +5499,51 @@ async function decideJoinRequest(req, res, approve) {
   }
 
   // 承認＋支払先登録（register=false なら登録せずに承認だけ）
-  let lineCost = null;
+  // 順番が大事（2026-10-13 レビュー指摘）: 先に申請を pending → approved/rejected へ条件付き UPDATE で
+  // 「押さえて」から支払先を登録する。逆順だと、取り下げ・却下と同時に処理されたとき承認は 409 になるのに
+  // 支払先（原価）だけ残り、集計に入ってしまう。登録に失敗したら pending に戻す（取り下げ等はその後でできる）。
   const register = approve && req.body?.register !== false;
+  const b = req.body || {};
+  if (register && !b.line_id) return res.status(400).json({ error: '登録先の成果物グループを選んでください' });
+
+  const decidedAt = new Date().toISOString();
+  const { data: claimed, error: claimErr } = await supabase.from('project_join_requests')
+    .update({
+      status: approve ? 'approved' : 'rejected',
+      decided_by: req.user.id,
+      decided_at: decidedAt,
+      decision_note: noteV.value || null,
+      updated_at: decidedAt,
+    })
+    .eq('id', r.id).eq('status', 'pending')
+    .select(JOIN_REQUEST_SELECT).maybeSingle();
+  if (claimErr) return res.status(500).json({ error: claimErr.message });
+  if (!claimed) return res.status(409).json({ error: 'この申請はすでに対応済みです（取り下げ・別の人の対応と重なった可能性があります）' });
+
+  let lineCost = null;
+  let updated = claimed;
   if (register) {
-    const b = req.body || {};
-    if (!b.line_id) return res.status(400).json({ error: '登録先の成果物グループを選んでください' });
     // 送られてきた項目だけ渡す（undefined のキーがあると _validatePricingFields が数値エラーにする）
     const costBody = { role_id: b.role_id, user_id: r.requester_id, unit_price: b.unit_price ?? 0 };
     for (const k of ['currency', 'pricing_type', 'percentage', 'actual_hours']) {
       if (b[k] !== undefined) costBody[k] = b[k];
     }
     const cr = await createLineCostForProject(req, r.project_id, b.line_id, costBody);
-    if (cr.status !== 200) return res.status(cr.status).json(cr.body);
+    if (cr.status !== 200) {
+      // 支払先を登録できなかった → 承認を取り消して申請中に戻す（自分が押さえた行だけ）
+      const { error: revertErr } = await supabase.from('project_join_requests')
+        .update({ status: 'pending', decided_by: null, decided_at: null, decision_note: null, updated_at: new Date().toISOString() })
+        .eq('id', r.id).eq('status', 'approved').eq('decided_by', req.user.id).is('created_line_cost_id', null);
+      if (revertErr) console.warn('[join-request] revert to pending failed:', revertErr.message);
+      return res.status(cr.status).json(cr.body);
+    }
     lineCost = cr.body;
+    const { data: linked, error: linkErr } = await supabase.from('project_join_requests')
+      .update({ created_line_cost_id: lineCost.id, updated_at: new Date().toISOString() })
+      .eq('id', r.id).select(JOIN_REQUEST_SELECT).maybeSingle();
+    if (linkErr) console.warn('[join-request] link line_cost failed:', linkErr.message);
+    if (linked) updated = linked;
   }
-
-  const { data: updated, error: upErr } = await supabase.from('project_join_requests')
-    .update({
-      status: approve ? 'approved' : 'rejected',
-      decided_by: req.user.id,
-      decided_at: new Date().toISOString(),
-      decision_note: noteV.value || null,
-      created_line_cost_id: lineCost?.id || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', r.id).eq('status', 'pending')
-    .select(JOIN_REQUEST_SELECT).maybeSingle();
-  if (upErr) return res.status(500).json({ error: upErr.message });
-  if (!updated) return res.status(409).json({ error: 'この申請はすでに対応済みです' });
 
   // 申請者へ結果を通知（best-effort）
   (async () => {
