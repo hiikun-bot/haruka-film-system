@@ -27675,11 +27675,31 @@ async function renderShowcaseCard() {
   if (!scTargetVisible(el)) return;
 
   scApplyItems(items);
-  setShowcaseUnreadBadge(scUnseenCount());
-  if (!scItems.length) { el.innerHTML = ''; return; }   // 新着ゼロの週はカードを出さない
+  if (!scItems.length) { el.innerHTML = ''; setShowcaseUnreadBadge(0); return; }   // 新着ゼロの週はカードを出さない
   scPos = scFirstUnseenPos();
   el.innerHTML = scCardHtml();
   scRenderCardBody();
+  // 作品ページを開いたら、いま並んでいる新着はすべて「見た」扱いにしてナビのバッジを消す
+  // （さとるさん指示 2026-10-13「一回見たら消す」）。この訪問中はカードの未見の赤点を残し、次に開いたときから消える。
+  scAcknowledgeAll();
+}
+
+// いま取得済みの新着（scFlat）を全部既読にしてバッジを 0 にする。カード内の赤点は描き直さない（この訪問中は残す）
+function scAcknowledgeAll() {
+  let changed = false;
+  for (const it of scFlat) {
+    const cid = String(it?.creative_id || '');
+    if (!cid || _scSeenSet.has(cid)) continue;
+    _scSeenSet.add(cid);
+    _scSeenList.push(cid);
+    changed = true;
+  }
+  if (changed) {
+    while (_scSeenList.length > SC_SEEN_MAX) _scSeenSet.delete(_scSeenList.shift());
+    try { localStorage.setItem(SC_SEEN_LS_KEY, JSON.stringify(_scSeenList)); } catch (_) {}
+  }
+  setShowcaseUnreadBadge(0);
+  scUpdateLine();
 }
 
 // ---- ホームの 1 行導線（#dash-showcase）----
