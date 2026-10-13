@@ -70,6 +70,13 @@ describe('extractVerifiedEmail', () => {
   test('確認済みメールを小文字化', () => {
     expect(g.extractVerifiedEmail({ email: 'Hiikun.ASCS@gmail.com', email_verified: true })).toEqual({ email: 'hiikun.ascs@gmail.com' });
   });
+  test('Gmail 以外は Google Workspace（hd 一致）のときだけ', () => {
+    expect(g.extractVerifiedEmail({ email: 'taro@harukafilm.com', email_verified: true, hd: 'harukafilm.com' })).toEqual({ email: 'taro@harukafilm.com' });
+    expect(g.extractVerifiedEmail({ email: 'taro@yahoo.co.jp', email_verified: true }).error).toBe('not_authoritative');
+    expect(g.extractVerifiedEmail({ email: 'taro@harukafilm.com', email_verified: true }).error).toBe('not_authoritative');
+    expect(g.extractVerifiedEmail({ email: 'taro@harukafilm.com', email_verified: true, hd: 'other.com' }).error).toBe('not_authoritative');
+    expect(g.extractVerifiedEmail({ email: 'a@googlemail.com', email_verified: true }).email).toBe('a@googlemail.com');
+  });
   test('未確認・無しはエラー', () => {
     expect(g.extractVerifiedEmail({ email: 'a@b.c', email_verified: false }).error).toBe('unverified');
     expect(g.extractVerifiedEmail({ email_verified: true }).error).toBe('no_email');
