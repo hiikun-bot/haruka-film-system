@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { margin: 0; padding: 10px; color: #e6e6e6; background: #232323; font-size: 12px; font-family: -apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+  h1 { font-size: 13px; margin: 0 0 6px; color: #fff; }
+  .muted { color: #9a9a9a; }
+  .row { display: flex; align-items: center; margin: 6px 0; }
+  .row > * { margin-right: 6px; }
+  .grow { flex: 1; }
+  label { color: #bdbdbd; }
+  input[type=text], input[type=password], select, textarea { background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 4px 6px; font-size: 12px; }
+  textarea { width: 100%; height: 60px; box-sizing: border-box; }
+  button { background: #3a3a3a; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 4px 10px; font-size: 12px; }
+  button.primary { background: #2BB8B4; border-color: #2BB8B4; color: #fff; font-weight: bold; padding: 8px 12px; width: 100%; }
+  button.small { padding: 2px 6px; font-size: 11px; }
+  button:disabled { opacity: .45; }
+  details { margin: 6px 0; border: 1px solid #333; border-radius: 4px; padding: 4px 8px; }
+  summary { color: #bdbdbd; }
+  .status { margin: 6px 0; min-height: 16px; }
+  .err { color: #ff8a80; }
+  .ok { color: #7ee2b8; }
+  .counts { display: flex; margin: 8px 0; }
+  .counts div { flex: 1; text-align: center; padding: 6px 0; border-radius: 4px; margin-right: 4px; background: #2d2d2d; }
+  .counts b { font-size: 16px; display: block; }
+  .c-err b { color: #ff6b6b; } .c-warn b { color: #ffd166; } .c-man b { color: #9ecbff; }
+  .item { border-left: 3px solid #555; background: #2a2a2a; margin: 4px 0; padding: 6px 8px; border-radius: 0 4px 4px 0; }
+  .item.error { border-left-color: #ff6b6b; }
+  .item.warn { border-left-color: #ffd166; }
+  .item.dismissed { opacity: .4; }
+  .item .head { display: flex; align-items: center; }
+  .item .head .t { color: #9a9a9a; margin-right: 6px; }
+  .item .quote { color: #fff; margin: 3px 0; }
+  .item .sugg { color: #7ee2b8; }
+  .item .why { color: #9a9a9a; margin-top: 2px; }
+  .man { display: flex; align-items: flex-start; margin: 4px 0; }
+  .man input { margin: 2px 6px 0 0; }
+  .section { margin-top: 10px; color: #bdbdbd; font-weight: bold; }
+  .foot { margin-top: 14px; border-top: 1px solid #333; padding-top: 8px; }
+  a { color: #7fd7d4; }
+</style>
+</head>
+<body>
+  <h1>🎬 HARUKA 投稿前チェック</h1>
+  <div id="who" class="muted">未接続</div>
+
+  <details id="setup">
+    <summary>⚙ 接続の設定</summary>
+    <div class="row"><label>トークン</label></div>
+    <input id="token" type="password" class="grow" style="width:100%;box-sizing:border-box" placeholder="HARUKA FILM の「Premiere プラグイン」ページで発行">
+    <div class="row">
+      <button id="connect">接続する</button>
+      <select id="server" class="grow">
+        <option value="https://app.harukafilm.com">本番</option>
+        <option value="https://haruka-film-system-production.up.railway.app">本番（予備URL）</option>
+      </select>
+    </div>
+    <div class="muted">トークンの発行: app.harukafilm.com/premiere-plugin.html</div>
+  </details>
+
+  <div class="row">
+    <label>案件</label>
+    <select id="set" class="grow"></select>
+  </div>
+  <div class="muted" id="seq">シーケンス: -</div>
+
+  <details>
+    <summary>オプション</summary>
+    <div class="row"><input type="checkbox" id="optMarkers" checked><label for="optMarkers">タイムラインにマーカーを打つ</label></div>
+    <div class="row"><input type="checkbox" id="optSpeech" checked><label for="optSpeech">話した言葉（文字起こし）も見る</label></div>
+    <div class="row"><label>キャプション文（任意）</label></div>
+    <textarea id="caption" placeholder="貼ると、ハッシュタグや必須リンクも確かめます"></textarea>
+  </details>
+
+  <button id="run" class="primary" disabled>チェックする</button>
+  <div id="status" class="status muted"></div>
+
+  <div id="result" style="display:none">
+    <div class="counts">
+      <div class="c-err"><b id="nErr">0</b>✕ 直す</div>
+      <div class="c-warn"><b id="nWarn">0</b>△ 確認</div>
+      <div class="c-man"><b id="nMan">0</b>□ 目で確認</div>
+    </div>
+    <div id="findings"></div>
+    <div class="section">□ 人が確認する項目</div>
+    <div id="manual"></div>
+    <button id="summary" class="primary" style="margin-top:10px" disabled>提出用のまとめをコピー</button>
+    <div class="muted" id="summaryHint">✕ を全部直し、□ に全部チェックを入れると押せます</div>
+  </div>
+
+  <div class="foot muted">
+    <button id="diag" class="small">診断データを送る</button>
+    <span>テロップが読めないときに押してください</span>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
