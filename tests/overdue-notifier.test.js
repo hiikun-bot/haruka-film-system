@@ -68,6 +68,9 @@ describe('runOnce', () => {
       { id: 'c2', file_name: 'b.mp4', status: '編集', final_deadline: '2026-10-05', force_delivered: false,
         projects: { name: 'P2', director_id: null, producer_id: 'prod-1', clients: { name: 'ハビー', status: '進行中' } },
         creative_assignments: [{ role: 'editor', user_id: 'ed-1', users: { id: 'ed-1', nickname: 'パンセ', team_id: 'team-A' } }] },
+      { id: 'c5', file_name: 'nomgr.mp4', status: '編集', final_deadline: '2026-10-06', force_delivered: false,
+        projects: { name: 'P5', director_id: null, producer_id: null, clients: { name: 'ハビー', status: '進行中' } },
+        creative_assignments: [{ role: 'editor', user_id: 'ed-1', users: { id: 'ed-1', nickname: 'パンセ', team_id: 'team-A' } }] },
       { id: 'c3', file_name: 'ended.mp4', status: '編集', final_deadline: '2026-10-01', force_delivered: false,
         projects: { name: 'P3', director_id: 'retired', producer_id: null, clients: { name: '旧', status: 'クライアント取引終了' } },
         creative_assignments: [] },
@@ -77,9 +80,9 @@ describe('runOnce', () => {
     ];
   });
 
-  test('管理 D/P ごとに 1 通ずつ（ベル＋DM）。取引終了・強制納品は除外。チーム代表 D はフォールバックで受信', async () => {
+  test('管理 D/P ごとに 1 通ずつ（ベル＋DM）。取引終了・強制納品は除外。チーム代表 D は D も P も居ない分だけフォールバックで受信', async () => {
     const r = await runOnce(new Date('2026-10-08T01:10:00Z'));
-    expect(r).toMatchObject({ today: '2026-10-08', overdue: 2, recipients: 3, sent: 3 });
+    expect(r).toMatchObject({ today: '2026-10-08', overdue: 3, recipients: 3, sent: 3 });
     const bellTo = mockCreateNotification.mock.calls.map(c => c[0].userId).sort();
     expect(bellTo).toEqual(['dir-proj', 'dir-team', 'prod-1']);
     const prod = mockCreateNotification.mock.calls.find(c => c[0].userId === 'prod-1')[0];
@@ -95,9 +98,9 @@ describe('runOnce', () => {
     expect(dm.chatwork).toContain('■ hertech / a.mp4');
     expect(dm.chatwork).toContain('https://app.example/haruka.html?creative=c1');
     expect(dm.chatwork).toContain('進行ボード（遅延のみ表示）: https://app.example/haruka.html?delayed=1');
-    // dir-team は c2（プロジェクト D 無し）だけ
+    // dir-team は c5（案件の D も P も無し）だけ。c2 は P が居るのでチーム代表 D には振らない
     const team = mockCreateNotification.mock.calls.find(c => c[0].userId === 'dir-team')[0];
-    expect(team.meta.creative_ids).toEqual(['c2']);
+    expect(team.meta.creative_ids).toEqual(['c5']);
   });
 
   test('同じ日に送信済みの受信者には再送しない（再デプロイ耐性）', async () => {

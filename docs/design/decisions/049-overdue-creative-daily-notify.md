@@ -22,8 +22,11 @@
 
 ### 2. 受信者は「そのクリエイティブを管理している D / P」。`getBallHolder` と同じ優先順で解決する
 
-- director: `creative_assignments(role=director)` → `projects.director_id` → 制作担当（editor/designer）のチーム代表ディレクター（`teams.director_id`）
+- director: `creative_assignments(role=director)` → `projects.director_id`
 - producer: `creative_assignments(role=producer)` → `projects.producer_id`
+- D も P も見つからないときだけ: 制作担当（editor/designer）のチーム代表ディレクター（`teams.director_id`）
+
+> 追補（2026-10-17）: 当初はチーム代表 D を「D が見つからなければ」使っていたため、P は居るが D 欄が空の案件（他チームから制作担当を借りた案件）で、借りた側のチーム D に「あなたが管理している」として届いた（hertech「たごんチーム」案件 → 謝花さん所属のみっつーチームの D へ）。通知と SOS はチーム代表 D を「管理者が誰もいない」ときの最後の受け皿に限定した。進行ボードのボール表示（`getBallHolder`）は変えていない。
 
 制作担当本人には送らない（遅延の是正は管理側の判断を要するため）。D と P が同一人物なら 1 通。誰も解決できないクリエイティブは件数だけログに残す（担当未設定の洗い出し用）。
 
