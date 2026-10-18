@@ -20,7 +20,8 @@ if [ "${1:-}" = "--dev" ]; then
 import json, sys
 tmp, server, token = sys.argv[1:4]
 m = json.load(open(f"{tmp}/manifest.json"))
-m["requiredPermissions"]["network"]["domains"].append(server)
+# 手元サーバー（http・ポート付き）は domains の書き方では許可されないため、テスト版だけ全許可にする
+m["requiredPermissions"]["network"]["domains"] = "all"
 v = m["version"].split(".")
 v[2] = "99"  # 手元テスト版は x.y.99（4 桁にするとインストーラーが manifest 不正で弾く）
 m["version"] = ".".join(v)
