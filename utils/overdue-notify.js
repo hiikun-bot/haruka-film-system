@@ -68,8 +68,12 @@ function selectOverdue(creatives, todayYmd) {
 
 /**
  * 管理している D / P を解決する。優先順は routes/haruka.js getBallHolder と同じ。
- *   director: assignment(role=director) → projects.director_id → 制作担当のチーム代表ディレクター
+ *   director: assignment(role=director) → projects.director_id
  *   producer: assignment(role=producer) → projects.producer_id
+ *   D も P も見つからないときだけ: 制作担当のチーム代表ディレクター
+ * チーム代表 D へのフォールバックは「管理者が誰もいない」場合に限る。他チームの案件に制作担当を
+ * 借りただけ（案件の P は居るが D 欄が空）で、借りた側のチーム D に届くのを防ぐため
+ * （hertech「たごんチーム」案件が みっつーチームの D に届いた事故）。
  * @param {object} c  creative（creative_assignments[].{role,user_id,users.team_id} / projects.{director_id,producer_id}）
  * @param {{ directorIdByTeamId?: Map, directorIdByUserId?: Map }} ctx
  * @returns {{ directorIds: string[], producerIds: string[], all: string[] }}
@@ -80,7 +84,11 @@ function resolveManagerIds(c, ctx = {}) {
 
   let directorIds = assigns.filter(a => a?.role === 'director').map(uid).filter(Boolean);
   if (directorIds.length === 0 && c?.projects?.director_id) directorIds = [c.projects.director_id];
-  if (directorIds.length === 0) {
+
+  let producerIds = assigns.filter(a => a?.role === 'producer').map(uid).filter(Boolean);
+  if (producerIds.length === 0 && c?.projects?.producer_id) producerIds = [c.projects.producer_id];
+
+  if (directorIds.length === 0 && producerIds.length === 0) {
     const editor = assigns.find(a => EDITOR_ROLES.includes(a?.role));
     const teamId = editor?.users?.team_id || null;
     const editorId = uid(editor);
@@ -89,9 +97,6 @@ function resolveManagerIds(c, ctx = {}) {
       || null;
     if (viaTeam) directorIds = [viaTeam];
   }
-
-  let producerIds = assigns.filter(a => a?.role === 'producer').map(uid).filter(Boolean);
-  if (producerIds.length === 0 && c?.projects?.producer_id) producerIds = [c.projects.producer_id];
 
   const all = Array.from(new Set([...directorIds, ...producerIds]));
   return { directorIds: Array.from(new Set(directorIds)), producerIds: Array.from(new Set(producerIds)), all };

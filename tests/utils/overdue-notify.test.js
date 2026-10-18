@@ -90,11 +90,25 @@ describe('resolveManagerIds（getBallHolder と同じ優先順）', () => {
     const c = base({ projects: { director_id: 'dir-proj', producer_id: 'prod-proj' } });
     expect(resolveManagerIds(c, ctx).all).toEqual(['dir-proj', 'prod-proj']);
   });
-  test('それも無ければ制作担当のチーム代表ディレクター（team_id → user_id の順）', () => {
+  test('D も P も無ければ制作担当のチーム代表ディレクター（team_id → user_id の順）', () => {
     const viaTeam = base({ creative_assignments: [{ role: 'editor', user_id: 'ed-1', users: { team_id: 'team-A' } }] });
     expect(resolveManagerIds(viaTeam, ctx).all).toEqual(['dir-team']);
     const viaUser = base({ creative_assignments: [{ role: 'designer', user_id: 'ed-2', users: { team_id: null } }] });
     expect(resolveManagerIds(viaUser, ctx).all).toEqual(['dir-team-by-user']);
+  });
+  test('案件に P が居れば、D 欄が空でもチーム代表 D には振らない（他チームから制作担当を借りた案件）', () => {
+    const c = base({
+      projects: { director_id: null, producer_id: 'prod-proj' },
+      creative_assignments: [{ role: 'editor', user_id: 'ed-1', users: { team_id: 'team-A' } }],
+    });
+    const r = resolveManagerIds(c, ctx);
+    expect(r.directorIds).toEqual([]);
+    expect(r.all).toEqual(['prod-proj']);
+    const viaAssign = base({ creative_assignments: [
+      { role: 'producer', user_id: 'prod-a' },
+      { role: 'editor', user_id: 'ed-1', users: { team_id: 'team-A' } },
+    ] });
+    expect(resolveManagerIds(viaAssign, ctx).all).toEqual(['prod-a']);
   });
   test('D と P が同一人物なら 1 回だけ', () => {
     const c = base({ projects: { director_id: 'same', producer_id: 'same' } });
