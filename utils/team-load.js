@@ -16,7 +16,7 @@
 //                      （2026-08-22 ユーザー指示: 制作が重複して手元にある負荷だけを見たい）
 //   - 持ちボール数   : getBallHolder() の user_ids[]（複数ホルダー対応）に自分が含まれる
 //                      未納品クリエイティブ数（ball_holder_id キャッシュ列は通知用の単数値のため使わない。
-//                      クライアント確認待ちは user_ids が空なので元々含まれない）
+//                      クライアント確認待ちは user_ids に担当 D/P が入るが、負荷ではないので数えない）
 //   - 今週期限数     : 担当クリエイティブのうち final_deadline が今日〜今週日曜（JST・週=月〜日）のもの
 //   - 期限超過数     : 担当クリエイティブのうち final_deadline < 今日（JST）のもの（未納品）
 //   ※ 期限系（今週期限・期限超過）は「保留」「クライアント確認待ち」も含む担当分全体で数える
@@ -117,8 +117,9 @@ function computeTeamLoad({ members = [], creatives = [], todayStr, sundayStr } =
       if (isOverdue) s.overdue++;
     }
 
-    // 持ちボール（複数ホルダー全員にカウント）
-    const holders = Array.from(new Set(c.ball_user_ids || []));
+    // 持ちボール（複数ホルダー全員にカウント）。クラ確認待ちは D/P の user_ids を持つが、
+    // 制作の手は止まっているので負荷（持ちボール）には数えない（クラ確認待ち数で別に見る）
+    const holders = isClientWait ? [] : Array.from(new Set(c.ball_user_ids || []));
     for (const uid of holders) {
       const s = stats.get(uid);
       if (!s) continue;

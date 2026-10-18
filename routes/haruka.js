@@ -19813,6 +19813,18 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     holder_users: users,
   });
 
+  const clientCheckBall = () => {
+    const useDir = directorIds.length > 0 || producerIds.length === 0;
+    const names = useDir ? directorNames : producerNames;
+    return {
+      holder: names.length ? `クライアント（${names.join('、')}）` : 'クライアント',
+      type: 'client', user_id: null, holder_user: null,
+      holders: names.length ? names : ['クライアント'],
+      user_ids: useDir ? directorIds : producerIds,
+      holder_users: useDir ? directorUsers : producerUsers,
+    };
+  };
+
   const ballMap = {
     '未着手': single(editorName, 'editor', editorId, editorUser),
     '制作中（初稿提出前）': single(editorName, 'editor', editorId, editorUser),
@@ -19827,7 +19839,12 @@ function getBallHolder(status, assignments, directorByTeamId, directorByUserId, 
     'Dチェック後修正': single(editorName, 'editor', editorId, editorUser),
     'Pチェック': multi(producerName, 'producer', producerId, producerUser, producerNames, producerIds, producerUsers),
     'Pチェック後修正': single(editorName, 'editor', editorId, editorUser),
-    'クライアントチェック中': { holder: 'クライアント', type: 'client', holder_user: null, holders: ['クライアント'], user_ids: [], holder_users: [] },
+    // クライアントチェック中: 返答待ちの相手はクライアントだが、納品完了まで追いかける責任は
+    // 担当ディレクター（解決できなければプロデューサー）にあるため、ボールは D（→P）に置く（2026-10-19 ユーザー指示）。
+    // type は 'client' のまま（「クラ確認待ち」集計・ボール種別フィルタ・ガントの色分けを変えない）。
+    // user_id / holder_user は null のまま: ball_holder_id キャッシュ（ball_returned 通知トリガー）を動かさず、
+    // チーム状況の「○○で停止中」もクライアント表記のまま出すため。手番の判定は user_ids[] で行う。
+    'クライアントチェック中': clientCheckBall(),
     // CLチェック修正指摘がDBに保存された時点で、ディレクターが client feedback を翻訳・伝達するフェーズは完了しており、
     // 次は編集者が修正する段階。よって Dチェック後修正・Pチェック後修正と揃えて editor 単独をボール保持者とする。
     'クライアントチェック後修正': single(editorName, 'editor', editorId, editorUser),
@@ -19928,7 +19945,8 @@ async function syncBallHolderId(creativeId, sb) {
     // user_ids 配列があればその先頭（編集者）をキャッシュに採用するロジックを残しておく。
     // （現時点では type:'all' を使うステータスは存在しないため、このフォールバックは発火しない）
     let nextHolderId = ball?.user_id || null;
-    if (!nextHolderId && Array.isArray(ball?.user_ids) && ball.user_ids.length > 0) {
+    // クライアントチェック中は user_ids に D/P が入るが、ボール移動通知の対象にはしない（従来どおり NULL）
+    if (!nextHolderId && ball?.type !== 'client' && Array.isArray(ball?.user_ids) && ball.user_ids.length > 0) {
       nextHolderId = ball.user_ids[0];
     }
 

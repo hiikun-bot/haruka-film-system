@@ -127,14 +127,23 @@ describe('computeMyFocus — 納期カウント', () => {
 });
 
 describe('computeMyFocus — クラ確認待ち', () => {
-  test('ボール一覧には出さず client_wait として別に数える', () => {
+  test('担当 D/P が持つ場合（user_ids に自分）はボール一覧に出しつつ client_wait にも数える', () => {
     const r = run([
-      cr({ id: 'cw', status: 'クライアントチェック中', ball_type: CLIENT_BALL_TYPE, ball_user_ids: [], member_user_ids: [ME] }),
+      cr({ id: 'cw', status: 'クライアントチェック中', ball_type: CLIENT_BALL_TYPE, ball_user_ids: [ME], member_user_ids: [ME] }),
       cr({ id: 'mine', ball_user_ids: [ME] }),
     ]);
     expect(r.counts.client_wait).toBe(1);
-    expect(r.counts.balls).toBe(1);
-    expect(r.items.map(i => i.id)).toEqual(['mine']);
+    expect(r.counts.balls).toBe(2);
+    expect(r.items.map(i => i.id).sort()).toEqual(['cw', 'mine']);
+  });
+
+  test('自分が D/P でない（制作担当だけ）のクラ確認待ちはボールに入らず client_wait だけ数える', () => {
+    const r = run([
+      cr({ id: 'cw', status: 'クライアントチェック中', ball_type: CLIENT_BALL_TYPE, ball_user_ids: ['dir'], member_user_ids: [ME, 'dir'] }),
+    ]);
+    expect(r.counts.client_wait).toBe(1);
+    expect(r.counts.balls).toBe(0);
+    expect(r.items).toEqual([]);
   });
 
   test('クラ確認待ちでも納期が過ぎていれば超過に数える', () => {
