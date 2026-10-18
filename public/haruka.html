@@ -15487,7 +15487,8 @@ function renderCreatives() {
       const ids = Array.isArray(bh.user_ids) ? bh.user_ids : [];
       const myIdsHit = !!myId && (ids.includes(myId) || bh.user_id === myId);
       let hasBall = false;
-      if (bh.type === 'editor' || bh.type === 'director' || bh.type === 'wcheck') hasBall = myIdsHit;
+      // クライアントチェック中も、納品完了まで追う担当 D（D 不在なら P）のボール（getBallHolder の user_ids）
+      if (bh.type === 'editor' || bh.type === 'director' || bh.type === 'wcheck' || bh.type === 'client') hasBall = myIdsHit;
       else if (bh.type === 'producer') hasBall = myIdsHit || (ids.length === 0 && !bh.user_id && isProducerLike);
       if (!hasBall) return false;
     }

@@ -8,13 +8,13 @@
 //            ADR 033（チーム状況）の「担当」は editor/designer/director_as_editor に限定しているが、
 //            ホームは D/P 自身の手番・納期責任も出す必要があるため role を問わない。定義差は ADR 040 に明記。
 //   ボール … getBallHolder().user_ids に自分が含まれる＝「いま自分が動かす番」のもの。
-//            クライアント確認待ちは user_ids が空なので構造上ここには入らない。
+//            クライアント確認待ちは、納品完了まで追う担当 D（D 不在なら P）のボールとして入る（2026-10-19）。
 //
 // 日付は全て 'YYYY-MM-DD'（JST 基準で呼び出し側が生成）で受け取り、文字列比較と UTC 固定パースだけで
 // 扱う。サーバーローカル TZ（Railway は UTC）に依存する new Date('Y-M-D') / getDay() は使わない。
 
 // ボールがクライアントにある getBallHolder().type（status「クライアントチェック中」）。
-// 制作の手は止まっているのでボール一覧には出さず、「クラ確認待ち N件」として別に数える（ADR 033 と同じ扱い）。
+// 担当 D/P のボールとして一覧に出しつつ、「クラ確認待ち N件」としても別に数える。
 const CLIENT_BALL_TYPE = 'client';
 
 function _isDateStr(s) {

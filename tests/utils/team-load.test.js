@@ -99,8 +99,8 @@ describe('computeTeamLoad（メンバー別集計）', () => {
   test('クラ確認待ち: ball_type=client は進行中CRから除外し client_wait に別カウントする', () => {
     const creatives = [
       { id: 'c1', status: '編集',               final_deadline: null, ball_type: 'editor', assignee_user_ids: ['u1'], ball_user_ids: ['u1'] },
-      // クライアントチェック中: ボールは向こう（user_ids は空）。active に入れず client_wait に数える
-      { id: 'c2', status: 'クライアントチェック中', final_deadline: null, ball_type: CLIENT_BALL_TYPE, assignee_user_ids: ['u1'], ball_user_ids: [] },
+      // クライアントチェック中: user_ids には担当 D（u2）が入るが、active にも持ちボールにも入れず client_wait に数える
+      { id: 'c2', status: 'クライアントチェック中', final_deadline: null, ball_type: CLIENT_BALL_TYPE, assignee_user_ids: ['u1'], ball_user_ids: ['u2'] },
       { id: 'c3', status: 'クライアントチェック中', final_deadline: null, ball_type: CLIENT_BALL_TYPE, assignee_user_ids: ['u2'], ball_user_ids: [] },
     ];
     const { members: rows, totals } = computeTeamLoad({ members, creatives, todayStr: TODAY, sundayStr: SUNDAY });
@@ -108,8 +108,9 @@ describe('computeTeamLoad（メンバー別集計）', () => {
     const u2 = rows.find(r => r.id === 'u2');
     expect(u1.active).toBe(1);        // c2 は進行中CRに含めない
     expect(u1.client_wait).toBe(1);
-    expect(u1.balls).toBe(1);         // クラ確認待ちは持ちボールにも入らない（user_ids 空）
+    expect(u1.balls).toBe(1);         // クラ確認待ちは持ちボールにも入らない
     expect(u2.active).toBe(0);
+    expect(u2.balls).toBe(0);         // D が user_ids に入っていても負荷には数えない
     expect(u2.client_wait).toBe(1);
     expect(totals.active).toBe(1);
     expect(totals.client_wait).toBe(2);
