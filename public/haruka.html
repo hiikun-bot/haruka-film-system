@@ -2251,22 +2251,36 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
      #fp-window は PC では 92vw × 92vh のフロートウィンドウ（左動画＋右コメント）
      スマホでは全画面化して縦積み（上:動画 / 下:タブ+コメント）に変換 */
 
-  /* ウィンドウを全画面化 */
+  /* ウィンドウを全画面化。
+     100vw/100vh だと、ページが横にはみ出して iOS Safari が縮小表示したとき
+     「画面の8割ほどの窓」になり裏のCR詳細が透けて見える（bug-report dcd2f260）。
+     親の #modal-file-preview（fixed + inset:0）に合わせて inset:0 で張る */
   #fp-window{
-    top:0 !important;left:0 !important;
-    width:100vw !important;height:100vh !important;
+    inset:0 !important;
+    width:auto !important;height:auto !important;
     border-radius:0 !important;border:none !important
   }
+  #fp-resize-handle{display:none !important}
   /* ヘッダー */
   #fp-header{padding:10px 12px !important;cursor:default !important;gap:6px}
   #fp-filename{font-size:11px !important}
   #fp-header a,#fp-header button{min-height:36px}
   #fp-header #fp-premiere-btn,#fp-header #fp-drive-link{font-size:10px !important;padding:3px 8px !important}
-  /* ボディ: 横並び→縦積み（body は fp-window の 2番目の div） */
-  #fp-window > div:nth-of-type(2){flex-direction:column !important}
-  /* 左=プレイヤー領域: 上部の固定高さ */
-  #fp-window > div:nth-of-type(2) > div:nth-of-type(1){flex:0 0 auto !important}
-  #fp-player{max-height:48vh !important;min-height:200px}
+  /* ボディ: 横並び→縦積み（body は fp-window の 2番目の div）。
+     以前は「動画48vh＋入力欄」で高さを使い切り、コメント一覧が1行分しか見えなかった。
+     ボディ全体を縦スクロールにして、動画＋操作バーだけ上に貼り付ける */
+  #fp-window > div:nth-of-type(2){
+    flex-direction:column !important;
+    overflow-x:hidden !important;overflow-y:auto !important;
+    -webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+    /* コメントへのジャンプ（scrollIntoView）が上に貼り付いた動画の裏に隠れないように */
+    scroll-padding-top:calc(40vh + 100px);scroll-padding-top:calc(40dvh + 100px)
+  }
+  /* 左=プレイヤー領域: スクロールしても上に残す */
+  #fp-window > div:nth-of-type(2) > div:nth-of-type(1){
+    flex:0 0 auto !important;position:sticky;top:0;z-index:3
+  }
+  #fp-player{flex:0 0 auto !important;height:40vh;height:40dvh;min-height:180px;max-height:none !important}
   /* コントロールバー: 縦幅を詰め、横スクロール可に */
   #fp-controls-bar{padding:6px 10px !important}
   #fp-controls-bar > div:last-child{gap:6px !important;flex-wrap:wrap}
@@ -2275,16 +2289,21 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   #fp-speed-display{font-size:10px !important;min-width:34px !important;padding:2px 6px !important}
   /* 時間表示はコンパクトに */
   #fp-time-display{font-size:10px !important}
-  /* 右=コメントパネル: 下段に移動、全幅、残り高さ全部 */
+  /* 右=コメントパネル: 下段に移動、全幅、中身の高さぶん伸ばして外側（ボディ）でスクロール */
   #fp-window > div:nth-of-type(2) > div:nth-of-type(2){
-    width:100% !important;flex:1 1 auto !important;min-height:0;
+    width:100% !important;flex:0 0 auto !important;min-height:0;
     border-left:none !important;border-top:1px solid #2a2a2e !important
   }
+  /* 並び順: タブ → 入力欄 → コメント一覧（件数が多くても一番下までスクロールせずに書ける） */
+  #fp-window > div:nth-of-type(2) > div:nth-of-type(2) > div:first-child{order:1}
+  #fp-comment-input-area{order:2;border-top:none !important;border-bottom:1px solid #2a2a2e}
+  #fp-comments-list{order:3;flex:0 0 auto !important;overflow:visible !important;min-height:120px}
+  #fp-drive-diagnose-area{order:4}
   /* タブ */
   #fp-tab-review,#fp-tab-checklist{min-height:44px}
   /* コメント一覧 */
   #fp-comments-list{padding:10px !important}
-  /* コメント入力（Frame.ioスマホの下部スティッキー感を再現） */
+  /* コメント入力 */
   #fp-comment-input-area{padding:10px !important}
   #fp-comment-text{font-size:14px !important;padding:10px !important}
   #fp-comment-category{font-size:13px !important;padding:8px !important;min-height:40px}
