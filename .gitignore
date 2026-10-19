@@ -31,3 +31,4 @@ pending-migrations/*
 
 # Claude Code のサブエージェント worktree（ローカル作業用、共有しない）
 .claude/worktrees/
+plugins/premiere-precheck/dev.json
