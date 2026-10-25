@@ -286,6 +286,9 @@ app.use('/api/', (req, res, next) => {
   next();
 });
 
+// 投稿前チェック API（ADR 050）。Premiere パネルからトークン認証で呼ばれる
+app.use('/api/precheck', require('./routes/precheck'));
+
 // 契約管理 API（ADR 035）。/api/haruka の汎用ルートより前に mount する
 app.use('/api/haruka/contracts', require('./routes/contracts'));
 
