@@ -1,0 +1,94 @@
+/* 🎞 思い出アルバム（ADR 052）— 描画は public/js/memories.js */
+.mem-wrap { max-width: 1100px; margin: 0 auto; padding: 0 4px; }
+.mem-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.mem-head h2 { margin: 0; font-size: 18px; }
+.mem-head-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.mem-album-select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--white); color: var(--text); font-size: 14px; max-width: 100%; }
+
+.mem-drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  border: 2px dashed var(--border); border-radius: 14px; background: var(--em-bg);
+  padding: 22px 12px; text-align: center; cursor: pointer; color: var(--text);
+  transition: background .15s, border-color .15s;
+}
+.mem-drop:hover, .mem-drop.is-over { background: var(--em-pale); border-color: var(--em); }
+.mem-drop-main { font-size: 17px; font-weight: 700; }
+.mem-drop-sub { font-size: 12px; color: var(--text-muted); }
+.mem-drop input[type=file] { display: none; }
+
+.mem-queue { margin-top: 10px; border: 1px solid var(--border-light); border-radius: 12px; background: var(--white); padding: 10px 12px; }
+.mem-queue-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; font-weight: 700; }
+.mem-queue-head .mem-queue-actions { margin-left: auto; display: flex; gap: 6px; }
+.mem-queue-note { font-size: 11px; color: var(--text-muted); margin: 4px 0 6px; }
+.mem-queue-bar { height: 6px; border-radius: 3px; background: var(--border-light); overflow: hidden; margin: 6px 0; }
+.mem-queue-bar > span { display: block; height: 100%; width: 0; background: var(--em); transition: width .2s; }
+.mem-queue-list { max-height: 180px; overflow-y: auto; font-size: 12px; }
+.mem-queue-row { display: flex; gap: 8px; align-items: center; padding: 3px 0; border-top: 1px solid var(--border-light); }
+.mem-queue-row:first-child { border-top: none; }
+.mem-queue-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-queue-state { flex-shrink: 0; color: var(--text-muted); }
+.mem-queue-row.is-done .mem-queue-state { color: #2e9d5b; }
+.mem-queue-row.is-error .mem-queue-state { color: #d9534f; white-space: normal; max-width: 60%; }
+
+.mem-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0 6px; }
+.mem-chip {
+  border: 1px solid var(--border); background: var(--white); color: var(--text);
+  border-radius: 999px; padding: 4px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.mem-chip.is-active { background: var(--em); border-color: var(--em); color: #fff; }
+.mem-chip .mem-chip-n { opacity: .75; margin-left: 3px; }
+
+.mem-day { margin-top: 16px; }
+.mem-day-title { font-size: 14px; font-weight: 700; color: var(--text); margin: 0 0 6px; }
+.mem-day-title small { font-weight: 400; color: var(--text-muted); margin-left: 6px; }
+.mem-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.mem-tile {
+  position: relative; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden; cursor: pointer;
+  background: var(--em-pale); border: none; padding: 0;
+}
+.mem-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mem-tile-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 2px; font-size: 30px; color: var(--text-muted); }
+.mem-tile-ph small { font-size: 10px; max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-tile-badge {
+  position: absolute; right: 5px; bottom: 5px; background: rgba(0,0,0,.6); color: #fff;
+  font-size: 11px; border-radius: 4px; padding: 1px 5px; pointer-events: none;
+}
+.mem-tile-who {
+  position: absolute; left: 5px; bottom: 5px; background: rgba(0,0,0,.45); color: #fff;
+  font-size: 10px; border-radius: 4px; padding: 1px 5px; max-width: 60%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
+}
+.mem-empty { text-align: center; color: var(--text-muted); padding: 40px 12px; font-size: 13px; }
+
+/* ライトボックス */
+.mem-lb { position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,.92); display: none; flex-direction: column; }
+.mem-lb.is-open { display: flex; }
+.mem-lb-top { display: flex; align-items: center; gap: 8px; padding: 10px 12px; color: #fff; font-size: 13px; }
+.mem-lb-info { flex: 1; min-width: 0; }
+.mem-lb-info div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-lb-info .mem-lb-sub { font-size: 11px; opacity: .75; }
+.mem-lb-btn {
+  background: rgba(255,255,255,.14); color: #fff; border: none; border-radius: 8px;
+  padding: 7px 11px; font-size: 13px; cursor: pointer; text-decoration: none; white-space: nowrap;
+}
+.mem-lb-btn:hover { background: rgba(255,255,255,.25); }
+.mem-lb-stage { flex: 1; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; padding: 0 8px 12px; }
+.mem-lb-stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.mem-lb-stage iframe { width: min(100%, 1100px); height: 100%; border: none; background: #000; }
+.mem-lb-nav {
+  position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,.14); color: #fff;
+  border: none; width: 44px; height: 44px; border-radius: 50%; font-size: 22px; cursor: pointer;
+}
+.mem-lb-prev { left: 10px; }
+.mem-lb-next { right: 10px; }
+
+@media (max-width: 768px) {
+  .mem-head-actions { margin-left: 0; width: 100%; }
+  .mem-album-select { flex: 1; min-width: 0; }
+  .mem-grid { grid-template-columns: repeat(3, 1fr); gap: 3px; }
+  .mem-tile { border-radius: 4px; }
+  .mem-tile-who { display: none; }
+  .mem-lb-top { flex-wrap: wrap; }
+  .mem-lb-info { flex-basis: 100%; }
+  .mem-lb-nav { width: 36px; height: 36px; font-size: 18px; }
+}
