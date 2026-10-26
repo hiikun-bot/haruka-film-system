@@ -267,9 +267,12 @@ async function loadAlbumItems(drive, albumId) {
 function invalidateAlbum(albumId) { _itemsCache.delete(albumId); }
 
 // どのアルバムのファイルかを引く（サムネ・削除で「思い出アルバムの中のファイルか」を確かめる）
-async function findAlbumOfFile(drive, fileId) {
-  for (const [albumId, entry] of _itemsCache) {
-    if (entry.fileIds.has(fileId)) return albumId;
+// fresh: true は一覧キャッシュを使わず Drive の今の親を辿る（削除用。Drive 側でアルバム外へ移されたファイルを消させない）
+async function findAlbumOfFile(drive, fileId, { fresh = false } = {}) {
+  if (!fresh) {
+    for (const [albumId, entry] of _itemsCache) {
+      if (Date.now() - entry.at < ITEMS_CACHE_MS && entry.fileIds.has(fileId)) return albumId;
+    }
   }
   const rootId = await getMemoriesRootId(drive);
   // 引けない（権限外・共有ドライブの最上位など）ものは「アルバムの外」とみなす
@@ -450,7 +453,7 @@ router.post('/items/:fileId/trash', async (req, res) => {
   try {
     const fileId = req.params.fileId;
     const drive = getDrive();
-    const albumId = await findAlbumOfFile(drive, fileId);
+    const albumId = await findAlbumOfFile(drive, fileId, { fresh: true });
     if (!albumId) return res.status(404).json({ error: 'ファイルが見つかりません' });
     const meta = (await drive.files.get({ fileId, fields: 'id, appProperties', supportsAllDrives: true })).data;
     const isOwner = meta.appProperties?.hfs_uploader_id === String(req.user.id);

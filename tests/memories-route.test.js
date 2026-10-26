@@ -153,6 +153,19 @@ describe('思い出アルバム API', () => {
     expect((await call(`/items/${outside.id}/thumb`)).status).toBe(404);
   });
 
+  test('一覧に出たあと Drive でアルバム外へ移したファイルは、キャッシュが残っていても削除できない', async () => {
+    const folder = [...store.values()].find((f) => f.appProperties?.hfs_uploader_id === 'u1' && f.mimeType === FOLDER);
+    const file = addFile({ name: 'moved.jpg', mimeType: 'image/jpeg', parents: [folder.id], appProperties: { hfs_uploader_id: 'u1' } });
+    await call(`/albums/${albumId}/upload-complete`, { method: 'POST', body: { driveFileId: file.id } });
+    const list = await call(`/albums/${albumId}/items`);
+    expect(list.body.items.map((it) => it.id)).toContain(file.id);
+    file.parents = ['ROOT']; // Drive 上でアルバムの外へ移動（一覧キャッシュはまだ有効）
+    expect((await call(`/items/${file.id}/trash`, { method: 'POST', body: {} })).status).toBe(404);
+    expect((await call(`/items/${file.id}/trash`, { admin: true, method: 'POST', body: {} })).status).toBe(404);
+    expect(store.get(file.id).trashed).toBe(false);
+    store.delete(file.id);
+  });
+
   test('削除は本人か admin だけ（ゴミ箱送り）', async () => {
     const file = [...store.values()].find((f) => f.name === 'IMG_0001.JPG');
     expect((await call(`/items/${file.id}/trash`, { user: 'u2', method: 'POST', body: {} })).status).toBe(403);
