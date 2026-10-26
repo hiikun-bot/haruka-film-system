@@ -288,6 +288,8 @@ app.use('/api/', (req, res, next) => {
 
 // 契約管理 API（ADR 035）。/api/haruka の汎用ルートより前に mount する
 app.use('/api/haruka/contracts', require('./routes/contracts'));
+// 🎞 思い出アルバム API（ADR 052）。保存先は Drive のみ・DB テーブルなし
+app.use('/api/haruka/memories', require('./routes/memories'));
 
 // HARUKA FILM SYSTEM API
 app.use('/api/haruka', harukaRouter);

@@ -22,6 +22,7 @@
 <link rel="stylesheet" href="/css/notification.css">
 <link rel="stylesheet" href="/css/tweets-page.css">
 <link rel="stylesheet" href="/css/contract.css">
+<link rel="stylesheet" href="/css/memories.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP',sans-serif}
 :root{
@@ -4274,6 +4275,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品<span class="nav-unread-badge" data-for="portfolio" hidden aria-label="未見の新着納品"></span></button>
     <button class="nav-btn" data-page="knowledge" onclick="showPage('knowledge',this)">学び広場</button>
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
+    <!-- 🎞 思い出アルバム: 全ロール（requireAuth のみ）。ADR 052 -->
+    <button class="nav-btn" data-page="memories" onclick="showPage('memories',this)">🎞 思い出</button>
     <!-- 📝 契約・登録手続き: 本人の依頼・契約のみ（requireAuth・全ロール）。ADR 035 -->
     <button class="nav-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
@@ -4411,6 +4414,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="portfolio" onclick="showPage('portfolio',this)">🏆 作品<span class="nav-unread-badge" data-for="portfolio" hidden aria-label="未見の新着納品"></span></button>
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
+    <button class="nav-drawer-btn" data-page="memories" onclick="showPage('memories',this)">🎞 思い出アルバム</button>
     <button class="nav-drawer-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
     <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
@@ -9531,6 +9535,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
 </div>
 
+<!-- 🎞 思い出アルバム（ADR 052）: 描画は public/js/memories.js の loadMemoriesPage() -->
+<div id="page-memories" class="page"></div>
+
 <!-- 📝 契約・登録手続き（本人用・ADR 035）: 描画は public/js/contract-wizard.js の loadContractPage() -->
 <div id="page-contract" class="page">
   <div id="contract-root"><div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div></div>
@@ -11478,6 +11485,12 @@ async function applyDeepLinkOnLoad() {
 
     // ?page=contract-admin : 管理者日次サマリ（Slack DM）のリンク先。契約管理ページだけ受け付ける（ADR 035）
     const pageParam = params.get('page');
+    // ?page=memories : Chatwork 等で共有する思い出アルバムへのリンク（全ロール。ADR 052）
+    if (pageParam === 'memories') {
+      stripQueryParam('page');
+      try { showPage('memories', document.querySelector('.nav-btn[data-page="memories"]')); } catch (e) { console.warn('[deepLink memories]', e); }
+      return;
+    }
     if (pageParam === 'contract-admin') {
       stripQueryParam('page');
       try {
@@ -25842,6 +25855,7 @@ function showPage(name, btn) {
   // 📝 契約（ADR 035）: 描画関数は外部 JS（contract-wizard.js / contract-admin.js）
   if(name==='contract' && typeof loadContractPage === 'function') loadContractPage();
   if(name==='contract-admin' && typeof loadContractAdminPage === 'function') loadContractAdminPage();
+  if(name==='memories' && typeof loadMemoriesPage === 'function') loadMemoriesPage();
   if(name==='material-square') loadMaterialSquarePage();
   else { try { if (typeof msStopListPolling === 'function') msStopListPolling(); } catch (_) {} }
 
@@ -61393,6 +61407,7 @@ function votStatusBadge(status) {
 <!-- 📝 契約管理（ADR 035）— 順序重要: wizard（共有ヘルパー HFSContract を定義）→ admin -->
 <script src="/js/contract-wizard.js"></script>
 <script src="/js/contract-admin.js"></script>
+<script src="/js/memories.js"></script>
 
 <!-- 通知UI（Phase 1 段階2）— 順序重要: card → bell → panel → realtime -->
 <!-- card: 描画ヘルパー / bell: バッジ管理 / panel: 開閉 + read-all / realtime: Supabase購読 -->
