@@ -18849,6 +18849,17 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     : req.user.id;
   if (!issuer_id) return res.status(400).json({ error: '発行者は必須です' });
 
+  // ADR 046: 新方式の開始月（既定 2026年10月分）以降は旧方式（内税）で作らせない。
+  // 古いタブ・代理作成などから来ても、必ず請求書エディタ（/invoice-editor/drafts）に回す。
+  {
+    const nowJst = new Date(Date.now() + 9 * 3600 * 1000);
+    const genYear = parseInt(req.body.year, 10) || nowJst.getUTCFullYear();
+    const genMonth = parseInt(req.body.month, 10) || (nowJst.getUTCMonth() + 1);
+    if (IE.isExclusiveYm(IE.ymOf(genYear, genMonth), await ieLoadExclusiveFrom())) {
+      return res.status(409).json({ error: `${genYear}年${genMonth}月分からは請求書エディタで作成してください。画面を再読み込みして「＋ 今月の請求書を作成」からやり直してください`, code: 'USE_INVOICE_EDITOR' });
+    }
+  }
+
   // selected_items のバリデーションと正規化
   // Issue #192: ディレクター請求書には director_fee 行を含められる
   // プロデューサー対応: producer_fee 行も含められる
