@@ -37662,8 +37662,8 @@ async function printInvoice(id) {
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;gap:24px">
       <div style="flex:1">
         <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求先</div>
-        <div style="font-size:17px;font-weight:700">HARUKA FILM</div>
-        <div style="font-size:13px;margin-top:4px;color:#444">高橋聖 様</div>
+        <div style="font-size:17px;font-weight:700">${_invRecipientHoujin(inv) ? '株式会社HARUKA FILM 御中' : 'HARUKA FILM'}</div>
+        ${_invRecipientHoujin(inv) ? '' : '<div style="font-size:13px;margin-top:4px;color:#444">高橋聖 様</div>'}
       </div>
       <div style="text-align:right;min-width:220px">
         <div style="font-size:10px;color:#999;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:8px;letter-spacing:.08em">請求者</div>
@@ -37718,6 +37718,11 @@ async function printInvoice(id) {
   document.getElementById('print-only').innerHTML = invoiceHTML;
   document.getElementById('invoice-print-preview').innerHTML = invoiceHTML;
   openModal('modal-invoice-print');
+}
+
+// メンバー → HARUKA FILM の請求書の宛名。2026年10月分以降は「株式会社HARUKA FILM 御中」（utils/invoice-pdf.js の invoiceRecipient と同じ判定）。
+function _invRecipientHoujin(inv) {
+  return ((Number(inv && inv.year) || 0) * 100 + (Number(inv && inv.month) || 0)) >= 202610;
 }
 
 function triggerInvoicePrint() {
