@@ -62,6 +62,7 @@
 | 案件スケジュール / フェーズ / タスク / ガント / LP / HP / マイルストーン / 工程表 | [decisions/010](docs/design/decisions/010-project-schedule-tasks.md) |
 | カテゴリ別フィールド可視性 / creative_category_fields / カスタム項目 / 詳細モーダル | [decisions/012](docs/design/decisions/012-creative-category-field-visibility.md) |
 | 📝 契約管理 / 業務委託契約 / 同意 / 署名 / 依頼URL / 契約主体 / billing_parties / 法人化 / member_contracts / contract_* | [decisions/035](docs/design/decisions/035-contract-management.md) |
+| 🧾 請求書エディタ / 税抜＋源泉 / tax_mode / 参考単価 / 二重請求・過剰請求の防止 / 請求書作成モーダル / preview-items | [decisions/046](docs/design/decisions/046-invoice-editor.md)（PDF の Drive 保存は [decisions/047](docs/design/decisions/047-invoice-pdf-auto-drive.md)） |
 | 🏅 マイ実績 / my-stats / 本人専用データ / isCreativeOfUser / 自分のクリエイティブ判定 / 順位・比較を出さない | [decisions/036](docs/design/decisions/036-my-stats-self-only.md)（本人専用の前例は [decisions/032](docs/design/decisions/032-personal-goals.md)） |
 | 👏 作品への拍手 / 💬 ひとこと / portfolio_reactions / portfolio_comments / リアクション定義の共通化（utils/reactions.js） / 通知の宛先（制作担当） / 24h 抑制 | [decisions/042](docs/design/decisions/042-portfolio-reactions.md) |
 | 🎬 新着納品ショーケース / showcase / スライドショー / まとめてナイス！ / showcase_hidden / 既読はlocalStorage / 作品ページ先頭 `#pf-showcase` / ホーム1行導線 / ナビ「🏆 作品」未見バッジ | [decisions/042](docs/design/decisions/042-portfolio-reactions.md)（追補 2026-09-17・2026-09-20・2026-09-23） |
