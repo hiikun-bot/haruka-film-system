@@ -1,5 +1,6 @@
 const {
   parsePortfolioText,
+  portfolioDetailRows,
   collectPortfolioRows,
   looksLikeBulkPaste,
   formatPortfolioText,
@@ -61,9 +62,9 @@ describe('parsePortfolioText', () => {
   test('URL が続かない行・不正なスキームは行番号つきでエラー', () => {
     const { errors } = parsePortfolioText('https://ok.example.com\nただのメモ\nもう1行\njavascript:alert(1)');
     expect(errors).toEqual([
-      '2 行目: URL がありません（https:// から貼ってください）',
-      '3 行目: URL がありません（https:// から貼ってください）',
-      '4 行目: URL がありません（https:// から貼ってください）',
+      '2 行目「ただのメモ」: URL がありません（https:// から貼ってください）',
+      '3 行目「もう1行」: URL がありません（https:// から貼ってください）',
+      '4 行目「javascript:alert(1)」: URL がありません（https:// から貼ってください）',
     ]);
   });
 
@@ -80,7 +81,7 @@ describe('formatPortfolioText', () => {
       { url: 'https://example.com/', title: null },
     ];
     const text = formatPortfolioText(items);
-    expect(text).toBe('ブランドムービー https://youtu.be/abc\nhttps://example.com/');
+    expect(text).toBe('ブランドムービー https://youtu.be/abc\n\nhttps://example.com/');
     expect(parsePortfolioText(text).items).toEqual(items);
   });
 });
@@ -107,7 +108,7 @@ describe('normalizePortfolioUrls', () => {
     expect(normalizePortfolioUrls([{ url: 'javascript:alert(1)' }]).error).toBeTruthy();
     expect(normalizePortfolioUrls([{ url: 'ftp://example.com' }]).error).toBeTruthy();
     expect(normalizePortfolioUrls({ url: 'https://example.com' }).error).toBeTruthy();
-    expect(normalizePortfolioUrls('メモだけ').error).toMatch(/1 行目/);
+    expect(normalizePortfolioUrls('メモだけ').error).toMatch(/1 行目「メモだけ」/);
   });
 
   test('上限超過はエラー', () => {
@@ -159,7 +160,7 @@ describe('collectPortfolioRows（項目名｜URL の行入力）', () => {
       { title: 'x', url: 'javascript:alert(1)' },
     ]);
     expect(errors).toEqual([
-      '1 件目: URL を入れてください',
+      '1 件目「本出版LP」: URL を入れてください',
       '2 件目: URL の形が正しくありません（https:// から入れてください）',
     ]);
   });
@@ -171,5 +172,79 @@ describe('looksLikeBulkPaste', () => {
     expect(looksLikeBulkPaste('会社ホームページ')).toBe(false);
     expect(looksLikeBulkPaste('会社ホームページ\nhttps://a.example.com')).toBe(true);
     expect(looksLikeBulkPaste('https://a.example.com https://b.example.com')).toBe(true);
+  });
+});
+
+// 実データ: みこさんが Chatwork で送ってくれた形（見出し＋「- ラベル：値」の箇条書き）
+const MIKO_TEXT = [
+  ' ◾️ Promasys（EDC）の製品ページ',
+  '',
+  '- 見せられるURL：https://site.tedama.co.jp/?page_id=79212',
+  '- ページ上の表記：「Promasys｜研究を最速で叶えるEDC」',
+  '- 業種：臨床研究・治験向けのシステム',
+  '- 目的：Promasysの特徴や利用場面を紹介する',
+  '- 担当範囲：ヒアリング、構成、ワイヤー、テキスト、デザイン、WordPress（SWELL）での実装',
+  '- 使ったツール：WordPress（SWELL）、Codex・Figma・Illustrator',
+  '- 社名を出してよいか：可',
+  '- ご自身が制作した部分（ページ全体／一部）：ページ全体',
+  '',
+  '',
+  ' ◾️ エステサロンオーナー様向け無料Zoom勉強会LP',
+  '',
+  '- 見せられるURL：https://member.kitelu.com/lps-001/',
+  '- 業種：美容・エステ（サロン運営者向け）',
+  '- 目的：無料Zoom勉強会の参加案内。ページからLINEで参加方法を受け取る導線。',
+  '- 担当範囲：デザイン、LP構築',
+  '- 使ったツール：canva(先方指定ツール）',
+  '- 制作した部分：全体のデザイン　ワードプレスに構築',
+].join('\n');
+
+describe('見出し＋箇条書きの詳細つき文面（実データ）', () => {
+  test('項目ごとに詳細欄へ振り分ける', () => {
+    const { items, errors } = parsePortfolioText(MIKO_TEXT);
+    expect(errors).toEqual([]);
+    expect(items).toEqual([
+      {
+        url: 'https://site.tedama.co.jp/?page_id=79212',
+        title: 'Promasys（EDC）の製品ページ',
+        page_label: '「Promasys｜研究を最速で叶えるEDC」',
+        industry: '臨床研究・治験向けのシステム',
+        purpose: 'Promasysの特徴や利用場面を紹介する',
+        role: 'ヒアリング、構成、ワイヤー、テキスト、デザイン、WordPress（SWELL）での実装',
+        tools: 'WordPress（SWELL）、Codex・Figma・Illustrator',
+        company_ok: '可',
+        scope: 'ページ全体',
+      },
+      {
+        url: 'https://member.kitelu.com/lps-001/',
+        title: 'エステサロンオーナー様向け無料Zoom勉強会LP',
+        industry: '美容・エステ（サロン運営者向け）',
+        purpose: '無料Zoom勉強会の参加案内。ページからLINEで参加方法を受け取る導線。',
+        role: 'デザイン、LP構築',
+        tools: 'canva(先方指定ツール）',
+        scope: '全体のデザイン　ワードプレスに構築',
+      },
+    ]);
+  });
+
+  test('まとめてコピーの文面は読み戻すと同じになる', () => {
+    const { items } = parsePortfolioText(MIKO_TEXT);
+    expect(parsePortfolioText(formatPortfolioText(items)).items).toEqual(items);
+  });
+
+  test('一覧に出す詳細は入っている項目だけ定義順', () => {
+    const { items } = parsePortfolioText(MIKO_TEXT);
+    expect(portfolioDetailRows(items[1]).map(r => r.label)).toEqual(['業種', '目的', '担当範囲', '使ったツール', '制作した部分']);
+  });
+
+  test('ラベルの無い箇条書きはメモに入る・URL の無い見出しはエラー', () => {
+    const { items, errors } = parsePortfolioText('◾️ 作品A\n- https://a.example.com\n- 自主制作です\n◾️ 作品B\n- 業種：飲食');
+    expect(items).toEqual([{ url: 'https://a.example.com/', title: '作品A', note: '自主制作です' }]);
+    expect(errors).toEqual(['4 行目「作品B」: URL がありません（https:// から貼ってください）']);
+  });
+
+  test('保存時の検証で詳細は残り、知らないキーは落ちる', () => {
+    expect(normalizePortfolioUrls([{ url: 'https://a.example.com', title: 'A', industry: ' 飲食 ', evil: '<x>' }]))
+      .toEqual({ items: [{ url: 'https://a.example.com/', title: 'A', industry: '飲食' }] });
   });
 });

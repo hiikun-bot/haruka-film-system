@@ -1128,21 +1128,35 @@ tr.row-help td{background:#FFFBF2}
 }
 .mpf-btn:hover{background:#B2DFDB}
 .mpf-list{display:flex;flex-direction:column;gap:8px}
-.mpf-item{
-  display:flex;align-items:center;gap:10px;padding:10px 12px;
-  border:1px solid var(--border);border-radius:10px;background:#fff;
-  text-decoration:none;color:var(--text);min-width:0;
-}
-.mpf-item:hover{border-color:var(--em);background:#F3FBFA}
+.mpf-item{border:1px solid var(--border);border-radius:10px;background:#fff;min-width:0}
+.mpf-item:hover{border-color:var(--em)}
+.mpf-item-head{display:flex;align-items:center;gap:10px;padding:10px 12px;text-decoration:none;color:var(--text);min-width:0;border-radius:10px}
+.mpf-item-head:hover{background:#F3FBFA}
 .mpf-item-icon{font-size:18px;flex-shrink:0;width:24px;text-align:center}
 .mpf-item-body{min-width:0;flex:1}
 .mpf-item-title{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mpf-item-url{font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mpf-item-open{font-size:12px;color:var(--em-dark);flex-shrink:0}
+.mpf-item-detail{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:0;padding:2px 12px 12px 46px;font-size:12px;line-height:1.6}
+.mpf-item-detail dt{color:var(--text-muted);white-space:nowrap}
+.mpf-item-detail dd{margin:0;color:var(--text);white-space:pre-wrap;word-break:break-word}
+@media (max-width:560px){
+  .mpf-item-detail{grid-template-columns:minmax(0,1fr);padding-left:12px;gap:0}
+  .mpf-item-detail dd{margin-bottom:6px}
+}
 /* メンバー編集「基本情報」の 項目名｜URL 行入力 */
 .mpf-rows-head,.mpf-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) 32px;gap:6px;align-items:center}
 .mpf-rows-head{font-size:11px;color:var(--text-muted);font-weight:600;margin:2px 0 4px}
-.mpf-rows{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
+.mpf-rows{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+.mpf-entry{display:flex;flex-direction:column;gap:4px}
+.mpf-detail{margin-left:2px}
+.mpf-detail > summary{font-size:11.5px;color:var(--em-dark);cursor:pointer;padding:2px 0;user-select:none}
+.mpf-detail-count{color:var(--text-muted);font-weight:400}
+.mpf-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px;padding:8px 10px;margin-top:4px;background:var(--surface,#F7FBFB);border-radius:8px}
+.mpf-detail-field{display:flex;flex-direction:column;gap:2px;min-width:0}
+.mpf-detail-field.wide{grid-column:1 / -1}
+.mpf-detail-field > span{font-size:11px;color:var(--text-muted);font-weight:600}
+.mpf-detail-field .form-input{font-size:12.5px;padding:6px 8px;min-width:0;resize:vertical}
 .mpf-row .form-input{font-size:13px;padding:8px 10px;min-width:0}
 .mpf-row .form-input.mpf-invalid{border-color:#E24B4A;background:#FFF5F5}
 .mpf-row-del{border:none;background:none;color:var(--text-muted);font-size:16px;cursor:pointer;border-radius:6px;height:32px}
@@ -1153,6 +1167,7 @@ tr.row-help td{background:#FFFBF2}
   .mpf-row .mpf-row-title{grid-column:1;grid-row:1}
   .mpf-row .mpf-row-url{grid-column:1;grid-row:2}
   .mpf-row .mpf-row-del{grid-column:2;grid-row:1 / span 2}
+  .mpf-detail-grid{grid-template-columns:minmax(0,1fr)}
 }
 .mposter-role-chip{
   display:inline-flex;align-items:center;gap:3px;
@@ -5717,7 +5732,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <!-- 🌐 ポートフォリオ（実績 URL）— 「項目名｜URL」の行入力。保存するとメンバー欄に「🌐 ポートフォリオ」として出る。
              チャットの文面（複数行・複数 URL）をどの欄に貼っても自動で行に分かれる（mpfRowsOnPaste） -->
         <div class="form-group" style="margin-top:20px;margin-bottom:4px">
-          <label class="form-label">🌐 ポートフォリオ・実績 URL <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・20 件まで）</span></label>
+          <label class="form-label">🌐 ポートフォリオ・実績 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・20 件まで。詳細を開くと業種・目的・担当範囲なども入れられます）</span></label>
           <div class="mpf-rows-head"><span>項目名</span><span>URL</span><span></span></div>
           <div id="m-portfolio-rows" class="mpf-rows"></div>
           <button type="button" class="tr-add-btn" onclick="mpfRowsAdd(null, true)">＋ 実績を追加</button>
@@ -14344,14 +14359,21 @@ function openMemberPortfolio(id) {
   document.getElementById('mpf-modal-title').textContent = `🌐 ${name} のポートフォリオ`;
   document.getElementById('mpf-modal-list').innerHTML = items.map(it => {
     const k = MemberPortfolioUrls.portfolioLinkKind(it.url);
-    return `<a class="mpf-item" href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">
-      <span class="mpf-item-icon">${esc(k.icon)}</span>
-      <span class="mpf-item-body">
-        <span class="mpf-item-title" style="display:block">${esc(MemberPortfolioUrls.portfolioLinkLabel(it))}</span>
-        <span class="mpf-item-url" style="display:block">${esc(it.url)}</span>
-      </span>
-      <span class="mpf-item-open">開く ↗</span>
-    </a>`;
+    // 詳細（業種・目的・担当範囲…）は入っている項目だけ。改行はそのまま見せる
+    const details = MemberPortfolioUrls.portfolioDetailRows(it);
+    const dl = details.length
+      ? `<dl class="mpf-item-detail">${details.map(d => `<dt>${esc(d.label)}</dt><dd>${esc(d.value)}</dd>`).join('')}</dl>`
+      : '';
+    return `<div class="mpf-item">
+      <a class="mpf-item-head" href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">
+        <span class="mpf-item-icon">${esc(k.icon)}</span>
+        <span class="mpf-item-body">
+          <span class="mpf-item-title" style="display:block">${esc(MemberPortfolioUrls.portfolioLinkLabel(it))}</span>
+          <span class="mpf-item-url" style="display:block">${esc(it.url)}</span>
+        </span>
+        <span class="mpf-item-open">開く ↗</span>
+      </a>${dl}
+    </div>`;
   }).join('');
   window._mpfCopyText = MemberPortfolioUrls.formatPortfolioText(items);
   const editBtn = document.getElementById('mpf-modal-edit');
@@ -14363,86 +14385,124 @@ function openMemberPortfolio(id) {
 async function copyMemberPortfolioText() {
   try {
     await navigator.clipboard.writeText(window._mpfCopyText || '');
-    showToast('ポートフォリオのURLをコピーしました');
+    showToast('ポートフォリオをコピーしました');
   } catch (_) {
     showToast('コピーできませんでした', 'warn');
   }
 }
-// 編集モーダルの「項目名｜URL」行入力（#m-portfolio-rows）
+// 編集モーダルの実績入力（#m-portfolio-rows）。1 件 = .mpf-entry（項目名｜URL の行＋開閉する詳細欄）
+// 詳細欄の項目は utils/member-portfolio-urls.js の DETAIL_FIELDS が正（ラベル・並び・貼り付け時の振り分け）
+function _mpfDetailFields() {
+  return window.MemberPortfolioUrls ? MemberPortfolioUrls.DETAIL_FIELDS : [];
+}
 function mpfRowsRender(items) {
   const box = document.getElementById('m-portfolio-rows');
   if (!box) return;
   box.innerHTML = '';
   const list = window.MemberPortfolioUrls ? MemberPortfolioUrls.toPortfolioArray(items) : [];
   list.forEach(it => mpfRowsAdd(it, false));
-  if (!list.length) mpfRowsAdd(null, false); // 空でも 1 行は出しておく
+  if (!list.length) mpfRowsAdd(null, false); // 空でも 1 件は出しておく
   mpfRowsUpdateStatus();
 }
 function mpfRowsAdd(item, focus) {
   const box = document.getElementById('m-portfolio-rows');
   if (!box) return null;
   const max = window.MemberPortfolioUrls ? MemberPortfolioUrls.MAX_ITEMS : 20;
-  if (box.children.length >= max) { showToast(`ポートフォリオURLは ${max} 件までです`, 'warn'); return null; }
-  const row = document.createElement('div');
-  row.className = 'mpf-row';
-  row.innerHTML = `<input class="form-input mpf-row-title" maxlength="80" placeholder="例：会社ホームページ">
-    <input class="form-input mpf-row-url" inputmode="url" placeholder="https://…">
-    <button type="button" class="mpf-row-del" title="この行を削除">×</button>`;
-  const [t, u] = row.querySelectorAll('input');
-  t.value = (item && item.title) || '';
-  u.value = (item && item.url) || '';
-  [t, u].forEach(el => {
+  if (box.children.length >= max) { showToast(`ポートフォリオは ${max} 件までです`, 'warn'); return null; }
+  const entry = document.createElement('div');
+  entry.className = 'mpf-entry';
+  const detailInputs = _mpfDetailFields().map(f => {
+    const ctl = f.multiline
+      ? `<textarea class="form-input" rows="2" data-field="${f.key}" maxlength="400" placeholder="${esc(f.placeholder)}"></textarea>`
+      : `<input class="form-input" data-field="${f.key}" maxlength="400" placeholder="${esc(f.placeholder)}">`;
+    return `<label class="mpf-detail-field${f.multiline ? ' wide' : ''}"><span>${esc(f.label)}</span>${ctl}</label>`;
+  }).join('');
+  entry.innerHTML = `<div class="mpf-row">
+      <input class="form-input mpf-row-title" maxlength="80" placeholder="例：会社ホームページ">
+      <input class="form-input mpf-row-url" inputmode="url" placeholder="https://…">
+      <button type="button" class="mpf-row-del" title="この実績を削除">×</button>
+    </div>
+    <details class="mpf-detail">
+      <summary>詳細（業種・目的・担当範囲 など）<span class="mpf-detail-count"></span></summary>
+      <div class="mpf-detail-grid">${detailInputs}</div>
+    </details>`;
+  mpfEntryFill(entry, item);
+  entry.querySelectorAll('input, textarea').forEach(el => {
     el.addEventListener('input', mpfRowsUpdateStatus);
     el.addEventListener('paste', mpfRowsOnPaste);
   });
-  row.querySelector('.mpf-row-del').addEventListener('click', () => {
-    row.remove();
+  entry.querySelector('.mpf-row-del').addEventListener('click', () => {
+    entry.remove();
     if (!box.children.length) mpfRowsAdd(null, false);
     mpfRowsUpdateStatus();
   });
-  box.appendChild(row);
-  if (focus) t.focus();
-  return row;
+  box.appendChild(entry);
+  if (focus) entry.querySelector('.mpf-row-title').focus();
+  return entry;
+}
+// 1 件分の値を欄に入れる。詳細が入っていれば詳細欄を開いておく
+function mpfEntryFill(entry, item) {
+  const it = item || {};
+  entry.querySelector('.mpf-row-title').value = it.title || '';
+  entry.querySelector('.mpf-row-url').value = it.url || '';
+  let has = false;
+  _mpfDetailFields().forEach(f => {
+    const el = entry.querySelector(`[data-field="${f.key}"]`);
+    if (el) el.value = it[f.key] || '';
+    if (it[f.key]) has = true;
+  });
+  entry.querySelector('.mpf-detail').open = has;
+}
+function _mpfEntryIsEmpty(entry) {
+  return Array.from(entry.querySelectorAll('input, textarea')).every(el => !el.value.trim());
 }
 function mpfRowsRead() {
-  return Array.from(document.querySelectorAll('#m-portfolio-rows .mpf-row')).map(r => ({
-    row: r,
-    title: r.querySelector('.mpf-row-title').value,
-    url: r.querySelector('.mpf-row-url').value,
-  }));
+  return Array.from(document.querySelectorAll('#m-portfolio-rows .mpf-entry')).map(entry => {
+    const r = {
+      row: entry,
+      title: entry.querySelector('.mpf-row-title').value,
+      url: entry.querySelector('.mpf-row-url').value,
+    };
+    _mpfDetailFields().forEach(f => {
+      const el = entry.querySelector(`[data-field="${f.key}"]`);
+      if (el) r[f.key] = el.value;
+    });
+    return r;
+  });
 }
-// チャットの文面（見出し行→URL 行・1 行に見出し＋URL・複数 URL）を貼られたら行に分けて取り込む
+// チャットの文面（見出し＋「- 業種：…」の箇条書き・見出し行→URL 行・複数 URL）を貼られたら、
+// 1 件ずつに分けて項目名・URL・詳細欄へ振り分ける
 function mpfRowsOnPaste(e) {
   if (!window.MemberPortfolioUrls) return;
   const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
   if (!MemberPortfolioUrls.looksLikeBulkPaste(text)) return; // URL 1 つなどは普通に貼る
   e.preventDefault();
   const { items, errors } = MemberPortfolioUrls.parsePortfolioText(text);
-  const cur = e.target.closest('.mpf-row');
+  const cur = e.target.closest('.mpf-entry');
   let first = true;
   items.forEach(it => {
-    // 貼った行が空ならそこに入れ、残りは空き行→新しい行へ
-    let row = null;
-    if (first && cur && !cur.querySelector('.mpf-row-title').value.trim() && !cur.querySelector('.mpf-row-url').value.trim()) row = cur;
-    if (!row) row = mpfRowsRead().find(r => !r.title.trim() && !r.url.trim())?.row || mpfRowsAdd(null, false);
+    // 貼った欄の 1 件が空ならそこに入れ、残りは空いている 1 件→新しい 1 件へ
+    let entry = null;
+    if (first && cur && _mpfEntryIsEmpty(cur)) entry = cur;
+    if (!entry) entry = Array.from(document.querySelectorAll('#m-portfolio-rows .mpf-entry')).find(_mpfEntryIsEmpty) || mpfRowsAdd(null, false);
     first = false;
-    if (!row) return;
-    row.querySelector('.mpf-row-title').value = it.title || '';
-    row.querySelector('.mpf-row-url').value = it.url;
+    if (entry) mpfEntryFill(entry, it);
   });
   mpfRowsUpdateStatus();
-  showToast(`${items.length} 件を行に分けて入れました` + (errors.length ? `（読み取れない行があります: ${errors[0]}）` : ''), errors.length ? 'warn' : undefined);
+  showToast(`${items.length} 件を項目ごとに分けて入れました` + (errors.length ? `（読み取れない行があります: ${errors[0]}）` : ''), errors.length ? 'warn' : undefined);
 }
-// 入力欄の下に「✓ N 件」/ エラーを出し、問題のある欄を赤くする
+// 入力欄の下に「✓ N 件」/ エラーを出し、問題のある URL 欄を赤くする。詳細の入力数も見出しに出す
 function mpfRowsUpdateStatus() {
   const out = document.getElementById('m-portfolio-preview');
   if (!out || !window.MemberPortfolioUrls) return;
   const rows = mpfRowsRead();
+  const fields = _mpfDetailFields();
   rows.forEach(r => {
-    const filled = r.title.trim() || r.url.trim();
-    const bad = filled && r.url.trim() && !MemberPortfolioUrls.normalizeUrl(r.url);
-    const missing = filled && !r.url.trim() && r.title.trim();
-    r.row.querySelector('.mpf-row-url').classList.toggle('mpf-invalid', !!(bad || missing));
+    const filled = !_mpfEntryIsEmpty(r.row);
+    const urlBad = r.url.trim() ? !MemberPortfolioUrls.normalizeUrl(r.url) : filled;
+    r.row.querySelector('.mpf-row-url').classList.toggle('mpf-invalid', filled && urlBad);
+    const n = fields.filter(f => String(r[f.key] || '').trim()).length;
+    r.row.querySelector('.mpf-detail-count').textContent = n ? `　${n} 項目入力済み` : '';
   });
   const { items, errors } = MemberPortfolioUrls.collectPortfolioRows(rows);
   if (errors.length) {
@@ -14453,7 +14513,7 @@ function mpfRowsUpdateStatus() {
     out.textContent = `✓ ${items.length} 件。保存するとメンバー欄にすぐ表示されます。`;
   } else {
     out.style.color = 'var(--text-muted)';
-    out.textContent = 'チャットの文面（項目名と URL）をそのまま貼ると、自動で行に分かれます。';
+    out.textContent = 'チャットの文面（作品名・URL・業種・担当範囲など）をそのまま貼ると、自動で欄に振り分けます。';
   }
 }
 
