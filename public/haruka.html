@@ -5748,7 +5748,6 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <button type="button" class="tr-add-btn" onclick="mpfRowsAdd(null, true)">＋ 実績を追加</button>
           <div id="m-portfolio-preview" style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6"></div>
         </div>
-        </div>
       </div>
 
       <!-- Tab 1: 稼働時間 -->
@@ -14414,11 +14413,15 @@ function mpfRowsRender(items) {
   if (!list.length) mpfRowsAdd(null, false); // 空でも 1 件は出しておく
   mpfRowsUpdateStatus();
 }
-function mpfRowsAdd(item, focus) {
+function mpfRowsAdd(item, focus, opts) {
   const box = document.getElementById('m-portfolio-rows');
   if (!box) return null;
   const max = window.MemberPortfolioUrls ? MemberPortfolioUrls.MAX_ITEMS : 20;
-  if (box.children.length >= max) { showToast(`ポートフォリオは ${max} 件までです`, 'warn'); return null; }
+  if (box.children.length >= max) {
+    // 貼り付け取り込み中は呼び出し側でまとめて知らせる（トーストを重ねない）
+    if (!(opts && opts.silent)) showToast(`ポートフォリオは ${max} 件までです`, 'warn');
+    return null;
+  }
   const entry = document.createElement('div');
   entry.className = 'mpf-entry';
   const detailInputs = _mpfDetailFields().map(f => {
@@ -14490,16 +14493,24 @@ function mpfRowsOnPaste(e) {
   const { items, errors } = MemberPortfolioUrls.parsePortfolioText(text);
   const cur = e.target.closest('.mpf-entry');
   let first = true;
-  items.forEach(it => {
+  let placed = 0;
+  for (const it of items) {
     // 貼った欄の 1 件が空ならそこに入れ、残りは空いている 1 件→新しい 1 件へ
     let entry = null;
     if (first && cur && _mpfEntryIsEmpty(cur)) entry = cur;
-    if (!entry) entry = Array.from(document.querySelectorAll('#m-portfolio-rows .mpf-entry')).find(_mpfEntryIsEmpty) || mpfRowsAdd(null, false);
+    if (!entry) entry = Array.from(document.querySelectorAll('#m-portfolio-rows .mpf-entry')).find(_mpfEntryIsEmpty) || mpfRowsAdd(null, false, { silent: true });
     first = false;
-    if (entry) mpfEntryFill(entry, it);
-  });
+    if (!entry) break; // 上限に達した。残りは取り込まない
+    mpfEntryFill(entry, it);
+    placed++;
+  }
   mpfRowsUpdateStatus();
-  showToast(`${items.length} 件を項目ごとに分けて入れました` + (errors.length ? `（読み取れない行があります: ${errors[0]}）` : ''), errors.length ? 'warn' : undefined);
+  const max = MemberPortfolioUrls.MAX_ITEMS || 20;
+  const skipped = items.length - placed;
+  const notes = [];
+  if (skipped > 0) notes.push(`上限 ${max} 件のため ${skipped} 件は取り込めませんでした`);
+  if (errors.length) notes.push(`読み取れない行があります: ${errors[0]}`);
+  showToast(`${placed} 件を項目ごとに分けて入れました` + (notes.length ? `（${notes.join('／')}）` : ''), notes.length ? 'warn' : undefined);
 }
 // 入力欄の下に「✓ N 件」/ エラーを出し、問題のある URL 欄を赤くする。詳細の入力数も見出しに出す
 function mpfRowsUpdateStatus() {
