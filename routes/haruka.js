@@ -18607,6 +18607,18 @@ router.post('/client-invoice/generate', requireAuth, async (req, res) => {
   res.json(invoice);
 });
 
+// ADR 046: 請求書の方式（inclusive=内税・旧方式 / exclusive=税抜＋源泉・請求書エディタ）。
+// 列が無い環境・取得失敗時は inclusive（＝従来どおり）とみなす。
+async function fetchInvoiceTaxMode(invoiceId) {
+  try {
+    const { data, error } = await supabase.from('invoices').select('tax_mode').eq('id', invoiceId).maybeSingle();
+    if (error || !data) return 'inclusive';
+    return data.tax_mode === 'exclusive' ? 'exclusive' : 'inclusive';
+  } catch (_) {
+    return 'inclusive';
+  }
+}
+
 // 請求書 備考更新（draft/rejected のみ）
 router.patch('/invoices/:id', requireAuth, async (req, res) => {
   const { notes, line_items } = req.body;
@@ -18616,6 +18628,12 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
   if (fetchErr || !inv) return res.status(404).json({ error: '請求書が見つかりません' });
   if (inv.issuer_id !== req.user?.id && !(await isStaffRequester(req)))
     return res.status(403).json({ error: 'アクセス権限がありません' });
+
+  // ADR 046: 新方式（税抜＋源泉）の請求書の明細は請求書エディタ（PUT /invoice-editor/:id）でだけ編集する
+  // （旧モーダルの PATCH だと税抜小計・源泉・差引お振込額が再計算されないため）
+  if (Array.isArray(line_items) && (await fetchInvoiceTaxMode(invId)) === 'exclusive') {
+    return res.status(409).json({ error: 'この請求書は新方式です。請求書エディタで編集してください', code: 'USE_INVOICE_EDITOR' });
+  }
 
   // 明細編集は draft / rejected のみ許可（提出済み以降は不可）
   if (Array.isArray(line_items)) {
@@ -19237,6 +19255,658 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   res.json({ ok: true, id: invoice.id, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: itemRows.length });
 });
 
+// ==================== 🧾 請求書エディタ（ADR 046・税抜＋源泉 / tax_mode='exclusive'） ====================
+// 旧方式（内税）の /invoices/preview-items・/invoices/generate・PATCH /invoices/:id・/invoices/:id/submit は
+// 一切変えない（exclusive の請求書だけ、旧 PATCH の明細編集と旧 submit をエディタ側へ回す）。
+// 計算・判定の純関数は utils/invoice-editor.js（jest テスト・TZ=UTC / Asia/Tokyo 両方）。
+//
+// 権限（ADR 015）:
+//   - 「自分の請求書」機能なので permission key は使わない（既存 /invoices/generate と同じ）。
+//   - 発行者は本人固定。admin/秘書（isStaffRequester＝実効ロール）だけ issuer_id 指定の代理作成・閲覧・編集ができる（既存どおり）。
+//   - 「本人の分」の判定は常に請求書の issuer_id で行う（操作した人ではない）。
+const IE = require('../utils/invoice-editor');
+
+// 候補・明細の CR 取得用 select（base64 列は入れない・PR #940）。resolveCreativeRoleCost が読む列を含める
+const IE_CREATIVE_SELECT = `
+  id, file_name, status, creative_type, final_deadline, draft_deadline, delivered_at, first_draft_submitted_at,
+  delivered_director_ids, delivered_producer_ids, project_id, line_id, category_id,
+  projects(id, name, director_id, producer_id, billing_timing, clients(name, client_code)),
+  creative_assignments(user_id, role, rank_applied)
+`;
+const IE_IN_CHUNK = 150; // .in() の URL 長対策（uuid 36 文字 × 150 ≒ 5.6KB）
+
+function ieChunk(arr, n = IE_IN_CHUNK) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
+/** 新方式の開始月（system_settings.invoice_exclusive_from・無ければ 2026-10） */
+async function ieLoadExclusiveFrom() {
+  try {
+    const { data } = await supabase.from('system_settings').select('value').eq('key', 'invoice_exclusive_from').maybeSingle();
+    return IE.parseExclusiveFrom(data ? data.value : null);
+  } catch (_) {
+    return IE.DEFAULT_EXCLUSIVE_FROM;
+  }
+}
+
+/** 発行者（本人 or 代理作成の対象）を決める。代理は admin/秘書のみ（既存 /invoices/generate と同じ） */
+async function ieResolveIssuerId(req, requested) {
+  if (requested && requested !== req.user.id && (await isStaffRequester(req))) return requested;
+  return req.user.id;
+}
+
+/** 請求書の閲覧・編集権限（本人 or admin/秘書）。exclusive 以外は対象外 */
+async function ieLoadInvoiceForAccess(req, id) {
+  const { data: inv, error } = await supabase
+    .from('invoices')
+    .select('id, invoice_number, issuer_id, status, year, month, notes, tax_mode, withholding_enabled, subtotal_amount, tax_amount, total_amount, withholding_amount, payout_amount, updated_at, submitted_at, rejection_reason, invoice_type')
+    .eq('id', id).maybeSingle();
+  if (error) return { status: 500, body: { error: error.message } };
+  if (!inv) return { status: 404, body: { error: '請求書が見つかりません' } };
+  if (inv.issuer_id !== req.user.id && !(await isStaffRequester(req))) return { status: 403, body: { error: 'アクセス権限がありません' } };
+  if (inv.tax_mode !== 'exclusive') return { status: 400, body: { error: 'この請求書は旧方式（内税）です。「修正」から編集してください', code: 'NOT_EXCLUSIVE' } };
+  return { inv };
+}
+
+/** 発行者の CR を範囲 OR 条件で集める（担当 ∪ 自分が D/P の案件 ∪ 納品時スナップショット D/P）。N+1 なし */
+async function ieFetchIssuerCreatives(uid, orFilter, { withThumbs = false } = {}) {
+  const sel = IE_CREATIVE_SELECT + (withThumbs ? ', creative_files(id, version, uploaded_at)' : '');
+  const [assignedR, directedR, producedR, snapDR, snapPR] = await Promise.all([
+    supabase.from('creatives').select(`${sel}, assignee_filter:creative_assignments!inner(user_id)`).eq('assignee_filter.user_id', uid).or(orFilter),
+    supabase.from('projects').select('id').eq('director_id', uid),
+    supabase.from('projects').select('id').eq('producer_id', uid),
+    supabase.from('creatives').select(sel).contains('delivered_director_ids', [uid]).or(orFilter),
+    supabase.from('creatives').select(sel).contains('delivered_producer_ids', [uid]).or(orFilter),
+  ]);
+  if (assignedR.error) throw new Error(assignedR.error.message);
+  const leaderIds = [...new Set([...(directedR.data || []), ...(producedR.data || [])].map(p => p.id))];
+  const leaderResults = await Promise.all(ieChunk(leaderIds).map(ids =>
+    supabase.from('creatives').select(sel).in('project_id', ids).or(orFilter)));
+  const byId = new Map();
+  const add = (rows) => { for (const c of (rows || [])) { if (!byId.has(c.id)) { delete c.assignee_filter; byId.set(c.id, c); } } };
+  add(assignedR.data);
+  for (const r of leaderResults) add(r.data);
+  add(snapDR.data);
+  add(snapPR.data);
+  return [...byId.values()].filter(c => isCreativeOfUser(c, uid));
+}
+
+/** CR を ID で取得（明細の検証用） */
+async function ieFetchCreativesByIds(ids) {
+  const uniq = [...new Set((ids || []).filter(Boolean))];
+  const results = await Promise.all(ieChunk(uniq).map(chunk =>
+    supabase.from('creatives').select(IE_CREATIVE_SELECT).in('id', chunk)));
+  const map = new Map();
+  for (const r of results) {
+    if (r.error) throw new Error(r.error.message);
+    for (const c of (r.data || [])) map.set(c.id, c);
+  }
+  return map;
+}
+
+/**
+ * 本人の他の提出済み・承認済み請求書にある (creative_id, cost_type) の集合。
+ * idx_invoice_items_creative_cost ＋ invoices の inner join をチャンクごとに 1 クエリ（N+1 なし）。
+ */
+async function ieLoadBilledKeys(issuerId, creativeIds, excludeInvoiceId) {
+  const keys = new Set();
+  const uniq = [...new Set((creativeIds || []).filter(Boolean))];
+  const results = await Promise.all(ieChunk(uniq).map(chunk =>
+    supabase.from('invoice_items')
+      .select('creative_id, cost_type, invoice_id, inv:invoices!inner(id, status, issuer_id)')
+      .in('creative_id', chunk)
+      .eq('inv.issuer_id', issuerId)
+      .in('inv.status', IE.BILLED_STATUSES)));
+  for (const r of results) {
+    if (r.error) throw new Error(r.error.message);
+    for (const row of (r.data || [])) {
+      if (excludeInvoiceId && row.invoice_id === excludeInvoiceId) continue;
+      if (row.creative_id && row.cost_type) keys.add(IE.billedKey(row.creative_id, row.cost_type));
+    }
+  }
+  return keys;
+}
+
+/**
+ * 参考単価（本人のその役割の単価・resolveCreativeRoleCost。/invoices/preview-items と同じ解決）。
+ * @returns {Promise<Map<string, number>>} billedKey → 単価
+ */
+async function ieResolveRefPrices(creatives, issuerId) {
+  const { resolveCreativeRoleCost } = require('../utils/pricing');
+  const out = new Map();
+  const list = (creatives || []).filter(Boolean);
+  if (!list.length) return out;
+  const projectIds = [...new Set(list.map(c => c.project_id).filter(Boolean))];
+  const [{ linesByProject, lineCostsByLine }, userR] = await Promise.all([
+    loadInvoiceEstimateLines(projectIds, 'invoice-editor'),
+    supabase.from('users').select('rank').eq('id', issuerId).maybeSingle(),
+  ]);
+  const currentRank = (userR && userR.data && userR.data.rank) || null;
+  for (const c of list) {
+    for (const r of IE.issuerCostRoles(c, issuerId)) {
+      const res = resolveCreativeRoleCost({
+        creative: c, roleCode: r.role_code, rankApplied: r.rank_applied ?? currentRank, linesByProject, lineCostsByLine,
+      });
+      out.set(IE.billedKey(c.id, r.cost_type), Number(res.unit_price) || 0);
+    }
+  }
+  return out;
+}
+
+/** 候補の OR 条件（遡り範囲〜対象月末の計上イベント ＋ 対象月が締切の未納品） */
+function ieCandidateOrFilter(year, month) {
+  const targetYm = IE.ymOf(year, month);
+  const startYm = IE.lookbackStartYm(targetYm);
+  const [sy, sm] = startYm.split('-').map(Number);
+  const startIso = IE.jstMonthRangeIso(sy, sm).startIso;
+  const endIso = IE.jstMonthRangeIso(year, month).endIso;
+  const windowStartDate = `${startYm}-01`;
+  const targetStartDate = `${targetYm}-01`;
+  const targetEndDate = IE.invoiceDate(year, month);
+  return [
+    `and(delivered_at.gte.${startIso},delivered_at.lt.${endIso})`,
+    `and(first_draft_submitted_at.gte.${startIso},first_draft_submitted_at.lt.${endIso})`,
+    `and(delivered_at.is.null,final_deadline.gte.${windowStartDate},final_deadline.lte.${targetEndDate})`,
+    `and(delivered_at.is.null,final_deadline.is.null,draft_deadline.gte.${windowStartDate},draft_deadline.lte.${targetEndDate})`,
+    `and(first_draft_submitted_at.is.null,draft_deadline.gte.${targetStartDate},draft_deadline.lte.${targetEndDate})`,
+  ].join(',');
+}
+
+/** 明細行 → 画面用（kind / 参考単価 / 注意） */
+function ieItemView(it, { creative, refPrice }) {
+  const kind = IE.isCrLine(it) ? 'cr' : (IE.isFixedLine(it) ? 'fixed' : 'manual');
+  const ref = kind === 'cr' ? (refPrice != null ? refPrice : (it.original_unit_price ?? null)) : null;
+  const project = creative ? creative.projects : null;
+  return {
+    id: it.id,
+    kind,
+    creative_id: it.creative_id || null,
+    cost_type: it.cost_type || null,
+    label: it.label || '',
+    creative_label: it.creative_label || (creative ? creative.file_name : '') || '',
+    client_name: (project && project.clients && project.clients.name) || '',
+    project_name: (project && project.name) || '',
+    billing_date: creative ? IE.billingDateOf(creative, project) : null,
+    unit_price: it.unit_price === undefined ? null : it.unit_price,
+    quantity: kind === 'manual' ? (Number(it.quantity) || 0) : 1,
+    ref_price: ref,
+    price_change_reason: it.price_change_reason || '',
+    manual_reason: it.manual_reason || '',
+    sort_order: it.sort_order ?? 0,
+    amount: IE.lineAmount(it),
+    issues: IE.lineIssues(it, ref),
+  };
+}
+
+async function ieLoadItems(invoiceId) {
+  const { data, error } = await supabase.from('invoice_items')
+    .select('id, creative_id, cost_type, label, creative_label, unit, unit_price, quantity, total_amount, original_unit_price, price_change_reason, manual_reason, sort_order, created_at')
+    .eq('invoice_id', invoiceId)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+/** エディタ表示用の全体（GET と提出 409 のときに使う）。参考単価はその時点で再計算 */
+async function ieBuildEditorState(inv) {
+  const items = await ieLoadItems(inv.id);
+  const creativesById = await ieFetchCreativesByIds(items.map(i => i.creative_id));
+  const [refPrices, issuerR] = await Promise.all([
+    ieResolveRefPrices([...creativesById.values()], inv.issuer_id),
+    supabase.from('users').select('id, full_name, invoice_registration_number, business_type').eq('id', inv.issuer_id).maybeSingle(),
+  ]);
+  const issuer = issuerR.data || {};
+  const views = items.map(it => ieItemView(it, {
+    creative: it.creative_id ? creativesById.get(it.creative_id) : null,
+    refPrice: it.creative_id ? (refPrices.get(IE.billedKey(it.creative_id, it.cost_type)) ?? null) : null,
+  }));
+  const totals = IE.computeTotals(items, { withholding_enabled: inv.withholding_enabled !== false });
+  return {
+    invoice: {
+      id: inv.id, invoice_number: inv.invoice_number, status: inv.status, year: inv.year, month: inv.month,
+      notes: inv.notes || '', withholding_enabled: inv.withholding_enabled !== false,
+      updated_at: inv.updated_at, rejection_reason: inv.rejection_reason || null, tax_mode: inv.tax_mode,
+    },
+    issuer: { id: issuer.id || inv.issuer_id, full_name: issuer.full_name || '', invoice_registration_number: issuer.invoice_registration_number || '', business_type: issuer.business_type || null },
+    recipient: '株式会社HARUKA FILM 御中',
+    invoice_date: IE.invoiceDate(inv.year, inv.month),
+    due_date: IE.paymentDueDate(inv.year, inv.month),
+    items: views,
+    totals,
+    editable: ['draft', 'rejected'].includes(inv.status),
+  };
+}
+
+// GET /invoice-editor/candidates?year=&month=[&with_thumbs=1][&issuer_id=]
+//   「＋ 今月の請求書を作成」モーダルの一覧。新方式の月でなければ mode='inclusive' だけ返す（画面は旧モーダルのまま）
+router.get('/invoice-editor/candidates', requireAuth, async (req, res) => {
+  try {
+    const year = parseInt(req.query.year, 10), month = parseInt(req.query.month, 10);
+    const targetYm = IE.ymOf(year, month);
+    if (!targetYm) return res.status(400).json({ error: 'year / month が不正です' });
+    const exclusiveFrom = await ieLoadExclusiveFrom();
+    const mode = IE.isExclusiveYm(targetYm, exclusiveFrom) ? 'exclusive' : 'inclusive';
+    const base = { year, month, mode, exclusive_from: exclusiveFrom, lookback_months: IE.LOOKBACK_MONTHS };
+    if (mode !== 'exclusive') return res.json({ ...base, items: [], hourly: [], installments: [] });
+
+    const uid = await ieResolveIssuerId(req, req.query.issuer_id);
+    const withThumbs = ['1', 'true'].includes(String(req.query.with_thumbs || '').toLowerCase());
+    const creatives = await ieFetchIssuerCreatives(uid, ieCandidateOrFilter(year, month), { withThumbs });
+
+    const classified = [];
+    for (const c of creatives) {
+      const kind = IE.classifyCandidate(c, c.projects, targetYm);
+      if (kind) classified.push({ c, kind });
+    }
+    const billable = classified.filter(x => x.kind !== 'undelivered');
+    const billedKeys = await ieLoadBilledKeys(uid, billable.map(x => x.c.id), null);
+
+    const items = [];
+    for (const { c, kind } of classified) {
+      const roles = IE.issuerCostRoles(c, uid)
+        .filter(r => kind === 'undelivered' || !billedKeys.has(IE.billedKey(c.id, r.cost_type)))
+        .map(r => ({ cost_type: r.cost_type, label: IE.COST_TYPE_LABELS[r.cost_type] || r.cost_type }));
+      if (!roles.length) continue; // すべての役割が請求済み
+      let thumbFileId = null;
+      if (withThumbs) {
+        // クリエイティブ一覧の thumb_file_id と同じ作り（最新版の id 文字列だけ返す）
+        const files = (c.creative_files || []).slice().sort((a, b) =>
+          (Number(b.version) || 0) - (Number(a.version) || 0)
+          || String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || '')));
+        thumbFileId = files[0] ? files[0].id : null;
+      }
+      items.push({
+        creative_id: c.id,
+        file_name: c.file_name || '',
+        client_name: (c.projects && c.projects.clients && c.projects.clients.name) || '',
+        project_name: (c.projects && c.projects.name) || '',
+        status: c.status || '',
+        kind,
+        billing_date: kind === 'undelivered' ? null : IE.billingDateOf(c, c.projects),
+        roles,
+        thumb_file_id: thumbFileId,
+      });
+    }
+    const order = { billable: 0, previous: 1, undelivered: 2 };
+    items.sort((a, b) => (order[a.kind] - order[b.kind])
+      || String(a.billing_date || '').localeCompare(String(b.billing_date || ''))
+      || String(a.file_name).localeCompare(String(b.file_name), 'ja'));
+
+    const [hourly, installments] = await Promise.all([
+      whBuildInvoiceItems(uid, year, month).catch(e => { console.warn('[invoice-editor] work hours:', e.message); return []; }),
+      installmentBuildInvoiceItems(uid, year, month).catch(e => { console.warn('[invoice-editor] installments:', e.message); return []; }),
+    ]);
+    res.json({
+      ...base,
+      items,
+      hourly: hourly.map(h => ({ hourly_key: h.hourly_key, label: h.label, total: h.total })),
+      installments: installments.map(i => ({ installment_key: i.installment_key, label: i.label, total: i.total })),
+    });
+  } catch (e) {
+    console.error('[invoice-editor][candidates]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /invoice-editor/drafts { year, month, creative_ids[], hourly_keys[], installment_keys[], notes?, issuer_id? }
+//   新方式の下書きを作る。CR 行は単価空欄（NULL）・数量 1・参考単価を original_unit_price に控える
+router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
+  try {
+    const year = parseInt(req.body.year, 10), month = parseInt(req.body.month, 10);
+    const targetYm = IE.ymOf(year, month);
+    if (!targetYm) return res.status(400).json({ error: 'year / month が不正です' });
+    const exclusiveFrom = await ieLoadExclusiveFrom();
+    if (!IE.isExclusiveYm(targetYm, exclusiveFrom)) {
+      return res.status(400).json({ error: `${year}年${month}月分は旧方式（内税）です`, code: 'NOT_EXCLUSIVE_MONTH' });
+    }
+    const strArr = (v, max) => (Array.isArray(v) ? v : []).filter(s => typeof s === 'string' && s.length <= 100).slice(0, max);
+    const creativeIds = [...new Set(strArr(req.body.creative_ids, IE.MAX_ITEMS))];
+    const hourlyKeys = strArr(req.body.hourly_keys, 50);
+    const installmentKeys = strArr(req.body.installment_keys, 50);
+    if (!creativeIds.length && !hourlyKeys.length && !installmentKeys.length) {
+      return res.status(400).json({ error: '請求するものを 1 件以上選んでください' });
+    }
+    const issuerId = await ieResolveIssuerId(req, req.body.issuer_id);
+
+    const creativesById = await ieFetchCreativesByIds(creativeIds);
+    const [billedKeys, refPrices, issuerR] = await Promise.all([
+      ieLoadBilledKeys(issuerId, creativeIds, null),
+      ieResolveRefPrices([...creativesById.values()], issuerId),
+      supabase.from('users').select('business_type').eq('id', issuerId).maybeSingle(),
+    ]);
+
+    const problems = [];
+    const rows = [];
+    let sort = 0;
+    for (const cid of creativeIds) {
+      const c = creativesById.get(cid);
+      if (!c) { problems.push({ creative_id: cid, code: 'CREATIVE_NOT_FOUND', message: 'クリエイティブが見つかりません' }); continue; }
+      if (!isCreativeOfUser(c, issuerId)) { problems.push({ creative_id: cid, code: 'NOT_OWN', message: `${c.file_name || ''}: 自分が担当していないクリエイティブです` }); continue; }
+      if (!IE.isBillableCreative(c, c.projects)) { problems.push({ creative_id: cid, code: 'NOT_DELIVERED', message: `${c.file_name || ''}: 納品済みではありません` }); continue; }
+      const roles = IE.issuerCostRoles(c, issuerId).filter(r => !billedKeys.has(IE.billedKey(c.id, r.cost_type)));
+      if (!roles.length) { problems.push({ creative_id: cid, code: 'DUPLICATE', message: `${c.file_name || ''}: すでに提出済みの請求書に入っています` }); continue; }
+      for (const r of roles) {
+        rows.push({
+          creative_id: c.id,
+          creative_label: c.file_name || '',
+          cost_type: r.cost_type,
+          label: IE.COST_TYPE_LABELS[r.cost_type] || r.cost_type,
+          quantity: 1,
+          unit: '本',
+          unit_price: null, // 単価は空欄で始めて本人が入れる（ADR 046 §1(b)）
+          total_amount: 0,
+          is_special: false,
+          special_reason: null,
+          original_unit_price: refPrices.get(IE.billedKey(c.id, r.cost_type)) ?? 0,
+          price_change_reason: null,
+          sort_order: sort++,
+        });
+      }
+    }
+    if (problems.length) return res.status(409).json({ error: '選んだクリエイティブに請求できないものがあります', code: 'INVOICE_CHECK_FAILED', problems });
+
+    // 作業時間報告（ADR 028）・一式分割（ADR 029）は従来どおりサーバー計算の固定額。新方式では税抜として扱う（§7-5）
+    if (hourlyKeys.length) {
+      const hourly = await whBuildInvoiceItems(issuerId, year, month);
+      for (const h of hourly) {
+        if (!hourlyKeys.includes(h.hourly_key)) continue;
+        rows.push({
+          creative_id: null, creative_label: h.label,
+          cost_type: h.hourly_key === 'expense' ? 'hourly_expense' : 'hourly_fee',
+          label: h.hourly_key === 'expense' ? '立替経費' : '時間報酬',
+          quantity: 1, unit: '式', unit_price: h.total, total_amount: h.total,
+          is_special: false, special_reason: null, original_unit_price: h.total, price_change_reason: null, sort_order: sort++,
+        });
+      }
+    }
+    if (installmentKeys.length) {
+      const insts = await installmentBuildInvoiceItems(issuerId, year, month);
+      for (const it of insts) {
+        if (!installmentKeys.includes(it.installment_key)) continue;
+        rows.push({
+          creative_id: null, creative_label: it.label, cost_type: 'installment_fee', label: '一式（分割支払）',
+          quantity: 1, unit: '式', unit_price: it.total, total_amount: it.total,
+          is_special: false, special_reason: null, original_unit_price: it.total, price_change_reason: null, sort_order: sort++,
+        });
+      }
+    }
+    if (!rows.length) return res.status(400).json({ error: '請求できる明細がありません' });
+
+    const withholdingEnabled = IE.defaultWithholding(issuerR.data ? issuerR.data.business_type : null);
+    const totals = IE.computeTotals(rows, { withholding_enabled: withholdingEnabled });
+
+    // 採番（既存 /invoices/generate と同じ INV-YYYYMM-NNN。年月は JST の今日）
+    const todayYm = IE.jstDateOfIso(new Date().toISOString()).slice(0, 7).replace('-', '');
+    const { count } = await supabase.from('invoices').select('*', { count: 'exact', head: true }).like('invoice_number', `INV-${todayYm}-%`);
+    const invoiceNumber = `INV-${todayYm}-${String((count || 0) + 1).padStart(3, '0')}`;
+    const firstCreative = rows.find(r => r.creative_id);
+    const nowIso = new Date().toISOString();
+
+    const { data: invoice, error: iErr } = await supabase.from('invoices').insert({
+      invoice_number: invoiceNumber,
+      issuer_id: issuerId,
+      project_id: firstCreative ? (creativesById.get(firstCreative.creative_id) || {}).project_id || null : null,
+      status: 'draft',
+      year, month,
+      notes: typeof req.body.notes === 'string' ? req.body.notes.slice(0, 2000) : null,
+      tax_mode: 'exclusive',
+      withholding_enabled: withholdingEnabled,
+      subtotal_amount: totals.subtotal,
+      tax_amount: totals.tax,
+      total_amount: totals.total,
+      withholding_amount: totals.withholding,
+      payout_amount: totals.payout,
+      updated_at: nowIso,
+    }).select('id, invoice_number').single();
+    if (iErr) return res.status(500).json({ error: iErr.message });
+
+    const { error: itErr } = await supabase.from('invoice_items').insert(rows.map(r => ({ ...r, invoice_id: invoice.id })));
+    if (itErr) {
+      // 明細が入らなかった下書きは残さない
+      await supabase.from('invoices').delete().eq('id', invoice.id);
+      return res.status(500).json({ error: itErr.message });
+    }
+    res.json({ ok: true, id: invoice.id, invoice_number: invoice.invoice_number, items_count: rows.length });
+  } catch (e) {
+    console.error('[invoice-editor][drafts]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /invoice-editor/:id — エディタ表示用（参考単価はその時点で再計算）
+router.get('/invoice-editor/:id', requireAuth, async (req, res) => {
+  try {
+    const r = await ieLoadInvoiceForAccess(req, req.params.id);
+    if (!r.inv) return res.status(r.status).json(r.body);
+    res.json(await ieBuildEditorState(r.inv));
+  } catch (e) {
+    console.error('[invoice-editor][get]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /invoice-editor/:id — 下書きの保存（1.5 秒の自動保存から呼ぶ）
+//   body: { updated_at, withholding_enabled, notes, items: [{ id?, client_key?, label, unit_price, quantity, price_change_reason, manual_reason }] }
+//   - updated_at で楽観ロック（別タブで更新済みなら 409 CONFLICT・上書きしない）
+//   - CR 行: 単価・理由・並び順だけ変えられる（数量は 1 に固定・CR / 役割は変えられない）
+//   - 固定行（作業時間・一式）: 並び順と削除だけ
+//   - id なしの行 = HFS外の行（creative_id NULL）。品目・単価・数量・理由
+//   - 送られてこなかった既存行は削除
+//   - 保存は止めず、注意（単価未入力・理由なし等）は issues として返す（提出時に 409）
+router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
+  try {
+    const r = await ieLoadInvoiceForAccess(req, req.params.id);
+    if (!r.inv) return res.status(r.status).json(r.body);
+    const inv = r.inv;
+    if (!['draft', 'rejected'].includes(inv.status)) return res.status(400).json({ error: '提出済みの請求書は編集できません', code: 'NOT_EDITABLE' });
+    if (!req.body || req.body.updated_at !== inv.updated_at) {
+      return res.status(409).json({ error: '別の画面でこの請求書が更新されています。再読み込みしてください', code: 'CONFLICT', updated_at: inv.updated_at });
+    }
+    const input = Array.isArray(req.body.items) ? req.body.items : null;
+    if (!input) return res.status(400).json({ error: 'items が必要です' });
+    if (input.length > IE.MAX_ITEMS) return res.status(400).json({ error: `明細は ${IE.MAX_ITEMS} 行までです` });
+
+    const existing = await ieLoadItems(inv.id);
+    const existingById = new Map(existing.map(it => [it.id, it]));
+    const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+
+    const next = [];       // 保存後の全行（計算用）
+    const updates = [];    // { id, row }
+    const inserts = [];    // { client_key, row }
+    const keep = new Set();
+    for (let i = 0; i < input.length; i++) {
+      const li = input[i] || {};
+      const price = IE.parseMoney(li.unit_price);
+      if (price.error) return res.status(400).json({ error: `${i + 1}行目: 単価は${price.error}`, index: i });
+      if (li.id) {
+        const prev = existingById.get(li.id);
+        if (!prev) return res.status(400).json({ error: `${i + 1}行目: 明細が見つかりません（再読み込みしてください）`, index: i });
+        if (keep.has(li.id)) return res.status(400).json({ error: `${i + 1}行目: 同じ明細が重複しています`, index: i });
+        keep.add(li.id);
+        let row;
+        if (IE.isCrLine(prev)) {
+          row = { unit_price: price.value, quantity: 1, price_change_reason: str(li.price_change_reason, IE.REASON_MAX) || null, sort_order: i };
+        } else if (IE.isFixedLine(prev)) {
+          row = { sort_order: i }; // 金額はサーバー計算の固定額
+        } else {
+          const q = IE.parseMoney(li.quantity, { max: IE.MAX_QUANTITY });
+          if (q.error) return res.status(400).json({ error: `${i + 1}行目: 数量は${q.error}`, index: i });
+          row = {
+            label: str(li.label, IE.LABEL_MAX) || prev.label || '',
+            unit_price: price.value,
+            quantity: q.value == null ? 1 : q.value,
+            manual_reason: str(li.manual_reason, IE.REASON_MAX) || null,
+            sort_order: i,
+          };
+        }
+        const merged = { ...prev, ...row };
+        row.total_amount = IE.lineAmount(merged);
+        merged.total_amount = row.total_amount;
+        updates.push({ id: li.id, row });
+        next.push(merged);
+      } else {
+        const q = IE.parseMoney(li.quantity, { max: IE.MAX_QUANTITY });
+        if (q.error) return res.status(400).json({ error: `${i + 1}行目: 数量は${q.error}`, index: i });
+        const row = {
+          invoice_id: inv.id,
+          creative_id: null,
+          creative_label: null,
+          cost_type: null,
+          label: str(li.label, IE.LABEL_MAX),
+          unit: '式',
+          unit_price: price.value,
+          quantity: q.value == null ? 1 : q.value,
+          manual_reason: str(li.manual_reason, IE.REASON_MAX) || null,
+          original_unit_price: null,
+          price_change_reason: null,
+          is_special: false,
+          special_reason: null,
+          sort_order: i,
+        };
+        row.total_amount = IE.lineAmount(row);
+        inserts.push({ client_key: typeof li.client_key === 'string' ? li.client_key.slice(0, 64) : null, row });
+        next.push(row);
+      }
+    }
+    const toDelete = existing.filter(it => !keep.has(it.id)).map(it => it.id);
+
+    const withholdingEnabled = typeof req.body.withholding_enabled === 'boolean' ? req.body.withholding_enabled : inv.withholding_enabled !== false;
+    const totals = IE.computeTotals(next, { withholding_enabled: withholdingEnabled });
+    const newUpdatedAt = new Date().toISOString();
+
+    // 1) 楽観ロックを取る（updated_at が変わっていない時だけ更新できる）
+    const invPatch = {
+      withholding_enabled: withholdingEnabled,
+      subtotal_amount: totals.subtotal,
+      tax_amount: totals.tax,
+      total_amount: totals.total,
+      withholding_amount: totals.withholding,
+      payout_amount: totals.payout,
+      updated_at: newUpdatedAt,
+    };
+    if (req.body.notes !== undefined) invPatch.notes = str(req.body.notes, 2000) || null;
+    const { data: locked, error: lockErr } = await supabase.from('invoices').update(invPatch)
+      .eq('id', inv.id).eq('updated_at', inv.updated_at).in('status', ['draft', 'rejected'])
+      .select('id, updated_at');
+    if (lockErr) return res.status(500).json({ error: lockErr.message });
+    if (!locked || !locked.length) {
+      return res.status(409).json({ error: '別の画面でこの請求書が更新されています。再読み込みしてください', code: 'CONFLICT' });
+    }
+
+    // 2) 明細の書き込み（削除 → 一括 insert → 並列 update）
+    if (toDelete.length) {
+      await supabase.from('invoice_item_details').delete().in('invoice_item_id', toDelete);
+      const { error: delErr } = await supabase.from('invoice_items').delete().in('id', toDelete);
+      if (delErr) return res.status(500).json({ error: delErr.message });
+    }
+    const idMap = {};
+    if (inserts.length) {
+      const { data: ins, error: insErr } = await supabase.from('invoice_items').insert(inserts.map(x => x.row)).select('id, sort_order');
+      if (insErr) return res.status(500).json({ error: insErr.message });
+      const bySort = new Map((ins || []).map(r => [r.sort_order, r.id]));
+      for (const x of inserts) {
+        const id = bySort.get(x.row.sort_order);
+        x.row.id = id;
+        if (x.client_key && id) idMap[x.client_key] = id;
+      }
+    }
+    if (updates.length) {
+      const errs = await Promise.all(updates.map(async ({ id, row }) => {
+        const { error } = await supabase.from('invoice_items').update(row).eq('id', id);
+        return error;
+      }));
+      const firstErr = errs.find(Boolean);
+      if (firstErr) return res.status(500).json({ error: firstErr.message });
+    }
+
+    // 3) 注意（保存は止めない）。参考単価は下書き作成時の控え（original_unit_price）で判定し、提出時に再計算する
+    const issues = next.map(it => ({
+      id: it.id,
+      issues: IE.lineIssues(it, IE.isCrLine(it) ? (it.original_unit_price ?? null) : null),
+    })).filter(x => x.issues.length);
+    res.json({ ok: true, updated_at: locked[0].updated_at, totals, id_map: idMap, issues, saved_at: newUpdatedAt });
+  } catch (e) {
+    console.error('[invoice-editor][put]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /invoice-editor/:id/submit { expected_total, expected_payout, updated_at? }
+//   サーバーで全部やり直して確かめる（ADR 046 §3）。1 つでも引っかかれば 409 INVOICE_CHECK_FAILED（どの行が何に）
+router.post('/invoice-editor/:id/submit', requireAuth, async (req, res) => {
+  try {
+    const r = await ieLoadInvoiceForAccess(req, req.params.id);
+    if (!r.inv) return res.status(r.status).json(r.body);
+    const inv = r.inv;
+    if (!['draft', 'rejected'].includes(inv.status)) {
+      return res.status(400).json({ error: `この状態では提出できません（現在: ${inv.status}）` });
+    }
+    if (req.body && req.body.updated_at && req.body.updated_at !== inv.updated_at) {
+      return res.status(409).json({ error: '別の画面でこの請求書が更新されています。再読み込みしてください', code: 'CONFLICT' });
+    }
+    const items = await ieLoadItems(inv.id);
+    const creativeIds = items.map(i => i.creative_id).filter(Boolean);
+    const creativesById = await ieFetchCreativesByIds(creativeIds);
+    const [billedKeys, refPrices] = await Promise.all([
+      ieLoadBilledKeys(inv.issuer_id, creativeIds, inv.id),
+      ieResolveRefPrices([...creativesById.values()], inv.issuer_id),
+    ]);
+    const withholdingEnabled = inv.withholding_enabled !== false;
+    const { problems, totals } = IE.checkInvoiceForSubmit({
+      items, issuerId: inv.issuer_id, creativesById, billedKeys, refPriceByKey: refPrices,
+      withholdingEnabled,
+      expectedTotal: req.body ? req.body.expected_total : undefined,
+      expectedPayout: req.body ? req.body.expected_payout : undefined,
+    });
+    if (problems.length) {
+      return res.status(409).json({ error: '提出できません。赤い行を直してください', code: 'INVOICE_CHECK_FAILED', problems, totals });
+    }
+
+    // 参考単価を提出時点の値で控え直す（original_unit_price）。変わった行だけ並列 update
+    const refUpdates = items.filter(it => IE.isCrLine(it)).map(it => {
+      const ref = refPrices.get(IE.billedKey(it.creative_id, it.cost_type)) ?? 0;
+      return (it.original_unit_price === ref) ? null : { id: it.id, ref };
+    }).filter(Boolean);
+    if (refUpdates.length) {
+      const errs = await Promise.all(refUpdates.map(async u => {
+        const { error } = await supabase.from('invoice_items').update({ original_unit_price: u.ref }).eq('id', u.id);
+        return error;
+      }));
+      const firstErr = errs.find(Boolean);
+      if (firstErr) return res.status(500).json({ error: firstErr.message });
+    }
+
+    const nowIso = new Date().toISOString();
+    const { data: updated, error: upErr } = await supabase.from('invoices').update({
+      status: 'submitted',
+      submitted_at: nowIso,
+      updated_at: nowIso,
+      subtotal_amount: totals.subtotal,
+      tax_amount: totals.tax,
+      total_amount: totals.total,
+      withholding_amount: totals.withholding,
+      payout_amount: totals.payout,
+    }).eq('id', inv.id).eq('updated_at', inv.updated_at).in('status', ['draft', 'rejected']).select().maybeSingle();
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    if (!updated) return res.status(409).json({ error: '別の画面でこの請求書が更新されています。再読み込みしてください', code: 'CONFLICT' });
+
+    // ADR 047: 提出時点の内容で Drive の PDF を保存（失敗しても提出は成立・既存と同じ扱い）
+    const driveSync = await tryAutoSyncInvoicePdf(inv.id, req.user.id, 'editor-submit');
+    res.json({
+      ...updated,
+      totals,
+      warnings: totals.withholding_over_limit ? ['小計が100万円を超えています。源泉徴収は10.21%一律で計算しています（超える部分の20.42%は反映していません）'] : [],
+      ...driveSync,
+    });
+  } catch (e) {
+    console.error('[invoice-editor][submit]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 請求書発行（draft → issued）
 router.post('/invoices/:id/issue', requireAuth, async (req, res) => {
   const { data, error } = await supabase
@@ -19264,6 +19934,10 @@ router.post('/invoices/:id/submit', requireAuth, async (req, res) => {
   if (!existing) return res.status(404).json({ error: '請求書が見つかりません' });
   if (existing.status !== 'draft' && existing.status !== 'rejected') {
     return res.status(400).json({ error: `この状態では提出できません（現在: ${existing.status}）` });
+  }
+  // ADR 046: 新方式の請求書はサーバーの再チェック（POST /invoice-editor/:id/submit）を必ず通す
+  if ((await fetchInvoiceTaxMode(id)) === 'exclusive') {
+    return res.status(409).json({ error: 'この請求書は新方式です。請求書エディタの「提出する」から提出してください', code: 'USE_INVOICE_EDITOR' });
   }
   const { data, error } = await supabase
     .from('invoices')
