@@ -3164,6 +3164,21 @@ CREATE INDEX IF NOT EXISTS idx_project_join_requests_requester
 
 ALTER TABLE project_join_requests ENABLE ROW LEVEL SECURITY;
 
+-- ==================== 請求書エディタ（ADR 046・税抜＋源泉方式） ====================
+-- migrations/2026-10-27_invoice_editor_tax_exclusive.sql と同内容（COMMENT は migration 側のみ）
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_mode TEXT NOT NULL DEFAULT 'inclusive';
+ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_tax_mode_check;
+ALTER TABLE invoices ADD CONSTRAINT invoices_tax_mode_check CHECK (tax_mode IN ('inclusive', 'exclusive'));
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS subtotal_amount     INTEGER;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_amount          INTEGER;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS withholding_enabled BOOLEAN;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS withholding_amount  INTEGER;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payout_amount       INTEGER;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS manual_reason TEXT;
+CREATE INDEX IF NOT EXISTS idx_invoice_items_creative_cost
+  ON invoice_items (creative_id, cost_type)
+  WHERE creative_id IS NOT NULL;
+
 -- ============================================================
 -- ADR 048: public スキーマの全テーブルで RLS を有効化（migrations/2026-10-07_enable_rls_all_public_tables.sql）
 -- 本ファイル途中（「セキュリティ：全 public テーブルで RLS 有効化」）にも同じループがあるが、
