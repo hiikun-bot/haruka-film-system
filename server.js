@@ -365,6 +365,9 @@ app.use('/icon-180.png',      express.static(path.join(__dirname, 'public/icon-1
 // 🎯 マイゴール: 進捗・ストリーク計算の純関数（utils/personal-goals.js・UMD形式）を
 // フロントにも同一実装で配信する（jest テスト済みロジックの二重実装を避けるため）
 app.use('/js/personal-goals.js', express.static(path.join(__dirname, 'utils/personal-goals.js')));
+// 🧾 請求書エディタ（ADR 046）: 計算（消費税・源泉・差引）と行の判定（utils/invoice-editor.js・UMD形式）を
+//   画面にも同一実装で配信する（提出時のサーバー再計算と 1 円もずれないように）
+app.use('/js/invoice-editor-calc.js', express.static(path.join(__dirname, 'utils/invoice-editor.js')));
 // 💭 つぶやきの「@メンション」解決（utils/mention-resolve.js・UMD形式）を
 //   フロントの「@」補完・本文ハイライトと共有する（サーバーの通知先解決と同じロジック）
 app.use('/js/mention-resolve.js', express.static(path.join(__dirname, 'utils/mention-resolve.js')));
