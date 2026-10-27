@@ -393,6 +393,9 @@ app.use('/js/vendor/chart.umd.js', express.static(
 // リアクションの定義（基本 5 種 👍 ❤️ 👏 😊 😳 ＋ つぶやき用の拡張パレット。utils/reactions.js・UMD形式）。
 // つぶやきと作品ギャラリーのフロント・サーバーで同じ定義を使う（二重定義しない）
 app.use('/js/reactions.js', express.static(path.join(__dirname, 'utils/reactions.js')));
+// メンバーのポートフォリオ URL の解析・表示（utils/member-portfolio-urls.js・UMD形式）。
+// メンバー編集モーダルの入力解析とサーバーの保存時検証で同じロジックを使う
+app.use('/js/member-portfolio-urls.js', express.static(path.join(__dirname, 'utils/member-portfolio-urls.js')));
 // haruka.html は認証後のみ配信（ミニファイ + 事前圧縮 + ETag/304 の最適化配信）
 app.get('/haruka.html', requireAuth, (req, res) => {
   harukaHtmlDelivery.serve(req, res);

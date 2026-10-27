@@ -1119,6 +1119,26 @@ tr.row-help td{background:#FFFBF2}
   font-size:10.5px;color:var(--text-muted);
   min-height:16px;
 }
+/* 🌐 ポートフォリオ（users.portfolio_urls）— メンバー欄のボタンと一覧モーダル */
+.mpf-btn{
+  display:inline-flex;align-items:center;gap:4px;align-self:flex-start;
+  padding:2px 8px;border-radius:10px;border:1px solid #B2DFDB;
+  background:#E0F2F1;color:#00695C;font-size:10.5px;font-weight:600;
+  cursor:pointer;line-height:1.5;white-space:nowrap;
+}
+.mpf-btn:hover{background:#B2DFDB}
+.mpf-list{display:flex;flex-direction:column;gap:8px}
+.mpf-item{
+  display:flex;align-items:center;gap:10px;padding:10px 12px;
+  border:1px solid var(--border);border-radius:10px;background:#fff;
+  text-decoration:none;color:var(--text);min-width:0;
+}
+.mpf-item:hover{border-color:var(--em);background:#F3FBFA}
+.mpf-item-icon{font-size:18px;flex-shrink:0;width:24px;text-align:center}
+.mpf-item-body{min-width:0;flex:1}
+.mpf-item-title{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpf-item-url{font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpf-item-open{font-size:12px;color:var(--em-dark);flex-shrink:0}
 .mposter-role-chip{
   display:inline-flex;align-items:center;gap:3px;
   padding:1px 6px;border-radius:8px;
@@ -2679,6 +2699,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <script src="/js/personal-goals.js"></script>
 <!-- リアクションの定義（基本 5 種 👍 ❤️ 👏 😊 😳 ＋ つぶやき用の拡張パレット 🤣 🔥 🎉 …。utils/reactions.js を server.js が配信）。つぶやき・作品ギャラリーで共通。インラインJSが参照するため defer なし -->
 <script src="/js/reactions.js"></script>
+<script src="/js/member-portfolio-urls.js"></script>
 </head>
 <body>
 <div id="toast-container"></div>
@@ -5547,6 +5568,21 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 </div>
 
 <!-- メンバー追加・編集モーダル -->
+<!-- 🌐 メンバーのポートフォリオ（実績 URL）一覧。メンバー欄の「🌐 ポートフォリオ」から開く -->
+<div class="modal-overlay" id="modal-member-portfolio">
+  <div class="modal" style="max-width:520px;width:95vw">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px">
+      <span id="mpf-modal-title" style="font-size:16px;font-weight:700;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🌐 ポートフォリオ</span>
+      <button class="modal-close" onclick="closeModal('modal-member-portfolio')">×</button>
+    </div>
+    <div id="mpf-modal-list" class="mpf-list"></div>
+    <div id="mpf-modal-foot" style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn-sm" id="mpf-modal-copy" onclick="copyMemberPortfolioText()" style="font-size:12px">📋 まとめてコピー</button>
+      <button type="button" class="btn-sm" id="mpf-modal-edit" style="font-size:12px;display:none">✏️ 編集する</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-member">
   <div class="modal" style="max-width:660px;width:95vw;max-height:90vh;padding:0;overflow:hidden;display:flex;flex-direction:column">
 
@@ -5662,6 +5698,14 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
             <input type="checkbox" id="m-hide-birth-year" style="cursor:pointer">
             年齢・生年月日の年を非表示にする（月日のみ表示）
           </label>
+        </div>
+        <!-- 🌐 ポートフォリオ（実績 URL）— 1 行 1 件。保存するとメンバー欄に「🌐 ポートフォリオ」として出る -->
+        <div class="form-group" style="margin-top:20px;margin-bottom:4px">
+          <label class="form-label">🌐 ポートフォリオ・実績 URL <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・1 行に 1 件・20 件まで）</span></label>
+          <textarea class="form-input" id="m-portfolio-urls" rows="4" oninput="previewMemberPortfolioInput()"
+            placeholder="会社ホームページ https://example.com/&#10;ブランドムービー https://youtu.be/xxxx&#10;https://drive.google.com/…（見出しは省略可）"
+            style="resize:vertical;font-size:13px;line-height:1.6"></textarea>
+          <div id="m-portfolio-preview" style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.6">「見出し URL」を 1 行ずつ、または見出しの次の行に URL。チャットの文面をそのまま貼っても読み取ります。保存するとメンバー欄にすぐ表示されます。</div>
         </div>
       </div>
 
@@ -14244,7 +14288,7 @@ function renderMemberTable(list, visibleMembers) {
           ${showEmailCol ? `<td style="padding:8px 12px;text-align:left;vertical-align:middle" onclick="event.stopPropagation()">${m.email ? `<span style="display:inline-flex;align-items:center;gap:5px;max-width:200px"><span title="${esc(m.email)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text)">${esc(m.email)}</span><button class="btn-sm" title="メールアドレスをコピー" data-email="${esc(m.email)}" style="font-size:11px;padding:1px 6px;flex-shrink:0;line-height:1.4" onclick="copyMemberEmail(event, this.dataset.email)">📋</button></span>` : '<span style="color:#ccc;font-size:12px">—</span>'}</td>` : ''}
           <td style="padding:8px 12px;text-align:center">${mkBar(m.weekday_hours,'var(--em)','平日')}</td>
           <td style="padding:8px 12px;text-align:center">${m.weekend_hours ? mkBar(m.weekend_hours,'#94d4d1','土日祝') : '<span style="font-size:11px;color:#bbb">休み</span>'}</td>
-          <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;max-width:200px;vertical-align:middle">${m.note ? `<span title="${esc(m.note)}" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;word-break:break-word;white-space:normal">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
+          <td style="padding:8px 12px;text-align:left;color:var(--text-muted);font-size:12px;max-width:200px;vertical-align:middle">${memberPortfolioButtonHtml(m, { block: true })}${m.note ? `<span title="${esc(m.note)}" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;word-break:break-word;white-space:normal">${esc(m.note)}</span>` : '<span style="color:#ccc">—</span>'}</td>
           <td style="padding:8px 12px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
             ${m.is_active && (hasPermission('member.edit_password') || m.id === currentUser?.id) ? `<button class="btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetMemberPassword('${m.id}','${m.full_name}')">🔑 PW</button>` : ''}
             ${m.is_active
@@ -14262,6 +14306,69 @@ function renderMemberTable(list, visibleMembers) {
       }).join('')}
     </tbody>
   </table>`;
+}
+
+// ---- 🌐 メンバーのポートフォリオ（実績 URL）----------------------------
+// 保存値は users.portfolio_urls（[{url, title}]）。解析・表示ラベルは utils/member-portfolio-urls.js と共用。
+function _memberPortfolioItems(m) {
+  return (window.MemberPortfolioUrls && m) ? MemberPortfolioUrls.toPortfolioArray(m.portfolio_urls) : [];
+}
+function memberPortfolioButtonHtml(m, opts) {
+  const items = _memberPortfolioItems(m);
+  if (!items.length) return '';
+  const wrap = opts && opts.block ? 'display:block;margin-bottom:4px' : '';
+  return `<span style="${wrap}"><button type="button" class="mpf-btn" title="ポートフォリオ・実績を見る" onclick="event.stopPropagation();openMemberPortfolio('${esc(m.id)}')">🌐 ポートフォリオ ${items.length}</button></span>`;
+}
+function openMemberPortfolio(id) {
+  const m = (allMembers || []).find(x => String(x.id) === String(id));
+  if (!m) return;
+  const items = _memberPortfolioItems(m);
+  const name = m.nickname ? `${m.nickname}（${m.full_name || ''}）` : (m.full_name || '');
+  document.getElementById('mpf-modal-title').textContent = `🌐 ${name} のポートフォリオ`;
+  document.getElementById('mpf-modal-list').innerHTML = items.map(it => {
+    const k = MemberPortfolioUrls.portfolioLinkKind(it.url);
+    return `<a class="mpf-item" href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">
+      <span class="mpf-item-icon">${esc(k.icon)}</span>
+      <span class="mpf-item-body">
+        <span class="mpf-item-title" style="display:block">${esc(MemberPortfolioUrls.portfolioLinkLabel(it))}</span>
+        <span class="mpf-item-url" style="display:block">${esc(it.url)}</span>
+      </span>
+      <span class="mpf-item-open">開く ↗</span>
+    </a>`;
+  }).join('');
+  window._mpfCopyText = MemberPortfolioUrls.formatPortfolioText(items);
+  const editBtn = document.getElementById('mpf-modal-edit');
+  const canEdit = canEditMember(m);
+  editBtn.style.display = canEdit ? '' : 'none';
+  editBtn.onclick = canEdit ? () => { closeModal('modal-member-portfolio'); openEditMember(m); } : null;
+  openModal('modal-member-portfolio');
+}
+async function copyMemberPortfolioText() {
+  try {
+    await navigator.clipboard.writeText(window._mpfCopyText || '');
+    showToast('ポートフォリオのURLをコピーしました');
+  } catch (_) {
+    showToast('コピーできませんでした', 'warn');
+  }
+}
+// 編集モーダルの入力欄の下に「N 件」/ エラー行をその場で出す
+function previewMemberPortfolioInput() {
+  const el = document.getElementById('m-portfolio-urls');
+  const out = document.getElementById('m-portfolio-preview');
+  if (!el || !out || !window.MemberPortfolioUrls) return;
+  if (!el.value.trim()) {
+    out.style.color = 'var(--text-muted)';
+    out.textContent = '「見出し URL」を 1 行ずつ、または見出しの次の行に URL。チャットの文面をそのまま貼っても読み取ります。保存するとメンバー欄にすぐ表示されます。';
+    return;
+  }
+  const { items, errors } = MemberPortfolioUrls.parsePortfolioText(el.value);
+  if (errors.length) {
+    out.style.color = '#A32D2D';
+    out.textContent = '⚠ ' + errors.join(' ／ ');
+  } else {
+    out.style.color = 'var(--em-dark)';
+    out.textContent = `✓ ${items.length} 件: ` + items.map(it => MemberPortfolioUrls.portfolioLinkLabel(it)).join('、');
+  }
 }
 
 // ---- Netflix風 ポスター棚 ----------------------------------------
@@ -14416,6 +14523,7 @@ function _mrosterCardHtml(m, def, isSelf) {
       <div class="mposter-info">
         <div class="mposter-name">${nameMain}${nameSub}</div>
         <div class="mposter-meta">${roleChip}${rankChip}${teamChip}</div>
+        ${memberPortfolioButtonHtml(m)}
         <div onclick="event.stopPropagation()">${invoiceFolderSectionHtml(m)}</div>
       </div>
     </div>`;
@@ -18604,6 +18712,7 @@ function openAddMember() {
   if (document.getElementById('m-tripod-info'))   document.getElementById('m-tripod-info').value = '';
   if (document.getElementById('m-lighting-info')) document.getElementById('m-lighting-info').value = '';
   renderHolidayWeekdays([0, 6]); // 既定: 日・土
+  if (document.getElementById('m-portfolio-urls')) { document.getElementById('m-portfolio-urls').value = ''; previewMemberPortfolioInput(); }
   applyMemberModalAdminFields(null);
   setMemberModalAvatar(null, null);
   onRoleChange('editor');
@@ -18655,6 +18764,8 @@ function openEditMember(m) {
     try { initTimeRanges('weekday', wdRanges); } catch(_) {}
     try { initTimeRanges('weekend', weRanges || [{from:10,to:17}]); } catch(_) {}
     setVal('m-note', m.note || '');
+    setVal('m-portfolio-urls', window.MemberPortfolioUrls ? MemberPortfolioUrls.formatPortfolioText(m.portfolio_urls) : '');
+    try { previewMemberPortfolioInput(); } catch(_) {}
     // クリエイティブ初期ビュー: PR #277 で DB 列 creative_default_view に移行。
     // 旧 hfs_cv_default_<id> localStorage は後方互換フォールバックとして残す（DB 列が NULL のとき）。
     {
@@ -18911,6 +19022,20 @@ async function submitMember() {
   const tripod_info   = document.getElementById('m-tripod-info')?.value.trim()   || null;
   const lighting_info = document.getElementById('m-lighting-info')?.value.trim() || null;
   const holiday_weekdays = collectHolidayWeekdays();
+  // 🌐 ポートフォリオ URL（1 行 1 件）。不正な行があれば保存を止めて基本情報タブへ戻す
+  let portfolio_urls;
+  {
+    const pfEl = document.getElementById('m-portfolio-urls');
+    if (pfEl && window.MemberPortfolioUrls) {
+      const parsed = MemberPortfolioUrls.parsePortfolioText(pfEl.value);
+      if (parsed.errors.length) {
+        switchMemberTab(0);
+        showToast('ポートフォリオURL: ' + parsed.errors[0], 'warn');
+        return;
+      }
+      portfolio_urls = parsed.items;
+    }
+  }
   // 初期表示クリエイティブ画面: 空文字 = 自動 (NULL 送信)。それ以外は 'all'/'video'/'design'
   const _dctRaw = document.getElementById('m-default-creative-tab')?.value;
   const default_creative_tab = (_dctRaw === 'all' || _dctRaw === 'video' || _dctRaw === 'design') ? _dctRaw : null;
@@ -18942,6 +19067,8 @@ async function submitMember() {
     // クリエイティブ画面の初期表示状態（PR #277）
     creative_default_view,
     ...cvDefaultsPayload,
+    // 🌐 ポートフォリオ URL（未読込時は undefined = サーバー側で既存値を触らない）
+    portfolio_urls,
   };
   let res;
   if (id) {
