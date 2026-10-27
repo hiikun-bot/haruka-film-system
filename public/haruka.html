@@ -5745,7 +5745,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <label class="form-label">🌐 ポートフォリオ・実績 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・20 件まで。詳細を開くと業種・目的・担当範囲なども入れられます）</span></label>
           <div class="mpf-rows-head"><span>項目名</span><span>URL</span><span></span></div>
           <div id="m-portfolio-rows" class="mpf-rows"></div>
-          <button type="button" class="tr-add-btn" onclick="mpfRowsAdd(null, true)">＋ 実績を追加</button>
+          <button type="button" class="tr-add-btn" id="m-portfolio-add" onclick="mpfRowsAdd(null, true)">＋ 実績を追加</button>
           <div id="m-portfolio-preview" style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6"></div>
         </div>
       </div>
@@ -14404,13 +14404,28 @@ async function copyMemberPortfolioText() {
 function _mpfDetailFields() {
   return window.MemberPortfolioUrls ? MemberPortfolioUrls.DETAIL_FIELDS : [];
 }
+// items が配列でない（＝サーバーで読み込めなかった）ときは編集不可にし、保存時にも送らない。
+// 空欄のまま保存して既存リンクを消してしまわないため（data-loaded="1" の時だけ submitMember が送る）
 function mpfRowsRender(items) {
   const box = document.getElementById('m-portfolio-rows');
   if (!box) return;
   box.innerHTML = '';
-  const list = window.MemberPortfolioUrls ? MemberPortfolioUrls.toPortfolioArray(items) : [];
+  box.dataset.loaded = '0';
+  const addBtn = document.getElementById('m-portfolio-add');
+  const loaded = Array.isArray(items) && !!window.MemberPortfolioUrls;
+  if (addBtn) addBtn.style.display = loaded ? '' : 'none';
+  if (!loaded) {
+    const out = document.getElementById('m-portfolio-preview');
+    if (out) {
+      out.style.color = '#A32D2D';
+      out.textContent = '⚠ ポートフォリオを読み込めなかったため、いまは編集できません（登録済みのリンクはそのまま残ります）。画面を再読み込みしてからもう一度開いてください。';
+    }
+    return;
+  }
+  const list = MemberPortfolioUrls.toPortfolioArray(items);
   list.forEach(it => mpfRowsAdd(it, false));
   if (!list.length) mpfRowsAdd(null, false); // 空でも 1 件は出しておく
+  box.dataset.loaded = '1';
   mpfRowsUpdateStatus();
 }
 function mpfRowsAdd(item, focus, opts) {
@@ -18897,6 +18912,9 @@ function openEditMember(m) {
   // 先にモーダルを開く（途中エラーで「グレーだけで本体が出ない」状態を防ぐ）— PR #137 の defensive 構造
   try { switchMemberTab(0); } catch(_) {}
   openModal('modal-member');
+  // 🌐 ポートフォリオ欄は最初に「未読込」へ戻す。下の try 途中で例外が出て mpfRowsRender まで届かなくても、
+  // 前に開いたメンバーのリンクが残ったまま保存されない（data-loaded!="1" は送信しない）
+  { const pfBox = document.getElementById('m-portfolio-rows'); if (pfBox) { pfBox.innerHTML = ''; pfBox.dataset.loaded = '0'; } }
   // 通知タブ（ADR 043）: 本人 or メンバー編集権限者だけに出す。読み込みは非同期（他タブの表示を待たせない）
   try { memberNotifSettingsLoad(m.id || null); } catch(e) { console.error('[openEditMember] notif settings:', e); }
   // 各フィールド代入は欠損プロパティ・要素不在に強くする
@@ -18931,7 +18949,8 @@ function openEditMember(m) {
     try { initTimeRanges('weekday', wdRanges); } catch(_) {}
     try { initTimeRanges('weekend', weRanges || [{from:10,to:17}]); } catch(_) {}
     setVal('m-note', m.note || '');
-    try { mpfRowsRender(m.portfolio_urls); } catch(_) {}
+    // portfolio_urls が付いていない＝サーバーで読み込めなかった → mpfRowsRender が編集不可にする
+    try { mpfRowsRender(m.portfolio_urls); } catch(e) { console.error('[openEditMember] mpfRowsRender:', e); }
     // クリエイティブ初期ビュー: PR #277 で DB 列 creative_default_view に移行。
     // 旧 hfs_cv_default_<id> localStorage は後方互換フォールバックとして残す（DB 列が NULL のとき）。
     {
@@ -19191,7 +19210,9 @@ async function submitMember() {
   // 🌐 ポートフォリオ URL（項目名｜URL の行）。不正な行があれば保存を止めて基本情報タブへ戻す
   let portfolio_urls;
   {
-    if (document.getElementById('m-portfolio-rows') && window.MemberPortfolioUrls) {
+    // 読み込めていない（data-loaded!="1"）ときは送らない＝サーバー側で既存値を触らない
+    const pfBox = document.getElementById('m-portfolio-rows');
+    if (pfBox && pfBox.dataset.loaded === '1' && window.MemberPortfolioUrls) {
       const parsed = MemberPortfolioUrls.collectPortfolioRows(mpfRowsRead());
       if (parsed.errors.length) {
         switchMemberTab(0);
