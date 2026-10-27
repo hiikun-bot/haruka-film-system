@@ -138,7 +138,7 @@ function buildInvoicePdfModel(inv, { now = new Date() } = {}) {
     invoice_number: inv.invoice_number || '',
     issue_date: formatJstDateLong(inv.issued_at || now),
     period: `${inv.year || ''}年${inv.month || ''}月`,
-    recipient: { company: 'HARUKA FILM', person: '高橋聖 様' },
+    recipient: invoiceRecipient(inv.year, inv.month),
     issuer_name: issuer.full_name || '-',
     issuer_lines: issuerLines,
     total, subtotal, tax,
@@ -147,6 +147,15 @@ function buildInvoicePdfModel(inv, { now = new Date() } = {}) {
     bank_lines: bankLines,
     notes: inv.notes ? String(inv.notes) : '',
   };
+}
+
+// メンバー → HARUKA FILM の請求書の宛名。法人化（2026-09-22 設立）に合わせ、2026年10月分以降は法人宛て（会社名＋御中・個人名なし）。
+// それより前の請求書は発行当時の宛名のまま（作り直しても過去分の PDF が変わらないように）。
+const HOUJIN_RECIPIENT_FROM = 202610;
+function invoiceRecipient(year, month) {
+  const ym = (Number(year) || 0) * 100 + (Number(month) || 0);
+  if (ym >= HOUJIN_RECIPIENT_FROM) return { company: '株式会社HARUKA FILM 御中', person: '' };
+  return { company: 'HARUKA FILM', person: '高橋聖 様' };
 }
 
 // Drive 上のファイル名。画面の印刷タイトル「請求書_Y年M月_YYYYMMDD_高橋宛_氏名_番号」から
@@ -218,7 +227,7 @@ async function renderInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
   doc.moveTo(rx, y + 14).lineTo(R, y + 14).lineWidth(0.5).strokeColor(BORDER_SOFT).stroke();
   let ly = y + 20;
   text(model.recipient.company, L, ly, { bold: true, size: 16, width: colW }); ly += 24;
-  text(model.recipient.person, L, ly, { size: 12, color: '#444', width: colW }); ly += 18;
+  if (model.recipient.person) { text(model.recipient.person, L, ly, { size: 12, color: '#444', width: colW }); ly += 18; }
   let ry = y + 20;
   text(model.issuer_name, rx, ry, { bold: true, size: 14, width: colW, align: 'right' }); ry += 21;
   for (const line of model.issuer_lines) {
@@ -380,6 +389,7 @@ async function renderInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
 
 module.exports = {
   buildInvoicePdfModel,
+  invoiceRecipient,
   buildInvoicePdfFileName,
   renderInvoicePdf,
   formatJstDateSlash,

@@ -1,5 +1,6 @@
 const {
   buildInvoicePdfModel,
+  invoiceRecipient,
   buildInvoicePdfFileName,
   renderInvoicePdf,
   formatJstDateSlash,
@@ -144,5 +145,21 @@ describe('renderInvoicePdf', () => {
     const m = buildInvoicePdfModel(baseInvoice());
     const text = `ご請求金額（税込・内税10%） ¥${m.total.toLocaleString('ja-JP')}`;
     expect(extractInvoiceAmount(text)).toEqual({ amount: 27500, source: 'seikyu' });
+  });
+});
+
+describe('invoiceRecipient（法人化に伴う宛名）', () => {
+  test('2026年9月分までは従来の宛名', () => {
+    expect(invoiceRecipient(2026, 9)).toEqual({ company: 'HARUKA FILM', person: '高橋聖 様' });
+    expect(invoiceRecipient(2025, 12)).toEqual({ company: 'HARUKA FILM', person: '高橋聖 様' });
+  });
+  test('2026年10月分以降は会社名＋御中（個人名なし）', () => {
+    expect(invoiceRecipient(2026, 10)).toEqual({ company: '株式会社HARUKA FILM 御中', person: '' });
+    expect(invoiceRecipient(2027, 1).company).toBe('株式会社HARUKA FILM 御中');
+  });
+  test('PDF モデルにも反映される', () => {
+    const inv = baseInvoice(); inv.year = 2026; inv.month = 10;
+    expect(buildInvoicePdfModel(inv).recipient).toEqual({ company: '株式会社HARUKA FILM 御中', person: '' });
+    expect(buildInvoicePdfModel(baseInvoice()).recipient.company).toBe('HARUKA FILM');
   });
 });
