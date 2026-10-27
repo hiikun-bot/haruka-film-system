@@ -14487,7 +14487,9 @@ router.delete('/assignments/:id', async (req, res) => {
 //   member.list なし → 自分1件のみ返す（プロフィール画面のため）
 // メンバーのポートフォリオ URL（users.portfolio_urls）を一覧の各行に載せる。
 // migration（2026-10-27_users_portfolio_urls.sql）未適用でも一覧を落とさないよう、
-// 本体 select のフォールバック連鎖には混ぜず別クエリで取り、失敗時は空配列で返す。
+// 本体 select のフォールバック連鎖には混ぜず別クエリで取る。
+// 取得に失敗した行には portfolio_urls を「付けない」（undefined のまま）。空配列にすると
+// フロントが「リンク 0 件」と区別できず、別項目の保存時に既存リンクを空で上書きしてしまうため。
 const { normalizePortfolioUrls, toPortfolioArray } = require('../utils/member-portfolio-urls');
 async function attachMemberPortfolioUrls(rows) {
   const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
@@ -14501,9 +14503,10 @@ async function attachMemberPortfolioUrls(rows) {
     if (error) throw error;
     (data || []).forEach(r => map.set(r.id, toPortfolioArray(r.portfolio_urls)));
   } catch (e) {
-    console.warn('[members] portfolio_urls 取得失敗（migration 未適用?）→ 空で返す:', e.message);
+    console.warn('[members] portfolio_urls 取得失敗（migration 未適用?）→ 付けずに返す（フロントは編集不可にする）:', e.message);
+    return;
   }
-  list.forEach(m => { m.portfolio_urls = map.get(m.id) || []; });
+  list.forEach(m => { if (map.has(m.id)) m.portfolio_urls = map.get(m.id); });
 }
 
 router.get('/members', requireAuth, async (req, res) => {
@@ -14660,8 +14663,16 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
     account_type, account_number, account_holder_kana,
     phone, postal_code, address,
     camera_model, tripod_info, lighting_info, holiday_weekdays,
+    // 🌐 ポートフォリオ（実績）URL [{url, title, ...詳細}]
+    portfolio_urls,
   } = req.body;
   if (!email || !full_name || !role) return res.status(400).json({ error: 'メール・名前・ロールは必須です' });
+  let portfolioItems;
+  if (portfolio_urls !== undefined) {
+    const pf = normalizePortfolioUrls(portfolio_urls);
+    if (pf.error) return res.status(400).json({ error: pf.error });
+    portfolioItems = pf.items;
+  }
   // Googleアカウント以外のメールアドレスを弾く（utils/google-email.js）。
   // 非Googleアドレスだと請求書フォルダの Drive 共有が通らず、しかも付与失敗は
   // console.warn で握り潰されて UI 上は正常に見えてしまうため、入口で止める。
@@ -14709,6 +14720,7 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
     holiday_weekdays: Array.isArray(holiday_weekdays) ? holiday_weekdays : undefined,
   };
   if (insertPayload.holiday_weekdays === undefined) delete insertPayload.holiday_weekdays;
+  if (portfolioItems && portfolioItems.length) insertPayload.portfolio_urls = portfolioItems;
 
   // 列が無い環境（migration 未適用 / schema-sync 失敗）でも落ちないよう、
   // PUT と同じく「missing col を 1 個ずつ落として再試行」する
@@ -14745,7 +14757,7 @@ router.post('/members', requireAuth, requirePermission('member.edit_password'), 
        'nickname','hide_birth_year','note',
        'bank_name','bank_code','branch_name','branch_code','account_type','account_number',
        'account_holder_kana','phone','postal_code','address',
-       'camera_model','tripod_info','lighting_info','holiday_weekdays']
+       'camera_model','tripod_info','lighting_info','holiday_weekdays','portfolio_urls']
         .forEach(k => {
           if (k in attempt) {
             delete attempt[k];
