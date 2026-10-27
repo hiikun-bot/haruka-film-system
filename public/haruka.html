@@ -22,6 +22,8 @@
 <link rel="stylesheet" href="/css/notification.css">
 <link rel="stylesheet" href="/css/tweets-page.css">
 <link rel="stylesheet" href="/css/contract.css">
+<!-- 🧾 請求書エディタ（ADR 046 Stage 3） -->
+<link rel="stylesheet" href="/css/invoice-editor.css">
 <link rel="stylesheet" href="/css/memories.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP',sans-serif}
@@ -4996,7 +4998,13 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <span style="font-size:12px;color:var(--text-muted)">の請求対象</span>
         </div>
       </div>
-      <button class="modal-close" onclick="closeModal('modal-gen-invoice')">×</button>
+      <div style="display:flex;align-items:center;gap:12px">
+        <!-- ADR 046: 新方式の月だけ表示。既定 OFF・状態は端末ごと（localStorage）。ON のときだけサムネを読み込む -->
+        <label id="gi-thumb-toggle-wrap" style="display:none;font-size:12px;color:var(--text-muted);cursor:pointer;white-space:nowrap">
+          <input type="checkbox" id="gi-thumb-toggle" onchange="HFSInvoiceEditor.onThumbToggle(this.checked)" style="cursor:pointer;vertical-align:middle"> 🖼 サムネを表示
+        </label>
+        <button class="modal-close" onclick="closeModal('modal-gen-invoice')">×</button>
+      </div>
     </div>
 
     <!-- テーブルエリア -->
@@ -5012,11 +5020,13 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <input class="form-input" id="gi-notes" placeholder="備考（任意）：特記事項、連絡事項など" style="font-size:13px;padding:8px 12px;width:100%;box-sizing:border-box">
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between">
-        <div style="display:flex;align-items:baseline;gap:8px">
+        <div id="gi-total-box" style="display:flex;align-items:baseline;gap:8px">
           <span style="font-size:13px;color:var(--text-muted)">選択合計</span>
           <span id="gi-total" style="font-size:22px;font-weight:700;color:var(--em-dark)">¥0</span>
           <span id="gi-count" style="font-size:12px;color:var(--text-muted)">（0件）</span>
         </div>
+        <!-- ADR 046: 新方式の月は金額を出さない（単価はエディタで入れる） -->
+        <span id="gi-selected-count" style="display:none;font-size:13px;color:var(--text-muted)">0 件を選択中</span>
         <div style="display:flex;gap:10px">
           <button class="btn-primary" id="gi-submit-btn" onclick="generateMyInvoice()" disabled style="opacity:0.5">請求書を作成する</button>
           <button class="btn" onclick="closeModal('modal-gen-invoice')">キャンセル</button>
@@ -36372,17 +36382,22 @@ async function loadMyInvoices() {
         <div style="text-align:right">
           <span style="font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;background:${statusInfo.bg};color:${statusInfo.color}">${statusInfo.label}</span>
           <div style="font-size:16px;font-weight:700;margin-top:4px">¥${(inv.total_amount||0).toLocaleString()}</div>
+          ${inv.tax_mode === 'exclusive' && inv.payout_amount != null ? `<div style="font-size:11px;color:var(--text-muted)">差引お振込額 ¥${(inv.payout_amount||0).toLocaleString()}</div>` : ''}
         </div>
       </div>
       ${inv.rejection_reason ? `<div style="margin-top:8px;padding:8px;background:#FFEBEE;border-radius:6px;font-size:12px;color:#A32D2D">差し戻し理由: ${inv.rejection_reason}</div>` : ''}
-      <div style="display:flex;gap:8px;margin-top:12px">
+      ${inv.tax_mode === 'exclusive' ? `<div style="display:flex;gap:8px;margin-top:12px">
+        <button class="${['draft','rejected'].includes(inv.status) ? 'btn-primary' : 'btn'} btn-sm" onclick="HFSInvoiceEditor.open('${inv.id}')">${['draft','rejected'].includes(inv.status) ? '開いて単価を入れる・提出' : '開く'}</button>
+        ${['draft','rejected'].includes(inv.status) ? `<button class="btn btn-sm" style="color:#A32D2D" onclick="deleteInvoice('${inv.id}')">削除</button>` : ''}
+        ${inv.invoice_type !== 'client' && ['submitted','approved'].includes(inv.status) ? `<button class="btn btn-sm" onclick="saveInvoicePdfToDrive('${inv.id}')" title="PDFを自分の請求書フォルダ（Drive）に保存し直して開く（提出済みのみ）">📁 Driveへ保存</button>` : ''}
+      </div>` : `<div style="display:flex;gap:8px;margin-top:12px">
         ${inv.status === 'draft' ? `<button class="btn-primary btn-sm" onclick="submitInvoice('${inv.id}')">提出する</button>` : ''}
         ${inv.status === 'rejected' ? `<button class="btn btn-sm" onclick="submitInvoice('${inv.id}')">再提出する</button>` : ''}
         ${['draft','rejected'].includes(inv.status) ? `<button class="btn btn-sm" onclick="editInvoice('${inv.id}')">修正</button>` : ''}
         ${['draft','rejected'].includes(inv.status) ? `<button class="btn btn-sm" style="color:#A32D2D" onclick="deleteInvoice('${inv.id}')">削除</button>` : ''}
         <button class="btn btn-sm" onclick="printInvoice('${inv.id}')">🖨 PDF出力</button>
         ${inv.invoice_type !== 'client' && ['submitted','approved'].includes(inv.status) ? `<button class="btn btn-sm" onclick="saveInvoicePdfToDrive('${inv.id}')" title="PDFを自分の請求書フォルダ（Drive）に保存し直して開く（提出済みのみ）">📁 Driveへ保存</button>` : ''}
-      </div>
+      </div>`}
     </div>`;
   }).join('');
 }
@@ -36725,6 +36740,9 @@ async function loadInvoicePreview() {
   document.getElementById('gi-submit-btn').disabled = true;
   document.getElementById('gi-submit-btn').style.opacity = '0.5';
 
+  // ADR 046: 新方式（税抜＋源泉・2026年10月分〜）の月は請求書エディタ用の一覧を出す。旧方式の月は従来どおり
+  if (window.HFSInvoiceEditor && await HFSInvoiceEditor.tryRenderCandidates(year, month)) return;
+
   const res = await apiFetch(`${API}/invoices/preview-items?year=${year}&month=${month}`);
   if (!res.ok) { wrap.innerHTML = '<div style="color:#E24B4A;font-size:13px;text-align:center;padding:40px">読み込みに失敗しました</div>'; return; }
   invoicePreviewItems = await res.json();
@@ -36916,6 +36934,8 @@ function updateInvoiceTotal() {
 }
 
 async function generateMyInvoice() {
+  // ADR 046: 新方式の月は単価空欄の下書きを作ってエディタを開く
+  if (window.HFSInvoiceEditor && HFSInvoiceEditor.isCandidateMode()) return HFSInvoiceEditor.createDraftFromModal();
   const uid = currentUser?.supabase_id || currentUser?.id;
   const year  = parseInt(document.getElementById('gi-year').value);
   const month = parseInt(document.getElementById('gi-month').value);
@@ -37030,6 +37050,8 @@ async function submitInvoice(id) {
   const listRes = await apiFetch(`${API}/invoices?issuer_id=${uid}`);
   const allInvs = listRes.ok ? await listRes.json() : [];
   const thisInv = allInvs.find(i => i.id === id);
+  // ADR 046: 新方式の請求書はエディタの「提出する」から（サーバーで再チェックしてから提出）
+  if (thisInv && thisInv.tax_mode === 'exclusive' && window.HFSInvoiceEditor) { HFSInvoiceEditor.open(id); return; }
 
   if (thisInv) {
     const dups = allInvs.filter(i =>
@@ -37136,6 +37158,8 @@ async function editInvoice(id) {
   const res = await apiFetch(`${API}/invoices/${id}`);
   if (!res.ok) { showToast('請求書の取得に失敗しました', 'error'); return; }
   const inv = await res.json();
+  // ADR 046: 新方式（税抜＋源泉）の請求書は請求書エディタで開く（旧モーダルでは税・源泉が再計算されない）
+  if (inv.tax_mode === 'exclusive' && window.HFSInvoiceEditor) { HFSInvoiceEditor.open(id); return; }
   document.getElementById('ei-invoice-id').value = id;
   document.getElementById('ei-invoice-num').textContent = inv.invoice_number || '';
   document.getElementById('ei-notes').value = inv.notes || '';
@@ -37526,6 +37550,8 @@ async function printInvoice(id) {
 
   // クライアント請求書（発行方向が逆）
   if (inv.invoice_type === 'client') { printClientInvoice(inv); return; }
+  // ADR 046: 新方式（税抜＋源泉）はエディタの「PDFを見る」で新しい様式を出す（この印刷は内税の様式のため）
+  if (inv.tax_mode === 'exclusive' && window.HFSInvoiceEditor) { HFSInvoiceEditor.open(id); showToast('請求書エディタの「PDFを見る」から表示できます', 'info', 4000); return; }
 
   const issuer  = inv.issuer  || {};
   const project = inv.projects || {};
@@ -61684,6 +61710,9 @@ function votStatusBadge(status) {
 <script src="/js/contract-wizard.js"></script>
 <script src="/js/contract-admin.js"></script>
 <script src="/js/memories.js"></script>
+<!-- 🧾 請求書エディタ（ADR 046）: 計算・判定はサーバーと同じ utils/invoice-editor.js を server.js が配信 → 画面 -->
+<script src="/js/invoice-editor-calc.js"></script>
+<script src="/js/invoice-editor.js"></script>
 
 <!-- 通知UI（Phase 1 段階2）— 順序重要: card → bell → panel → realtime -->
 <!-- card: 描画ヘルパー / bell: バッジ管理 / panel: 開閉 + read-all / realtime: Supabase購読 -->
