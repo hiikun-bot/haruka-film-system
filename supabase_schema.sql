@@ -2592,6 +2592,8 @@ CREATE TRIGGER creative_round_replies_updated_at
 -- backfill 無し・新規テーブルのみ。詳細: migrations/2026-07-02_work_hour_entries.sql
 ALTER TABLE users ADD COLUMN IF NOT EXISTS hourly_rate INTEGER;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS hourly_note TEXT;
+-- メンバーのポートフォリオ（実績）URL [{url, title}]（migrations/2026-10-27_users_portfolio_urls.sql）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS portfolio_urls JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS work_hour_entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

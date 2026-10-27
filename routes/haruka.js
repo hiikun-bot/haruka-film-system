@@ -14485,6 +14485,27 @@ router.delete('/assignments/:id', async (req, res) => {
 // メンバー一覧（権限による段階的開示）
 //   member.list あり → 全員返す（機微情報は member.edit_password 保有者のみ）
 //   member.list なし → 自分1件のみ返す（プロフィール画面のため）
+// メンバーのポートフォリオ URL（users.portfolio_urls）を一覧の各行に載せる。
+// migration（2026-10-27_users_portfolio_urls.sql）未適用でも一覧を落とさないよう、
+// 本体 select のフォールバック連鎖には混ぜず別クエリで取り、失敗時は空配列で返す。
+const { normalizePortfolioUrls, toPortfolioArray } = require('../utils/member-portfolio-urls');
+async function attachMemberPortfolioUrls(rows) {
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if (!list.length) return;
+  const map = new Map();
+  try {
+    // 1 件（本人のみ）は id 指定、一覧は全行（.in() の大量 ID は URL 長超過になるため）
+    let q = supabase.from('users').select('id, portfolio_urls');
+    if (list.length === 1) q = q.eq('id', list[0].id);
+    const { data, error } = await q;
+    if (error) throw error;
+    (data || []).forEach(r => map.set(r.id, toPortfolioArray(r.portfolio_urls)));
+  } catch (e) {
+    console.warn('[members] portfolio_urls 取得失敗（migration 未適用?）→ 空で返す:', e.message);
+  }
+  list.forEach(m => { m.portfolio_urls = map.get(m.id) || []; });
+}
+
 router.get('/members', requireAuth, async (req, res) => {
   // VIEW AS 中は実効ロールで判定（最高管理者のみ X-View-As が有効）
   const effectiveRole = getEffectiveRole(req);
@@ -14540,6 +14561,7 @@ router.get('/members', requireAuth, async (req, res) => {
     }
     if (error) return res.status(500).json({ error: error.message });
     if (data) applyAvatarRef(data, await avatarMapPromise); // avatar_url をキャッシュから注入
+    if (data) await attachMemberPortfolioUrls([data]);
     return res.json(data ? [data] : []);
   }
   const colsWith = canSeeSensitive ? baseColsWith + sensitiveCols : baseColsWith;
@@ -14565,6 +14587,8 @@ router.get('/members', requireAuth, async (req, res) => {
     const avatarMap = await avatarMapPromise;
     data.forEach(m => applyAvatarRef(m, avatarMap));
   }
+  // ポートフォリオ URL（公開情報。メンバー欄に表示する）
+  if (Array.isArray(data)) await attachMemberPortfolioUrls(data);
   // ADR 028 補足（ユーザー指示 2026-07-02: 秘書同士で単価が見えないように）:
   // 時給の金額は本人と admin 実効ロールのみ閲覧可。member.list 権限者（秘書等）にも
   // 他人の hourly_rate は値をマスクし、時給制バッジ用の is_hourly フラグだけ返す。
@@ -15119,7 +15143,9 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     // feedback batch 002: カメラ機材 / 休日曜日
     camera_model, tripod_info, lighting_info, holiday_weekdays,
     // クリエイティブ画面の初期表示タブ ('all' / 'video' / 'design' / null)
-    default_creative_tab
+    default_creative_tab,
+    // ポートフォリオ（実績）URL [{url, title}]。未指定なら既存値を触らない
+    portfolio_urls
   } = req.body;
 
   // default_creative_tab のバリデーション: 'all' / 'video' / 'design' / null のみ許可
@@ -15154,6 +15180,12 @@ router.put('/members/:id', requireAuth, async (req, res) => {
     updated_at: new Date().toISOString()
   };
   if (updateData.holiday_weekdays === undefined) delete updateData.holiday_weekdays;
+  // ポートフォリオ URL（機材情報と同じく公開情報扱い。編集できる人なら誰でも更新可）
+  if (portfolio_urls !== undefined) {
+    const pf = normalizePortfolioUrls(portfolio_urls);
+    if (pf.error) return res.status(400).json({ error: pf.error });
+    updateData.portfolio_urls = pf.items;
+  }
   // default_creative_tab: undefined（リクエスト未指定）なら更新せず、それ以外（null含む）は反映
   if (normalizedDefaultCreativeTab !== undefined) {
     updateData.default_creative_tab = normalizedDefaultCreativeTab;
@@ -15241,7 +15273,7 @@ router.put('/members/:id', requireAuth, async (req, res) => {
        'default_creative_tab',
        'creative_default_view','creative_default_view_mode','creative_default_group_mode','creative_default_range',
        'creative_default_include_ended','creative_default_include_delivered','creative_default_delayed_only','creative_default_sos_only',
-       'creative_default_statuses','creative_default_ball_types',
+       'creative_default_statuses','creative_default_ball_types','portfolio_urls',
        'bank_name','bank_code','branch_name','branch_code','account_type','account_number',
        'account_holder_kana','invoice_registration_number','phone','postal_code','address','nickname','note','birthday'];
       bulk.forEach(k => {
