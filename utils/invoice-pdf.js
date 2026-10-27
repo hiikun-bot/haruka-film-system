@@ -13,6 +13,8 @@
 // 時刻は Railway (UTC) でも JST で表示する（feedback_time_logic_jst_explicit）。
 // 金額の文字列は 振込管理 の自動抽出（utils/payout.js extractInvoiceAmount）が
 // 「ご請求金額」直後の数字を拾う前提なので、見出しと金額を続けて描く。
+// 新方式（tax_mode='exclusive'・ADR 046 Stage 4）は別レイアウト（buildExclusiveInvoicePdfModel /
+// renderExclusiveInvoicePdf）。旧方式の描画は変えない（tests/utils/invoice-pdf-exclusive.test.js がハッシュで担保）。
 
 const fs = require('fs');
 const path = require('path');
@@ -72,6 +74,8 @@ function lineAmount(it) {
 //   - グループ見出しの日付は final_deadline → draft_deadline → updated_at の順
 function buildInvoicePdfModel(inv, { now = new Date() } = {}) {
   if (!inv) throw new Error('invoice が空です');
+  // ADR 046 Stage 4: 新方式（税抜＋源泉）は別レイアウト。旧方式（内税）は以下を 1 行も変えない
+  if (inv.tax_mode === 'exclusive') return buildExclusiveInvoicePdfModel(inv, { now });
   const issuer = inv.issuer || {};
   const project = inv.projects || {};
   const client = project.clients || {};
@@ -173,6 +177,7 @@ function assetsAvailable() {
 
 // モデル → PDF Buffer。pdfkit は遅延 require（テスト・起動時のコストを避ける）。
 async function renderInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
+  if (model && model.layout === 'exclusive') return renderExclusiveInvoicePdf(model, { logoPath });
   if (!assetsAvailable()) throw new Error('請求書PDF用フォント（assets/fonts/NotoSansJP-*.otf）が見つかりません');
   const PDFDocument = require('pdfkit');
 
@@ -387,8 +392,331 @@ async function renderInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
   return done;
 }
 
+// =====================================================================
+// ADR 046 Stage 4: 新方式（tax_mode='exclusive'・税抜＋源泉）の PDF
+// =====================================================================
+//
+// レイアウトは請求書エディタの [PDFを見る]（public/js/invoice-editor.js preview()）と同じ並び:
+//
+//                          請 求 書               請求日 2026/10/31 / No. / お支払期限
+//   株式会社HARUKA FILM 御中                       請求者（氏名・連絡先・登録番号）
+//   件名：2026年10月分 制作費として
+//   ┌ ご請求金額（税込）  ¥26,400 ┐
+//   └ 差引お振込額        ¥23,950 ┘
+//   No │ 納品日 │ 品目 │ 税抜単価 │ 数量 │ 税抜金額
+//                    小計（税抜） / 消費税（10%） / ご請求金額（税込）
+//                    源泉徴収税額（10.21%） / 差引お振込額
+//   振込先 / 備考
+//
+// 金額は DB の保存値（提出時にサーバーが計算した subtotal_amount 等）を正とし、
+// 欠けていれば utils/invoice-editor.js の computeTotals で明細から再計算する。
+// 振込管理（utils/payout.js extractInvoiceAmount）は「差引お振込額」直後の金額を最優先で拾う。
+
+function invoiceEditorCalc() {
+  // 遅延 require（旧方式の PDF 生成では読み込まない）
+  return require('./invoice-editor');
+}
+
+function isIntLike(v) {
+  return v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+}
+
+// 'YYYY-MM-DD' → 'YYYY/MM/DD'（エディタの longDate と同じ）
+function slashLongDate(d) {
+  return d ? String(d).replace(/-/g, '/') : '';
+}
+
+// 'YYYY-MM-DD' → 'MM/DD'（エディタの slashDate と同じ）
+function slashShortDate(d) {
+  return d ? `${String(d).slice(5, 7)}/${String(d).slice(8, 10)}` : '―';
+}
+
+function buildIssuerContactLines(issuer) {
+  const lines = [];
+  if (issuer.email) lines.push(String(issuer.email));
+  if (issuer.phone) lines.push(`TEL：${issuer.phone}`);
+  if (issuer.postal_code || issuer.address) {
+    lines.push(`${issuer.postal_code ? `〒${issuer.postal_code}　` : ''}${issuer.address || ''}`.trim());
+  }
+  lines.push(`登録番号：${issuer.invoice_registration_number || '—'}`);
+  return lines;
+}
+
+function buildBankLines(issuer) {
+  return [
+    issuer.bank_name ? `${issuer.bank_name}${issuer.bank_code ? ` (${issuer.bank_code})` : ''}` : '',
+    issuer.branch_name ? `${issuer.branch_name}支店${issuer.branch_code ? ` (${issuer.branch_code})` : ''}` : '',
+    (issuer.account_type && issuer.account_number) ? `${issuer.account_type} ${issuer.account_number}` : '',
+    issuer.account_holder_kana ? `口座名義：${issuer.account_holder_kana}` : '',
+  ].filter(Boolean);
+}
+
+function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
+  const IE = invoiceEditorCalc();
+  const issuer = inv.issuer || {};
+  const items = sortItems(inv.invoice_items);
+  const withholdingEnabled = inv.withholding_enabled !== false;
+
+  // 明細（1 CR × 役割 = 1 行。HFS外・作業時間・分割の行もそのまま 1 行）
+  const rows = items.map((it, i) => {
+    const kind = IE.isCrLine(it) ? 'cr' : (IE.isFixedLine(it) ? 'fixed' : 'manual');
+    const cr = it.creatives || {};
+    const cp = cr.projects || null;
+    const clientName = (cp && cp.clients && cp.clients.name) || '';
+    let label;
+    if (kind === 'cr') {
+      const crLabel = it.creative_label || cr.file_name || '(無題)';
+      label = `${clientName}${clientName ? '｜' : ''}${crLabel}（${it.label || ''}）`;
+    } else if (kind === 'fixed') {
+      label = it.creative_label || it.label || '';
+    } else {
+      label = it.label || '明細';
+    }
+    const hasPrice = !(it.unit_price === null || it.unit_price === undefined || it.unit_price === '');
+    return {
+      no: i + 1,
+      kind,
+      date: kind === 'cr' ? slashShortDate(IE.billingDateOf(cr, cp)) : '',
+      label,
+      unit_price: hasPrice ? Math.trunc(Number(it.unit_price) || 0) : null,
+      quantity: kind === 'manual' ? (Math.trunc(Number(it.quantity)) || 0) : 1,
+      amount: IE.lineAmount(it),
+    };
+  });
+
+  // 金額: DB 保存値が揃っていればそれが正。欠けていれば明細から再計算
+  const recalc = IE.computeTotals(items, { withholding_enabled: withholdingEnabled });
+  const fromDb = ['subtotal_amount', 'tax_amount', 'total_amount', 'payout_amount'].every(k => isIntLike(inv[k]));
+  const subtotal = fromDb ? Math.round(Number(inv.subtotal_amount)) : recalc.subtotal;
+  const tax = fromDb ? Math.round(Number(inv.tax_amount)) : recalc.tax;
+  const total = fromDb ? Math.round(Number(inv.total_amount)) : recalc.total;
+  const payout = fromDb ? Math.round(Number(inv.payout_amount)) : recalc.payout;
+  const withholding = fromDb
+    ? (isIntLike(inv.withholding_amount) ? Math.round(Number(inv.withholding_amount)) : total - payout)
+    : recalc.withholding;
+
+  return {
+    layout: 'exclusive',
+    invoice_number: inv.invoice_number || '',
+    invoice_date: slashLongDate(IE.invoiceDate(inv.year, inv.month)) || formatJstDateSlash(now),
+    due_date: slashLongDate(IE.paymentDueDate(inv.year, inv.month)),
+    period: `${inv.year || ''}年${inv.month || ''}月`,
+    subject: `${inv.year || ''}年${inv.month || ''}月分 制作費として`,
+    recipient: invoiceRecipient(inv.year, inv.month),
+    issuer_name: issuer.full_name || '-',
+    issuer_lines: buildIssuerContactLines(issuer),
+    rows,
+    subtotal, tax, total, withholding, payout,
+    withholding_enabled: withholdingEnabled,
+    withholding_over_limit: withholdingEnabled && subtotal > IE.WITHHOLDING_WARN_THRESHOLD,
+    amounts_from: fromDb ? 'db' : 'recalc',
+    bank_lines: buildBankLines(issuer),
+    notes: inv.notes ? String(inv.notes) : '',
+  };
+}
+
+async function renderExclusiveInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
+  if (!assetsAvailable()) throw new Error('請求書PDF用フォント（assets/fonts/NotoSansJP-*.otf）が見つかりません');
+  const PDFDocument = require('pdfkit');
+
+  const doc = new PDFDocument({
+    size: 'A4',
+    margins: { top: 40, bottom: 44, left: 40, right: 40 },
+    info: { Title: `請求書 ${model.invoice_number}`, Author: model.issuer_name, Creator: 'HARUKA FILM SYSTEM' },
+    bufferPages: true,
+  });
+  const chunks = [];
+  doc.on('data', (c) => chunks.push(c));
+  const done = new Promise((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+  });
+
+  doc.registerFont('jp', FONT_REGULAR);
+  doc.registerFont('jpb', FONT_BOLD);
+  const L = doc.page.margins.left;
+  const R = doc.page.width - doc.page.margins.right;
+  const W = R - L;
+  const BOTTOM = doc.page.height - doc.page.margins.bottom;
+  let y = doc.page.margins.top;
+
+  // 1 行の text（折り返しなし・省略記号）。下余白を超える位置には描かない（ensureSpace で必ず改ページしてから呼ぶ）
+  const text = (str, x, yy, opts = {}) => {
+    const { bold = false, size = 11, color = '#222', width, align = 'left' } = opts;
+    doc.font(bold ? 'jpb' : 'jp').fontSize(size).fillColor(color);
+    doc.text(String(str ?? ''), x, yy, { width, align, lineBreak: false, ellipsis: true });
+  };
+  // 折り返しありの text（高さは heightOf で事前に測ってから ensureSpace する）
+  const wrapText = (str, x, yy, opts = {}) => {
+    const { bold = false, size = 10, color = '#222', width, align = 'left' } = opts;
+    doc.font(bold ? 'jpb' : 'jp').fontSize(size).fillColor(color);
+    doc.text(String(str ?? ''), x, yy, { width, align });
+  };
+  const heightOf = (str, size, width, bold = false) => {
+    doc.font(bold ? 'jpb' : 'jp').fontSize(size);
+    return doc.heightOfString(String(str ?? ''), { width });
+  };
+
+  // ---------- ヘッダー ----------
+  let logoDrawn = false;
+  if (logoPath && fs.existsSync(logoPath)) {
+    try { doc.image(logoPath, L, y, { fit: [56, 56] }); logoDrawn = true; } catch (_) { /* ロゴ無しで続行 */ }
+  }
+  text('請 求 書', L + 200, y, { bold: true, size: 22, width: W - 200, align: 'right' });
+  text(`No. ${model.invoice_number}`, L + 200, y + 32, { size: 10, color: '#666', width: W - 200, align: 'right' });
+  text(`請求日：${model.invoice_date}`, L + 200, y + 46, { size: 10, color: '#666', width: W - 200, align: 'right' });
+  text(`お支払期限：${model.due_date}`, L + 200, y + 60, { size: 10, color: '#666', width: W - 200, align: 'right' });
+  y += Math.max(logoDrawn ? 56 : 0, 76) + 20;
+
+  // ---------- 請求先 / 請求者 ----------
+  const colW = (W - 24) / 2;
+  const rx = L + colW + 24;
+  text('請求先', L, y, { size: 9, color: '#999', width: colW });
+  text('請求者', rx, y, { size: 9, color: '#999', width: colW, align: 'right' });
+  doc.moveTo(L, y + 14).lineTo(L + colW, y + 14).lineWidth(0.5).strokeColor(BORDER_SOFT).stroke();
+  doc.moveTo(rx, y + 14).lineTo(R, y + 14).lineWidth(0.5).strokeColor(BORDER_SOFT).stroke();
+  let ly = y + 20;
+  text(model.recipient.company, L, ly, { bold: true, size: 16, width: colW }); ly += 24;
+  if (model.recipient.person) { text(model.recipient.person, L, ly, { size: 12, color: '#444', width: colW }); ly += 18; }
+  text(`件名：${model.subject}`, L, ly + 2, { size: 10.5, color: '#444', width: colW }); ly += 18;
+  let ry = y + 20;
+  text(model.issuer_name, rx, ry, { bold: true, size: 14, width: colW, align: 'right' }); ry += 21;
+  for (const line of model.issuer_lines) {
+    const h = Math.max(13, heightOf(line, 9.5, colW));
+    wrapText(line, rx, ry, { size: 9.5, color: '#666', width: colW, align: 'right' });
+    ry += h + 1;
+  }
+  y = Math.max(ly, ry) + 12;
+
+  // ---------- ご請求金額（税込）／ 差引お振込額 ----------
+  // 振込管理の金額抽出が「差引お振込額」→ 直後の金額 の並びで読めるよう、見出しと金額を同じ行に描く
+  const boxH = 70;
+  doc.roundedRect(L, y, W, boxH, 8).lineWidth(1.5).fillAndStroke(TEAL_PALE, TEAL);
+  text('ご請求金額（税込）', L + 20, y + 14, { size: 11, color: '#555', width: 240 });
+  text(fmtYen(model.total), L + 200, y + 10, { bold: true, size: 18, color: '#222', width: W - 220, align: 'right' });
+  doc.moveTo(L + 16, y + 36).lineTo(R - 16, y + 36).lineWidth(0.5).strokeColor(GROUP_BORDER).stroke();
+  text('差引お振込額', L + 20, y + 46, { bold: true, size: 11, color: '#555', width: 240 });
+  text(fmtYen(model.payout), L + 200, y + 40, { bold: true, size: 20, color: TEAL, width: W - 220, align: 'right' });
+  y += boxH + 16;
+
+  // ---------- 明細テーブル ----------
+  const COL = { no: 24, date: 42, price: 70, qty: 32, amt: 76 };
+  COL.label = W - COL.no - COL.date - COL.price - COL.qty - COL.amt;
+  const X = {};
+  X.no = L; X.date = X.no + COL.no; X.label = X.date + COL.date; X.price = X.label + COL.label;
+  X.qty = X.price + COL.price; X.amt = X.qty + COL.qty;
+  const vlines = [X.date, X.label, X.price, X.qty, X.amt];
+
+  const drawTableHeader = () => {
+    doc.rect(L, y, W, 24).fill(TEAL);
+    const hd = (s, x, w, align) => text(s, x + 3, y + 6, { bold: true, size: 9.5, color: '#fff', width: w - 6, align });
+    hd('No', X.no, COL.no, 'center');
+    hd('納品日', X.date, COL.date, 'center');
+    hd('品目', X.label, COL.label, 'left');
+    hd('税抜単価', X.price, COL.price, 'right');
+    hd('数量', X.qty, COL.qty, 'center');
+    hd('税抜金額', X.amt, COL.amt, 'right');
+    y += 24;
+  };
+  const ensureSpace = (h, { tableHeader = false } = {}) => {
+    if (y + h <= BOTTOM) return;
+    doc.addPage();
+    y = doc.page.margins.top;
+    if (tableHeader) drawTableHeader();
+  };
+
+  drawTableHeader();
+  for (const r of model.rows) {
+    const labelH = Math.max(12, heightOf(r.label, 9.5, COL.label - 10));
+    const rh = labelH + 10;
+    ensureSpace(rh, { tableHeader: true });
+    doc.lineWidth(0.5).strokeColor(BORDER_SOFT);
+    if (r.kind === 'manual') doc.rect(L, y, W, rh).fillAndStroke('#f3f8ff', BORDER_SOFT);
+    else doc.rect(L, y, W, rh).stroke();
+    for (const xx of vlines) doc.moveTo(xx, y).lineTo(xx, y + rh).stroke();
+    text(String(r.no), X.no + 2, y + 5, { size: 9.5, color: '#555', width: COL.no - 4, align: 'center' });
+    text(r.date, X.date + 2, y + 5, { size: 9.5, color: '#555', width: COL.date - 4, align: 'center' });
+    wrapText(r.label, X.label + 5, y + 5, { size: 9.5, width: COL.label - 10 });
+    text(r.unit_price == null ? '' : fmtYen(r.unit_price), X.price + 3, y + 5, { size: 9.5, width: COL.price - 8, align: 'right' });
+    text(String(r.quantity), X.qty + 2, y + 5, { size: 9.5, width: COL.qty - 4, align: 'center' });
+    text(r.unit_price == null ? '' : fmtYen(r.amount), X.amt + 3, y + 5, { bold: true, size: 9.5, width: COL.amt - 8, align: 'right' });
+    y += rh;
+  }
+  if (!model.rows.length) {
+    ensureSpace(36, { tableHeader: true });
+    doc.rect(L, y, W, 36).lineWidth(0.5).strokeColor(BORDER).stroke();
+    text('明細なし', L, y + 11, { size: 10.5, color: '#aaa', width: W, align: 'center' });
+    y += 36;
+  }
+
+  // ---------- 合計 ----------
+  const sumX = L + W - 300;
+  const sumRow = (label, value, { strong = false, color = '#222' } = {}) => {
+    const rh = strong ? 24 : 20;
+    ensureSpace(rh);
+    doc.rect(sumX, y, 300, rh).lineWidth(0.5).fillAndStroke(strong ? TEAL_LIGHT : GRAY_BG, strong ? TEAL : BORDER);
+    text(label, sumX + 10, y + 5, { bold: strong, size: strong ? 10.5 : 10, width: 170 });
+    text(value, sumX + 170, y + 5, { bold: strong, size: strong ? 10.5 : 10, color, width: 120, align: 'right' });
+    y += rh;
+  };
+  y += 8;
+  sumRow('小計（税抜）', fmtYen(model.subtotal));
+  sumRow('消費税（10%）', fmtYen(model.tax));
+  sumRow('ご請求金額（税込）', fmtYen(model.total), { strong: true });
+  sumRow('源泉徴収税額（10.21%）', model.withholding ? `-${fmtYen(model.withholding)}` : fmtYen(0));
+  sumRow('差引お振込額', fmtYen(model.payout), { strong: true, color: TEAL });
+
+  // ---------- 振込先・備考 ----------
+  const box = (title, lines, { warn = false } = {}) => {
+    const lineH = 17;
+    const bodyH = lines.reduce((s, l) => s + Math.max(lineH, heightOf(l, 10, W - 32) + 5), 0);
+    const bh = 14 + 14 + bodyH + 8;
+    y += 12;
+    ensureSpace(bh);
+    doc.roundedRect(L, y, W, bh, 6).lineWidth(0.5).fillAndStroke(GRAY_BG, BORDER);
+    text(title, L + 16, y + 12, { bold: true, size: 9, color: '#999', width: W - 32 });
+    let by = y + 30;
+    for (const l of lines) {
+      wrapText(l, L + 16, by, { size: 10, color: warn ? '#F59E0B' : '#222', width: W - 32 });
+      by += Math.max(lineH, heightOf(l, 10, W - 32) + 5);
+    }
+    y += bh;
+  };
+  if (model.bank_lines.length) box('振込先', model.bank_lines);
+  else box('振込先', ['⚠ 振込先が未設定です。メンバー設定から口座情報を登録してください。'], { warn: true });
+  if (model.notes) {
+    const noteLines = model.notes.split(/\r?\n/);
+    box('備考', noteLines.length ? noteLines : ['']);
+  }
+
+  // ---------- フッター ----------
+  y += 16;
+  ensureSpace(24);
+  doc.moveTo(L, y).lineTo(R, y).lineWidth(0.5).strokeColor('#f0f0f0').stroke();
+  text('※ お振込み手数料はご負担ください。　※ ご不明な点はご連絡ください。', L, y + 8, { size: 9, color: '#aaa', width: W });
+
+  // ページ番号（2ページ以上のときだけ）。下余白の中に描くので一時的に margins.bottom = 0
+  // （pdfkit は下余白より下に text すると自動で addPage し、空ページが増える）
+  const range = doc.bufferedPageRange();
+  if (range.count > 1) {
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i);
+      const savedBottom = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
+      doc.font('jp').fontSize(8.5).fillColor('#aaa')
+        .text(`${model.invoice_number}　${i - range.start + 1} / ${range.count}`, L, doc.page.height - 28, { width: W, align: 'center', lineBreak: false });
+      doc.page.margins.bottom = savedBottom;
+    }
+  }
+
+  doc.end();
+  return done;
+}
+
 module.exports = {
   buildInvoicePdfModel,
+  buildExclusiveInvoicePdfModel,
+  renderExclusiveInvoicePdf,
   invoiceRecipient,
   buildInvoicePdfFileName,
   renderInvoicePdf,

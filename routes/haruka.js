@@ -20060,7 +20060,8 @@ async function fetchInvoiceForPdf(invoiceId) {
         id, total_amount, label, quantity, unit, unit_price, sort_order, created_at,
         cost_type, creative_label, creative_id,
         creatives(id, file_name, project_id, creative_type, final_deadline, draft_deadline, updated_at,
-          projects(id, name, clients(id, name, client_code))
+          status, delivered_at, first_draft_submitted_at,
+          projects(id, name, billing_timing, clients(id, name, client_code))
         )
       )
     `;
@@ -28433,14 +28434,32 @@ async function payoutExtractPdfAmount(drive, file) {
 // 「ご請求金額」由来（seikyu）の金額を優先合算。seikyu が 1 件も無い場合は、
 // 金額が取れたファイルがちょうど 1 件のときだけその値を採用（作業時間報告書など
 // 請求書以外の PDF の「合計」を誤って足し込まないため）。
+// ADR 046 Stage 4: 新方式の「差引お振込額」（sashihiki）と DB の payout_amount（hfs_db）も
+// 「ご請求金額」と同じく振込額そのものとして合算する（判定は utils/payout.js sumInvoicePdfAmounts）。
 function payoutSumInvoiceAmount(pdfFiles) {
-  // 「削除」「テンプレ」を冠したPDFは差し替え前の旧版・雛形なので合算対象から除外する
-  const candidates = (pdfFiles || []).filter(f => !/削除|テンプレ/.test(String(f.name || '')));
-  const priced = candidates.filter(f => Number.isFinite(Number(f.amount)) && Number(f.amount) > 0);
-  const seikyu = priced.filter(f => f.amount_source === 'seikyu');
-  if (seikyu.length) return seikyu.reduce((s, f) => s + Number(f.amount), 0);
-  if (priced.length === 1) return Number(priced[0].amount);
-  return null;
+  const { sumInvoicePdfAmounts } = require('../utils/payout');
+  return sumInvoicePdfAmounts(pdfFiles);
+}
+
+// ADR 046 Stage 4: HFS 製 PDF（appProperties.hfs_invoice_id）の請求書を DB でまとめて引く。
+// 新方式（tax_mode='exclusive'）の提出済み・承認済みは PDF の文字ではなく payout_amount（差引お振込額）を正とする。
+// @returns {Promise<Map<string, object>>} invoice_id -> hfsInvoicePayoutAmount の結果（対象外は入れない）
+async function payoutLoadHfsInvoiceAmounts(invoiceIds) {
+  const { hfsInvoicePayoutAmount } = require('../utils/payout');
+  const out = new Map();
+  const ids = [...new Set((invoiceIds || []).filter(Boolean).map(String))];
+  for (let k = 0; k < ids.length; k += 150) {
+    const { data, error } = await supabase
+      .from('invoices')
+      .select('id, status, tax_mode, subtotal_amount, tax_amount, total_amount, withholding_amount, payout_amount')
+      .in('id', ids.slice(k, k + 150));
+    if (error) { console.warn(`[payouts] HFS請求書の取得失敗（PDF読み取りにフォールバック）: ${error.message}`); return out; }
+    for (const inv of (data || [])) {
+      const hit = hfsInvoicePayoutAmount(inv);
+      if (hit) out.set(String(inv.id), hit);
+    }
+  }
+  return out;
 }
 
 function payoutRecordToJson(rec, user, extra = {}) {
@@ -28705,6 +28724,7 @@ async function scanPayoutDriveMonth(year, month) {
   const recByUser = new Map((recs || []).map(r => [r.user_id, r]));
 
   const pendingExtract = []; // { entry, driveFile }
+  const hfsRefs = []; // { entry, driveFile, user_id, invoice_id, refresh } — HFS 製 PDF（ADR 046 Stage 4）
   const upserts = new Map(); // user_id -> { pdf_files, is_new, write }
   for (const scan of scans) {
     const existing = recByUser.get(scan.user_id);
@@ -28714,9 +28734,16 @@ async function scanPayoutDriveMonth(year, month) {
     let changed = false;
     for (const f of scan.files) {
       const prev = prevById.get(f.id);
+      const hfsInvoiceId = f.appProperties && f.appProperties.hfs_invoice_id ? String(f.appProperties.hfs_invoice_id) : null;
       if (prev && prev.modified_at === f.modifiedTime) {
         const entry = { ...prev };
         nextFiles.push(entry);
+        // HFS 製 PDF は毎スキャン DB を引き直す（提出済みの新方式は payout_amount を正にする。
+        // Stage 4 前に「ご請求金額」で読んでいた新方式の PDF もここで差引お振込額に直る）
+        if (hfsInvoiceId) {
+          hfsRefs.push({ entry, driveFile: f, user_id: scan.user_id, invoice_id: hfsInvoiceId, refresh: true });
+          continue;
+        }
         // 抽出失敗（null）と「合計」由来（gokei）は毎スキャン再抽出して自己修復する
         // （SA容量超過などの一時失敗の固定化防止＋「ご請求金額」認識改善の後追い反映）
         if (drive && (entry.amount == null || entry.amount_source === 'gokei')) {
@@ -28734,7 +28761,8 @@ async function scanPayoutDriveMonth(year, month) {
         amount_source: null,
       };
       nextFiles.push(entry);
-      if (drive) pendingExtract.push({ entry, driveFile: f, user_id: scan.user_id });
+      if (hfsInvoiceId) hfsRefs.push({ entry, driveFile: f, user_id: scan.user_id, invoice_id: hfsInvoiceId, refresh: false });
+      else if (drive) pendingExtract.push({ entry, driveFile: f, user_id: scan.user_id });
     }
     if (nextFiles.length !== prevFiles.length) changed = true;
     upserts.set(scan.user_id, { pdf_files: nextFiles, is_new: changed, write: changed || !existing });
@@ -28752,6 +28780,40 @@ async function scanPayoutDriveMonth(year, month) {
       if (!prevFiles.length) continue;
       upserts.set(mf.user_id, { pdf_files: [], is_new: false, write: true });
       console.log(`[payouts] ${year}/${month} user=${mf.user_id} のフォルダから PDF が無くなったため pdf_files を空にします（旧 ${prevFiles.length} 件）`);
+    }
+  }
+
+  // HFS 製 PDF: 新方式の提出済み請求書は DB の payout_amount（差引お振込額）を正とする。
+  // 旧方式・未提出・DB 取得失敗は従来どおり PDF の文字から読む（旧方式の結果は変えない）
+  if (hfsRefs.length) {
+    const hfsById = await payoutLoadHfsInvoiceAmounts(hfsRefs.map(r => r.invoice_id));
+    for (const r of hfsRefs) {
+      const hit = hfsById.get(r.invoice_id);
+      if (hit) {
+        const before = JSON.stringify([r.entry.amount, r.entry.amount_source, r.entry.subtotal_amount, r.entry.total_amount]);
+        Object.assign(r.entry, {
+          amount: hit.amount,
+          amount_source: hit.source,
+          hfs_invoice_id: hit.hfs_invoice_id,
+          tax_mode: hit.tax_mode,
+          subtotal_amount: hit.subtotal_amount,
+          total_amount: hit.total_amount,
+          withholding_amount: hit.withholding_amount,
+        });
+        const after = JSON.stringify([r.entry.amount, r.entry.amount_source, r.entry.subtotal_amount, r.entry.total_amount]);
+        if (r.refresh && before !== after) { const u = upserts.get(r.user_id); if (u) u.write = true; }
+        continue;
+      }
+      // DB で決められない（旧方式など）→ PDF 読み取り。前回 DB 由来だった値は捨てて読み直す
+      if (r.entry.amount_source === 'hfs_db') {
+        for (const k of ['hfs_invoice_id', 'tax_mode', 'subtotal_amount', 'total_amount', 'withholding_amount']) delete r.entry[k];
+        r.entry.amount = null;
+        r.entry.amount_source = null;
+        const u = upserts.get(r.user_id); if (u) u.write = true;
+      }
+      if (drive && (!r.refresh || r.entry.amount == null || r.entry.amount_source === 'gokei')) {
+        pendingExtract.push({ entry: r.entry, driveFile: r.driveFile, user_id: r.user_id, refresh: r.refresh });
+      }
     }
   }
 
@@ -29030,7 +29092,7 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
     if (!rec) return res.status(404).json({ error: '対象の振込レコードが見つかりません' });
 
     const { resolveCreativeRoleCost } = require('../utils/pricing');
-    const { evaluatePayoutDiffMulti, extractCreativeKeys } = require('../utils/payout');
+    const { evaluatePayoutDiffMulti, extractCreativeKeys, resolveDiffInvoiceBasis } = require('../utils/payout');
 
     // ---------- 1) PDFから明細キーを抽出（PDF申告が正） ----------
     let keys = { tails: [], names: [] };
@@ -29163,11 +29225,15 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
     };
     let lineCheck = null;
     let status;
+    // ADR 046 Stage 4: 新方式の invoice_amount は源泉を引いた差引お振込額。実データ（税抜）とは
+    // 税抜小計（subtotal_amount）で比べる（税込換算での一致は見ない）。旧方式は従来どおり
+    const diffBasis = resolveDiffInvoiceBasis({ invoiceAmount: rec.invoice_amount, amountSource: rec.amount_source, pdfFiles });
     let verdict = evaluatePayoutDiffMulti({
-      invoiceAmount: rec.invoice_amount,
+      invoiceAmount: diffBasis.amount,
       currentTotal: totals.current,
       prevTotal: totals.prev,
       undeliveredTotal: totals.undelivered,
+      taxExclusive: diffBasis.tax_exclusive,
     });
 
     if (keyMode) {
@@ -29250,13 +29316,18 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
 
     const notes = [
       '明細突合はPDFに記載されたCR連番/ファイル名を正として、本人担当・納品状況をHFSと照合しています（金額タイルは参考値）。',
-      '実データはHFS登録の per-unit 支払単価の集計（税抜ベースのことが多い）。請求書は税込額面のため約10%の差は消費税の可能性があります。',
+      diffBasis.basis === 'subtotal'
+        ? '10月分以降の新方式の請求書なので、請求書の「小計（税抜）」と実データ（税抜）を比べています（振込額は源泉徴収を引いた差引お振込額です）。'
+        : '実データはHFS登録の per-unit 支払単価の集計（税抜ベースのことが多い）。請求書は税込額面のため約10%の差は消費税の可能性があります。',
       'LP/HP一式・時給（秘書業務/時給ディレクション）・立替経費・HFS未登録案件は突合対象外です（差分＝誤りとは限りません）。',
     ];
     if (zeroPriceCount > 0) notes.push(`当月納品に単価が解決できない（¥0）クリエイティブが ${zeroPriceCount} 件あります（line 未紐付けの可能性）。`);
 
     const detail = {
-      invoice_amount: rec.invoice_amount ?? null,
+      invoice_amount: diffBasis.amount ?? null,
+      invoice_amount_label: diffBasis.basis === 'subtotal' ? '請求額（税抜小計）' : (diffBasis.basis === 'mixed' ? '請求額（税込換算）' : '請求額'),
+      payout_amount: rec.invoice_amount ?? null,
+      tax_exclusive: diffBasis.tax_exclusive,
       actual_total: totals.current,
       delta: verdict.delta,
       delta_with_tax: verdict.delta_with_tax,

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>HARUKA FILM｜請求書エディタの使い方（近日公開）</title>
+<title>HARUKA FILM｜請求書エディタの使い方</title>
 <link rel="icon" type="image/png" href="/icon-192.png">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
@@ -199,7 +199,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 /* ===== このページ専用（請求書エディタ） ===== */
 .flow-row.flow-5{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr auto 1fr}
 
-/* 近日公開の注意書き */
+/* 公開のお知らせ */
 .soon-notice{margin-top:28px;background:linear-gradient(135deg,#FFF7ED 0%,#fff 70%);border:2px solid var(--star);border-radius:14px;padding:16px 18px;display:flex;gap:14px;align-items:flex-start;box-shadow:0 4px 14px rgba(245,158,11,0.18)}
 .soon-notice-icon{font-size:28px;line-height:1;flex-shrink:0}
 .soon-notice h2{font-size:16px;font-weight:800;color:var(--star-deep);margin-bottom:4px}
@@ -269,7 +269,7 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
 <header class="hero">
   <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
   <div class="hero-inner">
-    <span class="hero-badge">GUIDE ／ 近日公開の機能</span>
+    <span class="hero-badge">GUIDE ／ 2026年10月分から</span>
     <h1>🧾 請求書エディタの使い方<span>納品したものを選んで、単価を入れて、提出するまで</span></h1>
     <div class="hero-eta">⏱ 読了 約 8 分</div>
   </div>
@@ -277,13 +277,13 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
 
 <main class="container">
 
-<!-- 近日公開の注意書き -->
-<section class="soon-notice" role="note" aria-label="近日公開のお知らせ">
+<!-- 公開のお知らせ -->
+<section class="soon-notice" role="note" aria-label="公開のお知らせ">
   <span class="soon-notice-icon">🆕</span>
   <div>
-    <h2>近日公開：この画面はまだ使えません</h2>
-    <p>このページは、これから HFS に入る <b>新しい請求書エディタ</b> の使い方を先にお見せするものです。画面は完成イメージで、細かいところは変わることがあります。いつの請求から使うかも確認中です。</p>
-    <p style="margin-top:6px">今の請求書の作り方は <a href="/guide-invoice.html">請求書ガイド（請求書ドラフト → 提出）</a> を見てください。</p>
+    <h2>2026年10月分から使えます</h2>
+    <p><b>2026年10月分以降</b> の請求書は、この <b>新しい請求書エディタ</b> で作ります（税抜＋源泉徴収）。提出すると、源泉徴収税額と <b>差引お振込額</b> が載った PDF があなたの請求書フォルダに保存され、振り込みは差引お振込額で行われます。</p>
+    <p style="margin-top:6px">9月分までの請求書は、これまでどおり <a href="/guide-invoice.html">請求書ガイド（請求書ドラフト → 提出）</a> の手順です。</p>
   </div>
 </section>
 
@@ -348,7 +348,7 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
   </div>
   <div class="step-card">
     <p>・並ぶのは <b>自分が担当して、納品が完了したもの</b> だけです。</p>
-    <p>・前の月までに納品して、まだ請求していないものには <span class="pill prev">前月・未請求</span> と付きます（どこまでさかのぼるかは確認中です）。</p>
+    <p>・前の月までに納品して、まだ請求していないものには <span class="pill prev">前月・未請求</span> と付きます（3か月前の分までさかのぼって出ます）。</p>
     <p>・まだ納品していないものは、下にグレーで出ます。<b>選べません</b>。日付は「―」になります。</p>
 
     <div class="ie-screen" role="img" aria-label="請求書作成画面のイメージ">
@@ -420,7 +420,7 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
         <dt class="big">差引お振込額</dt><dd class="big" id="t-pay">0</dd>
       </dl>
       <div class="ie-msg" id="msg" role="status"></div>
-      <div class="ie-bar bottom"><span class="ie-sp"></span><button class="ie-btn" type="button" id="pdf">PDF を見る</button><button class="ie-btn primary" type="button" id="submit">提出する</button></div>
+      <div class="ie-bar bottom"><span class="ie-sp"></span><button class="ie-btn" type="button" id="pdf">PDFを見る</button><button class="ie-btn primary" type="button" id="submit">提出する</button></div>
     </div>
     <p class="ie-note">💡 試してみること：①「参考単価を入れる」→ ② どこかの単価を参考単価より高くしてみる（行が赤くなります）→ ③「＋ HFS外の行」→ ④「提出する」</p>
   </div>
@@ -453,8 +453,8 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
   <div class="step-card">
     <p>・<b>参考単価より高い単価</b> の行は赤くなります。理由を書けば提出できます（例：修正回数が多かった、尺が長い）。</p>
     <p>・<b>単価が空いている行</b> があると提出できません。0 円で出したいときは 0 を入れます。</p>
-    <p>・「PDF を見る」で、提出前に請求書の見た目を確認できます。</p>
-    <p>・<b>「提出する」</b> を押すと、PDF があなたの請求書フォルダに保存されます。そのあとは今と同じく、管理者の確認を経て振込に進みます。</p>
+    <p>・「PDFを見る」で、提出前に請求書の見た目を確認できます。</p>
+    <p>・<b>「提出する」</b> を押すと、PDF があなたの請求書フォルダに保存されます。PDF には小計（税抜）・消費税・ご請求金額（税込）・源泉徴収税額・<b>差引お振込額</b> が載ります。そのあとは今と同じく、管理者の確認を経て、差引お振込額が振り込まれます。</p>
   </div>
   <div class="wanpoint">
     <div class="wanpoint-title">ここだけは絶対！</div>
@@ -499,7 +499,7 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
   <div class="trouble-list">
     <div class="trouble-item">
       <span class="trouble-icon">⏳</span>
-      <div><div class="trouble-q">まだ納品していない仕事を請求したい</div><div class="trouble-a">この画面では選べません。納品が完了してから、その月の請求書に入れてください。初稿の時点で請求する約束の案件は、扱いを確認中です。</div></div>
+      <div><div class="trouble-q">まだ納品していない仕事を請求したい</div><div class="trouble-a">この画面では選べません。納品が完了してから、その月の請求書に入れてください。初稿の時点で請求する約束の案件は、初稿を提出した時点で選べるようになります。</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">📅</span>
@@ -511,7 +511,7 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🏢</span>
-      <div><div class="trouble-q">法人として請求している</div><div class="trouble-a">源泉徴収の欄を「なし」に切り替えてください（最初は「あり」になっています）。</div></div>
+      <div><div class="trouble-q">法人として請求している</div><div class="trouble-a">メンバー情報で法人として登録されていれば、源泉徴収は最初から「なし」です。「あり」になっていたら「なし」に切り替えてください。</div></div>
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">💱</span>
@@ -528,7 +528,7 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
 
 <footer class="foot">
   <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
-  <p>HARUKA FILM SYSTEM ／ 請求書エディタの使い方（近日公開・画面は完成イメージ）</p>
+  <p>HARUKA FILM SYSTEM ／ 請求書エディタの使い方（2026年10月分から）</p>
 </footer>
 
 <script>

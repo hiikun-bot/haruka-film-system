@@ -31013,6 +31013,9 @@ function renderPayout() {
     }
     if (r.amount_source === 'manual') {
       amountCell += '<div><span class="po-badge" style="background:#fff8e1;color:#7A5F00">手入力</span></div>';
+    } else if ((r.pdf_files || []).some(f => f.amount_source === 'hfs_db' || f.amount_source === 'sashihiki')) {
+      // ADR 046: 10月分以降の新方式の請求書は源泉徴収を引いた「差引お振込額」を振り込む
+      amountCell += '<div><span class="po-badge" style="background:#e6f8f8;color:#1a7f7c" title="新方式の請求書（税抜＋源泉）。源泉徴収税額を引いた差引お振込額です">差引お振込額</span></div>';
     }
 
     // 振込先（未登録項目は−）
@@ -31225,7 +31228,7 @@ function poRenderDiffModal(id) {
     (r.diff_checked_at ? `<span style="font-size:11px;color:var(--text-muted)">チェック: ${esc(poJstDT(r.diff_checked_at))}</span>` : '') +
     `</div>` +
     `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">` +
-      `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">請求額</div><div style="font-size:18px;font-weight:700">${d.invoice_amount != null ? poYen(d.invoice_amount) : '−'}</div></div>` +
+      `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${esc(d.invoice_amount_label || '請求額')}</div><div style="font-size:18px;font-weight:700">${d.invoice_amount != null ? poYen(d.invoice_amount) : '−'}</div>${d.tax_exclusive && d.payout_amount != null ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">振込額（差引）${esc(poYen(d.payout_amount))}</div>` : ''}</div>` +
       `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">実データ計</div><div style="font-size:18px;font-weight:700">${d.actual_total != null ? poYen(d.actual_total) : '−'}</div></div>` +
       `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">差額${d.delta_with_tax != null ? '（税込差 ' + esc(poYen(d.delta_with_tax)) + '）' : ''}</div><div style="font-size:18px;font-weight:700;color:${delta === 0 ? 'var(--em-dark)' : '#C0392B'}">${d.delta != null ? poYen(d.delta) : '−'}</div></div>` +
       (d.prev_month ? `<div class="stat-card"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">前月納品（参考・${esc(String(d.prev_month.month))}月）</div><div style="font-size:18px;font-weight:700">${poYen(d.prev_month.total)}<span style="font-size:11px;font-weight:400;color:var(--text-muted)"> ${Number(d.prev_month.count) || 0}件</span></div></div>` : '') +
