@@ -1,5 +1,7 @@
 const {
   parsePortfolioText,
+  collectPortfolioRows,
+  looksLikeBulkPaste,
   formatPortfolioText,
   normalizePortfolioUrls,
   portfolioLinkKind,
@@ -134,5 +136,40 @@ describe('表示用', () => {
     expect(toPortfolioArray('[{"url":"https://a.example.com"}]')).toEqual([{ url: 'https://a.example.com' }]);
     expect(toPortfolioArray('{broken')).toEqual([]);
     expect(toPortfolioArray([{ url: '' }, null, { url: 'https://b.example.com' }])).toEqual([{ url: 'https://b.example.com' }]);
+  });
+});
+
+describe('collectPortfolioRows（項目名｜URL の行入力）', () => {
+  test('空行は無視・項目名の空白整理・重複 URL はまとめる', () => {
+    expect(collectPortfolioRows([
+      { title: ' 会社ホームページ ', url: 'https://arclarejp.com/' },
+      { title: '', url: '' },
+      { title: '', url: 'www.example.com' },
+      { title: '重複', url: 'https://arclarejp.com/' },
+    ])).toEqual({ items: [
+      { url: 'https://arclarejp.com/', title: '会社ホームページ' },
+      { url: 'https://www.example.com/', title: null },
+    ], errors: [] });
+  });
+
+  test('項目名だけ・不正 URL は件数番号つきでエラー（空行は数えない）', () => {
+    const { errors } = collectPortfolioRows([
+      { title: '', url: '' },
+      { title: '本出版LP', url: '' },
+      { title: 'x', url: 'javascript:alert(1)' },
+    ]);
+    expect(errors).toEqual([
+      '1 件目: URL を入れてください',
+      '2 件目: URL の形が正しくありません（https:// から入れてください）',
+    ]);
+  });
+});
+
+describe('looksLikeBulkPaste', () => {
+  test('URL 1 つだけは普通の入力、複数行・複数 URL はまとめ貼り', () => {
+    expect(looksLikeBulkPaste('https://a.example.com')).toBe(false);
+    expect(looksLikeBulkPaste('会社ホームページ')).toBe(false);
+    expect(looksLikeBulkPaste('会社ホームページ\nhttps://a.example.com')).toBe(true);
+    expect(looksLikeBulkPaste('https://a.example.com https://b.example.com')).toBe(true);
   });
 });

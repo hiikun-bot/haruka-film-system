@@ -89,6 +89,38 @@
     return { items, errors };
   }
 
+  // 編集モーダルの「項目名｜URL」の行入力 → { items, errors }。
+  // 両方空の行は無視。項目名だけの行・URL が不正な行は「N 件目: 理由」でエラー。
+  function collectPortfolioRows(rows) {
+    const items = [];
+    const errors = [];
+    const seen = new Set();
+    let n = 0;
+    (Array.isArray(rows) ? rows : []).forEach(row => {
+      const rawTitle = row && row.title != null ? String(row.title).trim() : '';
+      const rawUrl = row && row.url != null ? String(row.url).trim() : '';
+      if (!rawTitle && !rawUrl) return;
+      n++;
+      if (!rawUrl) { errors.push(`${n} 件目: URL を入れてください`); return; }
+      const url = normalizeUrl(rawUrl);
+      if (!url) { errors.push(`${n} 件目: URL の形が正しくありません（https:// から入れてください）`); return; }
+      if (seen.has(url)) return;
+      seen.add(url);
+      items.push({ url, title: normalizeTitle(rawTitle) });
+    });
+    if (items.length > MAX_ITEMS) {
+      errors.push(`登録できるのは ${MAX_ITEMS} 件までです（いま ${items.length} 件）`);
+    }
+    return { items, errors };
+  }
+
+  // 1 つの欄に複数行・複数 URL が貼られたか（行に分けて取り込むかの判定）
+  function looksLikeBulkPaste(text) {
+    const s = String(text == null ? '' : text);
+    const urls = s.match(/(?:https?:\/\/|www\.)\S+/gi) || [];
+    return urls.length >= 2 || (urls.length >= 1 && /\n\s*\S/.test(s.trim()));
+  }
+
   // 保存済みの配列 → テキストエリアの初期値
   function formatPortfolioText(items) {
     return (Array.isArray(items) ? items : [])
@@ -153,6 +185,8 @@
     MAX_ITEMS,
     normalizeUrl,
     parsePortfolioText,
+    collectPortfolioRows,
+    looksLikeBulkPaste,
     formatPortfolioText,
     normalizePortfolioUrls,
     portfolioLinkKind,

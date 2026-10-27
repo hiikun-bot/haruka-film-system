@@ -1139,6 +1139,21 @@ tr.row-help td{background:#FFFBF2}
 .mpf-item-title{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mpf-item-url{font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mpf-item-open{font-size:12px;color:var(--em-dark);flex-shrink:0}
+/* メンバー編集「基本情報」の 項目名｜URL 行入力 */
+.mpf-rows-head,.mpf-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) 32px;gap:6px;align-items:center}
+.mpf-rows-head{font-size:11px;color:var(--text-muted);font-weight:600;margin:2px 0 4px}
+.mpf-rows{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
+.mpf-row .form-input{font-size:13px;padding:8px 10px;min-width:0}
+.mpf-row .form-input.mpf-invalid{border-color:#E24B4A;background:#FFF5F5}
+.mpf-row-del{border:none;background:none;color:var(--text-muted);font-size:16px;cursor:pointer;border-radius:6px;height:32px}
+.mpf-row-del:hover{background:#FCEBEB;color:#A32D2D}
+@media (max-width:560px){
+  .mpf-rows-head{display:none}
+  .mpf-row{grid-template-columns:minmax(0,1fr) 32px;padding:8px;border:1px solid var(--border);border-radius:8px}
+  .mpf-row .mpf-row-title{grid-column:1;grid-row:1}
+  .mpf-row .mpf-row-url{grid-column:1;grid-row:2}
+  .mpf-row .mpf-row-del{grid-column:2;grid-row:1 / span 2}
+}
 .mposter-role-chip{
   display:inline-flex;align-items:center;gap:3px;
   padding:1px 6px;border-radius:8px;
@@ -5699,13 +5714,15 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
             年齢・生年月日の年を非表示にする（月日のみ表示）
           </label>
         </div>
-        <!-- 🌐 ポートフォリオ（実績 URL）— 1 行 1 件。保存するとメンバー欄に「🌐 ポートフォリオ」として出る -->
+        <!-- 🌐 ポートフォリオ（実績 URL）— 「項目名｜URL」の行入力。保存するとメンバー欄に「🌐 ポートフォリオ」として出る。
+             チャットの文面（複数行・複数 URL）をどの欄に貼っても自動で行に分かれる（mpfRowsOnPaste） -->
         <div class="form-group" style="margin-top:20px;margin-bottom:4px">
-          <label class="form-label">🌐 ポートフォリオ・実績 URL <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・1 行に 1 件・20 件まで）</span></label>
-          <textarea class="form-input" id="m-portfolio-urls" rows="4" oninput="previewMemberPortfolioInput()"
-            placeholder="会社ホームページ https://example.com/&#10;ブランドムービー https://youtu.be/xxxx&#10;https://drive.google.com/…（見出しは省略可）"
-            style="resize:vertical;font-size:13px;line-height:1.6"></textarea>
-          <div id="m-portfolio-preview" style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.6">「見出し URL」を 1 行ずつ、または見出しの次の行に URL。チャットの文面をそのまま貼っても読み取ります。保存するとメンバー欄にすぐ表示されます。</div>
+          <label class="form-label">🌐 ポートフォリオ・実績 URL <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・20 件まで）</span></label>
+          <div class="mpf-rows-head"><span>項目名</span><span>URL</span><span></span></div>
+          <div id="m-portfolio-rows" class="mpf-rows"></div>
+          <button type="button" class="tr-add-btn" onclick="mpfRowsAdd(null, true)">＋ 実績を追加</button>
+          <div id="m-portfolio-preview" style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6"></div>
+        </div>
         </div>
       </div>
 
@@ -14351,23 +14368,92 @@ async function copyMemberPortfolioText() {
     showToast('コピーできませんでした', 'warn');
   }
 }
-// 編集モーダルの入力欄の下に「N 件」/ エラー行をその場で出す
-function previewMemberPortfolioInput() {
-  const el = document.getElementById('m-portfolio-urls');
+// 編集モーダルの「項目名｜URL」行入力（#m-portfolio-rows）
+function mpfRowsRender(items) {
+  const box = document.getElementById('m-portfolio-rows');
+  if (!box) return;
+  box.innerHTML = '';
+  const list = window.MemberPortfolioUrls ? MemberPortfolioUrls.toPortfolioArray(items) : [];
+  list.forEach(it => mpfRowsAdd(it, false));
+  if (!list.length) mpfRowsAdd(null, false); // 空でも 1 行は出しておく
+  mpfRowsUpdateStatus();
+}
+function mpfRowsAdd(item, focus) {
+  const box = document.getElementById('m-portfolio-rows');
+  if (!box) return null;
+  const max = window.MemberPortfolioUrls ? MemberPortfolioUrls.MAX_ITEMS : 20;
+  if (box.children.length >= max) { showToast(`ポートフォリオURLは ${max} 件までです`, 'warn'); return null; }
+  const row = document.createElement('div');
+  row.className = 'mpf-row';
+  row.innerHTML = `<input class="form-input mpf-row-title" maxlength="80" placeholder="例：会社ホームページ">
+    <input class="form-input mpf-row-url" inputmode="url" placeholder="https://…">
+    <button type="button" class="mpf-row-del" title="この行を削除">×</button>`;
+  const [t, u] = row.querySelectorAll('input');
+  t.value = (item && item.title) || '';
+  u.value = (item && item.url) || '';
+  [t, u].forEach(el => {
+    el.addEventListener('input', mpfRowsUpdateStatus);
+    el.addEventListener('paste', mpfRowsOnPaste);
+  });
+  row.querySelector('.mpf-row-del').addEventListener('click', () => {
+    row.remove();
+    if (!box.children.length) mpfRowsAdd(null, false);
+    mpfRowsUpdateStatus();
+  });
+  box.appendChild(row);
+  if (focus) t.focus();
+  return row;
+}
+function mpfRowsRead() {
+  return Array.from(document.querySelectorAll('#m-portfolio-rows .mpf-row')).map(r => ({
+    row: r,
+    title: r.querySelector('.mpf-row-title').value,
+    url: r.querySelector('.mpf-row-url').value,
+  }));
+}
+// チャットの文面（見出し行→URL 行・1 行に見出し＋URL・複数 URL）を貼られたら行に分けて取り込む
+function mpfRowsOnPaste(e) {
+  if (!window.MemberPortfolioUrls) return;
+  const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+  if (!MemberPortfolioUrls.looksLikeBulkPaste(text)) return; // URL 1 つなどは普通に貼る
+  e.preventDefault();
+  const { items, errors } = MemberPortfolioUrls.parsePortfolioText(text);
+  const cur = e.target.closest('.mpf-row');
+  let first = true;
+  items.forEach(it => {
+    // 貼った行が空ならそこに入れ、残りは空き行→新しい行へ
+    let row = null;
+    if (first && cur && !cur.querySelector('.mpf-row-title').value.trim() && !cur.querySelector('.mpf-row-url').value.trim()) row = cur;
+    if (!row) row = mpfRowsRead().find(r => !r.title.trim() && !r.url.trim())?.row || mpfRowsAdd(null, false);
+    first = false;
+    if (!row) return;
+    row.querySelector('.mpf-row-title').value = it.title || '';
+    row.querySelector('.mpf-row-url').value = it.url;
+  });
+  mpfRowsUpdateStatus();
+  showToast(`${items.length} 件を行に分けて入れました` + (errors.length ? `（読み取れない行があります: ${errors[0]}）` : ''), errors.length ? 'warn' : undefined);
+}
+// 入力欄の下に「✓ N 件」/ エラーを出し、問題のある欄を赤くする
+function mpfRowsUpdateStatus() {
   const out = document.getElementById('m-portfolio-preview');
-  if (!el || !out || !window.MemberPortfolioUrls) return;
-  if (!el.value.trim()) {
-    out.style.color = 'var(--text-muted)';
-    out.textContent = '「見出し URL」を 1 行ずつ、または見出しの次の行に URL。チャットの文面をそのまま貼っても読み取ります。保存するとメンバー欄にすぐ表示されます。';
-    return;
-  }
-  const { items, errors } = MemberPortfolioUrls.parsePortfolioText(el.value);
+  if (!out || !window.MemberPortfolioUrls) return;
+  const rows = mpfRowsRead();
+  rows.forEach(r => {
+    const filled = r.title.trim() || r.url.trim();
+    const bad = filled && r.url.trim() && !MemberPortfolioUrls.normalizeUrl(r.url);
+    const missing = filled && !r.url.trim() && r.title.trim();
+    r.row.querySelector('.mpf-row-url').classList.toggle('mpf-invalid', !!(bad || missing));
+  });
+  const { items, errors } = MemberPortfolioUrls.collectPortfolioRows(rows);
   if (errors.length) {
     out.style.color = '#A32D2D';
     out.textContent = '⚠ ' + errors.join(' ／ ');
-  } else {
+  } else if (items.length) {
     out.style.color = 'var(--em-dark)';
-    out.textContent = `✓ ${items.length} 件: ` + items.map(it => MemberPortfolioUrls.portfolioLinkLabel(it)).join('、');
+    out.textContent = `✓ ${items.length} 件。保存するとメンバー欄にすぐ表示されます。`;
+  } else {
+    out.style.color = 'var(--text-muted)';
+    out.textContent = 'チャットの文面（項目名と URL）をそのまま貼ると、自動で行に分かれます。';
   }
 }
 
@@ -18712,7 +18798,7 @@ function openAddMember() {
   if (document.getElementById('m-tripod-info'))   document.getElementById('m-tripod-info').value = '';
   if (document.getElementById('m-lighting-info')) document.getElementById('m-lighting-info').value = '';
   renderHolidayWeekdays([0, 6]); // 既定: 日・土
-  if (document.getElementById('m-portfolio-urls')) { document.getElementById('m-portfolio-urls').value = ''; previewMemberPortfolioInput(); }
+  mpfRowsRender([]);
   applyMemberModalAdminFields(null);
   setMemberModalAvatar(null, null);
   onRoleChange('editor');
@@ -18764,8 +18850,7 @@ function openEditMember(m) {
     try { initTimeRanges('weekday', wdRanges); } catch(_) {}
     try { initTimeRanges('weekend', weRanges || [{from:10,to:17}]); } catch(_) {}
     setVal('m-note', m.note || '');
-    setVal('m-portfolio-urls', window.MemberPortfolioUrls ? MemberPortfolioUrls.formatPortfolioText(m.portfolio_urls) : '');
-    try { previewMemberPortfolioInput(); } catch(_) {}
+    try { mpfRowsRender(m.portfolio_urls); } catch(_) {}
     // クリエイティブ初期ビュー: PR #277 で DB 列 creative_default_view に移行。
     // 旧 hfs_cv_default_<id> localStorage は後方互換フォールバックとして残す（DB 列が NULL のとき）。
     {
@@ -19022,12 +19107,11 @@ async function submitMember() {
   const tripod_info   = document.getElementById('m-tripod-info')?.value.trim()   || null;
   const lighting_info = document.getElementById('m-lighting-info')?.value.trim() || null;
   const holiday_weekdays = collectHolidayWeekdays();
-  // 🌐 ポートフォリオ URL（1 行 1 件）。不正な行があれば保存を止めて基本情報タブへ戻す
+  // 🌐 ポートフォリオ URL（項目名｜URL の行）。不正な行があれば保存を止めて基本情報タブへ戻す
   let portfolio_urls;
   {
-    const pfEl = document.getElementById('m-portfolio-urls');
-    if (pfEl && window.MemberPortfolioUrls) {
-      const parsed = MemberPortfolioUrls.parsePortfolioText(pfEl.value);
+    if (document.getElementById('m-portfolio-rows') && window.MemberPortfolioUrls) {
+      const parsed = MemberPortfolioUrls.collectPortfolioRows(mpfRowsRead());
       if (parsed.errors.length) {
         switchMemberTab(0);
         showToast('ポートフォリオURL: ' + parsed.errors[0], 'warn');
