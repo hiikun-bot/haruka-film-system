@@ -138,6 +138,8 @@ No 納品日 品目                         税抜単価 数量 税抜金額
 
 二重請求チェックは `invoice_items(creative_id, cost_type)` のインデックス＋ `invoices(status)` の 1 クエリでまとめて行う（N+1 にしない）。DB 制約（部分一意インデックス）は請求書の status を跨げないため使わない。
 
+> **2026-10-28 追補で変更**: 読むチェックと確定が別トランザクションだと同時提出で両方通るため、提出の確定は DB 関数の中で行い、請求済み記録テーブル `invoice_billing_claims` の主キーで物理的に一意にする（§8）。上のアプリ側チェックは画面に理由を返すために残す。
+
 ### 4. データの持ち方
 
 新テーブルは作らない。既存の `invoices` / `invoice_items` に列を足す（migration は Stage 1）。
@@ -204,3 +206,61 @@ Stage 2 以降は Stage 1 の SQL が本番に入ったことを確認してか�
 - **既存の修正モーダルを改造するだけ**: 1 行ずつのフォームで、まとめ入力・貼り付け・キーボード移動が入れにくい。内税前提の作りと新方式が同じ画面で混ざる。却下（旧方式の請求書用に残す）
 - **新テーブル（`member_invoices` 等）を作る**: 振込管理・分析・PDF・承認フローが全部 `invoices` を見ているため、二重管理になる。列追加で方式フラグを持つ方を採用
 - **DB の一意制約で二重請求を防ぐ**: 「提出済みの請求書の中で一意」は status が別テーブルにあるため部分一意インデックスで表せない。トリガーは運用・デバッグが重い。サーバーの提出時チェック＋インデックスで足りると判断
+  - → **2026-10-28 撤回**（§8）。レビューで同時提出・自動保存との競合が見つかったため、status を跨がない「請求済み記録」テーブルを別に持ち、その主キーで一意にする方式に変えた
+
+## 8. 追補（2026-10-28）: 保存・提出を DB の 1 トランザクションで行う（二重請求・自動保存との競合の修正）
+
+### 見つかった問題（レビュー・本番事故は未確認）
+
+| # | 問題 | 原因 |
+|---|---|---|
+| 1 | 同じ CR×役割を含む別々の請求書を同時に提出すると、両方とも提出できる | 二重請求チェック（読む）と提出確定（書く）が別トランザクション |
+| 2 | 自動保存と提出が重なると、提出後に明細が書き換わり合計と明細が食い違う | PUT は「請求書の updated_at 更新 → 明細の書き込み」を別々に行う。提出がその間に明細を読むと、古い明細で検証して確定し、その後に PUT の明細書き込みが入る |
+
+### 決定
+
+**(a) 請求済み記録テーブル `invoice_billing_claims`（新テーブル・RLS 有効・ポリシーなし）**
+
+| 列 | 意味 |
+|---|---|
+| `issuer_id` / `creative_id` / `cost_type` | **主キー**。同じ人が同じ CR×役割を 2 回請求済みにできない（他の人が同じ CR を自分の役割で請求するのは従来どおり可） |
+| `invoice_id` | どの請求書で請求済みか（`invoices` ON DELETE CASCADE） |
+| `invoice_item_id` | どの明細か（`invoice_items` ON DELETE CASCADE） |
+| `claimed_at` | 記録した時刻 |
+
+- **入れる**: 新方式（exclusive）の提出確定時（下の関数の中だけ）
+- **解放する**: 請求書の status が `draft` / `rejected` に変わったとき（`invoices` の AFTER UPDATE OF status トリガー。差し戻し `/invoices/:id/reject` を含むどの経路でも外れる）。請求書・明細の削除は外部キーの CASCADE。承認（`approved`）では外れない
+- 旧方式（inclusive）の請求書は記録しない（旧フローの提出・差戻・削除は一切変えない。過去に重複があっても旧フローが止まらない）
+- migration で、既存の提出済み・承認済みの新方式請求書をバックフィル（同じ組が既に 2 件あれば先に提出された 1 件だけ記録。確認用 SELECT を migration 末尾に付ける）
+
+**(b) DB 関数（RPC）。SECURITY INVOKER・search_path 固定・EXECUTE は service_role のみ**
+
+```
+invoice_editor_save_draft(id, expected_updated_at, invoice, delete_ids, updates, inserts)   ← PUT /invoice-editor/:id
+  1. SELECT … FROM invoices WHERE id FOR UPDATE（請求書行ロック）
+  2. tax_mode='exclusive'・status IN (draft, rejected)・updated_at 一致 を確認（違えば NOT_EDITABLE / CONFLICT を返す）
+  3. 明細の削除・更新・追加（この請求書の行だけ。CR 行の数量は 1 固定、作業時間・一式の行は金額を変えない）
+  4. 合計列と updated_at を更新
+invoice_editor_submit(id, expected_updated_at, items 指紋, ref_updates, totals)            ← POST /invoice-editor/:id/submit
+  1. pg_advisory_xact_lock(発行者)（同じ人の提出を 1 本ずつに並べる）
+  2. SELECT … FOR UPDATE（請求書行ロック。保存と提出はここで直列になる）
+  3. status・updated_at を確認
+  4. 明細がアプリの検証時と同じか（指紋 {id, creative_id, cost_type, unit_price, quantity} の差集合）。違えば STALE_ITEMS
+  5. 二重請求: 請求書内の重複 ／ 請求済み記録 ／ 旧方式も含む本人の提出済み・承認済み明細。あれば DUPLICATE と該当行
+  6. 参考単価の控え直し → 請求済み記録を INSERT（主キー違反なら全体が取り消される）→ status='submitted'・金額列を確定
+```
+
+- ロック順は「advisory → 請求書行」。保存は請求書行だけを取るので循環しない（デッドロックしない）
+- 「本人の分・納品済み・参考単価・理由・合計一致」の判定はこれまでどおりアプリ（`utils/invoice-editor.js`）で行い、その判定に使った明細を指紋として関数に渡す。関数はロックの中で「その明細のまま」であることだけを確かめる（判定ロジックを SQL に二重実装しない）
+- 関数が無い環境（migration 未適用）では、アプリは **503 で止める**。旧ロジックへ黙ってフォールバックしない（競合を再発させないため）
+
+**(c) 画面（同じ追補で直す）**
+
+- 未保存・保存失敗のまま × / Esc で閉じようとしたら、まず保存をやり直す。だめなら画面内の確認で「もう一度保存」「破棄して閉じる」「編集に戻る」を選ばせる。タブを閉じる・再読込は `beforeunload` で警告
+- 単価・数量に不正な文字がある行は赤くして理由を出し、1 行でもあれば「提出する」を押せなくする。提出時は画面に出ている明細（単価・数量）をサーバーへ送り、サーバーが `parseMoney` で厳格に検証（不正なら 400）・保存済みの明細と違えば 409（保存し直してから提出）
+
+### Alternatives（追補）
+
+- **部分一意インデックスを `invoice_items` に張る**: status が `invoices` 側にあり表せない。`invoice_items` に status を複製するのは同期漏れのもと。却下
+- **アプリ側で SELECT → UPDATE … WHERE updated_at だけで済ませる（従来）**: 別の請求書同士の同時提出は防げない。却下
+- **判定ロジックをすべて SQL に移す**: `resolveCreativeRoleCost`・`isCreativeOfUser` を SQL に二重実装することになり、仕様変更のたびにずれる。指紋照合で「検証した明細のまま確定」を保証する方を採用
