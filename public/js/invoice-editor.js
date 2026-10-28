@@ -113,7 +113,8 @@
         <tbody>
           ${billable.map(it => crRow(it, false)).join('')}
           ${d.hourly.map(x => fixedRow(x.hourly_key, 'hourly', x.label, x.total, `⏱ 作業時間報告（${d.month}月）`)).join('')}
-          ${d.installments.map(x => fixedRow(x.installment_key, 'installment', x.label, x.total, x.is_monthly_fee ? '📅 月額定額' : '📅 一式（分割支払）')).join('')}
+          ${d.installments.map(x => fixedRow(x.installment_key, 'installment', x.label, x.total, (x.is_monthly_fee ? '📅 月額定額' : '📅 一式（分割支払）')
+            + (x.pricing_pending ? ' <span title="金額が管理者の承認待ちです。承認されるまで請求書は作成できません（ADR 037）" style="font-size:10px;padding:1px 6px;border-radius:8px;background:#FEF3C7;color:#92400E;white-space:nowrap">🕓 承認待ち</span>' : ''))).join('')}
           ${undelivered.length ? `<tr class="ie-c-sep"><td colspan="${showThumb ? 5 : 4}">未納品（請求できません）</td></tr>` + undelivered.map(it => crRow(it, true)).join('') : ''}
         </tbody>
       </table>`;
@@ -172,7 +173,8 @@
       if (btn) { btn.disabled = false; btn.textContent = '請求書を作成する'; }
     }
     if (!res || !res.ok) {
-      const detail = Array.isArray(data.problems) && data.problems.length ? `（${data.problems.slice(0, 3).map(p => p.message).join(' / ')}）` : '';
+      const detail = Array.isArray(data.problems) && data.problems.length ? `（${data.problems.slice(0, 3).map(p => p.message).join(' / ')}）`
+        : Array.isArray(data.pending_lines) && data.pending_lines.length ? `（${data.pending_lines.slice(0, 3).map(l => `${l.project_name || ''}：${l.line_name || ''}`).join(' / ')}）管理者の承認後にもう一度お試しください` : '';
       showToast(`${data.error || '作成に失敗しました'}${detail}`, 'error');
       if (res && res.status === 409) tryRenderCandidates(cand.year, cand.month);
       return;

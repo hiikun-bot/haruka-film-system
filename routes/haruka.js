@@ -2674,13 +2674,23 @@ async function actorCanApprovePricing(req) {
 // line の「現在の承認済み値」スナップショット（差し戻し時の復元に使う）
 async function buildLinePricingSnapshot(lineId) {
   const [{ data: line }, { data: costs }] = await Promise.all([
-    supabase.from('project_estimate_lines').select('client_unit_price').eq('id', lineId).maybeSingle(),
+    supabase.from('project_estimate_lines').select('name, client_unit_price').eq('id', lineId).maybeSingle(),
     supabase.from('project_estimate_line_costs')
       .select('role_id, user_id, unit_price, pricing_type, percentage, actual_hours')
       .eq('line_id', lineId),
   ]);
+  // ADR 053: 月額定額は請求・集計の金額が各月の分割行（line_payment_installments）にあるので、それも控える
+  let installments;
+  if (String(line?.name || '').startsWith(MONTHLY_FEE_LINE_PREFIX)) {
+    const { data: insts, error: instErr } = await supabase.from('line_payment_installments')
+      .select('id, seq, total_count, label, target_month, payment_amount, client_amount, payee_user_id, note')
+      .eq('line_id', lineId);
+    if (instErr) throw new Error(instErr.message);
+    installments = insts || [];
+  }
   return {
     client_unit_price: Number(line?.client_unit_price) || 0,
+    ...(installments ? { installments } : {}),
     costs: (costs || []).map(c => ({
       role_id: c.role_id,
       user_id: c.user_id ?? null,
@@ -2934,7 +2944,7 @@ function stripClientPriceFromLine(row) {
   if (!row) return row;
   const { client_unit_price, ...rest } = row;
   if (rest.pricing_prev_snapshot && typeof rest.pricing_prev_snapshot === 'object') {
-    const { client_unit_price: _c, ...snapRest } = rest.pricing_prev_snapshot;
+    const { client_unit_price: _c, installments: _i, ...snapRest } = rest.pricing_prev_snapshot;
     rest.pricing_prev_snapshot = snapRest;
   }
   return rest;
@@ -3767,6 +3777,25 @@ router.post('/projects/:project_id/lines/:line_id/pricing/approve', requireAuth,
   res.json({ ok: true, line });
 });
 
+// 差し戻し時、月額定額の各月の行をスナップショットの状態へ戻す（ADR 053）。
+// 同じ id の行は値を戻し、申請後に増えた行は消し、申請後に消された行は同じ id で作り直す。
+async function restoreInstallmentsFromSnapshot(lineId, snapInsts) {
+  const { data: cur, error } = await supabase.from('line_payment_installments').select('id').eq('line_id', lineId);
+  if (error) throw new Error(error.message);
+  const keep = new Set(snapInsts.map(i => i.id));
+  const drop = (cur || []).map(i => i.id).filter(id => !keep.has(id));
+  if (drop.length) {
+    const { error: delErr } = await supabase.from('line_payment_installments').delete().in('id', drop);
+    if (delErr) throw new Error(delErr.message);
+  }
+  if (snapInsts.length) {
+    const nowIso = new Date().toISOString();
+    const { error: upErr } = await supabase.from('line_payment_installments')
+      .upsert(snapInsts.map(i => ({ ...i, line_id: lineId, updated_at: nowIso })), { onConflict: 'id' });
+    if (upErr) throw new Error(upErr.message);
+  }
+}
+
 // POST /api/projects/:project_id/lines/:line_id/pricing/reject   body: { reason }（必須）
 //   スナップショットあり → client_unit_price と line_costs を最後に承認された値へ戻し approved
 //   スナップショット無し → 紐づくクリエイティブが無ければ line 削除（deleted）／あれば line_costs 全削除＋
@@ -3812,6 +3841,10 @@ router.post('/projects/:project_id/lines/:line_id/pricing/reject', requireAuth, 
       const { error: insErr } = await supabase.from('project_estimate_line_costs').insert(costRows);
       if (insErr) return res.status(500).json({ error: insErr.message });
     }
+    if (Array.isArray(snap.installments)) {
+      try { await restoreInstallmentsFromSnapshot(lineId, snap.installments); }
+      catch (e) { return res.status(500).json({ error: `月額定額の各月の金額を戻せませんでした: ${e.message}` }); }
+    }
     await markLinePricingApproved(lineId, actorId);
     await notifyPricingDecision({ line: before, projectId, requesterId, actorId, approved: false, reason });
     const { data: line, error } = await selectLineRowById(lineId);
@@ -3831,6 +3864,11 @@ router.post('/projects/:project_id/lines/:line_id/pricing/reject', requireAuth, 
   }
   const { error: costDelErr } = await supabase.from('project_estimate_line_costs').delete().eq('line_id', lineId);
   if (costDelErr) return res.status(500).json({ error: costDelErr.message });
+  // 新規の月額定額は各月の行も承認前に作ったものなので消す（単価未設定に戻すのと同じ扱い）
+  if (String(before.name || '').startsWith(MONTHLY_FEE_LINE_PREFIX)) {
+    const { error: instDelErr } = await supabase.from('line_payment_installments').delete().eq('line_id', lineId);
+    if (instDelErr && !isMissingLpiTable(instDelErr)) return res.status(500).json({ error: instDelErr.message });
+  }
   const { error: clrErr } = await supabase.from('project_estimate_lines').update({ client_unit_price: 0 }).eq('id', lineId);
   if (clrErr) return res.status(500).json({ error: clrErr.message });
   await markLinePricingApproved(lineId, actorId);
@@ -6164,10 +6202,20 @@ router.put('/projects/:project_id/monthly-fee', requireAuth, requireAnyPermissio
 
     if (amount === 0) {
       if (!line) return res.json({ ok: true, removed: 0 });
+      // 解除も金額の変更なので、承認権限が無ければ承認待ちにする（差し戻せば消した月が戻るよう、消す前に控える）
+      const canApprove = await actorCanApprovePricing(req);
+      const snapshotsBefore = canApprove ? null : await capturePricingSnapshots([line.id]);
       const future = (line.installments || []).filter(i => i.target_month >= currentYmd).map(i => i.id);
       if (future.length) {
         const { error } = await supabase.from('line_payment_installments').delete().in('id', future);
         if (error) throw new Error(error.message);
+      }
+      if (!canApprove) {
+        const { error } = await supabase.from('project_estimate_line_costs').update({ unit_price: 0 }).eq('id', line.cost.id);
+        if (error) throw new Error(error.message);
+        await resequenceInstallments(line.id);
+        await applyPricingApprovalAfterWrite(req, [line.id], { projectId, snapshots: snapshotsBefore });
+        return res.json({ ok: true, removed: future.length, line_removed: false, line_pricing_approval: 'pending' });
       }
       const remaining = (line.installments || []).length - future.length;
       if (!remaining) {
@@ -8766,19 +8814,32 @@ function installmentInvoiceLabel(inst) {
   return `${parts.join(' ')}（${inst.seq}/${inst.total_count}）`;
 }
 
+// invoices.project_id の NOT NULL を外す migration（2026-10-29）が未適用の環境で、
+// 案件の無い明細（案件なしの時間報酬・立替経費）だけの請求書を作ろうとしたときの判定と文言
+function isInvoiceProjectIdNotNullError(err) {
+  return err?.code === '23502' && /project_id/.test(String(err?.message || ''));
+}
+function invoiceInsertErrorMessage(err) {
+  return isInvoiceProjectIdNotNullError(err)
+    ? '案件に紐づかない明細だけでは、まだ請求書を作れません。案件のある明細を1件以上一緒に選んでください'
+    : err.message;
+}
+
 async function installmentBuildInvoiceItems(userId, year, month) {
   const range = whMonthRange(year, month);
-  const { data, error } = await supabase
+  const runQuery = (lineCols) => supabase
     .from('line_payment_installments')
     .select(`
       id, line_id, seq, total_count, label, target_month, payment_amount, note,
-      line:project_estimate_lines(id, name, project_id, projects(id, name, clients(id, name)))
+      line:project_estimate_lines(${lineCols}, projects(id, name, clients(id, name)))
     `)
     .eq('payee_user_id', userId)
     .gte('target_month', range.start)
     .lt('target_month', range.end)
     .order('target_month', { ascending: true })
     .order('seq', { ascending: true });
+  let { data, error } = await runQuery('id, name, project_id, pricing_approval');
+  if (error && isMissingPricingApprovalColumn(error)) ({ data, error } = await runQuery('id, name, project_id'));
   if (error) {
     if (isMissingLpiTable(error)) return []; // migration 未適用環境では静かにスキップ
     throw new Error(error.message);
@@ -8801,9 +8862,25 @@ async function installmentBuildInvoiceItems(userId, year, month) {
       project_name: project?.name || '',
       client_name: project?.clients?.name || '',
       total: amount,
+      line_id: inst.line_id,
+      line_name: inst.line?.name || '',
+      // ADR 037: 承認待ちの成果物グループの金額は請求書にしない（月額定額の増額・解除も承認を通す）
+      pricing_pending: inst.line?.pricing_approval === 'pending',
     });
   }
   return items;
+}
+
+// 承認待ちの分割行が選ばれていたら 400 PRICING_PENDING の本文を返す（無ければ null）
+function installmentPendingError(selectedItems) {
+  const byLine = new Map();
+  for (const ii of selectedItems) {
+    if (ii.pricing_pending && !byLine.has(ii.line_id)) {
+      byLine.set(ii.line_id, { line_id: ii.line_id, project_id: ii.project_id, project_name: ii.project_name, line_name: ii.line_name });
+    }
+  }
+  if (!byLine.size) return null;
+  return { error: '承認待ちの単価が含まれているため請求書を生成できません', code: 'PRICING_PENDING', pending_lines: [...byLine.values()] };
 }
 
 // 一覧＋月次集計
@@ -16807,7 +16884,7 @@ router.get('/invoices/preview-items', async (req, res) => {
   // 例: 「プレスト／プレスト・ケアHP HP制作一式 着手金（1/2）」＝ payee_user_id = 自分の分割行。
   try {
     const instItems = await installmentBuildInvoiceItems(uid, year, month);
-    if (instItems.length) result.push(...instItems.map(ii => ({ ...ii, pricing_pending: false })));
+    if (instItems.length) result.push(...instItems);
   } catch (e) {
     console.warn('[preview-items] line_payment_installments load failed:', e.message);
   }
@@ -19421,9 +19498,11 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     const instYear = parseInt(req.body.year, 10) || new Date().getFullYear();
     const instMonth = parseInt(req.body.month, 10) || (new Date().getMonth() + 1);
     try {
-      const instItems = await installmentBuildInvoiceItems(issuer_id, instYear, instMonth);
+      const instItems = (await installmentBuildInvoiceItems(issuer_id, instYear, instMonth))
+        .filter(ii => installmentKeys.includes(ii.installment_key));
+      const pendingErr = installmentPendingError(instItems);
+      if (pendingErr) return res.status(400).json(pendingErr);
       for (const ii of instItems) {
-        if (!installmentKeys.includes(ii.installment_key)) continue;
         // 月額定額・分割支払だけの請求書はクリエイティブが無いので、ここで project_id を補完する（invoices.project_id は NOT NULL）
         if (!project_id && ii.project_id) project_id = ii.project_id;
         totalAmount += ii.total;
@@ -19449,9 +19528,6 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   }
 
   if (!itemRows.length) return res.status(400).json({ error: '該当するアサインが見つかりません' });
-  if (!project_id) {
-    return res.status(400).json({ error: '案件に紐づかない明細だけでは請求書を作れません。案件のある明細を1件以上一緒に選んでください' });
-  }
 
   // 請求書を保存
   const { data: invoice, error: iErr } = await supabase
@@ -19468,7 +19544,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     })
     .select()
     .single();
-  if (iErr) return res.status(500).json({ error: iErr.message });
+  if (iErr) return res.status(isInvoiceProjectIdNotNullError(iErr) ? 400 : 500).json({ error: invoiceInsertErrorMessage(iErr) });
 
   // 明細（コスト種別ごと）を一括保存
   const buildItemRow = (r, withAudit) => {
@@ -19822,7 +19898,7 @@ router.get('/invoice-editor/candidates', requireAuth, async (req, res) => {
       ...base,
       items,
       hourly: hourly.map(h => ({ hourly_key: h.hourly_key, label: h.label, total: h.total })),
-      installments: installments.map(i => ({ installment_key: i.installment_key, label: i.label, total: i.total, is_monthly_fee: !!i.is_monthly_fee })),
+      installments: installments.map(i => ({ installment_key: i.installment_key, label: i.label, total: i.total, is_monthly_fee: !!i.is_monthly_fee, pricing_pending: !!i.pricing_pending })),
     });
   } catch (e) {
     console.error('[invoice-editor][candidates]', e);
@@ -19905,9 +19981,11 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
     // 月額定額・分割支払・時間報酬だけの請求書はクリエイティブが無いので、明細の案件で project_id を補う（invoices.project_id は NOT NULL）
     let fallbackProjectId = null;
     if (installmentKeys.length) {
-      const insts = await installmentBuildInvoiceItems(issuerId, year, month);
+      const insts = (await installmentBuildInvoiceItems(issuerId, year, month))
+        .filter(it => installmentKeys.includes(it.installment_key));
+      const pendingErr = installmentPendingError(insts);
+      if (pendingErr) return res.status(400).json(pendingErr);
       for (const it of insts) {
-        if (!installmentKeys.includes(it.installment_key)) continue;
         if (it.project_id) fallbackProjectId = fallbackProjectId || it.project_id;
         rows.push({
           creative_id: null, creative_label: it.label, cost_type: 'installment_fee', label: it.is_monthly_fee ? '月額定額' : '一式（分割支払）',
@@ -19930,10 +20008,8 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
     const { count } = await supabase.from('invoices').select('*', { count: 'exact', head: true }).like('invoice_number', `INV-${todayYm}-%`);
     const invoiceNumber = `INV-${todayYm}-${String((count || 0) + 1).padStart(3, '0')}`;
     const firstCreative = rows.find(r => r.creative_id);
-    const projectId = (firstCreative ? (creativesById.get(firstCreative.creative_id) || {}).project_id : null) || fallbackProjectId;
-    if (!projectId) {
-      return res.status(400).json({ error: '案件に紐づかない明細だけでは請求書を作れません。案件のある明細を1件以上一緒に選んでください' });
-    }
+    // 案件の無い時間報酬・立替経費だけなら NULL（migrations/2026-10-29_invoices_project_id_nullable.sql）
+    const projectId = (firstCreative ? (creativesById.get(firstCreative.creative_id) || {}).project_id : null) || fallbackProjectId || null;
     const nowIso = new Date().toISOString();
 
     const { data: invoice, error: iErr } = await supabase.from('invoices').insert({
@@ -19952,7 +20028,7 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
       payout_amount: totals.payout,
       updated_at: nowIso,
     }).select('id, invoice_number').single();
-    if (iErr) return res.status(500).json({ error: iErr.message });
+    if (iErr) return res.status(isInvoiceProjectIdNotNullError(iErr) ? 400 : 500).json({ error: invoiceInsertErrorMessage(iErr) });
 
     const { error: itErr } = await supabase.from('invoice_items').insert(rows.map(r => ({ ...r, invoice_id: invoice.id })));
     if (itErr) {
