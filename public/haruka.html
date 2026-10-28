@@ -17699,6 +17699,7 @@ function openDelayedCreativesView() {
   const navBtn = document.querySelector('.nav-btn[data-page="creatives"]');
   if (!navBtn || navBtn.style.display === 'none') return false;
   if (typeof showPage === 'function') showPage('creatives', navBtn);
+  exitProjectCreativesFilter(); // 案件絞り込みが残っていると他案件の遅延が隠れる
   cvSpShowAllDelayed();
   return true;
 }
@@ -17755,6 +17756,16 @@ window.addEventListener('popstate', (e) => {
   if (!_projReturnState || e.state?.hfsProjectCreatives) return;
   backToProjectsFromCreatives();
 });
+// 遅延通知・「自分の案件／自分のボール」など、全案件を見るべき入口から来たら案件絞り込みを外す。
+// 外したら true（一覧は再取得済み）。
+function exitProjectCreativesFilter() {
+  if (!currentProjectFilter) return false;
+  currentProjectFilter = null;
+  renderProjectFilterBar();
+  creativesPage.offset = 0;
+  loadCreatives();
+  return true;
+}
 function clearProjectCreativesFilter() {
   currentProjectFilter = null;
   renderProjectFilterBar();
@@ -17871,6 +17882,8 @@ function setView(btn, view) {
   }
   btn.classList.add('active');
   if (btn.hasAttribute('role')) btn.setAttribute('aria-checked', 'true');
+  // 案件絞り込み中はビュー絞り込みが効かない（renderCreatives 参照）ため、mine/ball に切り替えたら外す
+  if (view !== 'all' && exitProjectCreativesFilter()) return;
   // mine/ball はクライアント側フィルタなので render のみで OK
   renderCreatives();
 }
