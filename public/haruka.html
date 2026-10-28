@@ -12572,6 +12572,11 @@ async function loadProjects() {
   allProjects = projects;
   if (clients) allClients = clients; // 共有経路では loadClients 側が allClients を更新済み
   renderProjectsView();
+  // クリエイティブ画面から戻った直後なら、確定データでの再描画にも元の位置・開閉を再適用して終える
+  if (_projReturnState && document.getElementById('page-projects')?.classList.contains('active')) {
+    _applyProjectsReturnState();
+    _projReturnState = null;
+  }
 }
 
 // allProjects / allClients から案件タブを描画する（fetch しない純粋な描画部）
@@ -17705,14 +17710,51 @@ function openProjectCreatives(projectId) {
     || document.querySelector('.nav-drawer-btn[data-page="creatives"]');
   if (!navBtn || navBtn.style.display === 'none') return;
   const p = (allProjects || []).find(x => x.id === projectId);
+  // ブラウザの「戻る」で案件一覧の元の位置に戻れるよう、スクロール位置と閉じていたクライアントを控えて履歴を1つ積む
+  _projReturnState = {
+    scrollY: window.scrollY,
+    collapsed: [...document.querySelectorAll('#page-projects .client-block-body')]
+      .filter(b => b.style.display === 'none').map(b => b.id),
+  };
+  try { history.pushState({ hfsProjectCreatives: projectId }, ''); } catch (_) {}
   currentProjectFilter = { id: projectId, name: p?.name || '' };
   cvColFilters = {};
   cvColSort = null;
   allCreatives = [];
   showPage('creatives', navBtn);
   setCreativeMode('list');
+  window.scrollTo(0, 0);
   loadCreatives();
 }
+// 案件一覧へ戻る（ブラウザの「戻る」/ バーの「← 案件一覧に戻る」）
+let _projReturnState = null;
+function backToProjectsFromCreatives() {
+  currentProjectFilter = null;
+  renderProjectFilterBar();
+  showPage('projects', document.querySelector('.nav-btn[data-page="projects"]'));
+  _applyProjectsReturnState(); // 手元データでの即時描画に適用（fetch 後の再描画には loadProjects 側で再適用）
+  loadCreatives(); // クリエイティブ一覧は通常の絞り込みに戻しておく
+}
+function _applyProjectsReturnState() {
+  const st = _projReturnState;
+  if (!st) return;
+  st.collapsed.forEach(id => {
+    const body = document.getElementById(id);
+    if (!body) return;
+    body.style.display = 'none';
+    const arrow = document.getElementById(id.replace(/^body-/, 'arrow-'));
+    if (arrow) arrow.style.transform = 'rotate(-90deg)';
+  });
+  window.scrollTo(0, st.scrollY);
+}
+function goBackFromProjectCreatives() {
+  if (history.state?.hfsProjectCreatives) history.back(); // popstate 経由で backToProjectsFromCreatives
+  else backToProjectsFromCreatives();
+}
+window.addEventListener('popstate', (e) => {
+  if (!_projReturnState || e.state?.hfsProjectCreatives) return;
+  backToProjectsFromCreatives();
+});
 function clearProjectCreativesFilter() {
   currentProjectFilter = null;
   renderProjectFilterBar();
@@ -17722,7 +17764,7 @@ function renderProjectFilterBar() {
   const bar = document.getElementById('cv-project-filter-bar');
   if (!bar) return;
   if (!currentProjectFilter) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
-  bar.innerHTML = `<span style="font-weight:700">📋 案件で絞り込み中</span><span class="cv-colf-chip">${esc(currentProjectFilter.name || '（案件名不明）')}（納品済み含む）<button type="button" title="案件の絞り込みを解除" onclick="clearProjectCreativesFilter()">✕</button></span>`;
+  bar.innerHTML = `<button type="button" class="btn-sm" onclick="goBackFromProjectCreatives()" title="案件一覧の元の位置に戻る">← 案件一覧に戻る</button><span style="font-weight:700">📋 案件で絞り込み中</span><span class="cv-colf-chip">${esc(currentProjectFilter.name || '（案件名不明）')}（納品済み含む）<button type="button" title="案件の絞り込みを解除" onclick="clearProjectCreativesFilter()">✕</button></span>`;
   bar.style.display = 'flex';
 }
 
