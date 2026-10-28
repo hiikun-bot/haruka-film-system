@@ -6867,7 +6867,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
               <label class="form-label">カテゴリ <span style="color:#E24B4A">*</span>
                 <span style="font-size:11px;color:var(--text-muted);font-weight:400">（マスタ駆動・カテゴリ管理から追加可能）</span>
               </label>
-              <select class="form-select" id="p-primary-category" required onchange="updateProjectWcheckRow(true);updateProjectHourlyRow()">
+              <select class="form-select" id="p-primary-category" required onchange="updateProjectWcheckRow(true);updateProjectHourlyRow();updateProjectMonthlyRow(true)">
                 <option value="">読込中...</option>
               </select>
             </div>
@@ -6911,6 +6911,41 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                   <span style="font-size:10px;color:var(--text-faint)">（クライアント請求）</span>
                 </label>
               </div>
+            </div>
+          </div>
+          <!-- 月額定額（code='monthly_fixed'）カテゴリのときだけ表示（ADR 053）。支払先・月額・期間を入れると
+               期間の各月に「YYYY年M月分」の支払行（ADR 029 の分割支払）を作り、毎月の請求書に自動で並ぶ。 -->
+          <div class="form-row" id="p-monthly-row" style="margin-bottom:10px;display:none">
+            <div class="form-group" style="flex:1;margin-bottom:0;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:12px 14px">
+              <div style="font-size:12px;font-weight:700;color:#1D4ED8;margin-bottom:4px">📅 月額定額の設定</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">成果物の本数ではなく<strong>毎月決まった額</strong>で請求する案件です。期間中は毎月の請求書作成画面に「◯年◯月分」として自動で並びます。</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+                <span style="font-size:12px;color:var(--text);min-width:52px">支払先</span>
+                <span id="p-monthly-payee-avatar" style="flex-shrink:0;display:inline-flex"></span>
+                <select class="form-select" id="p-monthly-payee-id" style="flex:1;min-width:160px;max-width:280px">
+                  <option value="">未設定</option>
+                </select>
+              </div>
+              <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:10px">
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text)">
+                  月額（支払）
+                  <input class="form-input" id="p-monthly-pay-input" type="number" min="0" step="1" placeholder="例: 30000" style="width:120px;padding:5px 8px;font-size:12px"> 円/月
+                </label>
+                <label id="p-monthly-client-wrap" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text)">
+                  月額（請求）
+                  <input class="form-input" id="p-monthly-client-input" type="number" min="0" step="1" placeholder="未設定" style="width:120px;padding:5px 8px;font-size:12px"> 円/月
+                  <span style="font-size:10px;color:var(--text-faint)">（クライアント請求）</span>
+                </label>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text)">
+                  期間 <input class="form-input" id="p-monthly-start-input" type="month" style="width:150px;padding:5px 8px;font-size:12px">
+                </label>
+                <span style="font-size:12px;color:var(--text-muted)">〜</span>
+                <input class="form-input" id="p-monthly-end-input" type="month" style="width:150px;padding:5px 8px;font-size:12px">
+                <span style="font-size:10px;color:var(--text-faint)">（最大36か月・延長は終了月を延ばして保存）</span>
+              </div>
+              <div id="p-monthly-note" style="font-size:11px;color:var(--text-muted);margin-top:8px;display:none"></div>
             </div>
           </div>
           <div class="form-group" style="margin-bottom:10px">
@@ -19462,6 +19497,74 @@ async function prefillProjectHourlyInputs(projectId) {
   } catch (_) { /* best-effort。取得失敗時は空欄のまま */ }
 }
 
+// ==================== 月額定額（ADR 053） ====================
+// 月額定額(code='monthly_fixed')カテゴリのときだけ「📅 月額定額の設定」行を表示する。
+// 保存は PUT /projects/:id/monthly-fee（create_edit / pricing_edit のどちらかで叩ける。ADR 037 の承認フローに乗る）。
+function _jstYm(offsetMonths) {
+  const [y, m] = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + (offsetMonths || 0), 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+function updateProjectMonthlyRow(categoryChanged) {
+  const row = document.getElementById('p-monthly-row');
+  const sel = document.getElementById('p-primary-category');
+  if (!row || !sel) return;
+  const cat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+    ? _categoriesCache.find(c => c && c.id === (sel.value || '')) : null;
+  const isMonthly = cat?.code === 'monthly_fixed' && (typeof canEditProjectPricing !== 'function' || canEditProjectPricing());
+  row.style.display = isMonthly ? 'flex' : 'none';
+  if (!isMonthly) return;
+  bindMemberPickerSelect('p-monthly-payee-id', {
+    placeholder: '未設定', emptyLabel: '未設定',
+    onChange: () => updateUserSelectAvatar('p-monthly-payee-id', 'p-monthly-payee-avatar', 24),
+  });
+  const clientWrap = document.getElementById('p-monthly-client-wrap');
+  if (clientWrap) clientWrap.style.display = (typeof hasPermission === 'function' && hasPermission('project.client_price')) ? 'inline-flex' : 'none';
+  // 新規 or カテゴリを切り替えた直後で未入力なら、支払先=自分・期間=今月から1年を初期値にする
+  const payeeEl = document.getElementById('p-monthly-payee-id');
+  const startEl = document.getElementById('p-monthly-start-input');
+  const endEl = document.getElementById('p-monthly-end-input');
+  if (categoryChanged && payeeEl && !payeeEl.value && currentUser?.id) {
+    payeeEl.value = currentUser.id;
+    updateUserSelectAvatar('p-monthly-payee-id', 'p-monthly-payee-avatar', 24);
+  }
+  if (startEl && !startEl.value) startEl.value = _jstYm(0);
+  if (endEl && !endEl.value) endEl.value = _jstYm(11);
+}
+function resetProjectMonthlyInputs() {
+  ['p-monthly-pay-input', 'p-monthly-client-input', 'p-monthly-start-input', 'p-monthly-end-input', 'p-monthly-payee-id']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  if (document.getElementById('p-monthly-payee-avatar')) updateUserSelectAvatar('p-monthly-payee-id', 'p-monthly-payee-avatar', 24);
+  const note = document.getElementById('p-monthly-note');
+  if (note) { note.style.display = 'none'; note.textContent = ''; }
+}
+// 編集モードで月額定額案件を開いたとき、現在の設定を入力欄に反映する（best-effort）。
+// 支払先が複数いる案件は先頭の1人を表示し、ほかの人は件数だけ添える（別の支払先を選んで保存すれば追加できる）。
+async function prefillProjectMonthlyInputs(projectId) {
+  resetProjectMonthlyInputs();
+  if (!projectId) return;
+  try {
+    const res = await apiFetch(`${API}/projects/${projectId}/monthly-fees`);
+    const list = res.ok ? (await res.json() || []) : [];
+    const mine = list.find(x => x.payee_user_id === currentUser?.id) || list[0];
+    if (!mine) { updateProjectMonthlyRow(true); return; }
+    const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+    set('p-monthly-payee-id', mine.payee_user_id);
+    updateUserSelectAvatar('p-monthly-payee-id', 'p-monthly-payee-avatar', 24);
+    set('p-monthly-pay-input', mine.payment_amount);
+    set('p-monthly-client-input', mine.client_amount);
+    set('p-monthly-start-input', mine.start_month);
+    set('p-monthly-end-input', mine.end_month);
+    const note = document.getElementById('p-monthly-note');
+    if (note) {
+      const others = list.filter(x => x !== mine).map(x => `${x.payee_name || '—'} ¥${(x.payment_amount || 0).toLocaleString()}/月`);
+      note.textContent = 'ℹ️ 先月以前の分は請求済みの可能性があるため、変更しても書き換わりません（今月以降に反映）。月額を0にして保存すると今月以降を解除します。'
+        + (others.length ? `　ほかの支払先: ${others.join('、')}（支払先を切り替えて保存すると個別に設定できます）` : '');
+      note.style.display = '';
+    }
+  } catch (_) { /* best-effort。取得失敗時は空欄のまま */ }
+}
+
 // ==================== カテゴリ別フィールド設定 (ADR 012) ====================
 // /api/categories/:id/fields のクライアント側キャッシュ。
 // 詳細モーダル open 時に loadCategoryFields(category_id) を呼ぶと、
@@ -19502,7 +19605,7 @@ function invalidateCategoryFieldsCache(categoryId) {
 // 案件種別を取得（'video' | 'design' | 'lp' | 'hp' | 'other'）。
 // primary_category.code を優先し、未解決時は 'video' にフォールバック。
 // PROJECT_TYPE_VALUES は UI バッジ・フィルタの表示順序定義として残す。
-const PROJECT_TYPE_VALUES = ['video','design','lp','hp','hourly','other'];
+const PROJECT_TYPE_VALUES = ['video','design','lp','hp','hourly','monthly_fixed','other'];
 function getProjectType(project) {
   const cat = getProjectCategory(project);
   const code = cat?.code;
@@ -19529,6 +19632,7 @@ const PROJECT_TYPE_META = {
   lp:     { label: 'LP',       icon: '📄', cls: 'badge-lp',     title: 'LP制作案件' },
   hp:     { label: 'HP',       icon: '🌐', cls: 'badge-hp',     title: 'HP制作案件' },
   hourly: { label: '時間給',   icon: '⏱', cls: 'badge-hourly', title: '時間給作業案件（⏱ 作業時間報告で稼働入力）' },
+  monthly_fixed: { label: '月額定額', icon: '📅', cls: 'badge-other', title: '月額定額案件（毎月決まった額を請求）' },
   other:  { label: 'その他',   icon: '📦', cls: 'badge-other',  title: 'その他案件' },
 };
 
@@ -21241,6 +21345,8 @@ function openProjectModal(preClientId) {
     const _payNew = document.getElementById('p-hourly-pay-input'); if (_payNew) _payNew.value = '';
     const _cliNew = document.getElementById('p-hourly-client-input'); if (_cliNew) _cliNew.value = '';
     updateProjectHourlyRow();
+    resetProjectMonthlyInputs();
+    updateProjectMonthlyRow(true);
   });
   // タグ入力初期化
   const pTagInputNew = document.getElementById('p-tags-input');
@@ -21448,6 +21554,10 @@ function openEditProject(p) {
     const _selCatH = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
       ? _categoriesCache.find(c => c && c.id === (p.primary_category_id || sel.value)) : null;
     if (_selCatH?.code === 'hourly') prefillProjectHourlyInputs(p.id);
+    // 月額定額カテゴリなら設定行を表示し、現在の支払先・月額・期間を反映（ADR 053）
+    resetProjectMonthlyInputs();
+    updateProjectMonthlyRow(false);
+    if (_selCatH?.code === 'monthly_fixed') prefillProjectMonthlyInputs(p.id);
   });
   // タグ初期値
   const pTagInputEdit = document.getElementById('p-tags-input');
@@ -26066,6 +26176,38 @@ async function submitProject() {
         }
       }
     }
+    // 月額定額カテゴリ（ADR 053）: 支払先・月額・期間を分割支払の各月行として保存する。
+    // 月額が空欄のときは何もしない（うっかり消し防止。0 を入れたときだけ今月以降を解除）
+    {
+      const _selCatM = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+        ? _categoriesCache.find(c => c && c.id === primary_category_id) : null;
+      const payRaw = (document.getElementById('p-monthly-pay-input')?.value || '').trim();
+      if (_selCatM?.code === 'monthly_fixed' && savedId && payRaw !== '' && canEditProjectPricing()) {
+        const body = {
+          payee_user_id: document.getElementById('p-monthly-payee-id')?.value || '',
+          payment_amount: Math.max(0, parseInt(payRaw, 10) || 0),
+          start_month: document.getElementById('p-monthly-start-input')?.value || '',
+          end_month: document.getElementById('p-monthly-end-input')?.value || '',
+        };
+        const clientRaw = (document.getElementById('p-monthly-client-input')?.value || '').trim();
+        if (clientRaw !== '') body.client_amount = Math.max(0, parseInt(clientRaw, 10) || 0);
+        const feeRes = await apiFetch(`${API}/projects/${savedId}/monthly-fee`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!feeRes.ok) {
+          const fe = await feeRes.json().catch(() => ({}));
+          showToast('案件は保存しましたが月額定額の設定に失敗しました: ' + translateError(fe?.error), 'error');
+          await loadProjects();
+          return;
+        }
+        const fr = await feeRes.json().catch(() => ({}));
+        if (fr?.months) {
+          showToast(`📅 月額定額を設定しました（${fr.months}か月分）` + (fr.line_pricing_approval === 'pending' ? '・管理者の承認待ちです' : ''), 'ok');
+        }
+      }
+    }
     // ディレクター費バーに入力したまま「時給を設定/全グループに反映」を押し忘れていても、
     // ここで一緒に反映する（押し忘れで値が消える事故防止）。失敗時はモーダルを開いたままにする
     if (isEdit) {
@@ -26076,7 +26218,10 @@ async function submitProject() {
     await loadProjects();
     // ADR 037: 案件作成のみ（create_edit 無し）で単価編集権限を持つロール（director）は、
     // 作成直後に単価専用モードで見積タブを開き「単価の無い案件」のまま放置されるのを防ぐ
-    if (!isEdit && savedId && !canEditProject() && canEditProjectPricing()) {
+    // 月額定額（ADR 053）は上で金額を設定済みなので、成果物グループの設定へは誘導しない
+    const _isMonthlyCat = (typeof _categoriesCache !== 'undefined' && Array.isArray(_categoriesCache))
+      && _categoriesCache.find(c => c && c.id === primary_category_id)?.code === 'monthly_fixed';
+    if (!isEdit && savedId && !_isMonthlyCat && !canEditProject() && canEditProjectPricing()) {
       showToast('続けて成果物グループ・単価を設定してください（管理者の承認待ちになります）', 'ok');
       openProjectPricing(savedId);
     }

@@ -113,7 +113,7 @@
         <tbody>
           ${billable.map(it => crRow(it, false)).join('')}
           ${d.hourly.map(x => fixedRow(x.hourly_key, 'hourly', x.label, x.total, `⏱ 作業時間報告（${d.month}月）`)).join('')}
-          ${d.installments.map(x => fixedRow(x.installment_key, 'installment', x.label, x.total, '📅 一式（分割支払）')).join('')}
+          ${d.installments.map(x => fixedRow(x.installment_key, 'installment', x.label, x.total, x.is_monthly_fee ? '📅 月額定額' : '📅 一式（分割支払）')).join('')}
           ${undelivered.length ? `<tr class="ie-c-sep"><td colspan="${showThumb ? 5 : 4}">未納品（請求できません）</td></tr>` + undelivered.map(it => crRow(it, true)).join('') : ''}
         </tbody>
       </table>`;
