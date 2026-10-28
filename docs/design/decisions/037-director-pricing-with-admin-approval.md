@@ -92,3 +92,10 @@ related_adrs: [002, 003, 015, 022, 027, 030, 031]
 - **承認を line_costs（単価行）単位に持つ** — 1 グループに editor/director/producer の 3 行があり、承認 UI が細かくなり過ぎる。差し戻しの単位も「グループの単価一式」が自然。line 単位に決定。
 - **承認テーブルを別建て（申請→承認の履歴を全部持つ）** — 現時点で履歴閲覧の要件が無く、line 列＋スナップショットで足りる。必要になったら追加。
 - **プロデューサーを最初から即確定にする** — ユーザー要望は「自分が承認」。permission key にしておき、運用で切り替え可能にする。
+
+## 追補（2026-10-28）承認待ちは管理者の Chatwork マイチャットへ必ず一報
+
+- 承認待ちのまま放置すると請求書の発行が止まり相手を待たせる（シビアな運用）ため、ベル通知・Slack DM に加えて、承認待ちが新たに発生するたびに**管理者の Chatwork マイチャット**へ毎回送る（`notifications.js` の `notifyPricingPendingMyChat`）。
+- 送信先は `resolveAdminMyChatRoomId`（env `ADMIN_MYCHAT_CHATWORK_ROOM_ID` → `BUG_REPORT_NOTIFY_CHATWORK_ROOM_ID` → `CHATWORK_API_TOKEN` 名義人のマイチャット自動検出）。admin ユーザーの有無・Slack DM の宛先の有無とは無関係に送る。
+- 送れなかった場合は Slack のエラーチャンネル（`notifyAutoError`）へ回し、無言で消えないようにする。
+- 通知ベルのリンク `?project=<id>&tab=estimate` は案件編集モーダルの「💰 見積・費用」タブを開く（#1261）。マイチャットのリンクも同じ。
