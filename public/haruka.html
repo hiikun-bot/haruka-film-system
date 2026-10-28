@@ -4982,7 +4982,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 
     <!-- ヘッダー -->
     <div style="padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:#fff;flex-shrink:0">
-      <div style="display:flex;align-items:center;gap:16px">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;row-gap:8px">
         <div style="display:flex;align-items:center;gap:8px">
           <div style="width:4px;height:18px;background:var(--em);border-radius:2px"></div>
           <span style="font-size:15px;font-weight:600">請求書作成</span>
@@ -4996,6 +4996,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
             <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
           </select>
           <span style="font-size:12px;color:var(--text-muted)">の請求対象</span>
+        </div>
+        <!-- バグ報告 36660483: 件数が多いときにファイル名・クライアント・案件で絞り込む（チェック状態は絞り込みを変えても保持） -->
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="search" class="form-input" id="gi-search" placeholder="🔍 ファイル名・クライアント・案件で絞り込み" oninput="applyInvoiceSearch()" autocomplete="off" style="width:260px;font-size:13px;padding:6px 10px">
+          <span id="gi-search-hit" style="font-size:11px;color:var(--text-muted);white-space:nowrap"></span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:12px">
@@ -36762,6 +36767,7 @@ function openGenerateInvoiceModal() {
   }
   document.getElementById('gi-month').value = now.getMonth()+1;
   invoicePreviewItems = [];
+  document.getElementById('gi-search').value = '';
   document.getElementById('gi-table-wrap').innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">読み込み中...</div>';
   openModal('modal-gen-invoice');
   loadInvoicePreview();
@@ -36884,12 +36890,37 @@ async function loadInvoicePreview() {
     </tbody>
   </table>`;
 
+  applyInvoiceSearch();
   updateInvoiceTotal();
 }
 
 function toggleAllInvoiceItems(checked) {
-  document.querySelectorAll('.gi-item-check:not(:disabled)').forEach(cb => { cb.checked = checked; });
+  // 絞り込み中は表示されている行だけ（隠れている行のチェックは触らない）
+  document.querySelectorAll('.gi-item-check:not(:disabled)').forEach(cb => {
+    if (cb.closest('tr')?.style.display === 'none') return;
+    cb.checked = checked;
+  });
   updateInvoiceTotal();
+}
+
+// 請求書作成モーダルの絞り込み（新方式・旧方式どちらの一覧にも効く）。
+// 空白区切りは AND。全角/半角・大文字/小文字は区別しない。旧方式の単価行（data-creative-id）は親行に従う
+function applyInvoiceSearch() {
+  const norm = (v) => String(v || '').normalize('NFKC').toLowerCase();
+  const words = norm(document.getElementById('gi-search')?.value).split(/\s+/).filter(Boolean);
+  const rows = document.querySelectorAll('#gi-table-wrap tbody tr');
+  let parentShown = true, total = 0, shown = 0;
+  rows.forEach(tr => {
+    if (tr.dataset.creativeId) { tr.style.display = parentShown ? '' : 'none'; return; }
+    if (tr.classList.contains('ie-c-sep')) { tr.style.display = words.length ? 'none' : ''; return; }
+    const text = norm(tr.textContent);
+    const hit = words.every(w => text.includes(w));
+    tr.style.display = hit ? '' : 'none';
+    parentShown = hit;
+    total++; if (hit) shown++;
+  });
+  const hitEl = document.getElementById('gi-search-hit');
+  if (hitEl) hitEl.textContent = words.length ? `${shown} / ${total} 件` : '';
 }
 
 function _giCreativeSubtotal(creativeId) {
