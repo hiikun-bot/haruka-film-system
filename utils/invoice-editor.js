@@ -370,6 +370,12 @@
     return { problems, totals };
   }
 
+  // 明細の品目名（クライアント｜CR名（役割））。編集（base_fee）は役割を付けない（請求書に「（編集）」と出ると不自然なため）
+  function crItemLabel(clientName, creativeLabel, costType, roleLabel) {
+    const role = costType === 'base_fee' ? '' : (roleLabel || '');
+    return `${clientName || ''}${clientName ? '｜' : ''}${creativeLabel || ''}${role ? `（${role}）` : ''}`;
+  }
+
   return {
     TAX_NUM, TAX_DEN, WH_NUM, WH_DEN, WITHHOLDING_WARN_THRESHOLD, LOOKBACK_MONTHS, DEFAULT_EXCLUSIVE_FROM,
     REASON_MAX, LABEL_MAX, MAX_PRICE, MAX_QUANTITY, MAX_ITEMS,
@@ -379,6 +385,6 @@
     billingTimingOf, isBillableCreative, billingDateOf, lookbackStartYm, classifyCandidate,
     issuerCostRoles, billedKey,
     parseMoney, isCrLine, isFixedLine, isManualLine, lineAmount, computeTotals, defaultWithholding,
-    lineIssues, checkInvoiceForSubmit,
+    lineIssues, checkInvoiceForSubmit, crItemLabel,
   };
 });

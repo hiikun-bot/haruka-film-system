@@ -720,7 +720,7 @@
     const rows = ed.rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td>
       <td class="c">${r.kind === 'cr' ? slashDate(r.billing_date) : ''}</td>
-      <td>${r.kind === 'cr' ? `${h(r.client_name)}${r.client_name ? '｜' : ''}${h(r.creative_label)}（${h(r.label)}）` : h(r.kind === 'fixed' ? (r.creative_label || r.label) : r.label)}</td>
+      <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.kind === 'fixed' ? (r.creative_label || r.label) : r.label)}</td>
       <td class="r">${r.unit_price == null ? '' : yen(r.unit_price)}</td>
       <td class="c">${r.kind === 'manual' ? h(r.quantity) : 1}</td>
       <td class="r">${r.unit_price == null ? '' : yen(C().lineAmount(r))}</td>

@@ -87,11 +87,11 @@ describe('新方式（exclusive）の PDF モデル', () => {
     expect(m.bank_lines).toEqual(['三井住友銀行 (0009)', '神戸支店 (500)', '普通 1234567', '口座名義：クニサダ ユイ']);
   });
 
-  test('明細は 1 行ずつ（CR は クライアント｜CR（役割）・納品日は JST の計上日、HFS外の行も載る）', () => {
+  test('明細は 1 行ずつ（CR は クライアント｜CR・編集以外は（役割）付き・納品日は JST の計上日、HFS外の行も載る）', () => {
     const m = buildInvoicePdfModel(exclusiveInvoice());
     expect(m.rows).toEqual([
-      { no: 1, kind: 'cr', date: '10/03', label: 'hertech｜hertech_241003_A（編集）', unit_price: 6000, quantity: 1, amount: 6000 },
-      { no: 2, kind: 'cr', date: '09/28', label: 'ACME｜acme_lp_0928_v2（編集）', unit_price: 3000, quantity: 1, amount: 3000 },
+      { no: 1, kind: 'cr', date: '10/03', label: 'hertech｜hertech_241003_A', unit_price: 6000, quantity: 1, amount: 6000 },
+      { no: 2, kind: 'cr', date: '09/28', label: 'ACME｜acme_lp_0928_v2', unit_price: 3000, quantity: 1, amount: 3000 },
       { no: 3, kind: 'manual', date: '', label: '撮影補助（10/12）', unit_price: 15000, quantity: 1, amount: 15000 },
     ]);
   });

@@ -466,7 +466,7 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
     let label;
     if (kind === 'cr') {
       const crLabel = it.creative_label || cr.file_name || '(無題)';
-      label = `${clientName}${clientName ? '｜' : ''}${crLabel}（${it.label || ''}）`;
+      label = IE.crItemLabel(clientName, crLabel, it.cost_type, it.label);
     } else if (kind === 'fixed') {
       label = it.creative_label || it.label || '';
     } else {

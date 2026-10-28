@@ -175,6 +175,18 @@ describe('候補 CR の分類', () => {
   });
 });
 
+describe('明細の品目名 crItemLabel', () => {
+  test('編集（base_fee）は役割を付けない', () => {
+    expect(IE.crItemLabel('hertech', 'hertech_241003_A', 'base_fee', '編集')).toBe('hertech｜hertech_241003_A');
+  });
+  test('編集以外は（役割）を付ける', () => {
+    expect(IE.crItemLabel('hertech', 'hertech_241003_A', 'director_fee', 'ディレクション費')).toBe('hertech｜hertech_241003_A（ディレクション費）');
+  });
+  test('クライアント名が無ければ区切りを付けない', () => {
+    expect(IE.crItemLabel('', 'a_001', 'script_fee', '台本作成')).toBe('a_001（台本作成）');
+  });
+});
+
 describe('本人の役割（1 CR × 役割 = 1 行）', () => {
   test('編集担当 → base_fee（参考単価は担当 role で引く）', () => {
     expect(IE.issuerCostRoles(cr(), ME)).toEqual([{ cost_type: 'base_fee', role_code: 'editor', rank_applied: 'A' }]);
