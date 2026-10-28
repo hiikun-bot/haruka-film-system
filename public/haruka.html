@@ -4761,6 +4761,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
     </div>
   </div>
+  <!-- 案件絞り込み中バー（案件一覧の「📋 クリエイティブ」から開いたとき）: renderProjectFilterBar() が表示制御 -->
+  <div id="cv-project-filter-bar" class="cv-colf-active-bar" style="display:none;margin:12px 20px 0"></div>
   <!-- リスト表示 -->
   <div id="creative-view-list" style="padding:20px;display:none">
     <div class="table-wrap">
@@ -11167,6 +11169,9 @@ function _saveAssigneeIds() {
   try { localStorage.setItem('cv_assignee_ids', JSON.stringify([...currentAssigneeIds])); } catch (_) {}
 }
 let showEndedInCreatives = false;
+// 案件一覧の「📋 クリエイティブ」から開いた案件絞り込み（{ id, name } / null）。
+// 有効中はその案件の CR を納品済み含めて全件出す（クライアント・担当者・検索・ボール・詳細フィルタは見ない）。
+let currentProjectFilter = null;
 // 一覧 API のページング状態
 // limit を 50 → 500 に拡張（2026-05-08）
 // allCreatives を「全件」前提でサイドバー警告 / ダッシュボード / 案件詳細件数 等が集計しているが、
@@ -12603,6 +12608,8 @@ function renderProjectsView() {
     return;
   }
 
+  const _cvNav = document.querySelector('.nav-btn[data-page="creatives"]');
+  const canOpenCreativesPage = !!_cvNav && _cvNav.style.display !== 'none';
   list.innerHTML = renderClients.map(client => {
     const allClientProjects = filteredProjects.filter(p => p.client_id === client.id);
     const clientProjects = (showCompleted
@@ -12654,6 +12661,7 @@ function renderProjectsView() {
                 ${p.admin_note ? `<span>📝 ${p.admin_note}</span>` : ''}
               </div>
             </div>
+            ${canOpenCreativesPage ? `<button class="btn-sm" style="white-space:nowrap" onclick="event.stopPropagation();openProjectCreatives('${p.id}')" title="この案件のクリエイティブ一覧を開く（納品済み含む）">📋 クリエイティブ</button>` : ''}
             ${p.sheet_url ? `<a href="${p.sheet_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">シート ↗</a>` : ''}
             ${p.regulation_url ? `<a href="${p.regulation_url}" target="_blank" class="btn-sm" style="text-decoration:none;white-space:nowrap">レギュレーション ↗</a>` : ''}
             ${joinRequestRowButtonsHtml(p)}
@@ -15223,6 +15231,11 @@ async function loadCreatives(opts = {}) {
   const params = new URLSearchParams();
   params.set('limit', String(creativesPage.limit));
   params.set('offset', String(creativesPage.offset));
+  if (currentProjectFilter) {
+    // 案件絞り込み中: その案件の CR を納品済み含めて全件（他の絞り込み条件は送らない）
+    params.set('project_id', currentProjectFilter.id);
+    params.set('include_done', '1');
+  } else {
   if (currentClient && currentClient !== 'all') params.set('client_id', currentClient);
   // 担当者: 複数選択対応（カンマ区切り）。互換性のため currentAssigneeFilter も尊重
   const _assigneeIdsParam = (currentAssigneeIds && currentAssigneeIds.size > 0)
@@ -15243,6 +15256,8 @@ async function loadCreatives(opts = {}) {
   if (cvAdvFilters?.includeDelivered) {
     params.set('include_done', '1');
   }
+  }
+  renderProjectFilterBar();
   // タブカウンタも並列に再取得（append/タブ切り替えのときは省略）
   if (!append && !skipCounts) {
     loadCreativeTabCounts();
@@ -15284,6 +15299,7 @@ async function loadCreatives(opts = {}) {
 // 確実に判定できない条件（検索 q のサーバー実装依存など）は「残す」側に倒し、
 // 表示上の最終絞り込みは renderCreatives() のクライアントフィルタに任せる（正しさ優先）。
 function _creativeStillInListScope(c) {
+  if (currentProjectFilter) return c.project_id === currentProjectFilter.id;
   // include_done: 「納品済も表示」トグル OFF のときサーバーは納品済を返さない。
   // ただしキーワード検索中はサーバーも納品済を含めて返す（バグ #db00a22b 対応と同条件）ため除去しない。
   if (!cvAdvFilters?.includeDelivered && !searchText && (c.status === '納品' || c.force_delivered)) return false;
@@ -15351,12 +15367,16 @@ let _creativeTabCountsSeq = 0;
 async function loadCreativeTabCounts() {
   const seq = ++_creativeTabCountsSeq;
   const params = new URLSearchParams();
+  if (currentProjectFilter) {
+    params.set('project_id', currentProjectFilter.id);
+  } else {
   if (currentClient && currentClient !== 'all') params.set('client_id', currentClient);
   const _assigneeIdsCnt = (currentAssigneeIds && currentAssigneeIds.size > 0)
     ? [...currentAssigneeIds].join(',')
     : (currentAssigneeFilter || '');
   if (_assigneeIdsCnt)                          params.set('assignee_id', _assigneeIdsCnt);
   if (searchText)                               params.set('q', searchText);
+  }
   params.set('include_done', '1');
   try {
     const res = await apiFetch(`${API}/creatives/counts?${params.toString()}`);
@@ -15769,6 +15789,14 @@ function renderCreatives() {
   // filtered     = baseFiltered にビュー絞り込み (mine/ball) を追加（作業エリアで使う）
   // ────────────────────────────────────────────────────────────────
   const baseFiltered = allCreatives.filter(c => {
+    // 案件絞り込み中は「その案件か」と種別タブだけで判定する（納品済み・取引終了・ボール等は全部出す）
+    if (currentProjectFilter) {
+      if (c.project_id !== currentProjectFilter.id) return false;
+      const _pct = (c.creative_type || '');
+      if (currentCreativeTab === 'video') return /^video_/.test(_pct);
+      if (currentCreativeTab === 'design') return /^design_/.test(_pct) || _pct === 'lp' || _pct === 'hp' || _pct === 'line';
+      return true;
+    }
     // 取引終了クライアントの案件は既定で除外（トグルONなら表示）。
     // ただしキーワード検索中は除外しない: 取引終了クライアントの過去CRを検索しても
     // 0件になり「CRが消えた・紛失した」ように見えるため（検索は全期間・全スコープ横断。
@@ -15832,7 +15860,7 @@ function renderCreatives() {
     // キーワード検索中はビュー絞り込みも適用しない。「自分のボール」ビュー中に
     // クライアントボールへ渡った CR を検索しても 0 件になり、CR 紛失と誤認される
     // （上のボールフィルタの検索バイパスと同条件で揃える）。
-    if (searchText) return true;
+    if (searchText || currentProjectFilter) return true;
     if (currentView === 'mine') {
       // 自分の案件 = 以下のいずれかに該当する場合
       //   1) 自分が編集者/デザイナー/director-as-editor として creative にアサインされている
@@ -17644,6 +17672,33 @@ function openDelayedCreativesView() {
   return true;
 }
 window.openDelayedCreativesView = openDelayedCreativesView;
+
+// 案件一覧の「📋 クリエイティブ」: その案件の CR を納品済み含めてリスト表示で開く
+function openProjectCreatives(projectId) {
+  const navBtn = document.querySelector('.nav-btn[data-page="creatives"]')
+    || document.querySelector('.nav-drawer-btn[data-page="creatives"]');
+  if (!navBtn || navBtn.style.display === 'none') return;
+  const p = (allProjects || []).find(x => x.id === projectId);
+  currentProjectFilter = { id: projectId, name: p?.name || '' };
+  cvColFilters = {};
+  cvColSort = null;
+  allCreatives = [];
+  showPage('creatives', navBtn);
+  setCreativeMode('list');
+  loadCreatives();
+}
+function clearProjectCreativesFilter() {
+  currentProjectFilter = null;
+  renderProjectFilterBar();
+  loadCreatives();
+}
+function renderProjectFilterBar() {
+  const bar = document.getElementById('cv-project-filter-bar');
+  if (!bar) return;
+  if (!currentProjectFilter) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.innerHTML = `<span style="font-weight:700">📋 案件で絞り込み中</span><span class="cv-colf-chip">${esc(currentProjectFilter.name || '（案件名不明）')}（納品済み含む）<button type="button" title="案件の絞り込みを解除" onclick="clearProjectCreativesFilter()">✕</button></span>`;
+  bar.style.display = 'flex';
+}
 
 function renderAlerts(rows) {
   // 旧 c.deadline は creatives テーブルに存在しないため常に空判定だった。
