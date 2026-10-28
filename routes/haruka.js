@@ -19902,10 +19902,13 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
         });
       }
     }
+    // 月額定額・分割支払・時間報酬だけの請求書はクリエイティブが無いので、明細の案件で project_id を補う（invoices.project_id は NOT NULL）
+    let fallbackProjectId = null;
     if (installmentKeys.length) {
       const insts = await installmentBuildInvoiceItems(issuerId, year, month);
       for (const it of insts) {
         if (!installmentKeys.includes(it.installment_key)) continue;
+        if (it.project_id) fallbackProjectId = fallbackProjectId || it.project_id;
         rows.push({
           creative_id: null, creative_label: it.label, cost_type: 'installment_fee', label: it.is_monthly_fee ? '月額定額' : '一式（分割支払）',
           quantity: 1, unit: '式', unit_price: it.total, total_amount: it.total,
@@ -19914,6 +19917,10 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
       }
     }
     if (!rows.length) return res.status(400).json({ error: '請求できる明細がありません' });
+    if (!fallbackProjectId && hourlyKeys.length) {
+      const hourly = await whBuildInvoiceItems(issuerId, year, month);
+      fallbackProjectId = (hourly.find(h => hourlyKeys.includes(h.hourly_key) && h.project_id) || {}).project_id || null;
+    }
 
     const withholdingEnabled = IE.defaultWithholding(issuerR.data ? issuerR.data.business_type : null);
     const totals = IE.computeTotals(rows, { withholding_enabled: withholdingEnabled });
@@ -19923,12 +19930,16 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
     const { count } = await supabase.from('invoices').select('*', { count: 'exact', head: true }).like('invoice_number', `INV-${todayYm}-%`);
     const invoiceNumber = `INV-${todayYm}-${String((count || 0) + 1).padStart(3, '0')}`;
     const firstCreative = rows.find(r => r.creative_id);
+    const projectId = (firstCreative ? (creativesById.get(firstCreative.creative_id) || {}).project_id : null) || fallbackProjectId;
+    if (!projectId) {
+      return res.status(400).json({ error: '案件に紐づかない明細だけでは請求書を作れません。案件のある明細を1件以上一緒に選んでください' });
+    }
     const nowIso = new Date().toISOString();
 
     const { data: invoice, error: iErr } = await supabase.from('invoices').insert({
       invoice_number: invoiceNumber,
       issuer_id: issuerId,
-      project_id: firstCreative ? (creativesById.get(firstCreative.creative_id) || {}).project_id || null : null,
+      project_id: projectId,
       status: 'draft',
       year, month,
       notes: typeof req.body.notes === 'string' ? req.body.notes.slice(0, 2000) : null,
