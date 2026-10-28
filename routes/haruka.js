@@ -2788,11 +2788,13 @@ async function applyPricingApprovalAfterWrite(req, lineIds, opts = {}) {
   }
   const snapshots = opts.snapshots instanceof Map ? opts.snapshots : new Map();
   const newSet = new Set(opts.newLineIds || []);
+  // 月またぎで分けた新グループは「分ける前の値＋分け元」を控える（差し戻しで 1 グループへ戻すため）
+  const splitSnaps = req._pricingSplitSnapshots instanceof Map ? req._pricingSplitSnapshots : new Map();
   const newlyPending = [];
   for (const id of ids) {
     const became = await markLinePricingPending(id, actorId, {
-      isNew: newSet.has(id),
-      snapshot: snapshots.has(id) ? snapshots.get(id) : undefined,
+      isNew: newSet.has(id) && !splitSnaps.has(id),
+      snapshot: splitSnaps.has(id) ? splitSnaps.get(id) : (snapshots.has(id) ? snapshots.get(id) : undefined),
     });
     if (became) newlyPending.push(id);
   }
@@ -2806,6 +2808,149 @@ async function applyPricingApprovalAfterWrite(req, lineIds, opts = {}) {
       .catch(e => console.warn('[pricing-approval] notify failed:', e?.message));
   }
   return { canApprove: false, pending: newlyPending };
+}
+
+// ===== 単価の変更は「今月の納品分から」（ADR 037 追補 2026-10-28 その3） =====
+// 単価は納品月の月末時点で解決する（ADR 030）が、同じグループの単価を書き換えると、まだ請求書を
+// 出していない先月以前の納品分まで新単価になってしまう。そこで単価に効く書き込みの直前に、
+// 先月以前の納品があるグループを「先月末で停止した旧グループ」と「今月1日から適用する新グループ」に
+// 分け、書き込みは新グループへ向ける。先月以前の納品分は旧グループに残るので旧単価のまま。
+// 分けないもの:
+//   - 先月以前に納品したクリエイティブが無い（今月分しか無い＝そのまま書き換えてよい）
+//   - 停止中のグループ（過去月の単価の訂正として、そのまま直す）
+//   - 今月から適用のグループ・単価がまだ何も入っていないグループ（¥0 の入れ忘れは遡って直す）
+//   - 月額定額・分割支払のあるグループ（金額は各月の行が持つ・ADR 029 / 053）
+// 戻り値: { lineId: 書き込み先, split: null | { from_line_id, to_line_id, applies_from }, costIdMap }
+//   costIdMap: Map<旧 line_cost id, 新 line_cost id>（PUT/DELETE /costs/:cost_id の付け替え用）
+
+async function splitLineForMonthlyPricing(req, lineId) {
+  const noSplit = { lineId, split: null, costIdMap: new Map() };
+  const { data: line, error } = await supabase
+    .from('project_estimate_lines')
+    .select('id, project_id, category_id, rank, name, planned_count, client_unit_price, sort_order, currency, tax_included, status, applies_from, applies_to, pricing_approval, pricing_prev_snapshot')
+    .eq('id', lineId)
+    .maybeSingle();
+  if (error || !line) {
+    if (error && !isMissingAppliesColumn(error) && !isMissingPricingApprovalColumn(error)) {
+      console.warn('[pricing-split] line read failed:', error.message);
+    }
+    return noSplit;
+  }
+  if (line.applies_to) return noSplit;
+  if (String(line.name || '').startsWith(MONTHLY_FEE_LINE_PREFIX)) return noSplit;
+  const { monthStart, prevMonthEnd, monthStartIso } = require('../utils/pricing').jstMonthBoundary(_todayStrJST());
+  if (line.applies_from && line.applies_from >= monthStart) return noSplit;
+
+  const { data: costs, error: costErr } = await supabase
+    .from('project_estimate_line_costs')
+    .select('id, role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours')
+    .eq('line_id', lineId);
+  if (costErr) { console.warn('[pricing-split] costs read failed:', costErr.message); return noSplit; }
+  const hasPrice = (Number(line.client_unit_price) || 0) > 0
+    || (costs || []).some(c => (Number(c.unit_price) || 0) > 0 || (Number(c.percentage) || 0) > 0);
+  if (!hasPrice) return noSplit;
+
+  const { count: pastCount, error: pastErr } = await supabase
+    .from('creatives').select('id', { count: 'exact', head: true })
+    .eq('line_id', lineId).lt('delivered_at', monthStartIso);
+  if (pastErr) { console.warn('[pricing-split] creatives count failed:', pastErr.message); return noSplit; }
+  if (!pastCount) return noSplit;
+
+  const { count: instCount, error: instErr } = await supabase
+    .from('line_payment_installments').select('id', { count: 'exact', head: true }).eq('line_id', lineId);
+  if (instErr && !isMissingLpiTable(instErr)) { console.warn('[pricing-split] installments count failed:', instErr.message); return noSplit; }
+  if (instCount) return noSplit;
+
+  // 新グループ（今月1日から）を作り、単価行をそのまま写す
+  const { data: inserted, error: insErr } = await supabase
+    .from('project_estimate_lines')
+    .insert({
+      project_id: line.project_id,
+      category_id: line.category_id || null,
+      rank: line.rank || null,
+      name: line.name || null,
+      planned_count: Math.max(0, parseInt(line.planned_count, 10) || 0),
+      client_unit_price: Number(line.client_unit_price) || 0,
+      sort_order: line.sort_order ?? null,
+      currency: line.currency || 'JPY',
+      tax_included: line.tax_included === false ? false : true,
+      status: line.status || 'contracted',
+      status_changed_at: new Date().toISOString(),
+      applies_from: monthStart,
+    })
+    .select('id')
+    .single();
+  if (insErr) { console.warn('[pricing-split] new line insert failed:', insErr.message); return noSplit; }
+  const newLineId = inserted.id;
+
+  const costIdMap = new Map();
+  if ((costs || []).length) {
+    const { data: newCosts, error: copyErr } = await supabase
+      .from('project_estimate_line_costs')
+      .insert(costs.map(c => ({
+        line_id: newLineId,
+        role_id: c.role_id,
+        user_id: c.user_id ?? null,
+        unit_price: c.unit_price,
+        currency: c.currency || 'JPY',
+        pricing_type: c.pricing_type || 'fixed_per_unit',
+        percentage: c.percentage ?? null,
+        actual_hours: c.actual_hours ?? null,
+      })))
+      .select('id, role_id, user_id');
+    if (copyErr) {
+      console.warn('[pricing-split] costs copy failed:', copyErr.message);
+      await supabase.from('project_estimate_lines').delete().eq('id', newLineId);
+      return noSplit;
+    }
+    // UNIQUE (line_id, role_id, user_id) なので (role_id, user_id) で 1 対 1 に対応する
+    const keyOf = (c) => `${c.role_id}|${c.user_id || ''}`;
+    const newByKey = new Map((newCosts || []).map(c => [keyOf(c), c.id]));
+    for (const c of costs) if (newByKey.has(keyOf(c))) costIdMap.set(c.id, newByKey.get(keyOf(c)));
+  }
+
+  // 今月の納品分・未納品は新グループへ。先月以前の納品分は旧グループに残す
+  const { error: moveErr } = await supabase
+    .from('creatives')
+    .update({ line_id: newLineId })
+    .eq('line_id', lineId)
+    .or(`delivered_at.is.null,delivered_at.gte.${monthStartIso}`);
+  if (moveErr) {
+    console.warn('[pricing-split] creatives move failed:', moveErr.message);
+    await supabase.from('project_estimate_lines').delete().eq('id', newLineId);
+    return noSplit;
+  }
+  const { error: stopErr } = await supabase
+    .from('project_estimate_lines').update({ applies_to: prevMonthEnd }).eq('id', lineId);
+  if (stopErr) console.warn('[pricing-split] old line stop failed:', stopErr.message);
+
+  // 並び順: 新グループを旧グループの直前に置く（今の単価が上に来る）
+  try {
+    const { data: allLines } = await supabase
+      .from('project_estimate_lines').select('id')
+      .eq('project_id', line.project_id)
+      .order('sort_order', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true });
+    if (Array.isArray(allLines)) {
+      const ids = allLines.map(l => l.id).filter(id => id !== newLineId);
+      const idx = ids.indexOf(lineId);
+      ids.splice(idx >= 0 ? idx : ids.length, 0, newLineId);
+      await Promise.all(ids.map((id, i) =>
+        supabase.from('project_estimate_lines').update({ sort_order: (i + 1) * 10 }).eq('id', id)));
+    }
+  } catch (e) { console.warn('[pricing-split] reorder failed:', e?.message); }
+
+  // 承認待ちにするときのスナップショット（差し戻し＝分ける前の 1 グループへ戻す）。
+  // 旧グループが承認待ちのままなら、その「最後に承認された値」を引き継ぐ。
+  const baseSnap = (line.pricing_approval === 'pending' && line.pricing_prev_snapshot && typeof line.pricing_prev_snapshot === 'object')
+    ? line.pricing_prev_snapshot
+    : await buildLinePricingSnapshot(newLineId);
+  const { split_from_line_id: _f, split_applies_from: _a, ...baseRest } = baseSnap || {};
+  if (!(req._pricingSplitSnapshots instanceof Map)) req._pricingSplitSnapshots = new Map();
+  req._pricingSplitSnapshots.set(newLineId, { ...baseRest, split_from_line_id: lineId, split_applies_from: monthStart });
+
+  console.log(`[pricing-split] line ${lineId} → ${newLineId}（${monthStart} から・先月以前の納品 ${pastCount} 件は旧単価のまま）`);
+  return { lineId: newLineId, split: { from_line_id: lineId, to_line_id: newLineId, applies_from: monthStart }, costIdMap };
 }
 
 // 承認待ち発生の通知（ADR 037 Decision 5）: is_active な admin 全員へアプリ内通知＋Slack DM（best-effort）
@@ -2998,11 +3143,12 @@ async function directorRoleId() {
 async function projectDirectorFeeConsensus(projectId, roleId) {
   const { data: lines, error } = await supabase
     .from('project_estimate_lines')
-    .select('id, line_costs:project_estimate_line_costs(role_id, user_id, pricing_type, unit_price)')
+    .select('id, applies_to, line_costs:project_estimate_line_costs(role_id, user_id, pricing_type, unit_price)')
     .eq('project_id', projectId);
   if (error || !lines || !lines.length) return null;
   let price = null;
-  for (const line of lines) {
+  // 停止中のグループ（先月までの単価）は見ない（ADR 037 追補その3）
+  for (const line of lines.filter(l => !l.applies_to)) {
     const hit = (line.line_costs || []).find(lc =>
       lc.role_id === roleId && !lc.user_id && lc.pricing_type === 'fixed_per_unit');
     if (!hit || !hit.unit_price) return null;
@@ -3133,29 +3279,47 @@ router.put('/projects/:project_id/director-fee', requireAuth, requireAnyPermissi
   }
 
   // ===== 1本あたりモード（従来） =====
-  const { data: lines, error: linesErr } = await supabase
+  const { data: allLines, error: linesErr } = await supabase
     .from('project_estimate_lines')
-    .select('id')
+    .select('id, applies_to')
     .eq('project_id', projectId);
   if (linesErr) return res.status(500).json({ error: linesErr.message });
-  if (!lines || !lines.length) {
+  // 停止中のグループ（先月までの単価など）は書き換えない（ADR 037 追補その3）
+  const lines = (allLines || []).filter(l => !l.applies_to);
+  if (!lines.length) {
     return res.status(400).json({ error: '成果物グループがまだありません。先にグループを追加してください（時給精算の場合は「時給」を選ぶとグループが自動作成されます）' });
   }
 
   // ADR 037: 書き込み前の承認済み値を全 line 分控える（実際に単価が変わった line だけ承認状態を更新）
   const perUnitSnapshots = await capturePricingSnapshots(lines.map(l => l.id));
   const touchedLineIds = [];
+  const pricingSplits = [];
   let applied = 0, removed = 0;
-  for (const line of lines) {
+  for (const srcLine of lines) {
+    let line = srcLine;
     // UNIQUE (line_id, role_id, user_id) のためロール固定行は最大1件
-    const { data: existing, error: exErr } = await supabase
+    const loadExisting = (lid) => supabase
       .from('project_estimate_line_costs')
       .select('id, pricing_type, unit_price')
-      .eq('line_id', line.id).eq('role_id', roleId).is('user_id', null)
+      .eq('line_id', lid).eq('role_id', roleId).is('user_id', null)
       .maybeSingle();
+    let { data: existing, error: exErr } = await loadExisting(line.id);
     if (exErr) return res.status(500).json({ error: exErr.message });
     // 時給行は1本あたりの一括反映で上書きしない（時給は時給モード・内訳での明示操作のみ）
     if (existing && existing.pricing_type === 'hourly') continue;
+    // ADR 037 追補その3: 金額が変わるグループは、先月以前の納品分を旧グループに残して今月からの新グループへ書く
+    const willChange = price > 0
+      ? !(existing && (Number(existing.unit_price) || 0) === price && existing.pricing_type === 'fixed_per_unit')
+      : !!(existing && existing.pricing_type === 'fixed_per_unit');
+    if (willChange) {
+      const sp = await splitLineForMonthlyPricing(req, line.id);
+      if (sp.split) {
+        line = { id: sp.lineId };
+        pricingSplits.push(sp.split);
+        ({ data: existing, error: exErr } = await loadExisting(line.id));
+        if (exErr) return res.status(500).json({ error: exErr.message });
+      }
+    }
     if (price > 0) {
       if (existing) {
         const unchanged = (Number(existing.unit_price) || 0) === price && existing.pricing_type === 'fixed_per_unit';
@@ -3180,7 +3344,7 @@ router.put('/projects/:project_id/director-fee', requireAuth, requireAnyPermissi
     }
   }
   const pricingApproval = await finishPricing(touchedLineIds, { snapshots: perUnitSnapshots });
-  res.json({ ok: true, unit_price: price, applied, removed, lines_count: lines.length, line_pricing_approval: pricingApproval, pricing_touched_line_ids: touchedLineIds });
+  res.json({ ok: true, unit_price: price, applied, removed, lines_count: lines.length, line_pricing_approval: pricingApproval, pricing_touched_line_ids: touchedLineIds, ...(pricingSplits.length ? { pricing_split: pricingSplits[0], pricing_splits: pricingSplits } : {}) });
 });
 
 // ===== ランク単価プリセット（category × rank → 制作者単価）。category_rank_rates を再利用 =====
@@ -3402,7 +3566,8 @@ router.post('/projects/:project_id/lines', requireAuth, requireAnyPermission('pr
 
 // PUT /api/projects/:project_id/lines/:line_id  部分更新
 router.put('/projects/:project_id/lines/:line_id', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
-  const { project_id: projectId, line_id: lineId } = req.params;
+  const { project_id: projectId } = req.params;
+  let lineId = req.params.line_id;
   const body = req.body || {};
 
   // 既存 line 取得 + project_id 一致チェック（applies 列が無い環境ではレガシー select で再試行）
@@ -3499,13 +3664,31 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requireAnyPermis
   const clientPriceChanges = Object.prototype.hasOwnProperty.call(updates, 'client_unit_price')
     && (Number(existing.client_unit_price) || 0) !== updates.client_unit_price;
   const hasProducerPrice = Object.prototype.hasOwnProperty.call(body, 'producer_unit_price') && body.producer_unit_price !== null && body.producer_unit_price !== '';
+  const catForCost = Object.prototype.hasOwnProperty.call(body, 'category_id') ? (body.category_id || existing.category_id) : existing.category_id;
+
+  // ADR 037 追補その3: 単価が変わるなら、先月以前の納品分を旧グループに残して今月からの新グループへ書く
+  let producerPriceChanges = false;
+  if (hasProducerPrice) {
+    const roleId = await productionRoleIdForCategory(catForCost);
+    const { data: curCost } = roleId
+      ? await supabase.from('project_estimate_line_costs')
+        .select('unit_price').eq('line_id', lineId).eq('role_id', roleId).is('user_id', null).maybeSingle()
+      : { data: null };
+    const nextPrice = Math.max(0, parseInt(body.producer_unit_price, 10) || 0);
+    producerPriceChanges = curCost ? (Number(curCost.unit_price) || 0) !== nextPrice : nextPrice > 0;
+  }
+  let pricingSplit = null;
+  if (clientPriceChanges || producerPriceChanges) {
+    const sp = await splitLineForMonthlyPricing(req, lineId);
+    if (sp.split) { lineId = sp.lineId; pricingSplit = sp.split; }
+  }
+
   // スナップショットは書き込み前に控える（差し戻し時は「最後に承認された値」へ戻す）
   const pricingSnapshots = (clientPriceChanges || hasProducerPrice) ? await capturePricingSnapshots([lineId]) : null;
   let pricingTouched = clientPriceChanges;
 
   // 制作者単価を line_cost へ反映（line 列の変更有無に関わらず実行）
   if (hasProducerPrice) {
-    const catForCost = Object.prototype.hasOwnProperty.call(body, 'category_id') ? (body.category_id || existing.category_id) : existing.category_id;
     try {
       const changed = await upsertProducerLineCost(lineId, catForCost, body.producer_unit_price);
       if (changed) pricingTouched = true;
@@ -3517,7 +3700,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requireAnyPermis
     if (pricingTouched) await applyPricingApprovalAfterWrite(req, [lineId], { projectId, snapshots: pricingSnapshots });
     // no-op: 既存をそのまま返す（フロントの fetch 再実行と整合性を保つ）
     const { data: row } = await selectLineRowById(lineId);
-    return res.json(row);
+    return res.json(pricingSplit ? { ...row, pricing_split: pricingSplit } : row);
   }
 
   const { error: updErr } = await supabase
@@ -3534,7 +3717,7 @@ router.put('/projects/:project_id/lines/:line_id', requireAuth, requireAnyPermis
   if (pricingTouched) await applyPricingApprovalAfterWrite(req, [lineId], { projectId, snapshots: pricingSnapshots });
   const { data, error } = await selectLineRowById(lineId);
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  res.json(pricingSplit ? { ...data, pricing_split: pricingSplit } : data);
 });
 
 // DELETE /api/projects/:project_id/lines/:line_id  削除
@@ -3820,6 +4003,32 @@ router.post('/projects/:project_id/lines/:line_id/pricing/reject', requireAuth, 
   const actorId = req.user?.id || null;
   const snap = before.pricing_prev_snapshot && typeof before.pricing_prev_snapshot === 'object' ? before.pricing_prev_snapshot : null;
 
+  // ADR 037 追補その3: 月またぎで分けた新グループの差し戻し → 分ける前の 1 グループに戻す
+  // （クリエイティブを旧グループへ戻し、旧グループの停止を解き、新グループを消す）。
+  // 新グループを消せない場合は下の通常の復元（単価だけ承認済みの値へ戻す）に回す。
+  if (snap && snap.split_from_line_id) {
+    const fromId = snap.split_from_line_id;
+    const { data: fromLine } = await supabase
+      .from('project_estimate_lines').select('id, project_id').eq('id', fromId).maybeSingle();
+    if (fromLine && fromLine.project_id === projectId) {
+      const { error: backErr } = await supabase.from('creatives').update({ line_id: fromId }).eq('line_id', lineId);
+      if (backErr) return res.status(500).json({ error: backErr.message });
+      const { error: delErr } = await supabase.from('project_estimate_lines').delete().eq('id', lineId);
+      if (!delErr) {
+        const { error: reopenErr } = await supabase.from('project_estimate_lines').update({ applies_to: null }).eq('id', fromId);
+        if (reopenErr) return res.status(500).json({ error: reopenErr.message });
+        await notifyPricingDecision({ line: before, projectId, requesterId, actorId, approved: false, reason });
+        const { data: line, error } = await selectLineRowById(fromId);
+        if (error) return res.status(500).json({ error: error.message });
+        return res.json({ ok: true, action: 'merged', line });
+      }
+      console.warn('[pricing-approval] split line delete failed, fallback to restore:', delErr.message);
+      // 消せなかったので、クリエイティブは新グループ側に置き直してから通常の復元を行う
+      await supabase.from('creatives').update({ line_id: lineId }).eq('line_id', fromId)
+        .or(`delivered_at.is.null,delivered_at.gte.${new Date(`${snap.split_applies_from}T00:00:00+09:00`).toISOString()}`);
+    }
+  }
+
   if (snap) {
     // 復元: client_unit_price → line_costs（delete → insert で作り直す。ADR 037 Consequences）
     const { error: lineErr } = await supabase.from('project_estimate_lines')
@@ -3945,6 +4154,8 @@ router.get('/pricing-approvals/pending', requireAuth, requirePermission('project
         client_unit_price: Number(snap.client_unit_price) || 0,
         costs: (Array.isArray(snap.costs) ? snap.costs : []).map(costView),
       } : null,
+      // ADR 037 追補その3: 月またぎで分けた新グループなら、適用開始日（この日以降の納品分から新単価）
+      split_applies_from: snap?.split_from_line_id ? (snap.split_applies_from || null) : null,
       requested_by: requester ? { id: requester.id, full_name: requester.full_name, nickname: requester.nickname } : null,
       requested_at: r.pricing_requested_at || null,
     };
@@ -5226,8 +5437,13 @@ router.get('/projects/:project_id/lines/:line_id/costs', requireAuth, async (req
 // body: { role_id, user_id, unit_price, currency, pricing_type, percentage, actual_hours }
 router.post('/projects/:project_id/lines/:line_id/costs', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
   const { project_id: projectId, line_id: lineId } = req.params;
-  const r = await createLineCostForProject(req, projectId, lineId, req.body || {});
-  res.status(r.status).json(r.body);
+  // ADR 037 追補その3: 先月以前の納品があるグループは今月からの新グループへ追加する
+  // （参加申請の承認＝新メンバーの支払先登録は単価の見直しではないので分けない）
+  const verify = await _verifyLineBelongsToProject(lineId, projectId);
+  if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
+  const sp = await splitLineForMonthlyPricing(req, lineId);
+  const r = await createLineCostForProject(req, projectId, sp.lineId, req.body || {});
+  res.status(r.status).json(sp.split && r.status === 200 ? { ...r.body, pricing_split: sp.split } : r.body);
 });
 
 // 支払先（line_cost）1 行の作成本体。POST /costs と参加申請の承認（ADR 051）で共用する。
@@ -5631,7 +5847,8 @@ router.post('/project-join-requests/:id/reject', requireAuth, (req, res) => deci
 
 // PUT /api/projects/:project_id/lines/:line_id/costs/:cost_id  部分更新
 router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
-  const { project_id: projectId, line_id: lineId, cost_id: costId } = req.params;
+  const { project_id: projectId } = req.params;
+  let { line_id: lineId, cost_id: costId } = req.params;
   const verify = await _verifyLineBelongsToProject(lineId, projectId);
   if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
 
@@ -5763,6 +5980,16 @@ router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, r
     return res.json(row);
   }
 
+  // ADR 037 追補その3: 単価が変わるなら、先月以前の納品分を旧グループに残して今月からの新グループの行を書き換える
+  let pricingSplit = null;
+  if (pricingTouched) {
+    const sp = await splitLineForMonthlyPricing(req, lineId);
+    if (sp.split && sp.costIdMap.has(costId)) {
+      lineId = sp.lineId;
+      costId = sp.costIdMap.get(costId);
+      pricingSplit = sp.split;
+    }
+  }
   const pricingSnapshots = pricingTouched ? await capturePricingSnapshots([lineId]) : null;
   const { data, error } = await supabase
     .from('project_estimate_line_costs')
@@ -5784,12 +6011,13 @@ router.put('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, r
     const { data: l } = await supabase.from('project_estimate_lines').select('pricing_approval').eq('id', lineId).maybeSingle();
     linePricingApproval = l?.pricing_approval || null;
   }
-  res.json({ ...data, line_pricing_approval: linePricingApproval });
+  res.json({ ...data, line_pricing_approval: linePricingApproval, ...(pricingSplit ? { pricing_split: pricingSplit } : {}) });
 });
 
 // DELETE /api/projects/:project_id/lines/:line_id/costs/:cost_id  物理削除
 router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
-  const { project_id: projectId, line_id: lineId, cost_id: costId } = req.params;
+  const { project_id: projectId } = req.params;
+  let { line_id: lineId, cost_id: costId } = req.params;
   const verify = await _verifyLineBelongsToProject(lineId, projectId);
   if (verify.error) return res.status(verify.error.status).json({ error: verify.error.message });
 
@@ -5804,6 +6032,14 @@ router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth
     return res.status(400).json({ error: 'line_id と cost_id が一致しません' });
   }
 
+  // ADR 037 追補その3: 先月以前の納品分は旧グループに残し、今月からの新グループの行を消す
+  let pricingSplit = null;
+  const sp = await splitLineForMonthlyPricing(req, lineId);
+  if (sp.split && sp.costIdMap.has(costId)) {
+    lineId = sp.lineId;
+    costId = sp.costIdMap.get(costId);
+    pricingSplit = sp.split;
+  }
   // ADR 037: 削除前の承認済み値を控える（差し戻し時に復元）
   const pricingSnapshots = await capturePricingSnapshots([lineId]);
   const { error: delErr } = await supabase
@@ -5812,7 +6048,7 @@ router.delete('/projects/:project_id/lines/:line_id/costs/:cost_id', requireAuth
     .eq('id', costId);
   if (delErr) return res.status(500).json({ error: delErr.message });
   const pr = await applyPricingApprovalAfterWrite(req, [lineId], { projectId, snapshots: pricingSnapshots });
-  res.json({ ok: true, line_pricing_approval: pr.canApprove ? 'approved' : 'pending' });
+  res.json({ ok: true, line_pricing_approval: pr.canApprove ? 'approved' : 'pending', ...(pricingSplit ? { pricing_split: pricingSplit } : {}) });
 });
 
 // ==================== 支払スケジュール（一式の分割）ADR 029 Stage 2 ====================
@@ -7814,13 +8050,21 @@ async function loadProjectLinePricing(projectIds, tag) {
 
 // creative 1件に紐付ける line_id を決める（判定は utils/pricing.js の pickCreativeLineId）。
 // 「今日」時点で有効なグループから選ぶので、停止済み（applies_to が過去）は対象外。
+// 納品済みは「納品月の月末」時点で選ぶ（ADR 030 / 037 追補その3: 先月までの納品分を
+// 担当者の付け替えなどで今月からの新グループ＝新単価へ動かさない）。
 function pickLineIdForCreative(creative, ctx) {
+  let asOf = _todayStrJST();
+  if (creative.delivered_at) {
+    const d = new Date(creative.delivered_at).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const [y, m] = d.split('-').map(Number);
+    if (y && m) asOf = jstMonthEndStr(y, m);
+  }
   return pickCreativeLineId({
     creative,
     linesByProject: ctx.linesByProject,
     costsByLine: ctx.costsByLine,
     categoryIdByCode: ctx.categoryIdByCode,
-    asOf: _todayStrJST(),
+    asOf,
   });
 }
 
@@ -7831,7 +8075,7 @@ async function syncCreativeLineId(creativeId, opts = {}) {
   try {
     const { data: c, error } = await supabase
       .from('creatives')
-      .select('id, project_id, line_id, category_id, creative_type, creative_assignments(role, rank_applied)')
+      .select('id, project_id, line_id, category_id, creative_type, delivered_at, creative_assignments(role, rank_applied)')
       .eq('id', creativeId)
       .maybeSingle();
     if (error) { console.warn('[syncCreativeLineId] creative fetch failed:', error.message); return null; }

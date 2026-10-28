@@ -22056,10 +22056,14 @@ function formatPricingPrevSnapshot(snap) {
 
 // ADR 037: 保存レスポンスが「承認待ち」なら文言を差し替える。
 // line 系は `pricing_approval`、line_costs 系は `line_pricing_approval` を見る。
+// ADR 037 追補その3: 先月以前の納品があるグループは、保存時に「先月までの旧グループ」と「今月からの新グループ」に分かれる。
 function pricingPendingToast(resJson, okText) {
   const st = resJson?.pricing_approval || resJson?.line_pricing_approval || resJson?.line?.pricing_approval;
-  if (st === 'pending') return '保存しました（管理者の承認待ち）';
-  return okText;
+  const base = st === 'pending' ? '保存しました（管理者の承認待ち）' : okText;
+  const from = resJson?.pricing_split?.applies_from;
+  if (!from) return base;
+  const m = Number(String(from).slice(5, 7));
+  return `${base}。${m}月の納品分から新しい単価になります（先月までに納品した分は前の単価のまま・グループを分けました）`;
 }
 
 // ADR 037: 承認（pricing_approve 保持者）。成功後は一覧を再描画。
@@ -22141,10 +22145,11 @@ async function executeProjectLinePricingReject() {
     closeModal('modal-project-line-pricing-reject');
     const msg = j.action === 'deleted' ? '差し戻しました（グループを削除）'
       : j.action === 'cleared' ? '差し戻しました（単価を未設定に戻しました）'
+      : j.action === 'merged' ? '差し戻しました（分ける前のグループと単価に戻しました）'
       : '差し戻しました（承認済みの単価に戻しました）';
     showToast(msg, 'ok');
     if (source === 'project' || document.getElementById('p-id')?.value === projectId) {
-      if (j.action === 'deleted') { delete _projectLineCostsCache[lineId]; _projectLineCostsOpen.delete(lineId); }
+      if (j.action === 'deleted' || j.action === 'merged') { delete _projectLineCostsCache[lineId]; _projectLineCostsOpen.delete(lineId); }
       if (document.getElementById('p-id')?.value === projectId) await loadProjectLines(projectId);
     }
     if (typeof refreshPricingApprovalsCard === 'function') refreshPricingApprovalsCard();
@@ -22331,7 +22336,7 @@ function renderProjectLines() {
             <button type="button" class="btn" onclick="approveProjectLinePricing('${esc(line.id)}')" style="padding:4px 10px;font-size:11px;color:#0F7A56;border-color:#86E0BE;white-space:nowrap" title="この成果物グループの単価を承認します">✅ 承認</button>
             <button type="button" class="btn" onclick="openProjectLinePricingReject('${esc(line.id)}')" style="padding:4px 10px;font-size:11px;color:#92400E;border-color:#F0C98A;white-space:nowrap" title="理由を添えて差し戻し、承認済みの値に戻します">↩ 差し戻し</button>` : '';
     const appliesLabel = isStopped
-      ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:1px">適用 ${esc(line.applies_from || '—')} 〜 ${esc(line.applies_to)}（停止）</div>`
+      ? `<div style="font-size:10.5px;color:#9CA3AF;margin-top:1px">適用 ${esc(line.applies_from || '—')} 〜 ${esc(line.applies_to)}（停止・この日までに納品した分はこの単価）</div>`
       : '';
     const toggleBtn = `<button type="button" class="btn" onclick="toggleProjectLineActive('${esc(line.id)}')" ${!canEdit ? 'disabled' : ''} style="padding:4px 10px;font-size:11px;${isStopped ? 'color:#0F7A56;border-color:#86E0BE;' : 'color:#92660A;border-color:#F0C98A;'}${!canEdit ? 'opacity:.5;cursor:not-allowed' : ''}">${isStopped ? '再開' : '停止'}</button>`;
 
@@ -22571,13 +22576,9 @@ async function saveProjectDirectorFee() {
     _directorFeeDirty = false;
     const j = await res.json().catch(() => ({}));
     // ADR 037: director-fee は複数 line を返し得る。どれかが承認待ちなら文言を差し替える
-    const feePending = j?.pricing_approval === 'pending'
-      || (Array.isArray(j?.lines) && j.lines.some(l => l?.pricing_approval === 'pending'));
-    showToast(feePending
-      ? '保存しました（管理者の承認待ち）'
-      : (price > 0
-        ? `ディレクター費 ¥${price.toLocaleString()}/本 を全${j.lines_count || ''}グループに反映しました`
-        : 'ディレクター費を解除しました'), 'ok');
+    showToast(pricingPendingToast(j, price > 0
+      ? `ディレクター費 ¥${price.toLocaleString()}/本 を全${j.lines_count || ''}グループに反映しました`
+      : 'ディレクター費を解除しました'), 'ok');
     await loadProjectLines(projectId);
   });
   return saved;
@@ -23445,8 +23446,8 @@ async function saveProjectLineCost() {
     const savedCost = await res.json().catch(() => null);
     showToast(pricingPendingToast(savedCost, costId ? 'コストを更新しました' : 'コストを追加しました'), 'ok');
     // line_costs を再 fetch して再描画。ADR 037: 承認状態（バッジ）が変わるので lines も取り直す
-    _projectLineCostsOpen.add(lineId);
-    if (savedCost?.line_pricing_approval && projectId) {
+    _projectLineCostsOpen.add(savedCost?.pricing_split?.to_line_id || lineId);
+    if ((savedCost?.line_pricing_approval || savedCost?.pricing_split) && projectId) {
       await loadProjectLines(projectId);
     } else {
       await loadLineCosts(lineId);
@@ -23497,7 +23498,8 @@ async function executeProjectLineCostDelete() {
     const delJson = await res.json().catch(() => null);
     showToast(pricingPendingToast(delJson, 'コストを削除しました'), 'ok');
     // ADR 037: 削除でも承認待ちに落ちる（バッジ更新のため lines ごと取り直す）
-    if (delJson?.line_pricing_approval && projectId) {
+    if (delJson?.pricing_split?.to_line_id) _projectLineCostsOpen.add(delJson.pricing_split.to_line_id);
+    if ((delJson?.line_pricing_approval || delJson?.pricing_split) && projectId) {
       await loadProjectLines(projectId);
     } else {
       await loadLineCosts(lineId);
@@ -33350,11 +33352,16 @@ async function renderPricingApprovalsCard() {
     ).join(' ／ ');
     const groupLabel = [it.category_name, it.rank ? `${it.rank}ランク` : ''].filter(Boolean).join(' ');
     const requester = formatPricingRequester(it.requested_by, it.requested_at);
-    const newTag = hasPrev ? '' : `<span style="font-size:10px;color:#92400E;background:#FEF3C7;border:1px solid #FCD34D;border-radius:999px;padding:1px 7px;white-space:nowrap">新規グループ</span>`;
+    const splitMonth = it.split_applies_from ? Number(String(it.split_applies_from).slice(5, 7)) : null;
+    const newTag = splitMonth
+      ? `<span style="font-size:10px;color:#1D4ED8;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:999px;padding:1px 7px;white-space:nowrap" title="先月までに納品した分は前の単価のまま（グループを分けています）">📅 ${splitMonth}月納品分から</span>`
+      : (hasPrev ? '' : `<span style="font-size:10px;color:#92400E;background:#FEF3C7;border:1px solid #FCD34D;border-radius:999px;padding:1px 7px;white-space:nowrap">新規グループ</span>`);
     const summaryHtml = `<div style="margin-bottom:4px"><strong>${esc(it.client_name || '')}</strong> ／ ${esc(it.project_name || '')}</div>`
       + `<div style="color:var(--text-muted)">${esc(it.line_name || '（名称未設定）')}${groupLabel ? `　${esc(groupLabel)}` : ''}</div>`
       + `<div style="color:var(--text-muted)">${esc(requester)}</div>`
-      + `<div style="color:var(--text-muted)">${hasPrev ? esc(formatPricingPrevSnapshot(it.prev_snapshot)) + ' に戻します' : '変更前の単価が無いため、単価を未設定に戻します（クリエイティブが無ければグループごと削除）'}</div>`;
+      + `<div style="color:var(--text-muted)">${splitMonth
+        ? `分ける前の 1 つのグループ（${esc(formatPricingPrevSnapshot(it.prev_snapshot))}）に戻します`
+        : (hasPrev ? esc(formatPricingPrevSnapshot(it.prev_snapshot)) + ' に戻します' : '変更前の単価が無いため、単価を未設定に戻します（クリエイティブが無ければグループごと削除）')}</div>`;
     return `<div class="today-dl-row" style="align-items:flex-start;cursor:default;gap:10px;flex-wrap:wrap" data-line-id="${esc(it.line_id)}">
       <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:3px">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">

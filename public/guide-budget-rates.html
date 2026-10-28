@@ -255,8 +255,27 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
   </div>
 
   <div class="wanpoint">
-    <div class="wanpoint-title">単価改定は「削除」ではなく「停止」</div>
-    <p>過去のクリエイティブが紐付いたグループを消すと集計が壊れます。<strong>旧単価のグループは停止 → 新単価のグループを追加</strong>、が正しい運用です。</p>
+    <div class="wanpoint-title">単価を変えると「今月の納品分から」新しい単価になります</div>
+    <p>先月までに納品したクリエイティブがあるグループの単価（クライアント単価・制作者単価・💰 内訳・ディレクター費）を変えると、保存したときに自動でグループが2つに分かれます。</p>
+    <div class="flow-row">
+      <div class="flow-step">
+        <div class="flow-step-icon">✏️</div>
+        <div class="flow-step-label">10月に<br>単価を変更</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">⛔</div>
+        <div class="flow-step-label">旧グループ<br>〜9/30 で停止<br>（9月までの納品分）</div>
+      </div>
+      <div class="flow-arrow">＋</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">🆕</div>
+        <div class="flow-step-label">新グループ<br>10/1 から適用<br>（10月の納品分・未納品）</div>
+      </div>
+    </div>
+    <p style="margin-top:6px">保存すると「<b>10月の納品分から新しい単価になります（先月までに納品した分は前の単価のまま・グループを分けました）</b>」と表示されます。<strong>先月までに納品して、まだ請求書を出していない分も前の単価のまま</strong> なので、月の途中で単価を見直しても先月分の請求はずれません。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 分かれないとき: 先月以前の納品がまだ無いグループ／単価がまだ何も入っていないグループ（¥0 の入れ忘れは過去の納品分にもさかのぼって効きます）／停止中のグループ（過去月の単価の訂正としてそのまま直ります）。差し戻しされると、分ける前の1つのグループに戻ります。</p>
+    <p style="margin-top:6px">過去のクリエイティブが紐付いたグループは <b>削除</b> せず、使わなくなったら <b>停止</b> にしてください。</p>
   </div>
 
   <div class="next-btn-wrap"><a class="next-btn" href="#step3">STEP 3 へ進む</a></div>
@@ -427,7 +446,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     </div>
     <div class="trouble-item">
       <span class="trouble-icon">🧮</span>
-      <div><div class="trouble-q">単価を変えたのに先月分の集計が変わらない／今月分が旧単価のまま</div><div class="trouble-a">集計の単価は「締め月の月末時点で有効なグループ」で決まります。旧グループを停止した日付と、新グループを追加した月を確認。まだ旧グループが有効なままなら停止を</div></div>
+      <div><div class="trouble-q">単価を変えたのに先月分の集計が変わらない／今月分が旧単価のまま</div><div class="trouble-a">単価の変更は「変えた月の納品分から」効きます（先月までの納品分は自動で分かれた旧グループの単価のまま）。先月分の単価そのものが間違っていたときは、⛔ 停止中の旧グループを編集して直してください。今月分が旧単価のままなら、旧グループがまだ停止されていないかを確認</div></div>
     </div>
   </div>
 </section>

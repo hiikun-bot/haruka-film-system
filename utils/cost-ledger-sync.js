@@ -83,14 +83,19 @@ async function loadModel() {
     }
     return out;
   };
-  const [clients, projects, cats, lines, costs, roles] = await Promise.all([
+  const [clients, projects, cats, allLines, costs, roles] = await Promise.all([
     fetchAll('clients', 'id,name,billing_org'),
     fetchAll('projects', 'id,client_id,name,created_at,primary_category_id,is_hidden'),
     fetchAll('creative_categories', 'id,code,name'),
-    fetchAll('project_estimate_lines', 'id,project_id,category_id,name,planned_count,client_unit_price,rank,sort_order'),
+    fetchAll('project_estimate_lines', 'id,project_id,category_id,name,planned_count,client_unit_price,rank,sort_order,applies_to'),
     fetchAll('project_estimate_line_costs', 'id,line_id,role_id,user_id,unit_price,pricing_type'),
     fetchAll('roles', 'id,code,category'),
   ]);
+  // 同じ案件×区分×ランクに現役のグループがある停止中グループ（月またぎで分けた先月までの単価・
+  // ADR 037 追補その3）は台帳に出さず、反映でも書き換えない。現役が無い停止中グループは従来どおり扱う。
+  const activeKey = l => `${l.project_id}|${l.category_id}|${rankOf(l) || ''}`;
+  const activeKeys = new Set(allLines.filter(l => !l.applies_to).map(activeKey));
+  const lines = allLines.filter(l => !l.applies_to || !activeKeys.has(activeKey(l)));
   const m = {
     clients, projects, cats, lines,
     roleById: Object.fromEntries(roles.map(r => [r.id, r])),
