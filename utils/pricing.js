@@ -442,8 +442,23 @@ function linePricingApproval(line) {
   return line && line.pricing_approval === 'pending' ? 'pending' : 'approved';
 }
 
+/**
+ * 単価の月またぎ分割（ADR 037 追補その3）で使う月の境目。
+ * @param {string} todayStr - JST の今日 'YYYY-MM-DD'
+ * @returns {{ monthStart: string, prevMonthEnd: string, monthStartIso: string }}
+ *   今月1日・先月末日（'YYYY-MM-DD'）と、今月1日 0:00 JST の ISO 時刻（delivered_at との比較用）
+ */
+function jstMonthBoundary(todayStr) {
+  const [y, m] = String(todayStr).split('-').map(Number);
+  const monthStart = `${String(todayStr).slice(0, 7)}-01`;
+  const prevMonthEnd = new Date(Date.UTC(y, m - 1, 0)).toISOString().slice(0, 10);
+  const monthStartIso = new Date(`${monthStart}T00:00:00+09:00`).toISOString();
+  return { monthStart, prevMonthEnd, monthStartIso };
+}
+
 module.exports = {
   ACTIVE_LINE_STATUSES,
+  jstMonthBoundary,
   calculateLineCost,
   calculateLineEconomics,
   calculateProjectEconomics,
