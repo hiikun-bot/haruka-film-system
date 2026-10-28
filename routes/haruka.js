@@ -19335,7 +19335,7 @@ async function ieLoadInvoiceForAccess(req, id) {
 
 /** 発行者の CR を範囲 OR 条件で集める（担当 ∪ 自分が D/P の案件 ∪ 納品時スナップショット D/P）。N+1 なし */
 async function ieFetchIssuerCreatives(uid, orFilter, { withThumbs = false } = {}) {
-  const sel = IE_CREATIVE_SELECT + (withThumbs ? ', creative_files(id, version, uploaded_at)' : '');
+  const sel = IE_CREATIVE_SELECT + (withThumbs ? ', creative_files(id, version, uploaded_at, drive_file_id, mime_type)' : '');
   const [assignedR, directedR, producedR, snapDR, snapPR] = await Promise.all([
     supabase.from('creatives').select(`${sel}, assignee_filter:creative_assignments!inner(user_id)`).eq('assignee_filter.user_id', uid).or(orFilter),
     supabase.from('projects').select('id').eq('director_id', uid),
@@ -19427,10 +19427,10 @@ async function ieResolveRefPrices(creatives, issuerId) {
   return out;
 }
 
-/** 候補の OR 条件（遡り範囲〜対象月末の計上イベント ＋ 対象月が締切の未納品） */
-function ieCandidateOrFilter(year, month) {
+/** 候補の OR 条件（遡り範囲〜対象月末の計上イベント ＋ 対象月が締切の未納品）。新方式の開始月より前には遡らない */
+function ieCandidateOrFilter(year, month, notBeforeYm) {
   const targetYm = IE.ymOf(year, month);
-  const startYm = IE.lookbackStartYm(targetYm);
+  const startYm = IE.previousStartYm(targetYm, notBeforeYm);
   const [sy, sm] = startYm.split('-').map(Number);
   const startIso = IE.jstMonthRangeIso(sy, sm).startIso;
   const endIso = IE.jstMonthRangeIso(year, month).endIso;
@@ -19535,11 +19535,11 @@ router.get('/invoice-editor/candidates', requireAuth, async (req, res) => {
 
     const uid = await ieResolveIssuerId(req, req.query.issuer_id);
     const withThumbs = ['1', 'true'].includes(String(req.query.with_thumbs || '').toLowerCase());
-    const creatives = await ieFetchIssuerCreatives(uid, ieCandidateOrFilter(year, month), { withThumbs });
+    const creatives = await ieFetchIssuerCreatives(uid, ieCandidateOrFilter(year, month, exclusiveFrom), { withThumbs });
 
     const classified = [];
     for (const c of creatives) {
-      const kind = IE.classifyCandidate(c, c.projects, targetYm);
+      const kind = IE.classifyCandidate(c, c.projects, targetYm, { notBeforeYm: exclusiveFrom });
       if (kind) classified.push({ c, kind });
     }
     const billable = classified.filter(x => x.kind !== 'undelivered');
@@ -19551,8 +19551,6 @@ router.get('/invoice-editor/candidates', requireAuth, async (req, res) => {
         .filter(r => kind === 'undelivered' || !billedKeys.has(IE.billedKey(c.id, r.cost_type)))
         .map(r => ({ cost_type: r.cost_type, label: IE.COST_TYPE_LABELS[r.cost_type] || r.cost_type }));
       if (!roles.length) continue; // すべての役割が請求済み
-      const latest = withThumbs ? ieLatestFile(c) : null;
-      const thumbFileId = latest ? latest.id : null;
       items.push({
         creative_id: c.id,
         file_name: c.file_name || '',
@@ -19562,7 +19560,8 @@ router.get('/invoice-editor/candidates', requireAuth, async (req, res) => {
         kind,
         billing_date: kind === 'undelivered' ? null : IE.billingDateOf(c, c.projects),
         roles,
-        thumb_file_id: thumbFileId,
+        // サムネ ON のときだけ。押すと選ぶ前に最新版を大きく見られる（似た名前の取り違え防止）
+        ...(withThumbs ? ieMediaView(c) : { thumb_file_id: null, media_drive_file_id: null, media_is_video: false }),
       });
     }
     const order = { billable: 0, previous: 1, undelivered: 2 };
@@ -19619,9 +19618,10 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
     for (const cid of creativeIds) {
       const c = creativesById.get(cid);
       if (!c) { problems.push({ creative_id: cid, code: 'CREATIVE_NOT_FOUND', message: 'クリエイティブが見つかりません' }); continue; }
-      if (!isCreativeOfUser(c, issuerId)) { problems.push({ creative_id: cid, code: 'NOT_OWN', message: `${c.file_name || ''}: 自分が担当していないクリエイティブです` }); continue; }
+      const ownRoles = isCreativeOfUser(c, issuerId) ? IE.issuerCostRoles(c, issuerId) : [];
+      if (!ownRoles.length) { problems.push({ creative_id: cid, code: 'NOT_OWN', message: `${c.file_name || ''}: 自分が制作・ディレクション・プロデュースを担当していないクリエイティブです` }); continue; }
       if (!IE.isBillableCreative(c, c.projects)) { problems.push({ creative_id: cid, code: 'NOT_DELIVERED', message: `${c.file_name || ''}: 納品済みではありません` }); continue; }
-      const roles = IE.issuerCostRoles(c, issuerId).filter(r => !billedKeys.has(IE.billedKey(c.id, r.cost_type)));
+      const roles = ownRoles.filter(r => !billedKeys.has(IE.billedKey(c.id, r.cost_type)));
       if (!roles.length) { problems.push({ creative_id: cid, code: 'DUPLICATE', message: `${c.file_name || ''}: すでに提出済みの請求書に入っています` }); continue; }
       for (const r of roles) {
         rows.push({

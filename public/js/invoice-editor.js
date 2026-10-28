@@ -28,7 +28,8 @@
   // ======================================================================
   const cand = { active: false, year: null, month: null, data: null, seq: 0 };
 
-  function thumbsOn() { return lsGet(THUMB_KEY) === '1'; }
+  // 既定 ON（似た名前の CR を見た目で見分けられるように）。OFF にした端末だけ軽い一覧のまま
+  function thumbsOn() { return lsGet(THUMB_KEY) !== '0'; }
 
   function setFooterMode(exclusive) {
     const totalBox = document.getElementById('gi-total-box');
@@ -76,9 +77,11 @@
       return;
     }
     const thumbCell = (it) => showThumb
-      ? `<td class="ie-c-thumb">${it.thumb_file_id ? `<img loading="lazy" decoding="async" src="${API}/portfolio/thumbnail/${encodeURIComponent(it.thumb_file_id)}?s=120" alt="" onerror="this.style.display='none'">` : ''}</td>`
+      ? `<td class="ie-c-thumb">${it.thumb_file_id ? `<button type="button" class="ie-thumb ie-c-thumb-btn" onclick="HFSInvoiceEditor.openCandidateMedia('${h(it.creative_id)}')" title="クリックで大きく表示">
+          <img loading="lazy" decoding="async" src="${API}/portfolio/thumbnail/${encodeURIComponent(it.thumb_file_id)}?s=160" alt="" onerror="this.style.display='none'">
+          ${it.media_is_video ? '<span class="ie-thumb-play">▶</span>' : ''}</button>` : '<span class="ie-thumb ie-c-thumb-btn ie-thumb-none" title="ファイルが登録されていません">―</span>'}</td>`
       : '';
-    const roleText = (it) => it.roles.map(r => r.label).join('・');
+    const roleText = (it) => it.roles.map(r => `<span class="ie-c-role">${h(r.label)}</span>`).join('');
     const crRow = (it, disabled) => `
       <tr class="${disabled ? 'ie-c-disabled' : ''}">
         <td class="ie-c-check"><input type="checkbox" class="ie-cand-check" data-kind="cr" data-id="${h(it.creative_id)}" ${disabled ? 'disabled' : 'checked'} onchange="HFSInvoiceEditor._updateCandidateCount()"></td>
@@ -86,7 +89,7 @@
         ${thumbCell(it)}
         <td>
           <div class="ie-c-sub">${h(it.client_name)}${it.project_name ? ' / ' + h(it.project_name) : ''}${it.kind === 'previous' ? ' <span class="ie-badge-prev">前月・未請求</span>' : ''}${disabled ? ` <span class="ie-badge-status">${h(it.status || '未納品')}</span>` : ''}</div>
-          <div class="ie-c-file">${h(it.file_name)} <span class="ie-c-role">${h(roleText(it))}</span></div>
+          <div class="ie-c-file">${h(it.file_name)} ${roleText(it)}</div>
         </td>
         <td class="ie-c-view"><a href="/haruka.html?creative=${encodeURIComponent(it.creative_id)}" target="_blank" rel="noopener" title="クリエイティブ詳細を別タブで開く">🔗</a></td>
       </tr>`;
@@ -369,8 +372,13 @@
     el.classList.remove('open');
     document.removeEventListener('keydown', onMediaKey, true);
   }
-  async function openMedia(i) {
-    const r = ed.rows[i];
+  async function openMedia(i) { return showMedia(ed.rows[i]); }
+  // 作成モーダルの一覧から（選ぶ前に中身を確かめる）
+  async function openCandidateMedia(creativeId) {
+    const it = cand.data && cand.data.items.find(x => x.creative_id === creativeId);
+    if (it) return showMedia({ ...it, creative_label: it.file_name });
+  }
+  async function showMedia(r) {
     if (!r || !r.thumb_file_id) return;
     const el = mediaBox();
     const title = `${r.client_name ? r.client_name + '｜' : ''}${r.creative_label || ''}`;
@@ -850,7 +858,7 @@
     createDraftFromModal,
     onThumbToggle,
     open, close, reload, submit, preview, fillRef, bulkPrice, addManual, removeSelected,
-    openMedia, closeMedia,
+    openMedia, openCandidateMedia, closeMedia,
     _updateCandidateCount: updateCandidateCount,
     _toggleAllCandidates: toggleAllCandidates,
   };

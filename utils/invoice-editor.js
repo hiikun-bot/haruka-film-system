@@ -53,6 +53,8 @@
   const CR_COST_TYPES = ['base_fee', 'script_fee', 'ai_fee', 'other_fee', 'director_fee', 'producer_fee'];
   // 二重請求の対象になる請求書の状態（差し戻し・下書き・削除は数えない）
   const BILLED_STATUSES = ['submitted', 'approved'];
+  // 請求の役割にならない担当（Wチェックは報酬の単価が無い確認役。制作担当の一覧に混ぜない）
+  const NON_BILLABLE_ASSIGNMENT_ROLES = ['wcheck'];
 
   // ---------- 年月ヘルパー（JST・TZ 非依存） ----------
 
@@ -173,6 +175,12 @@
     return addMonthsYm(targetYm, -(Number.isFinite(months) ? months : LOOKBACK_MONTHS));
   }
 
+  /** 「前月・未請求」を遡る起点月。遡り範囲と新方式の開始月の遅い方 */
+  function previousStartYm(targetYm, notBeforeYm, months) {
+    const start = lookbackStartYm(targetYm, months);
+    return (/^\d{4}-\d{2}$/.test(String(notBeforeYm || '')) && notBeforeYm > start) ? notBeforeYm : start;
+  }
+
   /**
    * モーダルでの CR の扱いを決める。
    * @returns {'billable'|'previous'|'undelivered'|null}
@@ -180,6 +188,8 @@
    *   previous    : 前月以前（遡り範囲内）に計上・まだ未請求 →「前月・未請求」バッジ
    *   undelivered : 当月が締切で未納品（グレー・選択不可）
    *   null        : 一覧に出さない（範囲外・未来・他月の未納品）
+   * opts.notBeforeYm（新方式の開始月）より前の月は遡らない。旧方式の月は HFS 外（PDF・手入力）で請求済みのものが
+   * 多く、invoice_items では見分けられないため（「請求済みが一覧に混ざる」の対策）
    */
   function classifyCandidate(creative, project, targetYm, opts) {
     const months = opts && Number.isFinite(opts.lookbackMonths) ? opts.lookbackMonths : LOOKBACK_MONTHS;
@@ -189,7 +199,7 @@
       const ym = d ? d.slice(0, 7) : null;
       if (!ym) return null;
       if (ym === targetYm) return 'billable';
-      if (ym < targetYm && ym >= lookbackStartYm(targetYm, months)) return 'previous';
+      if (ym < targetYm && ym >= previousStartYm(targetYm, opts && opts.notBeforeYm, months)) return 'previous';
       return null;
     }
     // 未納品: 従来の締切月（final_deadline → draft_deadline。初稿請求案件は draft_deadline）が当月なら「請求できません」で見せる
@@ -211,11 +221,13 @@
    *   - 担当（creative_assignments）の role が D/P 以外 → base_fee（参考単価は roleCode=その role）
    *   - 納品時スナップショット D（無ければ projects.director_id）or 担当 role='director' → director_fee
    *   - 同 P → producer_fee
+   *   - Wチェック担当（role='wcheck'）は請求の役割にしない（NON_BILLABLE_ASSIGNMENT_ROLES）
    * @returns {Array<{cost_type, role_code, rank_applied}>}
    */
   function issuerCostRoles(creative, uid) {
     if (!creative || !uid) return [];
-    const assignment = (creative.creative_assignments || []).find(a => a && (a.user_id === uid || (a.users && a.users.id === uid)));
+    const assignment = (creative.creative_assignments || []).find(a => a && (a.user_id === uid || (a.users && a.users.id === uid))
+      && !NON_BILLABLE_ASSIGNMENT_ROLES.includes(a.role));
     const isDirector = snapshotDirectorId(creative) === uid;
     const isProducer = snapshotProducerId(creative) === uid;
     const primaryRole = (assignment && assignment.role) || (isDirector ? 'director' : (isProducer ? 'producer' : null));
@@ -379,10 +391,10 @@
   return {
     TAX_NUM, TAX_DEN, WH_NUM, WH_DEN, WITHHOLDING_WARN_THRESHOLD, LOOKBACK_MONTHS, DEFAULT_EXCLUSIVE_FROM,
     REASON_MAX, LABEL_MAX, MAX_PRICE, MAX_QUANTITY, MAX_ITEMS,
-    COST_TYPE_LABELS, FIXED_COST_TYPES, CR_COST_TYPES, BILLED_STATUSES,
+    COST_TYPE_LABELS, FIXED_COST_TYPES, CR_COST_TYPES, BILLED_STATUSES, NON_BILLABLE_ASSIGNMENT_ROLES,
     ymOf, addMonthsYm, jstDateOfIso, dateOnly, jstMonthRangeIso, paymentDueDate, invoiceDate,
     parseExclusiveFrom, isExclusiveYm,
-    billingTimingOf, isBillableCreative, billingDateOf, lookbackStartYm, classifyCandidate,
+    billingTimingOf, isBillableCreative, billingDateOf, lookbackStartYm, previousStartYm, classifyCandidate,
     issuerCostRoles, billedKey,
     parseMoney, isCrLine, isFixedLine, isManualLine, lineAmount, computeTotals, defaultWithholding,
     lineIssues, checkInvoiceForSubmit, crItemLabel,
