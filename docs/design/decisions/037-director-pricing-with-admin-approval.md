@@ -99,3 +99,9 @@ related_adrs: [002, 003, 015, 022, 027, 030, 031]
 - 送信先は `resolveAdminMyChatRoomId`（env `ADMIN_MYCHAT_CHATWORK_ROOM_ID` → `BUG_REPORT_NOTIFY_CHATWORK_ROOM_ID` → `CHATWORK_API_TOKEN` 名義人のマイチャット自動検出）。admin ユーザーの有無・Slack DM の宛先の有無とは無関係に送る。
 - 送れなかった場合は Slack のエラーチャンネル（`notifyAutoError`）へ回し、無言で消えないようにする。
 - 通知ベルのリンク `?project=<id>&tab=estimate` は案件編集モーダルの「💰 見積・費用」タブを開く（#1261）。マイチャットのリンクも同じ。
+
+## 追補（2026-10-28 その2）管理者専用メニュー「💴 単価承認」と毎朝のまとめリマインド
+
+- 承認待ちが溜まっても管理者が気づけていなかった（ホームのカードは開かないと見えない）。
+- **ナビ「💴 単価承認」**（permission `project.pricing_approve`・既定 admin のみ）を追加し、承認待ちの件数を赤バッジで常時表示する（`GET /api/pricing-approvals/count`・10 分ごと＋タブ復帰時）。ページ `#page-pricing-approvals` の一覧はホームカードと同じ `renderPricingApprovalsCard()` で描画（承認・差し戻し・案件を開く・すべて承認）。
+- **毎朝のまとめリマインド**（`workers/pricing-pending-reminder.js`）: 承認待ちが 1 件でも残っていれば、平日 JST 10 時台に管理者の Chatwork マイチャットへ案件ごとにまとめて 1 通（待ち日数つき・リンク `?page=pricing-approvals`）。二重送信ガードは `system_settings.pricing_pending_reminder_last_date`。無効化は env `PRICING_PENDING_REMINDER_ENABLED=false`。

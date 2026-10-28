@@ -3952,6 +3952,19 @@ router.get('/pricing-approvals/pending', requireAuth, requirePermission('project
   res.json({ count: items.length, items });
 });
 
+// GET /api/pricing-approvals/count  承認待ちの件数だけ（ナビ「💴 単価承認」のバッジ用・10分ごとに叩くので軽量に）
+router.get('/pricing-approvals/count', requireAuth, requirePermission('project.pricing_approve'), async (req, res) => {
+  const { count, error } = await supabase
+    .from('project_estimate_lines')
+    .select('id', { count: 'exact', head: true })
+    .eq('pricing_approval', 'pending');
+  if (error) {
+    if (isMissingPricingApprovalColumn(error) || isMissingPelTable(error)) return res.json({ count: 0, migration_pending: true });
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ count: count || 0 });
+});
+
 // POST /api/pricing-approvals/approve-all  body: { line_ids: [...] }（最大 200）一括承認
 router.post('/pricing-approvals/approve-all', requireAuth, requirePermission('project.pricing_approve'), async (req, res) => {
   const ids = [...new Set((Array.isArray(req.body?.line_ids) ? req.body.line_ids : []).filter(x => typeof x === 'string' && x))];

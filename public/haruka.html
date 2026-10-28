@@ -4336,6 +4336,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" id="nav-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">オンボーディング</button>
     <button class="nav-btn" id="nav-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">分析</button>
     <button class="nav-btn" id="nav-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
+    <button class="nav-btn" id="nav-pricing-approvals" data-page="pricing-approvals" onclick="showPage('pricing-approvals',this)" style="display:none">💴 単価承認<span class="nav-unread-badge" data-for="pricing-approvals" hidden aria-label="承認待ちの単価"></span></button>
     <button class="nav-btn" id="nav-payout" data-page="payout" onclick="showPage('payout',this)" style="display:none">💸 振込管理</button>
     <button class="nav-btn" id="nav-contract-admin" data-page="contract-admin" onclick="showPage('contract-admin',this)" style="display:none">📝 契約管理</button>
     <button class="nav-btn" id="nav-master" data-page="master" onclick="showPage('master',this)" style="display:none">マスター</button>
@@ -4473,6 +4474,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
     <button class="nav-drawer-btn" id="nav-drawer-analytics" data-page="analytics" onclick="showPage('analytics',this)" style="display:none">📊 分析</button>
     <button class="nav-drawer-btn" id="nav-drawer-team-load" data-page="team-load" onclick="showPage('team-load',this)" style="display:none">📊 チーム状況</button>
+    <button class="nav-drawer-btn" id="nav-drawer-pricing-approvals" data-page="pricing-approvals" onclick="showPage('pricing-approvals',this)" style="display:none">💴 単価承認<span class="nav-unread-badge" data-for="pricing-approvals" hidden aria-label="承認待ちの単価"></span></button>
     <button class="nav-drawer-btn" id="nav-drawer-payout" data-page="payout" onclick="showPage('payout',this)" style="display:none">💸 振込管理</button>
     <button class="nav-drawer-btn" id="nav-drawer-contract-admin" data-page="contract-admin" onclick="showPage('contract-admin',this)" style="display:none">📝 契約管理</button>
     <button class="nav-drawer-btn" id="nav-drawer-master" data-page="master" onclick="showPage('master',this)" style="display:none">⚙️ マスター</button>
@@ -9567,6 +9569,21 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   </div>
 </div>
 
+<!-- 💴 単価承認（ADR 037 追補 2026-10-28）: 全案件の承認待ちをまとめて承認・差し戻しする管理者専用ページ。
+     閲覧は permission 'project.pricing_approve'（既定 admin のみ）。ナビ表示は applyRoleBasedUI、
+     ページ内は renderPricingApprovalsCard 冒頭の projectPricingCanApprove() で二重ガード（ADR 015）。
+     一覧の描画はホームの「💴 単価の承認待ち」カードと同じ renderPricingApprovalsCard() を使う。 -->
+<div id="page-pricing-approvals" class="page">
+  <div style="max-width:1100px;margin:0 auto;padding:0 4px">
+    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px">
+      <h2 style="margin:0;font-size:18px">💴 単価承認</h2>
+      <span style="font-size:12px;color:var(--text-muted)">ディレクター・プロデューサーが設定した単価の承認待ち</span>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">承認されるまで、その案件の請求書は発行できません。承認待ちが残っている間は、平日の朝に管理者の Chatwork マイチャットへまとめてお知らせします。</div>
+    <div id="pa-page-body"></div>
+  </div>
+</div>
+
 <!-- 💸 振込管理（メンバー月次請求書×振込消し込み）
      閲覧は permission 'payout.page'（既定 admin のみ）。金額・口座情報を含むため開放は最小限。
      ナビ表示は applyRoleBasedUI、ページ内は loadPayoutPage 冒頭の二重ガードで制御（ADR 015）。 -->
@@ -11614,6 +11631,15 @@ async function applyDeepLinkOnLoad() {
     if (pageParam === 'memories') {
       stripQueryParam('page');
       try { showPage('memories', document.querySelector('.nav-btn[data-page="memories"]')); } catch (e) { console.warn('[deepLink memories]', e); }
+      return;
+    }
+    // ?page=pricing-approvals : 単価の承認待ちリマインド（Chatwork マイチャット）のリンク先（ADR 037 追補）
+    if (pageParam === 'pricing-approvals') {
+      stripQueryParam('page');
+      try {
+        const navBtn = document.querySelector('.nav-btn[data-page="pricing-approvals"]');
+        if (navBtn && navBtn.style.display !== 'none') showPage('pricing-approvals', navBtn);
+      } catch (e) { console.warn('[deepLink pricing-approvals]', e); }
       return;
     }
     if (pageParam === 'contract-admin') {
@@ -20435,6 +20461,8 @@ function setPreviewRole(role) {
   if (document.getElementById('page-team-load')?.classList.contains('active') && typeof loadTeamLoadPage === 'function') loadTeamLoadPage();
   // 💸 振込管理: payout.page 限定ページ。VIEW AS 切替で前ロールの振込データ（金額・口座）が残らないよう再描画（ADR 015）
   if (document.getElementById('page-payout')?.classList.contains('active') && typeof loadPayoutPage === 'function') loadPayoutPage();
+  // 💴 単価承認: 権限が無いロールに切り替えたら一覧を消す（renderPricingApprovalsCard 冒頭で判定・ADR 015）
+  if (document.getElementById('page-pricing-approvals')?.classList.contains('active') && typeof renderPricingApprovalsCard === 'function') renderPricingApprovalsCard();
   // 📝 契約・登録手続き: 本人データのみだが描画一貫性のため再ロード／📝 契約管理: contract.page（全操作）と contract.view（参照のみ）で
   // 操作ボタン・個人情報欄の出し分けが変わるため VIEW AS 切替で必ず再描画（ADR 015 / ADR 035）
   if (document.getElementById('page-contract')?.classList.contains('active') && typeof loadContractPage === 'function') loadContractPage();
@@ -20524,6 +20552,13 @@ function applyRoleBasedUI() {
   const drawerTeamLoad = document.getElementById('nav-drawer-team-load');
   if (drawerTeamLoad) drawerTeamLoad.style.display = canTeamLoad ? '' : 'none';
 
+  // 💴 単価承認ナビ — permission 'project.pricing_approve'（既定 admin のみ。ADR 037 追補・ADR 015: hasPermission で VIEW AS 追従）
+  const canPricingApprove = projectPricingCanApprove();
+  ['nav-pricing-approvals', 'nav-drawer-pricing-approvals'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) b.style.display = canPricingApprove ? '' : 'none';
+  });
+  refreshPricingApprovalsBadge();
   // 💸 振込管理ナビ — permission 'payout.page'（既定 admin のみ。ページ内は loadPayoutPage 冒頭で二重ガード・ADR 015）
   const canPayout = hasPermission('payout.page');
   const payoutNav = document.getElementById('nav-payout');
@@ -26323,6 +26358,7 @@ function showPage(name, btn) {
   if(name==='analytics') initAnalyticsPage();
   if(name==='team-load') loadTeamLoadPage();
   if(name==='payout') loadPayoutPage();
+  if(name==='pricing-approvals') renderPricingApprovalsCard();
   // 読み込み完了を focusTweetOnPage()（ホーム／通知／?tweet= からの該当カードへのスクロール）が待てるよう Promise を公開
   if(name==='tweets')   window._twPageLoadPromise = loadTweetsPage();
   if(name==='portfolio') loadPortfolioPage();
@@ -33132,21 +33168,56 @@ function renderTodayDeadlines(today) {
 let _pricingApprovalsSeq = 0;
 let _pricingApprovalsCache = [];
 
+// ナビ「💴 単価承認」のバッジ（PC / ドロワー）を同じ数で同期する
+function setPricingApprovalsBadge(n) {
+  const c = Math.max(0, Number(n) || 0);
+  document.querySelectorAll('.nav-unread-badge[data-for="pricing-approvals"]').forEach(b => {
+    b.hidden = c === 0;
+    b.textContent = c > 99 ? '99+' : String(c);
+  });
+}
+
+// 件数だけ軽く取り直す（ログイン直後・タブ復帰・10 分ごと。pricing_approve 保持者以外は叩かない）
+async function refreshPricingApprovalsBadge() {
+  if (!projectPricingCanApprove()) { setPricingApprovalsBadge(0); return; }
+  try {
+    const res = await apiFetch(`${API}/pricing-approvals/count`);
+    if (!res.ok) return;
+    const d = await res.json().catch(() => null);
+    if (projectPricingCanApprove()) setPricingApprovalsBadge(d?.count);
+  } catch (e) { console.warn('[pricing-approvals] count failed', e); }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && currentUser?.id) refreshPricingApprovalsBadge();
+});
+setInterval(() => { if (document.visibilityState === 'visible' && currentUser?.id) refreshPricingApprovalsBadge(); }, 10 * 60 * 1000);
+
+// ホームのカード（#dash-pricing-approvals・0 件なら出さない）と 💴 単価承認ページ（#pa-page-body・0 件なら「ありません」）の両方へ描く
 async function renderPricingApprovalsCard() {
-  const el = document.getElementById('dash-pricing-approvals');
-  if (!el) return;
+  const dashEl = document.getElementById('dash-pricing-approvals');
+  const pageEl = document.getElementById('pa-page-body');
+  const clear = () => {
+    if (dashEl) { dashEl.innerHTML = ''; dashEl.style.marginBottom = ''; }
+    if (pageEl) pageEl.innerHTML = '';
+  };
+  if (!dashEl && !pageEl) return;
   const seq = ++_pricingApprovalsSeq;
-  if (!projectPricingCanApprove()) { el.innerHTML = ''; el.style.marginBottom = ''; return; }
+  if (!projectPricingCanApprove()) { clear(); setPricingApprovalsBadge(0); return; }
   let data = null;
   try {
     const res = await apiFetch(`${API}/pricing-approvals/pending`);
     if (res.ok) data = await res.json().catch(() => null);
   } catch (e) { console.warn('[pricing-approvals] load failed', e); }
   if (seq !== _pricingApprovalsSeq) return; // VIEW AS 切替などで後発の描画が始まっていたら破棄
-  if (!projectPricingCanApprove()) { el.innerHTML = ''; el.style.marginBottom = ''; return; }
+  if (!projectPricingCanApprove()) { clear(); setPricingApprovalsBadge(0); return; }
   const items = Array.isArray(data?.items) ? data.items : [];
   _pricingApprovalsCache = items;
-  if (!items.length) { el.innerHTML = ''; el.style.marginBottom = ''; return; }
+  if (data) setPricingApprovalsBadge(Number(data.count) || items.length);
+  if (!items.length) {
+    clear();
+    if (pageEl) pageEl.innerHTML = `<div class="dash-section" style="text-align:center;color:var(--text-muted);font-size:13px;padding:28px 12px">${data ? '承認待ちの単価はありません 🎉' : '一覧を読み込めませんでした。少し待ってから開き直してください'}</div>`;
+    return;
+  }
   const count = Number(data?.count) || items.length;
   const canClientPrice = hasPermission('project.client_price');
 
@@ -33198,20 +33269,21 @@ async function renderPricingApprovalsCard() {
     </div>`;
   }).join('');
 
-  el.style.marginBottom = '14px';
-  el.innerHTML = `<div class="dash-section" style="border-left:4px solid #F59E0B">
+  const html = `<div class="dash-section" style="border-left:4px solid #F59E0B">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
       <div class="dash-section-title" style="color:#B45309;margin-bottom:0">💴 単価の承認待ち（${count}件）</div>
-      <button type="button" class="btn" id="dash-pricing-approve-all" onclick="dashApproveAllPricing()" style="padding:4px 12px;font-size:11px;color:#0F7A56;border-color:#86E0BE">すべて承認</button>
+      <button type="button" class="btn" onclick="dashApproveAllPricing()" style="padding:4px 12px;font-size:11px;color:#0F7A56;border-color:#86E0BE">すべて承認</button>
     </div>
     <div style="font-size:11px;color:var(--text-muted);margin:4px 0 8px">承認前でも集計・請求プレビューには反映されています（請求書の発行は承認後）</div>
     ${rows}
   </div>`;
+  if (dashEl) { dashEl.style.marginBottom = '14px'; dashEl.innerHTML = html; }
+  if (pageEl) pageEl.innerHTML = html;
 }
 
 // 見積タブ側の承認 / 差し戻し後にホームのカードも同期する（ホーム表示中でなくても軽い）
 function refreshPricingApprovalsCard() {
-  if (document.getElementById('dash-pricing-approvals')) renderPricingApprovalsCard();
+  renderPricingApprovalsCard();
 }
 
 async function dashApprovePricing(projectId, lineId) {
@@ -33239,7 +33311,7 @@ async function dashApprovePricing(projectId, lineId) {
 function dashRejectPricing(lineId) {
   const it = _pricingApprovalsCache.find(x => x.line_id === lineId);
   if (!it) { showToast('承認待ちの行が見つかりません。再読み込みします', 'warn'); renderPricingApprovalsCard(); return; }
-  const row = document.querySelector(`#dash-pricing-approvals [data-line-id="${CSS.escape(lineId)}"] template[data-reject-summary]`);
+  const row = document.querySelector(`[data-line-id="${CSS.escape(lineId)}"] template[data-reject-summary]`);
   openProjectLinePricingReject(lineId, it.project_id, 'dashboard', row ? row.innerHTML : '');
 }
 
@@ -33247,7 +33319,7 @@ async function dashApproveAllPricing() {
   const ids = _pricingApprovalsCache.map(x => x.line_id).filter(Boolean);
   if (!ids.length) return;
   if (!confirm(`承認待ちの単価 ${ids.length} 件をすべて承認します。よろしいですか？`)) return;
-  return btnBusy(busyBtnFrom('dash-pricing-approve-all'), async () => {
+  return btnBusy(busyBtnFrom(), async () => {
     try {
       const res = await apiFetch(`${API}/pricing-approvals/approve-all`, {
         method: 'POST',
