@@ -14,7 +14,7 @@ function mockBuilder(table) {
     if (op === 'insert') {
       mockInserted.push({ table, payload });
       if (table === 'invoices' && payload.project_id == null) {
-        return { data: null, error: { message: 'null value in column "project_id" of relation "invoices" violates not-null constraint' } };
+        return { data: null, error: { code: '23502', message: 'null value in column "project_id" of relation "invoices" violates not-null constraint' } };
       }
       return { data: table === 'invoices' ? { id: 'inv1', invoice_number: payload.invoice_number } : null, error: null };
     }

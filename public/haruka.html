@@ -26218,6 +26218,8 @@ async function submitProject() {
         const fr = await feeRes.json().catch(() => ({}));
         if (fr?.months) {
           showToast(`📅 月額定額を設定しました（${fr.months}か月分）` + (fr.line_pricing_approval === 'pending' ? '・管理者の承認待ちです' : ''), 'ok');
+        } else if (body.payment_amount === 0 && fr?.line_pricing_approval === 'pending') {
+          showToast('📅 月額定額の解除を申請しました（管理者の承認待ちです）', 'ok');
         }
       }
     }
