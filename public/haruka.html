@@ -22057,6 +22057,13 @@ function formatPricingPrevSnapshot(snap) {
 // ADR 037: 保存レスポンスが「承認待ち」なら文言を差し替える。
 // line 系は `pricing_approval`、line_costs 系は `line_pricing_approval` を見る。
 // ADR 037 追補その3: 先月以前の納品があるグループは、保存時に「先月までの旧グループ」と「今月からの新グループ」に分かれる。
+// ADR 037 追補その3: 画面で現役のグループを編集するときは ?expect_active=1 を付ける。
+// 別の保存で月の境目に分かれて停止済みなら、サーバーが 409 で止める（先月分の単価を書き換えない）。
+function lineExpectActiveQuery(lineId) {
+  const line = (_projectLinesCache || []).find(l => l.id === lineId);
+  return line && !line.applies_to ? '?expect_active=1' : '';
+}
+
 function pricingPendingToast(resJson, okText) {
   const st = resJson?.pricing_approval || resJson?.line_pricing_approval || resJson?.line?.pricing_approval;
   const base = st === 'pending' ? '保存しました（管理者の承認待ち）' : okText;
@@ -23105,7 +23112,7 @@ async function saveProjectLine() {
   if (saveBtn) saveBtn.disabled = true;
   try {
     const url = lineId
-      ? `${API}/projects/${projectId}/lines/${lineId}`
+      ? `${API}/projects/${projectId}/lines/${lineId}${lineExpectActiveQuery(lineId)}`
       : `${API}/projects/${projectId}/lines`;
     const method = lineId ? 'PUT' : 'POST';
     const res = await apiFetch(url, {
@@ -23425,8 +23432,8 @@ async function saveProjectLineCost() {
   if (saveBtn) saveBtn.disabled = true;
   try {
     const url = costId
-      ? `${API}/projects/${projectId}/lines/${lineId}/costs/${costId}`
-      : `${API}/projects/${projectId}/lines/${lineId}/costs`;
+      ? `${API}/projects/${projectId}/lines/${lineId}/costs/${costId}${lineExpectActiveQuery(lineId)}`
+      : `${API}/projects/${projectId}/lines/${lineId}/costs${lineExpectActiveQuery(lineId)}`;
     const method = costId ? 'PUT' : 'POST';
     const res = await apiFetch(url, {
       method,
@@ -23488,7 +23495,7 @@ async function executeProjectLineCostDelete() {
   const btn = document.getElementById('plc-del-execute-btn');
   if (btn) btn.disabled = true;
   try {
-    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/costs/${costId}`, { method: 'DELETE' });
+    const res = await apiFetch(`${API}/projects/${projectId}/lines/${lineId}/costs/${costId}${lineExpectActiveQuery(lineId)}`, { method: 'DELETE' });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       showToast(err.error || `削除に失敗しました（${res.status}）`, 'warn');
