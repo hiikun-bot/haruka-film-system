@@ -37078,6 +37078,15 @@ async function generateMyInvoice() {
       showToast(`${data.error}（${lines}${more}）管理者の承認後にもう一度お試しください`, 'error');
       return;
     }
+    // ADR 046: 新方式の月なのに旧一覧で作ろうとした（候補一覧の取得失敗で旧一覧に戻った等）。
+    // エラーで止めず、その場でエディタ用の一覧に切り替えて選び直してもらう
+    if (data.code === 'USE_INVOICE_EDITOR') {
+      await loadInvoicePreview();
+      if (window.HFSInvoiceEditor && HFSInvoiceEditor.isCandidateMode()) {
+        showToast(`${year}年${month}月分は新しい請求書エディタで作ります。一覧を切り替えたので、もう一度選んで「請求書を作成する」を押してください`, 'info', 8000);
+        return;
+      }
+    }
     showToast(data.error || '作成に失敗しました', 'error');
     return;
   }
