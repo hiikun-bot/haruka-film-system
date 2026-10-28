@@ -114,6 +114,7 @@
           ${undelivered.length ? `<tr class="ie-c-sep"><td colspan="${showThumb ? 5 : 4}">未納品（請求できません）</td></tr>` + undelivered.map(it => crRow(it, true)).join('') : ''}
         </tbody>
       </table>`;
+    if (typeof applyInvoiceSearch === 'function') applyInvoiceSearch();
     updateCandidateCount();
   }
 
@@ -126,7 +127,11 @@
   }
 
   function toggleAllCandidates(checked) {
-    document.querySelectorAll('.ie-cand-check:not(:disabled)').forEach(cb => { cb.checked = checked; });
+    // 絞り込み中は表示されている行だけ（隠れている行のチェックは触らない）
+    document.querySelectorAll('.ie-cand-check:not(:disabled)').forEach(cb => {
+      if (cb.closest('tr')?.style.display === 'none') return;
+      cb.checked = checked;
+    });
     updateCandidateCount();
   }
 
