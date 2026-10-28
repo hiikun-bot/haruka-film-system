@@ -295,6 +295,24 @@ async function activateCard(cardEl, options = {}) {
     return;
   }
 
+  // 単価の承認待ち / 承認 / 差し戻し（ADR 037）: /haruka.html?project=<id>&tab=estimate 形式。
+  // haruka.html 内なら openProjectPricing() で案件編集モーダルの「💰 見積・費用」タブを開く（リロード不要）。
+  // 無ければ通常遷移（applyDeepLinkOnLoad が ?project= を処理する）。
+  const projectMatch = /^\/haruka\.html\?project=([^&#]+)/.exec(linkUrl);
+  if (projectMatch) {
+    document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
+    if (typeof window.openProjectPricing === 'function') {
+      try {
+        window.openProjectPricing(decodeURIComponent(projectMatch[1]));
+        return;
+      } catch (e) {
+        console.warn('[notification-card] openProjectPricing 失敗', e);
+      }
+    }
+    window.location.href = linkUrl;
+    return;
+  }
+
   // 作品ギャラリー通知: /haruka.html?portfolio=<creative_id> 形式。
   // haruka.html 内なら pfOpenByCreativeId() で作品タブに切り替えて該当作品を開く（リロード不要）。
   // 無ければ通常遷移（applyDeepLinkOnLoad が ?portfolio= を処理する）。

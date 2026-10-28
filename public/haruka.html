@@ -11642,6 +11642,17 @@ async function applyDeepLinkOnLoad() {
       return;
     }
 
+    // ?project=<id>&tab=estimate : 単価の承認待ち / 承認 / 差し戻し の通知（ベル・Slack DM）から
+    // 案件編集モーダルの「💰 見積・費用」タブを開く（ADR 037。ホームの「案件を開く」と同じ openProjectPricing）
+    const projectParam = params.get('project');
+    if (projectParam) {
+      stripQueryParam('project');
+      stripQueryParam('tab');
+      await (window._initDataReady || Promise.resolve());
+      try { await openProjectPricing(projectParam); } catch (e) { console.warn('[deepLink project]', e); }
+      return;
+    }
+
     // 作品ギャラリー deep link（👏 拍手 / 💬 ひとこと のベル通知から）— 作品タブに切り替えて該当作品を開く
     const pfCreativeId = params.get('portfolio');
     if (pfCreativeId) {
@@ -21482,6 +21493,8 @@ async function openProjectPricing(projectId, closeModalId) {
     }
   });
 }
+
+window.openProjectPricing = openProjectPricing; // notification-card.js（ES module）の単価通知から参照する
 
 function openEditProject(p) {
   // ADR 037: 通常の編集モードで開く（単価専用モードの残留を解除。openProjectPricing はこの後で再設定する）
