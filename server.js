@@ -872,6 +872,13 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] overdue-notifier 起動失敗:', e.message);
     }
+    // 単価の承認待ち（ADR 037 追補）: 残っていれば平日 JST 10時台に管理者のマイチャットへまとめて 1 通
+    try {
+      const { startPricingPendingReminder } = require('./workers/pricing-pending-reminder');
+      startPricingPendingReminder();
+    } catch (e) {
+      console.error('[startup] pricing-pending-reminder 起動失敗:', e.message);
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
@@ -908,6 +915,12 @@ const runSchemaSync = require('./db/migrate');
       stopOverdueNotifier();
     } catch (e) {
       console.error('[shutdown] overdue-notifier 停止失敗:', e.message);
+    }
+    try {
+      const { stopPricingPendingReminder } = require('./workers/pricing-pending-reminder');
+      stopPricingPendingReminder();
+    } catch (e) {
+      console.error('[shutdown] pricing-pending-reminder 停止失敗:', e.message);
     }
     try {
       const { stopR2EvictionSweep } = require('./workers/r2-eviction-sweep');
