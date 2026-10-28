@@ -2801,7 +2801,7 @@ async function applyPricingApprovalAfterWrite(req, lineIds, opts = {}) {
 // 承認待ち発生の通知（ADR 037 Decision 5）: is_active な admin 全員へアプリ内通知＋Slack DM（best-effort）
 async function notifyPricingPending(projectId, lineIds, actorUser) {
   const { createBulkNotifications } = require('../utils/notification');
-  const { sendSlackDm } = require('../notifications');
+  const { sendSlackDm, notifyPricingPendingMyChat } = require('../notifications');
   const actorId = actorUser?.id || null;
   let actorLabel = formatUserLabel(actorUser);
   if (!actorLabel && actorId) {
@@ -2813,6 +2813,9 @@ async function notifyPricingPending(projectId, lineIds, actorUser) {
     : { data: null };
   const clientName = proj?.clients?.name || '';
   const projectName = proj?.name || '';
+  // 管理者のマイチャットへは宛先の有無に関係なく必ず送る（承認待ちで相手を止めないため・ADR 037 追補）
+  notifyPricingPendingMyChat({ actorLabel, clientName, projectName, projectId, lineCount: lineIds.length })
+    .catch(e => console.warn('[pricing-approval] mychat notify failed:', e?.message));
   const { data: admins, error: adminErr } = await supabase
     .from('users').select('id, slack_dm_id').eq('is_active', true).in('role', ['admin']);
   if (adminErr) { console.warn('[pricing-approval] admin 取得失敗:', adminErr.message); return; }

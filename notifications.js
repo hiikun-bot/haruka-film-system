@@ -423,6 +423,41 @@ async function notifyBugReportCreated({ report, reporter }) {
   return result;
 }
 
+// =============== 単価の承認待ち → 管理者の Chatwork マイチャットへ必ず一報（ADR 037 追補） ===============
+// 承認待ちのまま放置すると請求書の発行が止まり相手を待たせるため、ベル・Slack DM に加えて
+// 管理者のマイチャット（resolveAdminMyChatRoomId）へ毎回送る。送れなかったら Slack のエラーチャンネルへ回す。
+function _formatPricingPendingText({ actorLabel, clientName, projectName, projectId, lineCount }) {
+  const url = projectId
+    ? buildAppUrl(`haruka.html?project=${encodeURIComponent(projectId)}&tab=estimate`)
+    : buildAppUrl('haruka.html');
+  const lines = [];
+  lines.push(`設定した人: ${actorLabel || '不明'}さん`);
+  lines.push(`案件: ${[clientName, projectName].filter(Boolean).join(' / ') || '(不明)'}`);
+  lines.push(`対象: ${lineCount || 0}グループ`);
+  lines.push('承認されるまで、この案件の請求書は発行できません。');
+  if (url) lines.push(`承認する: ${url}`);
+  return `[info][title]💴 単価の承認待ちが届きました[/title]${lines.join('\n')}[/info]`;
+}
+
+async function notifyPricingPendingMyChat(params) {
+  const token = process.env.CHATWORK_API_TOKEN;
+  const roomId = token ? await resolveAdminMyChatRoomId(token) : null;
+  const result = !token ? { ok: false, reason: 'no_token' }
+    : !roomId ? { ok: false, reason: 'no_room' }
+    : await sendChatworkRoom(roomId, _formatPricingPendingText(params), { token });
+  if (!result.ok) {
+    console.warn(`[notif/pricing-pending] Chatwork マイチャットへの送信に失敗 room=${roomId || '-'} reason=${result.reason}`);
+    notifyAutoError({
+      source: 'server',
+      kind: 'chatwork.pricing_pending_failed',
+      apiPath: `chatwork:room:${roomId || '-'}`,
+      message: `単価の承認待ちを Chatwork マイチャットへ送れませんでした（${result.reason}）。CHATWORK_API_TOKEN / ADMIN_MYCHAT_CHATWORK_ROOM_ID を確認してください。\n` +
+        `案件: ${[params?.clientName, params?.projectName].filter(Boolean).join(' / ') || '-'} ／ 設定した人: ${params?.actorLabel || '-'}`,
+    }).catch(() => {});
+  }
+  return result;
+}
+
 // Chatwork 投稿失敗時の管理者向けメッセージを組み立てる（バグ報告 #f03ba5cd）。
 // 案件ルームへの投稿失敗・代替送信の結果を1行で要約し、notifyAutoError 経由で
 // Slack エラーチャンネルに流す。純関数としてテスト可能にするため分離。
@@ -1662,6 +1697,9 @@ module.exports = {
   resolveChatworkMyAccountId,
   resolveAdminMyChatRoomId,
   _formatBugReportCreatedText,   // テスト用
+  // 単価の承認待ち → 管理者 Chatwork マイチャットへ一報（ADR 037 追補）
+  notifyPricingPendingMyChat,
+  _formatPricingPendingText,     // テスト用
   // 自動エラー通知（PR ?: routes と server.js の両方から呼ぶ）
   notifyAutoError,
   _formatAutoErrorText,         // テスト用
