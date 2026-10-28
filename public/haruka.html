@@ -5004,7 +5004,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:12px">
-        <!-- ADR 046: 新方式の月だけ表示。既定 OFF・状態は端末ごと（localStorage）。ON のときだけサムネを読み込む -->
+        <!-- ADR 046: 新方式の月だけ表示。既定 ON（似た名前の取り違え防止）・OFF にした状態は端末ごと（localStorage）。ON のときだけサムネを読み込む -->
         <label id="gi-thumb-toggle-wrap" style="display:none;font-size:12px;color:var(--text-muted);cursor:pointer;white-space:nowrap">
           <input type="checkbox" id="gi-thumb-toggle" onchange="HFSInvoiceEditor.onThumbToggle(this.checked)" style="cursor:pointer;vertical-align:middle"> 🖼 サムネを表示
         </label>

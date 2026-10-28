@@ -147,6 +147,16 @@ describe('候補 CR の分類', () => {
     expect(IE.classifyCandidate(c7, c7.projects, '2026-10')).toBe('previous');
     expect(IE.classifyCandidate(c6, c6.projects, '2026-10')).toBe(null);
   });
+  test('新方式の開始月より前（旧方式の月）は遡らない', () => {
+    const c9 = cr({ delivered_at: '2026-09-28T03:00:00.000Z' });
+    const c10 = cr({ delivered_at: '2026-10-05T03:00:00.000Z' });
+    expect(IE.classifyCandidate(c9, c9.projects, '2026-10', { notBeforeYm: '2026-10' })).toBe(null);
+    expect(IE.classifyCandidate(c10, c10.projects, '2026-11', { notBeforeYm: '2026-10' })).toBe('previous');
+    expect(IE.classifyCandidate(c9, c9.projects, '2026-11', { notBeforeYm: '2026-10' })).toBe(null);
+    expect(IE.previousStartYm('2027-03', '2026-10')).toBe('2026-12');
+    expect(IE.previousStartYm('2026-11', '2026-10')).toBe('2026-10');
+    expect(IE.previousStartYm('2026-11', null)).toBe('2026-08');
+  });
   test('未納品で当月締切 → undelivered（計上日なし）、他月締切は出さない', () => {
     const c = cr({ status: 'Dチェック中', delivered_at: null, final_deadline: '2026-10-20' });
     expect(IE.classifyCandidate(c, c.projects, '2026-10')).toBe('undelivered');
@@ -206,6 +216,14 @@ describe('本人の役割（1 CR × 役割 = 1 行）', () => {
   });
   test('関係ない人は空', () => {
     expect(IE.issuerCostRoles(cr(), OTHER)).toEqual([]);
+  });
+  test('Wチェック担当だけの CR は請求の役割にならない（制作担当の一覧に混ぜない）', () => {
+    const c = cr({ creative_assignments: [{ user_id: OTHER, role: 'editor', rank_applied: 'A' }, { user_id: ME, role: 'wcheck', rank_applied: 'A' }] });
+    expect(IE.issuerCostRoles(c, ME)).toEqual([]);
+  });
+  test('Wチェック担当でも D なら ディレクション費だけ', () => {
+    const c = cr({ creative_assignments: [{ user_id: ME, role: 'wcheck', rank_applied: 'A' }], delivered_director_ids: [ME] });
+    expect(IE.issuerCostRoles(c, ME).map(r => r.cost_type)).toEqual(['director_fee']);
   });
 });
 
