@@ -52,6 +52,27 @@
 .ie-col-qty { width: 60px; text-align: center; }
 .ie-cr { word-break: break-all; }
 .ie-role { color: var(--text-muted, #6b7280); font-size: 11px; }
+.ie-cr-line { display: flex; gap: 8px; align-items: flex-start; }
+.ie-cr-main { min-width: 0; flex: 1; }
+.ie-thumb { position: relative; flex: none; width: 56px; height: 36px; padding: 0; border: 1px solid var(--border, #e5e7eb); border-radius: 4px; background: #f3f4f6; overflow: hidden; cursor: zoom-in; display: inline-flex; align-items: center; justify-content: center; }
+.ie-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ie-thumb:hover { outline: 2px solid #14B8A6; outline-offset: 0; }
+.ie-thumb-none { cursor: default; color: #9CA3AF; font-size: 11px; }
+.ie-thumb-play { position: absolute; inset: auto 3px 2px auto; font-size: 9px; color: #fff; background: rgba(0, 0, 0, .55); border-radius: 3px; padding: 0 3px; line-height: 14px; }
+.ie-origin { margin-top: 3px; line-height: 1; }
+.ie-origin:empty { display: none; }
+.ie-tag-sys { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: #DCFCE7; color: #15803D; white-space: nowrap; }
+.ie-tag-chg { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: #FFEDD5; color: #C2410C; white-space: nowrap; font-weight: 600; }
+
+/* サムネを押したときの拡大表示（エディタの上に重ねる） */
+.ie-media { position: fixed; inset: 0; z-index: 10010; background: rgba(15, 23, 42, .8); display: none; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+.ie-media.open { display: flex; }
+.ie-media-inner { display: flex; flex-direction: column; max-width: 100%; max-height: 100%; }
+.ie-media-head { display: flex; align-items: center; gap: 12px; justify-content: space-between; color: #fff; font-size: 12px; margin-bottom: 8px; word-break: break-all; }
+.ie-media-close { flex: none; background: rgba(255, 255, 255, .15); color: #fff; border: 0; border-radius: 50%; width: 32px; height: 32px; font-size: 16px; cursor: pointer; }
+.ie-media-stage { display: flex; align-items: center; justify-content: center; min-height: 120px; }
+.ie-media-stage img, .ie-media-stage video { max-width: min(92vw, 1200px); max-height: calc(100vh - 110px); border-radius: 6px; background: #000; display: block; }
+.ie-media-msg { color: rgba(255, 255, 255, .6); font-size: 13px; }
 .ie-fixed { display: inline-block; padding: 4px 6px; }
 
 /* 入力欄＝黄 */

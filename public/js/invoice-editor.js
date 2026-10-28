@@ -326,6 +326,80 @@
       ${t.withholding_over_limit ? '<div class="ie-t-warn">小計が100万円を超えています。源泉は10.21%一律で計算しています</div>' : ''}`;
   }
 
+  // 単価が HFS の参考単価そのままか、手で変えたか（確認する人が一目で分かるように）
+  function priceOrigin(r) {
+    if (r.kind !== 'cr') return null;
+    if (r.unit_price == null || r.unit_price === '') return 'empty';
+    if (!(r.ref_price > 0)) return 'noref';
+    return Number(r.unit_price) === Number(r.ref_price) ? 'system' : 'changed';
+  }
+  function originTagHtml(r) {
+    switch (priceOrigin(r)) {
+      case 'system': return '<span class="ie-tag-sys">✓ HFSの単価どおり</span>';
+      case 'changed': return `<span class="ie-tag-chg">✏️ 手動で変更（参考 ${yen(r.ref_price)}円 → ${yen(r.unit_price)}円）</span>`;
+      case 'noref': return '<span class="ie-tag-chg">✏️ 手動で入力（HFSに参考単価なし）</span>';
+      default: return '';
+    }
+  }
+
+  // 小さいサムネ。押すと提出された最新版を大きく表示する
+  function thumbHtml(r, i) {
+    if (!r.thumb_file_id) return '<span class="ie-thumb ie-thumb-none" title="ファイルが登録されていません">―</span>';
+    return `<button type="button" class="ie-thumb" onclick="HFSInvoiceEditor.openMedia(${i})" title="クリックで大きく表示">
+      <img loading="lazy" decoding="async" src="${API}/portfolio/thumbnail/${encodeURIComponent(r.thumb_file_id)}?s=120" alt="" onerror="this.style.display='none'">
+      ${r.media_is_video ? '<span class="ie-thumb-play">▶</span>' : ''}</button>`;
+  }
+
+  function mediaBox() {
+    let el = document.getElementById('ie-media');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'ie-media';
+      el.className = 'ie-media';
+      el.addEventListener('click', (e) => { if (e.target === el) closeMedia(); });
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+  function onMediaKey(e) { if (e.key === 'Escape') { e.stopPropagation(); closeMedia(); } }
+  function closeMedia() {
+    const el = document.getElementById('ie-media');
+    if (!el) return;
+    el.innerHTML = ''; // 再生を止める
+    el.classList.remove('open');
+    document.removeEventListener('keydown', onMediaKey, true);
+  }
+  async function openMedia(i) {
+    const r = ed.rows[i];
+    if (!r || !r.thumb_file_id) return;
+    const el = mediaBox();
+    const title = `${r.client_name ? r.client_name + '｜' : ''}${r.creative_label || ''}`;
+    el.innerHTML = `<div class="ie-media-inner"><div class="ie-media-head"><span>${h(title)}</span>
+      <button type="button" class="ie-media-close" onclick="HFSInvoiceEditor.closeMedia()" aria-label="閉じる">✕</button></div>
+      <div class="ie-media-stage" id="ie-media-stage"><div class="ie-media-msg">読み込み中…</div></div></div>`;
+    el.classList.add('open');
+    document.addEventListener('keydown', onMediaKey, true);
+    const stage = document.getElementById('ie-media-stage');
+    const thumbSrc = `${API}/portfolio/thumbnail/${encodeURIComponent(r.thumb_file_id)}`;
+    if (!r.media_drive_file_id) { stage.innerHTML = `<img src="${thumbSrc}" alt="">`; return; }
+    const streamSrc = `${API}/files/${encodeURIComponent(r.media_drive_file_id)}/stream`;
+    if (r.media_is_video) {
+      // 作品ギャラリーと同じく Drive 直配信 URL を優先（無ければプロキシ配信）
+      const src = typeof pfResolvePlaybackUrl === 'function'
+        ? (await pfResolvePlaybackUrl({ drive_file_id: r.media_drive_file_id })) || streamSrc
+        : streamSrc;
+      if (!stage.isConnected) return; // 読み込み中に閉じた
+      stage.innerHTML = `<video src="${h(src)}" controls autoplay playsinline preload="metadata" poster="${thumbSrc}"></video>`;
+      const v = stage.querySelector('video');
+      v.addEventListener('error', () => { if (v.src.indexOf(streamSrc) === -1) v.src = streamSrc; }, { once: true });
+    } else {
+      // 静止画は原本（サムネは粗い）。失敗時のみサムネへ退避
+      stage.innerHTML = `<img src="${streamSrc}" alt="">`;
+      const img = stage.querySelector('img');
+      img.addEventListener('error', () => { img.src = thumbSrc; }, { once: true });
+    }
+  }
+
   function rowHtml(r, i, canEdit) {
     const issues = rowIssues(r);
     const isNg = issues.length > 0;
@@ -342,7 +416,9 @@
     if (r.kind === 'cr') {
       const over = issues.some(x => x.code === 'OVER_REFERENCE_NO_REASON') || (r.price_change_reason && r.price_change_reason.trim()) ||
         (r.ref_price > 0 && Number(r.unit_price) > r.ref_price);
-      label = `<div class="ie-cr">${h(r.client_name)}${r.client_name ? '｜' : ''}${h(r.creative_label)}<span class="ie-role">（${h(r.label)}）</span></div>
+      label = `<div class="ie-cr-line">${thumbHtml(r, i)}<div class="ie-cr-main">
+        <div class="ie-cr">${h(r.client_name)}${r.client_name ? '｜' : ''}${h(r.creative_label)}<span class="ie-role">（${h(r.label)}）</span></div>
+        <div class="ie-origin" data-i="${i}">${originTagHtml(r)}</div></div></div>
         ${over ? `<div class="ie-reason">理由: <input class="ie-in ie-in-reason" data-i="${i}" data-col="reason" maxlength="500" value="${h(r.price_change_reason)}" placeholder="参考単価より高い理由（必須）" ${dis}></div>` : ''}`;
     } else if (r.kind === 'manual') {
       label = `<div class="ie-manual"><input class="ie-in ie-in-label" data-i="${i}" data-col="label" maxlength="200" value="${h(r.label)}" placeholder="品目（例: 撮影補助 10/12）" ${dis}> <span class="ie-tag-blue">HFS未登録</span></div>
@@ -429,6 +505,8 @@
     setCell(i, col, t.value);
     const amt = overlay().querySelector(`.ie-amount[data-i="${i}"]`);
     if (amt) amt.textContent = r.unit_price == null ? '' : yen(C().lineAmount(r));
+    const origin = overlay().querySelector(`.ie-origin[data-i="${i}"]`);
+    if (origin) origin.innerHTML = originTagHtml(r);
     const after = rowIssues(r).map(x => x.code).join();
     const needReasonBox = r.kind === 'cr' && r.ref_price > 0 && Number(r.unit_price) > r.ref_price;
     if (before !== after || (r.kind === 'cr' && needReasonBox && !hadReasonBox)) refreshRow(i);
@@ -772,6 +850,7 @@
     createDraftFromModal,
     onThumbToggle,
     open, close, reload, submit, preview, fillRef, bulkPrice, addManual, removeSelected,
+    openMedia, closeMedia,
     _updateCandidateCount: updateCandidateCount,
     _toggleAllCandidates: toggleAllCandidates,
   };

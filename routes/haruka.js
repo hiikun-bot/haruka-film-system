@@ -19357,16 +19357,25 @@ async function ieFetchIssuerCreatives(uid, orFilter, { withThumbs = false } = {}
 }
 
 /** CR を ID で取得（明細の検証用） */
-async function ieFetchCreativesByIds(ids) {
+async function ieFetchCreativesByIds(ids, { withFiles = false } = {}) {
   const uniq = [...new Set((ids || []).filter(Boolean))];
+  const sel = IE_CREATIVE_SELECT + (withFiles ? ', creative_files(id, version, uploaded_at, drive_file_id, mime_type)' : '');
   const results = await Promise.all(ieChunk(uniq).map(chunk =>
-    supabase.from('creatives').select(IE_CREATIVE_SELECT).in('id', chunk)));
+    supabase.from('creatives').select(sel).in('id', chunk)));
   const map = new Map();
   for (const r of results) {
     if (r.error) throw new Error(r.error.message);
     for (const c of (r.data || [])) map.set(c.id, c);
   }
   return map;
+}
+
+/** CR の最新版ファイル（クリエイティブ一覧の thumb_file_id と同じ選び方: version 降順 → uploaded_at 降順） */
+function ieLatestFile(c) {
+  const files = ((c && c.creative_files) || []).slice().sort((a, b) =>
+    (Number(b.version) || 0) - (Number(a.version) || 0)
+    || String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || '')));
+  return files[0] || null;
 }
 
 /**
@@ -19460,7 +19469,16 @@ function ieItemView(it, { creative, refPrice }) {
     sort_order: it.sort_order ?? 0,
     amount: IE.lineAmount(it),
     issues: IE.lineIssues(it, ref),
+    ...ieMediaView(creative),
   };
+}
+
+/** 明細の小さいサムネと、クリックで大きく見る最新版ファイル（ファイルが無い CR は null） */
+function ieMediaView(creative) {
+  const f = creative ? ieLatestFile(creative) : null;
+  if (!f) return { thumb_file_id: null, media_drive_file_id: null, media_is_video: false };
+  const isVideo = f.mime_type ? String(f.mime_type).startsWith('video/') : String(creative.creative_type || '').startsWith('video');
+  return { thumb_file_id: f.id, media_drive_file_id: f.drive_file_id || null, media_is_video: isVideo };
 }
 
 async function ieLoadItems(invoiceId) {
@@ -19476,7 +19494,7 @@ async function ieLoadItems(invoiceId) {
 /** エディタ表示用の全体（GET と提出 409 のときに使う）。参考単価はその時点で再計算 */
 async function ieBuildEditorState(inv) {
   const items = await ieLoadItems(inv.id);
-  const creativesById = await ieFetchCreativesByIds(items.map(i => i.creative_id));
+  const creativesById = await ieFetchCreativesByIds(items.map(i => i.creative_id), { withFiles: true });
   const [refPrices, issuerR] = await Promise.all([
     ieResolveRefPrices([...creativesById.values()], inv.issuer_id),
     supabase.from('users').select('id, full_name, invoice_registration_number, business_type').eq('id', inv.issuer_id).maybeSingle(),
@@ -19533,14 +19551,8 @@ router.get('/invoice-editor/candidates', requireAuth, async (req, res) => {
         .filter(r => kind === 'undelivered' || !billedKeys.has(IE.billedKey(c.id, r.cost_type)))
         .map(r => ({ cost_type: r.cost_type, label: IE.COST_TYPE_LABELS[r.cost_type] || r.cost_type }));
       if (!roles.length) continue; // すべての役割が請求済み
-      let thumbFileId = null;
-      if (withThumbs) {
-        // クリエイティブ一覧の thumb_file_id と同じ作り（最新版の id 文字列だけ返す）
-        const files = (c.creative_files || []).slice().sort((a, b) =>
-          (Number(b.version) || 0) - (Number(a.version) || 0)
-          || String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || '')));
-        thumbFileId = files[0] ? files[0].id : null;
-      }
+      const latest = withThumbs ? ieLatestFile(c) : null;
+      const thumbFileId = latest ? latest.id : null;
       items.push({
         creative_id: c.id,
         file_name: c.file_name || '',
