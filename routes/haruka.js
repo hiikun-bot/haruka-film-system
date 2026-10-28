@@ -29481,6 +29481,8 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
   try {
     const memo = typeof req.body?.memo === 'string' ? req.body.memo.trim() : '';
     const customMessage = typeof req.body?.message === 'string' ? req.body.message.trim().slice(0, 4000) : '';
+    // skip_send: 既に別経路で連絡済みなど、メッセージを送らずに消し込みだけ行う
+    const skipSend = req.body?.skip_send === true;
     const { data: rec, error: rErr } = await supabase
       .from('payout_records').select('*').eq('id', req.params.id).maybeSingle();
     if (rErr) throw new Error(rErr.message);
@@ -29504,7 +29506,9 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
     const hasDm = /^\d+$/.test(dm);
     const hasDirectRoom = /^\d+$/.test(directRoom);
     const hasSlack = /^[UW][A-Z0-9]+$/i.test(slackId);
-    if (!user) {
+    if (skipSend) {
+      sentReason = '送信なしで消し込みました';
+    } else if (!user) {
       sentReason = 'メンバーが見つからないため送信していません';
     } else {
       const { sendChatworkRoom, sendSlackDm, sendSlackDmAsUser } = require('../notifications');

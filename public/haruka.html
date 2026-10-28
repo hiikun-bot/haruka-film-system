@@ -31436,6 +31436,9 @@ function renderPayout() {
       } else {
         opCell += '<div style="font-size:11px;color:#C05A0A;margin-top:4px">⚠️ 送信なし（チャット未設定）</div>';
       }
+      if (r.has_chatwork_dm || r.has_chatwork || r.slack_user_id) {
+        opCell += `<div style="margin-top:2px"><a href="javascript:void(0)" onclick="poMarkPaidOnly('${rid}')" style="font-size:11px;color:var(--text-muted)" title="連絡済みなどでメッセージ不要のとき — 送信せずに振込済みにします">送信せず完了にする</a></div>`;
+      }
     }
 
     html += `<tr class="${paid ? 'po-paid' : ''}">` +
@@ -31774,6 +31777,7 @@ function poPay(id) {
     `<input class="form-input" id="po-pay-memo" style="width:100%;font-size:13px" placeholder="例）リサイズ分は来月に回します">` +
     '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">' +
       `<button class="btn-sm" onclick="closeModal('modal-po-pay')">キャンセル</button>` +
+      (canSend ? `<button class="btn-sm" id="po-pay-skip" style="font-size:12px" onclick="poPaySubmit('${esc(id)}',true)" title="メッセージは送らず、振込済みにだけします">消し込みのみ（送信しない）</button>` : '') +
       `<button class="btn-primary" id="po-pay-submit" style="font-size:13px;padding:8px 14px" onclick="poPaySubmit('${esc(id)}')">${canSend ? '✅ 送信して消し込む' : '✅ 消し込む（送信なし）'}</button>` +
     '</div>';
 
@@ -31828,7 +31832,7 @@ function poPayToggleEdit() {
 }
 
 // プレビューで OK → 実送信＋消し込み
-async function poPaySubmit(id) {
+async function poPaySubmit(id, skipSend) {
   const r = poRecord(id);
   if (!r) return;
   const memoEl = document.getElementById('po-pay-memo');
@@ -31836,13 +31840,15 @@ async function poPaySubmit(id) {
   // ✏️ 直接編集モードなら編集後の全文を message として送る（サーバーは定型文の代わりにそのまま送信）
   const editTa = document.getElementById('po-pay-msg-edit');
   const message = (_poPayEditing && editTa) ? editTa.value.trim() : '';
-  const btn = document.getElementById('po-pay-submit');
-  if (btn) { btn.disabled = true; btn.textContent = '送信中…'; }
+  const btn = document.getElementById(skipSend ? 'po-pay-skip' : 'po-pay-submit');
+  const btnLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = skipSend ? '処理中…' : '送信中…'; }
   try {
+    const payload = skipSend ? { memo, skip_send: true } : (message ? { memo, message } : { memo });
     const res = await apiFetch(`${API}/admin/payouts/${encodeURIComponent(id)}/pay`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(message ? { memo, message } : { memo }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '振込完了の登録に失敗しました');
@@ -31850,13 +31856,35 @@ async function poPaySubmit(id) {
     poApplyRecord(data.record);
     if (data.sent) {
       showToast(`${poName(r)}さんへ振込完了メッセージを${data.sent_via === 'dm' ? 'ChatworkのDM' : data.sent_via === 'slack_user' ? '本人名義のSlack DM' : data.sent_via === 'slack' ? 'SlackのDM（bot名義）' : 'Chatwork全体チャット'}に送信し、消し込みました`, 'success');
+    } else if (skipSend) {
+      showToast(`${poName(r)}さんを送信なしで消し込みました`, 'success');
     } else {
       showToast(`消し込みました（メッセージ未送信: ${data.sent_reason || '理由不明'}）`, 'warn');
     }
   } catch (e) {
     showToast(e.message, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '✅ 送信して消し込む'; }
+    if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
   }
+}
+
+// 一覧の「送信せず完了にする」: 連絡済みの人をプレビューを経ずに消し込みだけ行う
+async function poMarkPaidOnly(id) {
+  const r = poRecord(id);
+  if (!r) return;
+  if (!confirm(`${poName(r)}さんをメッセージを送らずに振込済みにします。よろしいですか？`)) return;
+  const memoInput = document.getElementById(`po-memo-${id}`);
+  const memo = memoInput ? memoInput.value.trim() : (r.memo || '');
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/${encodeURIComponent(id)}/pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo, skip_send: true }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '振込完了の登録に失敗しました');
+    poApplyRecord(data.record);
+    showToast(`${poName(r)}さんを送信なしで消し込みました`, 'success');
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // 消し込みの取消（paid → unpaid）
