@@ -19391,6 +19391,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
       const hourlyItems = await whBuildInvoiceItems(issuer_id, whYear, whMonth);
       for (const hi of hourlyItems) {
         if (!hourlyKeys.includes(hi.hourly_key)) continue;
+        if (!project_id && hi.project_id) project_id = hi.project_id;
         totalAmount += hi.total;
         itemRows.push({
           creative_id:    null,
@@ -19423,6 +19424,8 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
       const instItems = await installmentBuildInvoiceItems(issuer_id, instYear, instMonth);
       for (const ii of instItems) {
         if (!installmentKeys.includes(ii.installment_key)) continue;
+        // 月額定額・分割支払だけの請求書はクリエイティブが無いので、ここで project_id を補完する（invoices.project_id は NOT NULL）
+        if (!project_id && ii.project_id) project_id = ii.project_id;
         totalAmount += ii.total;
         itemRows.push({
           creative_id:    null,
@@ -19446,6 +19449,9 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   }
 
   if (!itemRows.length) return res.status(400).json({ error: '該当するアサインが見つかりません' });
+  if (!project_id) {
+    return res.status(400).json({ error: '案件に紐づかない明細だけでは請求書を作れません。案件のある明細を1件以上一緒に選んでください' });
+  }
 
   // 請求書を保存
   const { data: invoice, error: iErr } = await supabase
