@@ -6040,6 +6040,242 @@ router.delete('/projects/:project_id/lines/:line_id/installments/:installment_id
   }
 });
 
+// ==================== 月額定額（ADR 053） ====================
+//
+// 「このクライアントは月◯万円の定額」のように、本数・時間ではなく毎月決まった額を請求する案件。
+// 新しい表は作らず、ADR 029 の分割支払（line_payment_installments）に「各月1行」で載せる。
+// → 請求書（preview-items / 請求書エディタ）・クリエイター別集計・月次売上は既存の一式分割の経路にそのまま乗る。
+// - 支払先ごとに専用グループ「月額定額（◯◯）」を1つ持つ（line_cost: user_id=支払先・pricing_type='fixed_total'）
+// - 期間（開始月〜終了月）の各月に「YYYY年M月分」の行を作る。請求書には（seq/N）を付けない
+// - 変更しても先月以前の行は触らない（請求済みの月を遡って書き換えない）。今月以降だけ作り直す
+const MONTHLY_FEE_LINE_PREFIX = '月額定額';
+const MONTHLY_FEE_LABEL_RE = /^\d{4}年\d{1,2}月分$/;
+
+function monthlyFeeLabel(ymd) {
+  const [y, m] = ymd.split('-').map(Number);
+  return `${y}年${m}月分`;
+}
+
+// 'YYYY-MM-01' の開始〜終了（両端含む）を月初日の配列にする
+function monthlyFeeMonths(startYmd, endYmd) {
+  const out = [];
+  let [y, m] = startYmd.split('-').map(Number);
+  const [ey, em] = endYmd.split('-').map(Number);
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}-01`);
+    m++; if (m > 12) { m = 1; y++; }
+    if (out.length > INSTALLMENT_MAX_PER_LINE) break;
+  }
+  return out;
+}
+
+// 案件の月額定額グループ一覧（支払先ごと）を返す
+async function loadMonthlyFeeLines(projectId) {
+  const { data, error } = await supabase
+    .from('project_estimate_lines')
+    .select(`id, name, client_unit_price,
+      line_costs:project_estimate_line_costs(id, role_id, user_id, unit_price, pricing_type),
+      installments:line_payment_installments(id, target_month, payment_amount, client_amount, payee_user_id)`)
+    .eq('project_id', projectId);
+  if (error) throw new Error(error.message);
+  return (data || [])
+    .map(l => {
+      const cost = (l.line_costs || []).find(lc => lc.user_id && lc.pricing_type === 'fixed_total');
+      return cost && String(l.name || '').startsWith(MONTHLY_FEE_LINE_PREFIX) ? { ...l, cost } : null;
+    })
+    .filter(Boolean);
+}
+
+// GET /api/projects/:project_id/monthly-fees
+//   → [{ line_id, payee_user_id, payee_name, payment_amount, client_amount?, start_month, end_month, months }]
+router.get('/projects/:project_id/monthly-fees', requireAuth, async (req, res) => {
+  try {
+    const lines = await loadMonthlyFeeLines(req.params.project_id);
+    const codes = await getEffectiveRoleCodes(req);
+    const canViewClientPrice = await roleCodesHavePermission(codes, 'project.client_price');
+    const payeeIds = [...new Set(lines.map(l => l.cost.user_id))];
+    const { data: users } = payeeIds.length
+      ? await supabase.from('users').select('id, full_name, nickname').in('id', payeeIds)
+      : { data: [] };
+    const userById = new Map((users || []).map(u => [u.id, u]));
+    res.json(lines.map(l => {
+      const months = (l.installments || []).map(i => i.target_month).sort();
+      return {
+        line_id: l.id,
+        payee_user_id: l.cost.user_id,
+        payee_name: formatUserLabel(userById.get(l.cost.user_id)) || '',
+        payment_amount: l.cost.unit_price || 0,
+        ...(canViewClientPrice ? { client_amount: l.client_unit_price || 0 } : {}),
+        start_month: months.length ? months[0].slice(0, 7) : null,
+        end_month: months.length ? months[months.length - 1].slice(0, 7) : null,
+        months: months.length,
+      };
+    }));
+  } catch (e) {
+    if (isMissingLpiTable(e)) return res.json([]);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/projects/:project_id/monthly-fee
+//   body: { payee_user_id, payment_amount, client_amount?, start_month:'YYYY-MM', end_month:'YYYY-MM' }
+//   payment_amount=0 で解除（今月以降の行を消す。先月以前は残す）
+router.put('/projects/:project_id/monthly-fee', requireAuth, requireAnyPermission('project.create_edit', 'project.pricing_edit'), async (req, res) => {
+  const projectId = req.params.project_id;
+  const body = req.body || {};
+  const payeeId = String(body.payee_user_id || '').trim();
+  if (!payeeId) return res.status(400).json({ error: '支払先メンバーを選んでください' });
+  const amount = normalizeInstallmentAmount(body.payment_amount);
+  if (amount === null || Number.isNaN(amount)) return res.status(400).json({ error: '月額（支払）は 0 以上の整数で入力してください' });
+
+  const codes = await getEffectiveRoleCodes(req);
+  const canSetClientPrice = await roleCodesHavePermission(codes, 'project.client_price');
+  let clientAmount = null; // null = 変更しない
+  if (canSetClientPrice && body.client_amount !== undefined && body.client_amount !== null && body.client_amount !== '') {
+    clientAmount = normalizeInstallmentAmount(body.client_amount);
+    if (Number.isNaN(clientAmount)) return res.status(400).json({ error: '月額（請求）は 0 以上の整数で入力してください' });
+  }
+
+  const { data: proj, error: projErr } = await supabase.from('projects').select('id').eq('id', projectId).maybeSingle();
+  if (projErr) return res.status(500).json({ error: projErr.message });
+  if (!proj) return res.status(404).json({ error: '案件が見つかりません' });
+  const { data: payee, error: payeeErr } = await supabase
+    .from('users').select('id, full_name, nickname, role').eq('id', payeeId).maybeSingle();
+  if (payeeErr) return res.status(500).json({ error: payeeErr.message });
+  if (!payee) return res.status(400).json({ error: '支払先メンバーが見つかりません' });
+
+  let months = [];
+  if (amount > 0) {
+    const start = normalizeInstallmentMonth(body.start_month);
+    const end = normalizeInstallmentMonth(body.end_month);
+    if (!start || !end) return res.status(400).json({ error: '開始月・終了月を YYYY-MM で入力してください' });
+    if (end < start) return res.status(400).json({ error: '終了月は開始月以降にしてください' });
+    months = monthlyFeeMonths(start, end);
+    if (months.length > INSTALLMENT_MAX_PER_LINE) {
+      return res.status(400).json({ error: `期間は最大${INSTALLMENT_MAX_PER_LINE}か月までです（延長するときは後で終了月を延ばしてください）` });
+    }
+  }
+
+  try {
+    const lines = await loadMonthlyFeeLines(projectId);
+    let line = lines.find(l => l.cost.user_id === payeeId) || null;
+    const { year: cy, month: cm } = jstCurrentYearMonth();
+    const currentYmd = `${cy}-${String(cm).padStart(2, '0')}-01`;
+
+    if (amount === 0) {
+      if (!line) return res.json({ ok: true, removed: 0 });
+      const future = (line.installments || []).filter(i => i.target_month >= currentYmd).map(i => i.id);
+      if (future.length) {
+        const { error } = await supabase.from('line_payment_installments').delete().in('id', future);
+        if (error) throw new Error(error.message);
+      }
+      const remaining = (line.installments || []).length - future.length;
+      if (!remaining) {
+        const { count } = await supabase.from('creatives')
+          .select('id', { count: 'exact', head: true }).eq('line_id', line.id);
+        if (!count) {
+          const { error } = await supabase.from('project_estimate_lines').delete().eq('id', line.id);
+          if (error) throw new Error(error.message);
+          return res.json({ ok: true, removed: future.length, line_removed: true });
+        }
+      }
+      await resequenceInstallments(line.id);
+      return res.json({ ok: true, removed: future.length, line_removed: false });
+    }
+
+    let snapshots = new Map();
+    const newLineIds = [];
+    if (line) {
+      snapshots = await capturePricingSnapshots([line.id]);
+      const { error } = await supabase.from('project_estimate_line_costs')
+        .update({ unit_price: amount }).eq('id', line.cost.id);
+      if (error) throw new Error(error.message);
+      if (clientAmount !== null) {
+        const { error: lErr } = await supabase.from('project_estimate_lines')
+          .update({ client_unit_price: clientAmount }).eq('id', line.id);
+        if (lErr) throw new Error(lErr.message);
+      }
+    } else {
+      // 支払先のロールで line_cost を作る（roles に無いロールは director 扱い）
+      const { data: roleRow } = await supabase.from('roles').select('id').eq('code', payee.role || '').maybeSingle();
+      const roleId = roleRow?.id || await directorRoleId();
+      if (!roleId) throw new Error('ロールが roles マスタに存在しません');
+      const { data: maxRow } = await supabase.from('project_estimate_lines')
+        .select('sort_order').eq('project_id', projectId)
+        .order('sort_order', { ascending: false, nullsFirst: false }).limit(1);
+      const currentMax = (maxRow && maxRow[0] && Number.isFinite(maxRow[0].sort_order)) ? maxRow[0].sort_order : 0;
+      const payeeLabel = payee.nickname || payee.full_name || '';
+      const { data: newLine, error: insErr } = await supabase.from('project_estimate_lines')
+        .insert({
+          project_id: projectId,
+          name: payeeLabel ? `${MONTHLY_FEE_LINE_PREFIX}（${payeeLabel}）` : MONTHLY_FEE_LINE_PREFIX,
+          planned_count: 0,
+          client_unit_price: clientAmount ?? 0,
+          sort_order: currentMax + 10,
+          currency: 'JPY',
+          tax_included: true,
+          status: 'contracted',
+          status_changed_at: new Date().toISOString(),
+        })
+        .select('id').single();
+      if (insErr) throw new Error(insErr.message);
+      const { error: costErr } = await supabase.from('project_estimate_line_costs')
+        .insert({ line_id: newLine.id, role_id: roleId, user_id: payeeId, unit_price: amount, pricing_type: 'fixed_total', currency: 'JPY' });
+      if (costErr) {
+        await supabase.from('project_estimate_lines').delete().eq('id', newLine.id);
+        throw new Error(costErr.message);
+      }
+      line = { id: newLine.id, client_unit_price: clientAmount ?? 0, installments: [] };
+      newLineIds.push(newLine.id);
+    }
+
+    // 各月の行を揃える。先月以前の既存行は触らない（請求済みの月を遡って変えない）
+    const lineClient = clientAmount !== null ? clientAmount : (line.client_unit_price || 0);
+    const existingByMonth = new Map((line.installments || []).map(i => [i.target_month, i]));
+    const wanted = new Set(months);
+    const inserts = [];
+    for (const ym of months) {
+      const ex = existingByMonth.get(ym);
+      if (!ex) {
+        inserts.push({
+          line_id: line.id, seq: 1, total_count: 1, label: monthlyFeeLabel(ym), target_month: ym,
+          payment_amount: amount, client_amount: lineClient, payee_user_id: payeeId,
+        });
+      } else if (ym >= currentYmd && (ex.payment_amount !== amount || ex.client_amount !== lineClient || ex.payee_user_id !== payeeId)) {
+        const { error } = await supabase.from('line_payment_installments')
+          .update({ payment_amount: amount, client_amount: lineClient, payee_user_id: payeeId, updated_at: new Date().toISOString() })
+          .eq('id', ex.id);
+        if (error) throw new Error(error.message);
+      }
+    }
+    const drop = (line.installments || [])
+      .filter(i => i.target_month >= currentYmd && !wanted.has(i.target_month)).map(i => i.id);
+    if (drop.length) {
+      const { error } = await supabase.from('line_payment_installments').delete().in('id', drop);
+      if (error) throw new Error(error.message);
+    }
+    if (inserts.length) {
+      const { error } = await supabase.from('line_payment_installments').insert(inserts);
+      if (error) throw new Error(error.message);
+    }
+    const installments = await resequenceInstallments(line.id);
+    const pr = await applyPricingApprovalAfterWrite(req, [line.id], { projectId, snapshots, newLineIds });
+    res.json({
+      ok: true,
+      line_id: line.id,
+      created: newLineIds.length > 0,
+      months: installments.length,
+      line_pricing_approval: pr.canApprove ? 'approved' : 'pending',
+    });
+  } catch (e) {
+    if (isMissingLpiTable(e)) {
+      return res.status(503).json({ error: 'line_payment_installments テーブルが未作成です。migrations/2026-07-03_line_payment_installments.sql を本番Supabaseに適用してください。' });
+    }
+    console.error('[monthly-fee]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 旧 client-fee CRUD endpoint (project_client_fees) は Stage 4d で削除済み。
 // 後継: project_estimate_lines.client_unit_price + project_fixed_items(item_type='revenue')
 
@@ -8525,6 +8761,8 @@ function installmentInvoiceLabel(inst) {
   const projectName = project.name || '';
   const head = [clientName, projectName].filter(Boolean).join('／');
   const parts = [head, line.name, inst.label].filter(s => s && String(s).trim());
+  // ADR 053: 月額定額（「2026年10月分」）は月が分かれば足りるので（seq/N）を付けない
+  if (MONTHLY_FEE_LABEL_RE.test(String(inst.label || ''))) return parts.join(' ');
   return `${parts.join(' ')}（${inst.seq}/${inst.total_count}）`;
 }
 
@@ -8555,9 +8793,10 @@ async function installmentBuildInvoiceItems(userId, year, month) {
       id: `installment:${inst.id}`,
       is_installment: true,
       installment_key: inst.id,
+      is_monthly_fee: MONTHLY_FEE_LABEL_RE.test(String(inst.label || '')), // ADR 053
       label,
       file_name: label,      // 請求書作成モーダルの一覧表示互換
-      status: '一式分割',
+      status: MONTHLY_FEE_LABEL_RE.test(String(inst.label || '')) ? '月額定額' : '一式分割',
       project_id: project?.id || null,
       project_name: project?.name || '',
       client_name: project?.clients?.name || '',
@@ -19189,7 +19428,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
           creative_id:    null,
           creative_label: ii.label,   // 例: 「プレスト／プレスト・ケアHP HP制作一式 着手金（1/2）」
           cost_type:      'installment_fee',
-          label:          '一式（分割支払）',
+          label:          ii.is_monthly_fee ? '月額定額' : '一式（分割支払）',
           quantity:       1,
           unit:           '式',
           unit_price:     ii.total,
@@ -19577,7 +19816,7 @@ router.get('/invoice-editor/candidates', requireAuth, async (req, res) => {
       ...base,
       items,
       hourly: hourly.map(h => ({ hourly_key: h.hourly_key, label: h.label, total: h.total })),
-      installments: installments.map(i => ({ installment_key: i.installment_key, label: i.label, total: i.total })),
+      installments: installments.map(i => ({ installment_key: i.installment_key, label: i.label, total: i.total, is_monthly_fee: !!i.is_monthly_fee })),
     });
   } catch (e) {
     console.error('[invoice-editor][candidates]', e);
@@ -19662,7 +19901,7 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
       for (const it of insts) {
         if (!installmentKeys.includes(it.installment_key)) continue;
         rows.push({
-          creative_id: null, creative_label: it.label, cost_type: 'installment_fee', label: '一式（分割支払）',
+          creative_id: null, creative_label: it.label, cost_type: 'installment_fee', label: it.is_monthly_fee ? '月額定額' : '一式（分割支払）',
           quantity: 1, unit: '式', unit_price: it.total, total_amount: it.total,
           is_special: false, special_reason: null, original_unit_price: it.total, price_change_reason: null, sort_order: sort++,
         });
