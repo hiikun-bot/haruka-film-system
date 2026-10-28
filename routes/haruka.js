@@ -6042,7 +6042,7 @@ router.delete('/projects/:project_id/lines/:line_id/installments/:installment_id
 
 // ==================== 月額定額（ADR 053） ====================
 //
-// 「東京ガスは月3万円の定額」のように、本数・時間ではなく毎月決まった額を請求する案件。
+// 「このクライアントは月◯万円の定額」のように、本数・時間ではなく毎月決まった額を請求する案件。
 // 新しい表は作らず、ADR 029 の分割支払（line_payment_installments）に「各月1行」で載せる。
 // → 請求書（preview-items / 請求書エディタ）・クリエイター別集計・月次売上は既存の一式分割の経路にそのまま乗る。
 // - 支払先ごとに専用グループ「月額定額（◯◯）」を1つ持つ（line_cost: user_id=支払先・pricing_type='fixed_total'）
