@@ -53469,9 +53469,11 @@ async function processUploadFile(file, autoExecute = false) {
   const confirmBar = document.getElementById('cd-upload-confirm');
   const manualBtn = document.getElementById('cd-manual-upload-btn');
   try {
-    const { width, height } = await detectMediaDimensions(file);
+    const { width, height, guessed } = await detectMediaDimensions(file);
     uploadFileData = { file, width, height };
-    document.getElementById('cd-detected-size').textContent = `${width} × ${height}`;
+    document.getElementById('cd-detected-size').textContent = !width
+      ? '不明（ブラウザで再生できない形式のため自動検出できませんでした）'
+      : guessed ? `${width} × ${height}（ファイル名から推定）` : `${width} × ${height}`;
     // 次にアップロードする version はラウンド番号と等しい（ADR 011 補足・代表 髙橋指示）。
     // 取り消し→再アップ で同じラウンド番号のまま再アップロードできるようにする。
     document.getElementById('cd-version-num').value = _cdComputeNextVersion();
@@ -55080,14 +55082,50 @@ async function submitPCheckPicker() {
   }
 }
 
+// 名前に含まれる「1080x1920」「1080_1920」「1080×1920」からサイズを拾う（無ければ null）。
+// 「ap042_1080」のような連番を拾わないよう、先頭ゼロ・240 未満は除外して次の候補を探す。
+function parseDimensionsFromName(name) {
+  const re = /(?<!\d)([1-9]\d{2,3})\s*[x×X_]\s*([1-9]\d{2,3})(?!\d)/g;
+  const s = String(name || '');
+  let m;
+  while ((m = re.exec(s))) {
+    const width = parseInt(m[1], 10), height = parseInt(m[2], 10);
+    if (width >= 240 && height >= 240) return { width, height };
+    re.lastIndex = m.index + 1;
+  }
+  return null;
+}
+
+const VIDEO_EXT_RE = /\.(mp4|m4v|mov|qt|webm|mkv|avi|wmv|mts|m2ts|mxf|3gp)$/i;
+
 function detectMediaDimensions(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
-    if (file.type.startsWith('video/')) {
+    // ProRes の .mov や Chrome での HEVC など、ブラウザが再生できない動画はメタデータが読めない。
+    // サーバは width/height が空でも保存できるので、ここで止めずにファイル名から推定し、
+    // それも無ければサイズ不明（null）のままアップロードを続ける（バグ報告 #1e78b7eb）。
+    if (file.type.startsWith('video/') || (!file.type && VIDEO_EXT_RE.test(file.name))) {
       const video = document.createElement('video');
+      let settled = false;
+      const fallback = () => {
+        if (settled) return;
+        settled = true;
+        URL.revokeObjectURL(url);
+        const guess = parseDimensionsFromName(file.name)
+          || parseDimensionsFromName(currentCreativeDetail?.file_name);
+        resolve(guess ? { ...guess, guessed: true } : { width: null, height: null, guessed: true });
+      };
+      const timer = setTimeout(fallback, 10000);
       video.preload = 'metadata';
-      video.onloadedmetadata = () => { URL.revokeObjectURL(url); resolve({ width: video.videoWidth, height: video.videoHeight }); };
-      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('動画の読み込みに失敗しました')); };
+      video.onloadedmetadata = () => {
+        if (settled) return;
+        if (!video.videoWidth || !video.videoHeight) { clearTimeout(timer); fallback(); return; }
+        settled = true;
+        clearTimeout(timer);
+        URL.revokeObjectURL(url);
+        resolve({ width: video.videoWidth, height: video.videoHeight });
+      };
+      video.onerror = () => { clearTimeout(timer); fallback(); };
       video.src = url;
     } else if (file.type.startsWith('image/')) {
       const img = new Image();
