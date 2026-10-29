@@ -112,3 +112,23 @@
   .ie-body { padding: 0 8px; }
   .ie-col-date, .ie-col-view { display: none; }
 }
+
+/* ---------- 並び替え・一覧に無い CR を探す（作成モーダル／エディタの「＋ HFSのCRを追加」） ---------- */
+.ie-sort { padding: 4px 6px; font-size: 12px; border: 1px solid var(--border, #d1d5db); border-radius: 4px; background: #fff; }
+.ie-pick { padding: 8px 20px 10px; border-bottom: 1px solid var(--border, #e5e7eb); background: #F8FAFC; max-height: 40vh; overflow: auto; }
+.ie-pick[hidden] { display: none; }
+.ie-pick-q { width: 100%; max-width: 560px; box-sizing: border-box; padding: 6px 10px; font-size: 13px; border: 1px solid var(--border, #d1d5db); border-radius: 6px; }
+#ie-outside { border-top: 1.5px solid var(--border, #e5e7eb); }
+#ie-outside:empty { display: none; }
+.ie-out-head { font-size: 11px; font-weight: 600; color: var(--text-muted, #6b7280); padding: 8px 10px; }
+.ie-out-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 0.5px solid var(--border, #e5e7eb); }
+.ie-out-main { flex: 1; min-width: 0; }
+.ie-out-link { text-decoration: none; flex: none; }
+.ie-out-note { font-size: 11px; color: #92400E; margin-top: 2px; }
+.ie-out-ng .ie-c-file { color: #6B7280; }
+.ie-out-ng .ie-out-note { color: #B91C1C; }
+.ie-out-ng-tag { flex: none; font-size: 11px; color: #9CA3AF; white-space: nowrap; }
+@media (max-width: 640px) {
+  .ie-out-row { flex-wrap: wrap; }
+  #gi-search { width: 100% !important; }
+}

@@ -367,3 +367,39 @@ describe('新方式の請求書でも既存 PDF（ADR 047）が落ちない', ()
     expect(buf.slice(0, 4).toString()).toBe('%PDF');
   });
 });
+
+describe('検索（searchNorm / matchesSearch）', () => {
+  test('全角/半角・大文字/小文字・ひらがな/カタカナ・区切り記号の違いを無視する', () => {
+    expect(IE.searchNorm('ﾊﾞﾙｾﾛﾅ_15S')).toBe('バルセロナ15s');
+    expect(IE.searchNorm('ばるせろな 15s')).toBe('バルセロナ15s');
+    expect(IE.matchesSearch('hertech｜バルセロナ_LP-01_v2', 'ばるせろな lp01')).toBe(true);
+    expect(IE.matchesSearch('acme_banner_03', 'acme banner03')).toBe(true);
+    expect(IE.matchesSearch('acme_banner_03', 'acme 04')).toBe(false);
+  });
+  test('語が無ければ全部ヒット', () => {
+    expect(IE.matchesSearch('anything', '   ')).toBe(true);
+  });
+});
+
+describe('並び替え（sortRows）', () => {
+  const rows = [
+    { creative_id: 'a', billing_date: '2026-10-03', client_name: 'Bclient', creative_label: 'b_01' },
+    { creative_id: null, cost_type: 'hourly_fee', label: '時間報酬' },
+    { creative_id: 'b', billing_date: '2026-10-26', client_name: 'Aclient', creative_label: 'a_01' },
+    { creative_id: 'c', billing_date: '2026-10-10', client_name: '', creative_label: 'c_01' },
+    { creative_id: null, label: '撮影補助' },
+  ];
+  const ids = (list) => list.map(r => r.creative_id || r.label);
+  test('納品日が新しい順・古い順（CR 以外は元の順で後ろ）', () => {
+    expect(ids(IE.sortRows(rows, 'date_desc'))).toEqual(['b', 'c', 'a', '時間報酬', '撮影補助']);
+    expect(ids(IE.sortRows(rows, 'date_asc'))).toEqual(['a', 'c', 'b', '時間報酬', '撮影補助']);
+  });
+  test('クライアント名順（クライアント無しは最後）', () => {
+    expect(ids(IE.sortRows(rows, 'client'))).toEqual(['b', 'a', 'c', '時間報酬', '撮影補助']);
+  });
+  test('知らないモードは元の順のまま・元の配列は変えない', () => {
+    expect(ids(IE.sortRows(rows, 'xxx'))).toEqual(ids(rows));
+    IE.sortRows(rows, 'date_desc');
+    expect(rows[0].creative_id).toBe('a');
+  });
+});
