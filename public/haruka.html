@@ -5005,6 +5005,12 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
         <div style="display:flex;align-items:center;gap:6px">
           <input type="search" class="form-input" id="gi-search" placeholder="🔍 ファイル名・クライアント・案件で絞り込み" oninput="applyInvoiceSearch()" autocomplete="off" style="width:260px;font-size:13px;padding:6px 10px">
           <span id="gi-search-hit" style="font-size:11px;color:var(--text-muted);white-space:nowrap"></span>
+          <!-- 新方式の月だけ表示。選んだ順が請求書の明細の順になる（端末ごとに記憶） -->
+          <select id="gi-sort" class="form-input" onchange="HFSInvoiceEditor.onCandidateSort(this.value)" title="一覧の並び順（この順で請求書の明細に並びます）" style="display:none;width:auto;font-size:12px;padding:5px 8px">
+            <option value="date_asc">納品日が古い順</option>
+            <option value="date_desc">納品日が新しい順</option>
+            <option value="client">クライアント名順</option>
+          </select>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:12px">
@@ -37288,23 +37294,28 @@ function toggleAllInvoiceItems(checked) {
 }
 
 // 請求書作成モーダルの絞り込み（新方式・旧方式どちらの一覧にも効く）。
-// 空白区切りは AND。全角/半角・大文字/小文字は区別しない。旧方式の単価行（data-creative-id）は親行に従う
+// 空白区切りは AND。全角/半角・大文字/小文字・ひらがな/カタカナ・区切り記号（_ - . 空白など）は区別しない
+// （InvoiceEditorCalc.matchesSearch）。旧方式の単価行（data-creative-id）は親行に従う。
+// 新方式の月は、一覧に無い自分の CR もサーバーで探して「請求できるか／できない理由」を下に出す
 function applyInvoiceSearch() {
-  const norm = (v) => String(v || '').normalize('NFKC').toLowerCase();
-  const words = norm(document.getElementById('gi-search')?.value).split(/\s+/).filter(Boolean);
+  const query = document.getElementById('gi-search')?.value || '';
+  const calc = window.InvoiceEditorCalc;
+  const match = calc ? (text) => calc.matchesSearch(text, query)
+    : (text) => { const n = (v) => String(v || '').normalize('NFKC').toLowerCase(); return n(query).split(/\s+/).filter(Boolean).every(w => n(text).includes(w)); };
+  const hasWords = !!query.trim();
   const rows = document.querySelectorAll('#gi-table-wrap tbody tr');
   let parentShown = true, total = 0, shown = 0;
   rows.forEach(tr => {
     if (tr.dataset.creativeId) { tr.style.display = parentShown ? '' : 'none'; return; }
-    if (tr.classList.contains('ie-c-sep')) { tr.style.display = words.length ? 'none' : ''; return; }
-    const text = norm(tr.textContent);
-    const hit = words.every(w => text.includes(w));
+    if (tr.classList.contains('ie-c-sep')) { tr.style.display = hasWords ? 'none' : ''; return; }
+    const hit = match(tr.textContent);
     tr.style.display = hit ? '' : 'none';
     parentShown = hit;
     total++; if (hit) shown++;
   });
   const hitEl = document.getElementById('gi-search-hit');
-  if (hitEl) hitEl.textContent = words.length ? `${shown} / ${total} 件` : '';
+  if (hitEl) hitEl.textContent = hasWords ? `${shown} / ${total} 件` : '';
+  if (window.HFSInvoiceEditor && HFSInvoiceEditor.isCandidateMode()) HFSInvoiceEditor.searchOutside(query, shown);
 }
 
 function _giCreativeSubtotal(creativeId) {

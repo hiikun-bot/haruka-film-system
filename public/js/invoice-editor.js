@@ -10,6 +10,7 @@
 
   const C = () => window.InvoiceEditorCalc;
   const THUMB_KEY = 'hfs.invoiceEditor.thumbs';
+  const SORT_KEY = 'hfs.invoiceEditor.candSort';
   const SAVE_DELAY_MS = 1500;
   const PASTE_COLS = ['label', 'price', 'qty', 'reason']; // 貼り付けの列順（Excel の 品目→単価→数量→理由。行に在るものだけ）
 
@@ -30,6 +31,7 @@
 
   // 既定 ON（似た名前の CR を見た目で見分けられるように）。OFF にした端末だけ軽い一覧のまま
   function thumbsOn() { return lsGet(THUMB_KEY) !== '0'; }
+  function candSort() { const v = lsGet(SORT_KEY); return C().SORT_MODES.includes(v) ? v : 'date_asc'; }
 
   function setFooterMode(exclusive) {
     const totalBox = document.getElementById('gi-total-box');
@@ -38,6 +40,9 @@
     if (thumbBox) thumbBox.style.display = exclusive ? '' : 'none';
     const sel = document.getElementById('gi-selected-count');
     if (sel) sel.style.display = exclusive ? '' : 'none';
+    const sort = document.getElementById('gi-sort');
+    if (sort) { sort.style.display = exclusive ? '' : 'none'; sort.value = candSort(); }
+    if (!exclusive) outside.box = null;
   }
 
   /**
@@ -68,11 +73,14 @@
     const d = cand.data;
     if (!wrap || !d) return;
     const showThumb = thumbsOn();
-    const billable = d.items.filter(i => i.kind !== 'undelivered');
+    // 並び順は選んだもの（既定: 納品日が古い順）。この順のまま請求書の明細になる
+    const billable = C().sortRows(d.items.filter(i => i.kind !== 'undelivered'), candSort());
     const undelivered = d.items.filter(i => i.kind === 'undelivered');
     const total = billable.length + d.hourly.length + d.installments.length;
     if (!total && !undelivered.length) {
-      wrap.innerHTML = `<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">${d.year}年${d.month}月に請求できるものはありません</div>`;
+      wrap.innerHTML = `<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px">${d.year}年${d.month}月に請求できるものはありません<br><span style="font-size:11px">一覧に無いクリエイティブは上の 🔍 にファイル名を入れると探せます</span></div><div id="ie-outside"></div>`;
+      outside.box = null;
+      if (typeof applyInvoiceSearch === 'function') applyInvoiceSearch();
       updateCandidateCount();
       return;
     }
@@ -88,7 +96,7 @@
         <td class="ie-c-date">${disabled ? '―' : slashDate(it.billing_date)}</td>
         ${thumbCell(it)}
         <td>
-          <div class="ie-c-sub">${h(it.client_name)}${it.project_name ? ' / ' + h(it.project_name) : ''}${it.kind === 'previous' ? ' <span class="ie-badge-prev">前月・未請求</span>' : ''}${disabled ? ` <span class="ie-badge-status">${h(it.status || '未納品')}</span>` : ''}</div>
+          <div class="ie-c-sub">${h(it.client_name)}${it.project_name ? ' / ' + h(it.project_name) : ''}${it.kind === 'previous' ? ' <span class="ie-badge-prev">前月・未請求</span>' : ''}${it.kind === 'extra' ? ' <span class="ie-badge-prev">検索で追加</span>' : ''}${disabled ? ` <span class="ie-badge-status">${h(it.status || '未納品')}</span>` : ''}</div>
           <div class="ie-c-file">${h(it.file_name)} ${roleText(it)}</div>
         </td>
         <td class="ie-c-view"><a href="/haruka.html?creative=${encodeURIComponent(it.creative_id)}" target="_blank" rel="noopener" title="クリエイティブ詳細を別タブで開く">🔗</a></td>
@@ -117,7 +125,9 @@
             + (x.pricing_pending ? ' <span title="金額が管理者の承認待ちです。承認されるまで請求書は作成できません（ADR 037）" style="font-size:10px;padding:1px 6px;border-radius:8px;background:#FEF3C7;color:#92400E;white-space:nowrap">🕓 承認待ち</span>' : ''))).join('')}
           ${undelivered.length ? `<tr class="ie-c-sep"><td colspan="${showThumb ? 5 : 4}">未納品（請求できません）</td></tr>` + undelivered.map(it => crRow(it, true)).join('') : ''}
         </tbody>
-      </table>`;
+      </table>
+      <div id="ie-outside"></div>`;
+    outside.box = null;
     if (typeof applyInvoiceSearch === 'function') applyInvoiceSearch();
     updateCandidateCount();
   }
@@ -137,6 +147,96 @@
       cb.checked = checked;
     });
     updateCandidateCount();
+  }
+
+  function captureChecks() {
+    return new Map([...document.querySelectorAll('.ie-cand-check:not(:disabled)')].map(cb => [cb.dataset.id || cb.dataset.key, cb.checked]));
+  }
+  function renderKeepingChecks() {
+    const prev = captureChecks();
+    renderCandidates();
+    document.querySelectorAll('.ie-cand-check:not(:disabled)').forEach(cb => {
+      const k = cb.dataset.id || cb.dataset.key;
+      if (prev.has(k)) cb.checked = prev.get(k);
+    });
+    updateCandidateCount();
+  }
+
+  function onCandidateSort(mode) {
+    lsSet(SORT_KEY, mode);
+    if (cand.active) renderKeepingChecks();
+  }
+
+  // ---------- 一覧に無い CR を探す（GET /invoice-editor/search） ----------
+  //   一覧は対象月（＋新方式の開始月以降の前月）の分だけ。納品日の登録ずれ等で漏れた CR を名前で探し、
+  //   請求できるものは一覧に足す。できないものは理由（未納品・請求済み・Wチェック等）を出す
+  const outside = { seq: 0, timer: null, box: null, lastQuery: null, cache: new Map() };
+
+  async function fetchOutside(query, year, month) {
+    const res = await apiFetch(`${API}/invoice-editor/search?q=${encodeURIComponent(query)}&year=${year}&month=${month}${thumbsOn() ? '&with_thumbs=1' : ''}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '検索に失敗しました');
+    for (const it of (data.items || [])) outside.cache.set(it.creative_id, it);
+    return data.items || [];
+  }
+
+  function outsideRowHtml(it, actionHtml) {
+    const roles = (it.roles || []).map(r => `<span class="ie-c-role">${h(r.label)}</span>`).join('');
+    const thumb = it.thumb_file_id
+      ? `<button type="button" class="ie-thumb" onclick="HFSInvoiceEditor.openCandidateMedia('${h(it.creative_id)}')" title="クリックで大きく表示"><img loading="lazy" decoding="async" src="${API}/portfolio/thumbnail/${encodeURIComponent(it.thumb_file_id)}?s=120" alt="" onerror="this.style.display='none'">${it.media_is_video ? '<span class="ie-thumb-play">▶</span>' : ''}</button>`
+      : '';
+    return `<div class="ie-out-row ${it.state === 'addable' ? '' : 'ie-out-ng'}">
+      ${thumb}
+      <div class="ie-out-main">
+        <div class="ie-c-sub">${it.billing_date ? slashDate(it.billing_date) + ' 納品　' : ''}${h(it.client_name)}${it.project_name ? ' / ' + h(it.project_name) : ''}</div>
+        <div class="ie-c-file">${h(it.file_name)} ${roles}</div>
+        ${it.note ? `<div class="ie-out-note">${h(it.note)}</div>` : ''}
+      </div>
+      <a href="/haruka.html?creative=${encodeURIComponent(it.creative_id)}" target="_blank" rel="noopener" title="クリエイティブ詳細を別タブで開く" class="ie-out-link">🔗</a>
+      ${actionHtml}
+    </div>`;
+  }
+
+  /** applyInvoiceSearch から呼ばれる（入力が止まって 0.4 秒で検索） */
+  function searchOutside(query, shownInList) {
+    clearTimeout(outside.timer);
+    const q = String(query || '').trim();
+    const box = document.getElementById('ie-outside');
+    if (!box) return;
+    if (!q) { box.innerHTML = ''; outside.lastQuery = null; return; }
+    if (outside.box === box && outside.lastQuery === q) return;
+    outside.timer = setTimeout(async () => {
+      const seq = ++outside.seq;
+      box.innerHTML = '<div class="ie-out-head">一覧に無いクリエイティブを探しています…</div>';
+      let items;
+      try { items = await fetchOutside(q, cand.year, cand.month); } catch (e) { if (seq === outside.seq) box.innerHTML = `<div class="ie-out-head">${h(e.message)}</div>`; return; }
+      if (seq !== outside.seq) return;
+      outside.box = box; outside.lastQuery = q;
+      const listed = new Set((cand.data ? cand.data.items : []).map(x => x.creative_id));
+      // 一覧で見つかっているときは足せるものだけ。一覧で 0 件のときは「なぜ出ないか」が分かるよう全部（請求済み・未納品なども）
+      const extra = items.filter(it => !listed.has(it.creative_id) && (!shownInList || it.state === 'addable' || it.state === 'future'));
+      if (!extra.length) {
+        box.innerHTML = shownInList ? '' : '<div class="ie-out-head">見つかりませんでした（自分が担当・ディレクション・プロデュースしたクリエイティブだけ探せます）</div>';
+        return;
+      }
+      box.innerHTML = `<div class="ie-out-head">一覧に無いクリエイティブ（${extra.length} 件）— 請求できるものは「＋ 一覧に追加」で足せます</div>`
+        + extra.map(it => outsideRowHtml(it, it.state === 'addable'
+          ? `<button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor._addOutsideToList('${h(it.creative_id)}')">＋ 一覧に追加</button>`
+          : '<span class="ie-out-ng-tag">追加できません</span>')).join('');
+    }, 400);
+  }
+
+  function addOutsideToList(creativeId) {
+    const it = outside.cache.get(creativeId);
+    if (!it || !cand.data || cand.data.items.some(x => x.creative_id === creativeId)) return;
+    cand.data.items.push({ ...it, kind: 'extra' });
+    const q = document.getElementById('gi-search');
+    if (q) q.value = '';
+    renderKeepingChecks();
+    const cb = document.querySelector(`.ie-cand-check[data-id="${CSS.escape(creativeId)}"]`);
+    if (cb) { cb.checked = true; cb.closest('tr')?.scrollIntoView({ block: 'center' }); }
+    updateCandidateCount();
+    showToast('一覧に追加しました', 'success', 2000);
   }
 
   async function onThumbToggle(on) {
@@ -191,6 +291,7 @@
   const ed = {
     id: null, state: null, rows: [], updatedAt: null, withholding: true, notes: '',
     timer: null, saving: null, dirty: false, conflict: false, problems: new Map(), keySeq: 0, lastSavedAt: null,
+    pickOpen: false, pickTimer: null,
   };
 
   function overlay() {
@@ -229,7 +330,7 @@
     ed.updatedAt = data.invoice.updated_at;
     ed.withholding = !!data.invoice.withholding_enabled;
     ed.notes = data.invoice.notes || '';
-    ed.dirty = false; ed.conflict = false; ed.problems = new Map(); ed.lastSavedAt = null;
+    ed.dirty = false; ed.conflict = false; ed.problems = new Map(); ed.lastSavedAt = null; ed.pickOpen = false;
     render();
     const first = el.querySelector('input.ie-in[data-col="price"]:not([disabled])');
     if (first) first.focus();
@@ -286,9 +387,20 @@
         <div class="ie-toolbar">
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.fillRef()" title="選んだ行（選んでいなければ単価が空の行全部）に参考単価を入れます">参考単価を入れる</button>
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.bulkPrice()" title="選んだ行に同じ単価を入れます">単価をまとめて入力</button>
+          <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.togglePick()" title="作成のときに選び漏れた自分のクリエイティブを名前で探して足します">＋ HFSのCRを追加</button>
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.addManual()">＋ HFS外の行</button>
           <button type="button" class="btn btn-sm ie-btn-del" onclick="HFSInvoiceEditor.removeSelected()">削除</button>
+          <select class="ie-sort" onchange="HFSInvoiceEditor.sortBy(this.value); this.value = ''" title="明細を並べ替えます（この順で PDF にも並びます）">
+            <option value="">並び替え…</option>
+            <option value="date_desc">納品日が新しい順</option>
+            <option value="date_asc">納品日が古い順</option>
+            <option value="client">クライアント名順</option>
+          </select>
           <span class="ie-hint">Tab・Enter・矢印で移動／Excel から貼り付け可／Ctrl+D で上の値をコピー</span>
+        </div>
+        <div class="ie-pick" id="ie-pick" ${ed.pickOpen ? '' : 'hidden'}>
+          <input type="search" class="ie-pick-q" id="ie-pick-q" placeholder="🔍 足したいクリエイティブのファイル名（一部でOK・ひらがな/カタカナどちらでも）" autocomplete="off" oninput="HFSInvoiceEditor._pickSearch(this.value)">
+          <div id="ie-pick-results"></div>
         </div>` : ''}
         <div class="ie-body">
           <table class="ie-table">
@@ -377,7 +489,7 @@
   async function openMedia(i) { return showMedia(ed.rows[i]); }
   // 作成モーダルの一覧から（選ぶ前に中身を確かめる）
   async function openCandidateMedia(creativeId) {
-    const it = cand.data && cand.data.items.find(x => x.creative_id === creativeId);
+    const it = (cand.data && cand.data.items.find(x => x.creative_id === creativeId)) || outside.cache.get(creativeId);
     if (it) return showMedia({ ...it, creative_label: it.file_name });
   }
   async function showMedia(r) {
@@ -560,6 +672,7 @@
   }
 
   function onKeyDown(e) {
+    if (e.key === 'Escape' && e.target && e.target.id === 'ie-pick-q') { e.preventDefault(); togglePick(false); return; }
     if (e.key === 'Escape') { e.preventDefault(); close(); return; }
     const t = e.target;
     if (!t.classList || !t.classList.contains('ie-in')) return;
@@ -671,6 +784,71 @@
     const set = new Set(idx);
     ed.rows = ed.rows.filter((_, i) => !set.has(i));
     render(); scheduleSave();
+  }
+
+  /** 並び替え（CR 行だけ。作業時間・一式・HFS外の行は後ろに元の順で）。保存すると sort_order＝PDF の順になる */
+  function sortBy(mode) {
+    if (!editable() || !C().SORT_MODES.includes(mode)) return;
+    ed.rows = C().sortRows(ed.rows, mode);
+    render(); scheduleSave();
+  }
+
+  // ---------- ＋ HFSのCRを追加（作成後に選び漏れに気づいたとき） ----------
+  function togglePick(force) {
+    ed.pickOpen = typeof force === 'boolean' ? force : !ed.pickOpen;
+    const box = overlay().querySelector('#ie-pick');
+    if (!box) return;
+    box.hidden = !ed.pickOpen;
+    if (ed.pickOpen) overlay().querySelector('#ie-pick-q')?.focus();
+  }
+
+  function pickSearch(query) {
+    clearTimeout(ed.pickTimer);
+    const out = overlay().querySelector('#ie-pick-results');
+    if (!out) return;
+    const q = String(query || '').trim();
+    if (!q) { out.innerHTML = ''; return; }
+    ed.pickTimer = setTimeout(async () => {
+      const seq = ++outside.seq;
+      out.innerHTML = '<div class="ie-out-head">探しています…</div>';
+      let items;
+      try { items = await fetchOutside(q, ed.state.invoice.year, ed.state.invoice.month); } catch (e) { if (seq === outside.seq) out.innerHTML = `<div class="ie-out-head">${h(e.message)}</div>`; return; }
+      if (seq !== outside.seq) return;
+      if (!items.length) { out.innerHTML = '<div class="ie-out-head">見つかりませんでした（自分が担当・ディレクション・プロデュースしたクリエイティブだけ探せます）</div>'; return; }
+      const inThis = (it) => (it.roles || []).length > 0 && it.roles.every(r => ed.rows.some(x => x.creative_id === it.creative_id && x.cost_type === r.cost_type));
+      out.innerHTML = items.map(it => {
+        if (it.state === 'addable' && inThis(it)) return outsideRowHtml({ ...it, state: 'in', note: 'この請求書にもう入っています' }, '<span class="ie-out-ng-tag">追加済み</span>');
+        return outsideRowHtml(it, it.state === 'addable'
+          ? `<button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor._addCreative('${h(it.creative_id)}', this)">＋ 追加</button>`
+          : '<span class="ie-out-ng-tag">追加できません</span>');
+      }).join('');
+    }, 400);
+  }
+
+  async function addCreative(creativeId, btn) {
+    if (!editable()) return;
+    if (btn) { btn.disabled = true; btn.textContent = '追加中…'; }
+    // 入力途中の単価を先に保存してから足す（楽観ロックの updated_at を最新にする）
+    const saved = await save();
+    if (saved === false || !editable()) { if (btn) { btn.disabled = false; btn.textContent = '＋ 追加'; } return; }
+    let res, data = {};
+    try {
+      res = await apiFetch(`${API}/invoice-editor/${encodeURIComponent(ed.id)}/items`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creative_ids: [creativeId], updated_at: ed.updatedAt }),
+      });
+      data = await res.json().catch(() => ({}));
+    } catch (_) { res = null; }
+    if (!res || !res.ok) {
+      if (btn) { btn.disabled = false; btn.textContent = '＋ 追加'; }
+      if (data.code === 'CONFLICT') { ed.conflict = true; render(); return; }
+      const detail = Array.isArray(data.problems) && data.problems.length ? `（${data.problems.map(p => p.message).join(' / ')}）` : '';
+      showToast(`${data.error || '追加に失敗しました'}${detail}`, 'error');
+      return;
+    }
+    ed.pickOpen = false;
+    await open(ed.id);
+    showToast(`${data.added} 行を足しました。単価を入れてください`, 'success');
   }
 
   // ---------- 自動保存（入力が止まって 1.5 秒・楽観ロック） ----------
@@ -859,9 +1037,13 @@
     isCandidateMode: () => cand.active,
     createDraftFromModal,
     onThumbToggle,
-    open, close, reload, submit, preview, fillRef, bulkPrice, addManual, removeSelected,
+    open, close, reload, submit, preview, fillRef, bulkPrice, addManual, removeSelected, sortBy, togglePick,
     openMedia, openCandidateMedia, closeMedia,
+    onCandidateSort, searchOutside,
     _updateCandidateCount: updateCandidateCount,
     _toggleAllCandidates: toggleAllCandidates,
+    _addOutsideToList: addOutsideToList,
+    _pickSearch: pickSearch,
+    _addCreative: addCreative,
   };
 })();

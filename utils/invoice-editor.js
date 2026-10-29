@@ -388,6 +388,50 @@
     return `${clientName || ''}${clientName ? '｜' : ''}${creativeLabel || ''}${role ? `（${role}）` : ''}`;
   }
 
+  // ---------- 検索・並び替え（作成モーダル・エディタ共通） ----------
+
+  /**
+   * 検索用の正規化。全角/半角・大文字/小文字・ひらがな/カタカナ・空白や区切り記号（_ - . / ・ 括弧 など）の違いを無視する。
+   * 例: 'ﾊﾞﾙｾﾛﾅ_15s' / 'ばるせろな 15S' → 'バルセロナ15s'
+   */
+  function searchNorm(v) {
+    return String(v ?? '').normalize('NFKC').toLowerCase()
+      .replace(/[\u3041-\u3096]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60))
+      .replace(/[\s_\-‐－—―・.,、。/\\|()（）\[\]［］「」【】]/g, '');
+  }
+
+  /** 空白区切りの語がすべて text に含まれるか（AND）。語が無ければ true */
+  function matchesSearch(text, query) {
+    const words = String(query ?? '').normalize('NFKC').split(/\s+/).map(searchNorm).filter(Boolean);
+    if (!words.length) return true;
+    const t = searchNorm(text);
+    return words.every(w => t.includes(w));
+  }
+
+  const SORT_MODES = ['date_desc', 'date_asc', 'client'];
+
+  /**
+   * 並び替え（元の配列は変えない）。CR 行だけ並べ替え、作業時間・一式・HFS外の行は元の順で後ろに置く。
+   *   date_desc: 納品日が新しい順 / date_asc: 納品日が古い順 / client: クライアント名順（同じクライアントは納品日が古い順）
+   * 行は { creative_id, billing_date, client_name, creative_label|file_name } を持つ（エディタの行・モーダルの候補どちらでも可）
+   */
+  function sortRows(rows, mode) {
+    const list = (rows || []).map((r, i) => ({ r, i }));
+    const isCr = (x) => !!(x.r && x.r.creative_id);
+    const date = (x) => String(x.r.billing_date || '');
+    const name = (x) => String(x.r.creative_label || x.r.file_name || '');
+    const client = (x) => String(x.r.client_name || '');
+    const cmpDate = (a, b) => date(a).localeCompare(date(b));
+    const cmp = {
+      date_desc: (a, b) => -cmpDate(a, b) || name(a).localeCompare(name(b), 'ja'),
+      date_asc: (a, b) => cmpDate(a, b) || name(a).localeCompare(name(b), 'ja'),
+      client: (a, b) => (!client(a) - !client(b)) || client(a).localeCompare(client(b), 'ja') || cmpDate(a, b) || name(a).localeCompare(name(b), 'ja'),
+    }[mode];
+    if (!cmp) return list.map(x => x.r);
+    const cr = list.filter(isCr).sort((a, b) => cmp(a, b) || (a.i - b.i));
+    return cr.concat(list.filter(x => !isCr(x))).map(x => x.r);
+  }
+
   return {
     TAX_NUM, TAX_DEN, WH_NUM, WH_DEN, WITHHOLDING_WARN_THRESHOLD, LOOKBACK_MONTHS, DEFAULT_EXCLUSIVE_FROM,
     REASON_MAX, LABEL_MAX, MAX_PRICE, MAX_QUANTITY, MAX_ITEMS,
@@ -398,5 +442,6 @@
     issuerCostRoles, billedKey,
     parseMoney, isCrLine, isFixedLine, isManualLine, lineAmount, computeTotals, defaultWithholding,
     lineIssues, checkInvoiceForSubmit, crItemLabel,
+    searchNorm, matchesSearch, SORT_MODES, sortRows,
   };
 });
