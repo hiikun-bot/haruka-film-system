@@ -288,4 +288,52 @@ async function readSheetColumn(spreadsheetId, tabTitle, column) {
   return readSheetRange(spreadsheetId, tabTitle, column, column);
 }
 
-module.exports = { createSheetWithData, overwriteFirstSheet, getServiceAccountEmail, extractSpreadsheetId, readSheetData, listSheetTabs, readSheetColumn, readSheetRange };
+// 複数タブのスプレッドシートを共有ドライブに新規作成（ADR 054 §5 源泉徴収の出力で使用）
+//   tabs: [{ title, rows }]  … 1枚目は createSheetWithData と同じ経路で作り、タブ名を付け替える。
+//   各タブは 1 行目を太字＋固定（ヘッダー）にする。
+async function createSheetWithTabs(title, tabs) {
+  if (!Array.isArray(tabs) || tabs.length === 0) throw new Error('tabs が空です');
+  const first = tabs[0];
+  const created = await createSheetWithData(title, first.rows || []);
+  const auth = getAuth();
+  const sheets = google.sheets({ version: 'v4', auth });
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: created.id, fields: 'sheets.properties' });
+  const firstSheetId = meta.data.sheets?.[0]?.properties?.sheetId ?? 0;
+
+  const requests = [];
+  if (first.title) {
+    requests.push({ updateSheetProperties: { properties: { sheetId: firstSheetId, title: String(first.title) }, fields: 'title' } });
+  }
+  for (let i = 1; i < tabs.length; i++) {
+    requests.push({ addSheet: { properties: { title: String(tabs[i].title || `シート${i + 1}`), index: i } } });
+  }
+  const sheetIds = [firstSheetId];
+  if (requests.length) {
+    const res = await sheets.spreadsheets.batchUpdate({ spreadsheetId: created.id, requestBody: { requests } });
+    for (const r of res.data.replies || []) {
+      if (r.addSheet?.properties?.sheetId != null) sheetIds.push(r.addSheet.properties.sheetId);
+    }
+  }
+  // 2枚目以降のデータ書き込み
+  for (let i = 1; i < tabs.length; i++) {
+    const rows = tabs[i].rows || [];
+    if (!rows.length) continue;
+    const range = `'${String(tabs[i].title).replace(/'/g, "''")}'!A1`;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: created.id, range, valueInputOption: 'RAW', requestBody: { values: rows },
+    });
+  }
+  // ヘッダー行の太字・固定
+  const fmt = sheetIds.map((sheetId) => ([
+    { repeatCell: { range: { sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } },
+    { updateSheetProperties: { properties: { sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
+  ])).flat();
+  try {
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId: created.id, requestBody: { requests: fmt } });
+  } catch (e) {
+    console.warn('[sheets] createSheetWithTabs: 書式設定に失敗（データは書き込み済み）:', e.message);
+  }
+  return { id: created.id, url: created.url };
+}
+
+module.exports = { createSheetWithData, createSheetWithTabs, overwriteFirstSheet, getServiceAccountEmail, extractSpreadsheetId, readSheetData, listSheetTabs, readSheetColumn, readSheetRange };
