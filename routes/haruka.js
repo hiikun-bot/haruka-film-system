@@ -1038,6 +1038,38 @@ router.get('/projects/schedule-overview', requireAuth, async (req, res) => {
 // ADR 002 後: project_rates(*) / director_rates(*) を embed していた箇所は
 // project_estimate_lines(*, project_estimate_line_costs(*, role:roles(code,label))) に置換。
 // クライアント側はこのレスポンスから単価モーダル等の表示を構築する。
+// ADR 055: 当月の案件内 納品カウント（積み上げ台帳）を JSON で返す。
+// 納品完了メッセージ（Slack / Chatwork）に載せた [HFS-LEDGER] タグと同じ数字を DB 側から出す。
+// あとから AI が Slack / Chatwork のログと DB を突き合わせる（scripts/delivery-ledger-check.js）用。
+//   GET /projects/:id/delivery-ledger?month=YYYY-MM   （month 省略時は JST の今月）
+// 認証済みなら誰でも読める（件数とファイル名のみ。金額・単価は含まない）。
+router.get('/projects/:id/delivery-ledger', async (req, res) => {
+  try {
+    const L = require('../utils/delivery-ledger');
+    const ym = (req.query.month && String(req.query.month).trim()) || L.jstYearMonthOf(new Date().toISOString());
+    if (!L.jstMonthRangeIso(ym)) return res.status(400).json({ error: 'month は YYYY-MM 形式で指定してください' });
+    const { data: project, error: pErr } = await supabase
+      .from('projects').select('id, name, clients(id, name)').eq('id', req.params.id).maybeSingle();
+    if (pErr) return res.status(500).json({ error: pErr.message });
+    if (!project) return res.status(404).json({ error: '案件が見つかりません' });
+    const ledger = await L.loadProjectDeliveryLedger(supabase, { projectId: project.id, ym });
+    const block = L.buildDeliveryLedgerBlock({ ledger, projectId: project.id, currentIds: [] });
+    res.json({
+      project_id: project.id,
+      project_name: project.name,
+      client_name: project.clients?.name || null,
+      month: ledger.ym,
+      month_total: ledger.monthTotal,
+      project_total: ledger.projectTotal,
+      items: ledger.items,
+      tag: block.tag,
+    });
+  } catch (e) {
+    console.error('[delivery-ledger] failed:', e?.message || e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
 router.get('/projects/:id', async (req, res) => {
   // ADR 017: liaison + director に is_external / external_company を含めて返す
   const detailSelectWith = `
@@ -12663,17 +12695,33 @@ router.post('/creatives/bulk-deliver', requireAuth, async (req, res) => {
           const key = r.project_id || '__none__';
           countByProject.set(key, (countByProject.get(key) || 0) + 1);
         });
+        // 納品完了日ラベルは JST で表示（feedback: 時間ロジックはJST明示）
+        const labelSrc = deliveredAtIso ? new Date(deliveredAtIso) : new Date();
+        const deliveredAtLabel = labelSrc.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+        // ADR 055: 案件ごとに1通、案件チャンネル／ルームへ「当月の納品カウント（積み上げ台帳）」を投稿し、
+        // その当月累計をダイジェストにも併記する。当月＝納品完了日（JST）の月。
+        const ledgerYm = deliveredAtLabel.slice(0, 7);
+        const monthTotalByProject = new Map();
+        for (const pid of projectIds) {
+          const ids = deliveredRows.filter(r => r.project_id === pid).map(r => r.id);
+          try {
+            const { ledger } = await notif.notifyProjectDeliveryLedger({
+              projectId: pid, creativeIds: ids, actorUserId: req.user?.id || null, ym: ledgerYm,
+            });
+            if (ledger) monthTotalByProject.set(pid, ledger.monthTotal);
+          } catch (e) {
+            console.warn('[bulk-deliver] project ledger notify failed:', pid, e?.message || e);
+          }
+        }
         const projects = [...countByProject.entries()].map(([pid, count]) => {
           const p = pid === '__none__' ? null : projById.get(pid);
           return {
             projectName: p?.name || '(案件不明)',
             clientName: p?.clients?.name || null,
             count,
+            monthTotal: monthTotalByProject.has(pid) ? monthTotalByProject.get(pid) : null,
           };
         });
-        // 納品完了日ラベルは JST で表示（feedback: 時間ロジックはJST明示）
-        const labelSrc = deliveredAtIso ? new Date(deliveredAtIso) : new Date();
-        const deliveredAtLabel = labelSrc.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
         await notif.notifyBulkDelivered({
           actor: { id: req.user?.id || null },
           batchId,
