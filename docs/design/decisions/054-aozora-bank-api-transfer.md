@@ -115,12 +115,20 @@ RLS は全テーブル ENABLE（ADR 048・service_role のみアクセス）。
 | `GET  /bank/connect` | 認可 URL へリダイレクト（state = HMAC＋10分期限＋セッション nonce、`utils/google-login.js` と同方式） |
 | `GET  /bank/callback` | code → token。口座一覧照会で account_id を取り、暗号化保存 |
 | `POST /bank/disconnect` | revoked_at を立てる（トークン列は NULL に） |
-| `POST /payouts/transfer/preview` | body `{year, month, payout_record_ids[], transfer_designated_date}` → サーバーで明細を組み立て、検証（§4）→ 手数料事前照会 → `{preview_token, items[], warnings[], excluded[], total_count, total_amount, fee}`。preview_token は HMAC 署名付き・10分期限・明細ハッシュを含む |
-| `POST /payouts/transfer/request` | body `{preview_token}`。再認証チェック（§1-3）→ 同じ明細を再構築してハッシュ一致を確認 → `Idempotency-Key` 付きで依頼 → batches/items 保存 → 管理者マイチャットへ要約 → `{batch_id, apply_no, result_code}` |
+| `POST /payouts/transfer/preview` | body `{year, month, payout_record_ids[], transfer_designated_date}` → サーバーで明細を組み立て、検証（§4）→ 手数料事前照会 → `{preview_token, items[], warnings[], excluded[], total_count, total_amount, fee}`。preview_token は HMAC 署名付き・10分期限・**明細ハッシュ＋振込指定日＋依頼者 id** を含む（画面は token と一緒に `transfer_designated_date` も送り、サーバーは token 内の日付と一致しなければ 409） |
+| `POST /payouts/transfer/request` | body `{preview_token, transfer_designated_date}`。再認証チェック（§1-3）→ 同じ明細を再構築してハッシュ一致を確認 → **先に batches（status=`requesting`・`idempotency_key` 採番）と items を INSERT** → その `idempotency_key` を `Idempotency-Key` にして依頼 → 応答で `apply_no`/`result_code` を UPDATE → 管理者マイチャットへ要約 → `{batch_id, apply_no, result_code}`。応答が返らなかった（タイムアウト・接続断）場合は status=`requesting` のまま残し、**同じ `idempotency_key` で再送**するか、結果照会で受付済みかを確かめてから再送する（§3-2） |
 | `GET  /payouts/transfer/batches?year&month` / `GET .../batches/:id` | 一覧・詳細（明細の口座は下4桁のみ） |
 | `POST /payouts/transfer/batches/:id/poll` | 手動で結果照会→状況照会を実行 |
 | `POST /payouts/transfer/batches/:id/cancel` | 総合振込取消依頼（これも銀行側承認が要る） |
 | `GET  /auth/google/reauth?next=` | 再認証。成功で `req.session.reauth_at = now` |
+
+### 3-2. 二重依頼を起こさない順序（2026-10-30 レビュー指摘への追補）
+
+1. 依頼 API は「DB に書いてから銀行へ送る」。`payout_transfer_batches` を status=`requesting` で INSERT した時点で `idempotency_key`（UUID）が確定し、以後の送信・再送はすべてこのキーを `Idempotency-Key` に使う（銀行側は同一キーを24時間、受付1回）
+2. 銀行の応答が消えた（timeout / ECONNRESET / 5xx）ときは batch を `requesting` のまま `last_error` に記録して返す。画面は「送信結果を確認中」と出し、`POST .../batches/:id/retry` で **同じキーで再送**する。再送前に総合振込状況照会で同じ振込データ名＋件数＋合計の受付が無いかも確認し、あれば `apply_no` を取り込んで `awaiting_approval` にする
+3. ワーカは `requesting` が 15 分以上続く batch を拾い、同じキーで 1 回だけ再送 → それでも応答が無ければ `failed` にして管理者マイチャットへ知らせる（人が銀行画面で確認）
+4. 1 人のメンバーについて同月に未確定の明細があるあいだは、新しい preview に含めない（§4 の除外規則）。preview と request の間に別の依頼が入った場合も request 時に再検証して 409 を返す
+5. 画面側: 振込指定日を変えたら進行中の preview を破棄し、新しい preview が返るまで「依頼する」ボタンを無効にする。request には token と一緒に画面の日付を送り、サーバーで突き合わせる
 
 ワーカ `workers/bank-transfer-poller.js`（10分ごと・JST）: `awaiting_approval`/`approved`/`processing` の batch を
 結果照会 → 1:完了なら状況照会 → 明細ごとに `completed`/`returned`。全件 completed で batch を `completed` にし、
@@ -134,13 +142,15 @@ RLS は全テーブル ENABLE（ADR 048・service_role のみアクセス）。
 - 受取人名: `account_holder_kana`（全角カナ）→ 半角カナへ変換、許容文字（半角カナ・英大文字・数字・` ( ) - . / \ ｰ`等）以外は除去し、
   除去があれば警告。30字で切る（銀行側も31字以降は切り捨て）。空ならエラー
 - 以下は依頼対象から **除外**して `excluded[]` で理由を返す: 口座列に不備・`bank_info_updated_at` が7日以内・`status='paid'` 済み・
-  `is_active=false`・金額が 0 以下・同月に `completed`/`awaiting_approval` の明細がすでにある人（二重振込防止）
+  `is_active=false`・金額が 0 以下・同月に **未確定または完了の明細**（batch の status が `requesting` / `requested` / `awaiting_approval` / `approved` / `processing` / `completed` のいずれか、かつ item が `failed`/`returned` でない）がすでにある人（二重振込防止。`expired` / `cancelled` / `failed` の batch の明細だけが再依頼できる）
 
 ### 5. 源泉徴収台帳と出力（Stage D）
 
 対象は「支払日ベース」で集計する（源泉所得税は支払った月で納付する）。
 
-- データ源: `payout_transfer_items`（completed・`completed_at`）＋ 手動振込の `payout_records`（paid・`paid_at`）を
+- **台帳の金額は支払時点で凍結する**（2026-10-30 追補）: 振込完了（API）または消し込み（手動）の時点で、請求書の `subtotal/tax/withholding/payout` と支払額を `payout_records.ledger_snapshot`（JSONB・Stage A2 migration）に書き、台帳はこのスナップショットを読む。後から請求書を編集しても台帳の源泉額は変わらない（変えたいときは支払を取り消して再消し込み）。スナップショットが無い過去の行だけ、現在の請求書から組み立てて「スナップショット無し」の注記を付ける
+- **支払額と請求書の合計が一致しないときは差額を独立した行にする**: 例）消し込み額 149,790 円に対し HFS 請求書の差引額 99,790 円なら、99,790 円の行（源泉は請求書どおり）＋「請求書外の支払 50,000 円（源泉 0・要確認）」の行。差額を黙って落とさない
+- データ源: `payout_transfer_items`（completed・batch の `completed_at`）＋ 手動振込の `payout_records`（paid・`paid_at`）を
   `invoices`（同 issuer_id/year/month・提出済/承認済）に結合。exclusive の請求書は `subtotal_amount / tax_amount / withholding_amount / payout_amount`、
   inclusive（旧方式・源泉なし）は `total_amount` のみで源泉 0。請求書が無い支払は「要確認」行として出す
 - `GET /admin/withholding/summary?year&month` … 支払月ごとの 人数・支払金額（税込）・源泉徴収税額・差引支払額・要確認件数
