@@ -69,6 +69,7 @@
 | 🧾 請求書 PDF の Drive 自動保存 / pdfkit / invoice-pdf / member_invoice_folders への同名上書き / 振込管理スキャンとの整合 | [decisions/047](docs/design/decisions/047-invoice-pdf-auto-drive.md) |
 | 🙋 案件への参加申請 / project_join_requests / 宛先選択（P・D・管理者）/ 承認で支払先登録 | [decisions/051](docs/design/decisions/051-project-join-request.md) |
 | 🎞 思い出アルバム / 合宿・イベントの写真・動画 / memories / Drive 直送 / アルバム・投稿者フォルダ | [decisions/052](docs/design/decisions/052-memories-album-drive.md) |
+| 🏦 あおぞら銀行 API / 総合振込 / bulk-transfer / 振込依頼の承認 / payout.transfer / 再認証 / 口座変更ガード / 源泉徴収台帳 / 支払調書 / withholding | [decisions/054](docs/design/decisions/054-aozora-bank-api-transfer.md) |
 | 共通の設計原則・新ADR を書くときの指針 | [philosophy.md](docs/design/philosophy.md) |
 | ball_holder / user.role / feed統合 / マスタ統廃合 | [open-questions.md](docs/design/open-questions.md) |
 | 用語の正準形を確認したい | [glossary.md](docs/design/glossary.md) |
