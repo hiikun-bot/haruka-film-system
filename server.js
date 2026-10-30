@@ -421,13 +421,78 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 // ==================== 認証ルート ====================
 
+// ---- ログイン強化（ADR 054 §1 末尾 / Stage E）----
+// 1) 失敗ロック: 同一メール or 同一 IP で 5 回連続失敗 → 15 分ロック（utils/login-guard.js・メモリ保持）
+// 2) 管理者セッション: admin ロール保有者（または最高管理者）は 24 時間、他は従来の 7 日
+const loginGuardUtil = require('./utils/login-guard');
+const rolesUtil = require('./utils/roles');
+const loginGuard = loginGuardUtil.createLoginGuard();
+const ADMIN_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function loginLockResponse(res, retryAfterSec) {
+  res.setHeader('Retry-After', String(retryAfterSec));
+  return res.status(429).json({ error: loginGuardUtil.LOCK_MESSAGE, retry_after_sec: retryAfterSec });
+}
+
+// user_activity_logs に失敗・ロックを記録する（パスワードや入力メールは書かない）。
+// 既存の login 記録と同じ列だけ使う。未登録メールのときは user_id が無いので null。
+// 本番の列制約で失敗しても認証処理は止めない（warn のみ）。
+async function logLoginEvent(req, action, userId) {
+  try {
+    const ip = getClientIP(req) || null;
+    const ua = req.headers['user-agent'] || '';
+    const { error } = await supabase.from('user_activity_logs')
+      .insert({ user_id: userId || null, action, ip_address: ip, user_agent: ua });
+    if (error) console.warn(`[auth] ${action} log failed:`, error.message);
+  } catch (e) {
+    console.warn(`[auth] ${action} log failed:`, e?.message);
+  }
+}
+
+// ログイン成功直後に、そのユーザーのセッション寿命を決める。
+// ここは VIEW AS（X-View-As）とは無関係に「実アカウントが admin か」で決めるべき箇所なので、
+// getEffectiveRoleCodes ではなく getUserRoleCodes（user_roles が空なら users.role に dual-read）を使う（ADR 015 の例外: 実ユーザー判定）。
+async function applySessionLifetime(req, user) {
+  if (!req.session?.cookie) return;
+  let isAdmin = isSuperAdminUser(user);
+  if (!isAdmin) {
+    try {
+      const codes = await rolesUtil.getUserRoleCodes(user.id);
+      const effective = codes.length ? codes : [user.role].filter(Boolean);
+      isAdmin = effective.includes('admin');
+    } catch (e) {
+      console.warn('[auth] role lookup for session lifetime failed:', e?.message);
+      isAdmin = user.role === 'admin';
+    }
+  }
+  if (isAdmin) req.session.cookie.maxAge = ADMIN_SESSION_MAX_AGE_MS;
+}
+
 // メール＋パスワード ログイン
 app.post('/auth/login', (req, res, next) => {
+  const guardIdent = { email: loginGuardUtil.normalizeEmail(req.body?.email), ip: getClientIP(req) };
+  // ロック中はパスワード照合に進まない（存在しないメールでも同じ 429 を返す＝登録有無を漏らさない）
+  const lock = loginGuard.check(guardIdent);
+  if (lock.locked) return loginLockResponse(res, lock.retryAfterSec);
+
   passportInstance.authenticate('local', (err, user, info) => {
     if (err)    return next(err);
-    if (!user)  return res.status(401).json({ error: info?.message || 'ログインに失敗しました' });
+    if (!user) {
+      // DB 接続障害など本人の入力ミスでない失敗（info.transient）は回数に数えない
+      if (info?.transient) return res.status(401).json({ error: info?.message || 'ログインに失敗しました' });
+      const r = loginGuard.recordFailure(guardIdent);
+      logLoginEvent(req, 'login_failed', info?.user_id);
+      if (r.lockedNow) {
+        console.warn(`[auth] login locked: ${r.lockedKeys.join(',')} (${r.failures} failures)`);
+        logLoginEvent(req, 'login_locked', info?.user_id);
+      }
+      if (r.locked) return loginLockResponse(res, r.retryAfterSec);
+      return res.status(401).json({ error: info?.message || 'ログインに失敗しました' });
+    }
     req.logIn(user, async err => {
       if (err) return next(err);
+      loginGuard.recordSuccess(guardIdent);
+      await applySessionLifetime(req, user);
       // 手動ログインしたので自動ログイン抑止クッキーをクリア
       res.setHeader('Set-Cookie', `auto_login_off=; Max-Age=0; Path=/`);
       // ログイン記録
@@ -516,6 +581,8 @@ app.get('/auth/google/callback', async (req, res) => {
     const user = picked.user;
     req.logIn(user, async err => {
       if (err) { console.warn('[auth/google] login error:', err.message); return googleLoginFail(res, 'google_failed'); }
+      // 管理者は 24 時間セッション（/auth/login と同じ）。失敗ロックは Google ログインには掛けない
+      await applySessionLifetime(req, user);
       // 手動ログインしたので自動ログイン抑止クッキーをクリア（/auth/login と同じ）
       res.setHeader('Set-Cookie', `auto_login_off=; Max-Age=0; Path=/`);
       const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;

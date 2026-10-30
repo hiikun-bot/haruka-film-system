@@ -319,8 +319,14 @@ async function login() {
       body: JSON.stringify({ email, password }),
       credentials: 'include',
     });
-    const data = await res.json();
-    if (!res.ok) { showError(data.error || 'ログインに失敗しました'); return; }
+    // 429（失敗が続いてロック中）もサーバーの error 文言をそのまま出す。JSON でない応答でも落とさない
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showError(data.error || (res.status === 429
+        ? 'ログインの失敗が続いたため、15分ほど待ってからやり直してください'
+        : 'ログインに失敗しました'));
+      return;
+    }
     window.location.href = resolveNextUrl();
   } catch(e) {
     showError('ネットワークエラーが発生しました');
