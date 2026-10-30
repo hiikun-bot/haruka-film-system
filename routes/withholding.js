@@ -57,6 +57,8 @@ function publicRow(r) {
     apply_no: r.apply_no,
     payout_record_id: r.payout_record_id,
     transfer_item_id: r.transfer_item_id,
+    from_snapshot: !!r.from_snapshot,
+    extra_of_payout_record_id: r.extra_of_payout_record_id || null,
     needs_review: r.needs_review,
     review_reasons: r.review_reasons,
     notes: r.notes,
@@ -70,7 +72,7 @@ router.get('/summary', ...guard, async (req, res) => {
   if (!year || !month) return res.status(400).json({ error: 'year と month（1〜12）を指定してください' });
   try {
     const rep = await source.buildMonthReport(year, month);
-    res.json({ year, month, summary: rep.summary, due_date: ledger.paymentDueDate(year, month), warnings: rep.warnings });
+    res.json({ year, month, summary: rep.summary, due: ledger.taxPaymentDueDate(year, month), due_date: ledger.taxPaymentDueDate(year, month).date, warnings: rep.warnings });
   } catch (e) {
     console.error('[withholding/summary]', e.message);
     res.status(500).json({ error: `源泉徴収の集計に失敗しました: ${e.message}` });
@@ -88,7 +90,8 @@ router.get('/ledger', ...guard, async (req, res) => {
       year, month,
       rows: rep.rows.map(publicRow),
       summary: rep.summary,
-      due_date: ledger.paymentDueDate(year, month),
+      due: ledger.taxPaymentDueDate(year, month),            // { date, base, holiday_checked, shifted }（土日祝は翌営業日）
+      due_date: ledger.taxPaymentDueDate(year, month).date,
       warnings: rep.warnings,
     });
   } catch (e) {

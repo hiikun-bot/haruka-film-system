@@ -23,6 +23,8 @@ const LAST_MONTH_KEY = 'withholding_reminder_last_month';
 
 let intervalHandle = null;
 let isRunning = false;
+// メモリ上の送信済みガード（markSent が失敗しても 30 分ごとに再送しない。pricing-pending-reminder の lastRunDay と同じ方式）
+let lastSentMonthMem = null;
 
 function isEnabled() {
   const v = String(process.env.WITHHOLDING_REMINDER_ENABLED ?? 'true').toLowerCase();
@@ -107,7 +109,9 @@ async function tick(now = new Date()) {
       lastSentMonth: await loadLastSentMonth(),
     });
     if (decision.action !== 'send') return;
-    await sendWithholdingReminder({ year: decision.year, month: decision.month, trigger: 'auto' });
+    if (lastSentMonthMem === decision.monthKey) return; // 今プロセスで送信済み（markSent 失敗時の再送防止）
+    const r = await sendWithholdingReminder({ year: decision.year, month: decision.month, trigger: 'auto' });
+    if (r?.sent) lastSentMonthMem = decision.monthKey;
   } catch (e) {
     console.error('[withholding-reminder] 実行失敗（次の tick で再試行）:', e.message);
   } finally {

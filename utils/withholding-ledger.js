@@ -173,19 +173,68 @@ function invoiceFromSnapshot(snap) {
   const tax = toInt(snap.tax_amount);
   const withholding = toInt(snap.withholding_amount);
   const payout = toInt(snap.payout_amount);
+  const totalSnap = toInt(snap.total_amount);
+  const count = toInt(snap.invoice_count);
+  const base = {
+    id: snap.invoice_id || null,
+    invoice_number: snap.invoice_number || null,
+    invoice_count: count != null && count > 1 ? count : null, // Stage B は同月の請求書を合算して凍結する
+  };
   if (subtotal != null) {
-    const total = subtotal + (tax ?? 0);
+    const total = totalSnap ?? (subtotal + (tax ?? 0));
     return {
-      id: snap.invoice_id || null, invoice_number: snap.invoice_number || null, tax_mode: 'exclusive',
+      ...base, tax_mode: 'exclusive',
       subtotal_amount: subtotal, tax_amount: tax ?? 0, total_amount: total,
       withholding_amount: withholding ?? 0, payout_amount: payout ?? (total - (withholding ?? 0)),
       withholding_enabled: (withholding ?? 0) > 0 ? true : null,
     };
   }
+  return { ...base, tax_mode: 'inclusive', total_amount: totalSnap ?? payout ?? toInt(snap.amount) ?? 0 };
+}
+
+/**
+ * payout_transfer_items（API 振込の明細）→ 凍結値のスナップショット。
+ * Stage B は依頼時に gross_amount（税込）/ tax_amount（消費税・inclusive と請求書なしは null）/ withholding_amount /
+ * amount（振込額＝差引）を請求書から転記して保存するので、台帳はこれを優先して使う（後から請求書を直しても変わらない）。
+ * gross_amount が無い行（旧データ）は null を返し、呼び出し側が payout_records.ledger_snapshot → 現在の請求書の順で補う。
+ */
+function snapshotFromTransferItem(item, invoiceNumber = null) {
+  if (!item) return null;
+  const gross = toInt(item.gross_amount);
+  if (gross == null) return null;
+  const amount = toInt(item.amount);
+  const tax = toInt(item.tax_amount);
+  const withholding = toInt(item.withholding_amount) ?? 0;
+  const common = { amount: amount ?? gross, snapshot_at: item.completed_at || item.created_at || null };
+  if (!item.invoice_id) {
+    // 請求書なし（PDF 抽出額）: 税込＝amount、請求書列は空
+    return { ...common, invoice_id: null, invoice_number: null, subtotal_amount: null, tax_amount: null, withholding_amount: 0, payout_amount: null, total_amount: null };
+  }
+  if (tax == null) {
+    // inclusive（内税・源泉なし）
+    return { ...common, invoice_id: item.invoice_id, invoice_number: invoiceNumber, subtotal_amount: null, tax_amount: null, withholding_amount: 0, payout_amount: gross, total_amount: gross };
+  }
   return {
-    id: snap.invoice_id || null, invoice_number: snap.invoice_number || null, tax_mode: 'inclusive',
-    total_amount: payout ?? toInt(snap.amount) ?? 0,
+    ...common, invoice_id: item.invoice_id, invoice_number: invoiceNumber,
+    subtotal_amount: gross - tax, tax_amount: tax, withholding_amount: withholding,
+    payout_amount: amount ?? (gross - withholding), total_amount: gross,
   };
+}
+
+const DUP_INVOICE_REASON = '同じ月に提出済みの請求書が複数あります';
+
+/**
+ * 同月に提出済み請求書が複数あった支払（dupKeys: 'pr:<payout_record_id>' / 'ti:<transfer_item_id>' の Set）を
+ * 要確認にする（差額行は除く・O(n)）。どちらの請求書を引くべきか人が決める。
+ */
+function applyDupReasons(rows, dupKeys) {
+  if (!dupKeys || !dupKeys.size) return rows;
+  return (rows || []).map(r => {
+    if (r.source === 'extra' || r.from_snapshot) return r; // 凍結済みの行は依頼時点で確定している
+    const hit = (r.payout_record_id && dupKeys.has(`pr:${r.payout_record_id}`)) || (r.transfer_item_id && dupKeys.has(`ti:${r.transfer_item_id}`));
+    if (!hit) return r;
+    return { ...r, needs_review: true, review_reasons: [...r.review_reasons, DUP_INVOICE_REASON] };
+  });
 }
 
 function buildLedgerRow(payment) {
@@ -194,11 +243,13 @@ function buildLedgerRow(payment) {
   const reasons = [];
   const notes = [];
 
-  // 支払時点のスナップショット優先。無い行だけ現在の請求書から組み立てる（請求書の後編集で変わりうる）
+  // 支払時点のスナップショット（API 明細の凍結値 → payout_records.ledger_snapshot）優先。
+  // 無い行だけ現在の請求書から組み立てる（請求書の後編集で変わりうる）ので注記を付ける
   const snapInv = invoiceFromSnapshot(p.snapshot);
   const fromSnapshot = !!snapInv;
   const inv = snapInv || p.invoice || null;
-  if (!fromSnapshot && inv && !p.snapshot_exempt) notes.push('スナップショット無し（請求書の後編集で変わる可能性）');
+  if (!fromSnapshot && inv) notes.push('スナップショット無し（請求書の後編集で変わる可能性）');
+  if (fromSnapshot && inv.invoice_count) notes.push(`同月の請求書 ${inv.invoice_count} 枚を合算`);
 
   const paidDate = isoToJstYmd(p.paid_at);
   if (!paidDate) reasons.push('支払日が未設定');
@@ -391,9 +442,13 @@ function ymLabel(year, month) {
 /** (a) 月次 納付用 */
 function buildMonthlySheetRows({ year, month, summary }) {
   const s = summary || summarizeMonth([]);
+  const due = taxPaymentDueDate(year, month);
+  const dueNote = due.shifted
+    ? `${due.base} が土日${due.holiday_checked ? '祝' : ''}のため翌営業日${due.holiday_checked ? '' : '（祝日は要確認）'}`
+    : (due.holiday_checked ? '支払月の翌月10日' : '支払月の翌月10日（祝日は要確認）');
   return [
-    ['支払年月', '区分', '人数', '支払件数', '支払金額（税込）', '源泉徴収税額', '差引支払額', '要確認件数', '納付期限'],
-    [ymLabel(year, month), CATEGORY_LABEL, s.payee_count, s.payment_count, s.gross_total, s.withholding_total, s.net_total, s.needs_review_count, paymentDueDate(year, month)],
+    ['支払年月', '区分', '人数', '支払件数', '支払金額（税込）', '源泉徴収税額', '差引支払額', '要確認件数', '納付期限', '納付期限の注記'],
+    [ymLabel(year, month), CATEGORY_LABEL, s.payee_count, s.payment_count, s.gross_total, s.withholding_total, s.net_total, s.needs_review_count, due.date, dueNote],
     [],
     ['※ 支払日（JST）ベースで集計。源泉徴収税額は提出済み・承認済みの請求書（税抜方式）の源泉欄の合計です。'],
     ['※ 「要確認」は請求書なし・金額不整合の支払です。支払台帳タブで内容を確認してください。'],
@@ -538,7 +593,10 @@ module.exports = {
   buildTaxPaymentFormRows,
   entityTypeLabel,
   EXTRA_REASON,
+  DUP_INVOICE_REASON,
   invoiceFromSnapshot,
+  snapshotFromTransferItem,
+  applyDupReasons,
   buildLedgerRow,
   buildLedgerRows,
   summarizeMonth,

@@ -31,11 +31,14 @@
 
   function initPeriod() {
     if (S.year && S.month) return;
-    // 振込管理で開いている月（_poYear/_poMonth）があればそれに合わせる。無ければ JST の前月（＝直近の納付対象）
+    // 振込管理で開いている月（_poYear/_poMonth）は「請求月」。支払はその翌月に行うので、既定は翌月（＝支払月）。
+    // 振込管理を開いていなければ JST の前月（＝直近の納付対象）
     const py = (typeof _poYear !== 'undefined') ? _poYear : null;
     const pm = (typeof _poMonth !== 'undefined') ? _poMonth : null;
-    if (Number.isInteger(py) && Number.isInteger(pm)) { S.year = py; S.month = pm; }
-    else {
+    if (Number.isInteger(py) && Number.isInteger(pm)) {
+      S.year = pm === 12 ? py + 1 : py;
+      S.month = pm === 12 ? 1 : pm + 1;
+    } else {
       const n = jstNow();
       S.year = n.m === 1 ? n.y - 1 : n.y;
       S.month = n.m === 1 ? 12 : n.m - 1;
@@ -119,12 +122,13 @@
         : (tip ? `<span title="${esc(tip)}" style="color:var(--text-muted);cursor:help">ⓘ</span>` : '');
       const via = r.paid_via === 'aozora_api' ? `API${r.apply_no ? `<div style="font-size:10px;color:var(--text-muted)">${esc(r.apply_no)}</div>` : ''}` : '手動';
       const num = (v) => `<td style="text-align:right;font-variant-numeric:tabular-nums">${yen(v)}</td>`;
-      return `<tr${r.needs_review ? ' style="background:#fff8e1"' : ''}>
+      return `<tr${r.needs_review ? ' class="wh-review"' : ''}>
         <td>${esc(d)}</td><td>${esc(r.user_name || '')}</td><td>${inv}</td>
         ${num(r.subtotal)}${num(r.tax)}${num(r.withholding)}${num(r.net)}
         <td>${via}</td><td>${flag}</td></tr>`;
     }).join('');
-    return `<table class="po-tbl" style="min-width:760px"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    // #page-payout .po-tbl の CSS はモーダル配下には効かないので、モーダル専用の .wh-tbl（haruka.html の modal-withholding 内 <style>）
+    return `<table class="wh-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   }
 
   function renderWarnings(ws) {
@@ -214,22 +218,12 @@
   window.__whExport = exportSheet;
   window.__whReload = load;
 
-  // ディープリンク: haruka.html?page=payout&withholding=YYYY-MM（月初リマインドの「台帳・出力」から）
+  // ディープリンク: haruka.html?page=payout&withholding=YYYY-MM（月初リマインドの「台帳・出力」から）。
+  // ?page=payout でページを開く処理は Stage C（#1278）側。こちらは「振込管理が表示されたら開く」フックを置くだけ:
+  // loadPayoutPage() が window._whOpenOnPayoutLoad を見て openWithholdingModal(値) を呼ぶ（ポーリングしない）。
+  // Stage C 未マージで ?page=payout が処理されなくても、フックが残るだけで何も起きない。
   try {
-    const q = new URLSearchParams(window.location.search);
-    const wh = q.get('withholding');
-    if (wh) {
-      let tries = 0;
-      const t = setInterval(() => {
-        tries++;
-        const ready = typeof window.hasPermission === 'function'
-          && (typeof currentUser !== 'undefined' && currentUser)
-          && document.getElementById('page-payout')?.classList.contains('active');
-        if (ready || tries > 40) {
-          clearInterval(t);
-          if (ready) open(wh);
-        }
-      }, 500);
-    }
+    const wh = new URLSearchParams(window.location.search).get('withholding');
+    if (wh && /^\d{4}-\d{1,2}$/.test(wh)) window._whOpenOnPayoutLoad = wh;
   } catch (_) { /* no-op */ }
 })(window, document);

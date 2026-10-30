@@ -7,7 +7,61 @@ const {
   buildMonthlySheetRows, buildYearlySheetRows, buildLedgerSheetRows,
   buildWithholdingReminderText, CATEGORY_LABEL, DETAIL_LABEL,
   taxPaymentDueDate, summarizeWithholdingTargets, buildTaxPaymentFormRows, TAX_FORM_CATEGORY,
+  snapshotFromTransferItem, applyDupReasons, DUP_INVOICE_REASON,
 } = require('../utils/withholding-ledger');
+
+describe('snapshotFromTransferItem（API 明細の凍結値 → スナップショット）', () => {
+  test('exclusive: gross=税込・tax・withholding・amount=差引 → 税抜は gross−tax', () => {
+    const snap = snapshotFromTransferItem({ invoice_id: 'inv1', amount: 99790, gross_amount: 110000, tax_amount: 10000, withholding_amount: 10210, created_at: '2026-10-29T01:00:00Z' }, 'INV-2610-03');
+    expect(snap).toEqual({
+      amount: 99790, snapshot_at: '2026-10-29T01:00:00Z', invoice_id: 'inv1', invoice_number: 'INV-2610-03',
+      subtotal_amount: 100000, tax_amount: 10000, withholding_amount: 10210, payout_amount: 99790, total_amount: 110000,
+    });
+    // 後から請求書を 2 倍に編集しても、台帳は凍結値のまま
+    const edited = { ...invExclusive, subtotal_amount: 200000, tax_amount: 20000, total_amount: 220000, withholding_amount: 20420, payout_amount: 199580 };
+    const [r] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: edited, paid_amount: 99790, snapshot: snap, transfer_item_id: 'ti1' }]);
+    expect(r).toMatchObject({ from_snapshot: true, source: 'invoice_exclusive', subtotal: 100000, tax: 10000, withholding: 10210, gross: 110000, net: 99790, needs_review: false });
+    expect(r.notes).not.toContain('スナップショット無し（請求書の後編集で変わる可能性）');
+  });
+  test('inclusive（tax_amount null・invoice_id あり）は税込＝gross・源泉 0', () => {
+    const snap = snapshotFromTransferItem({ invoice_id: 'inv2', amount: 55000, gross_amount: 55000, tax_amount: null, withholding_amount: 0 }, 'INV-2609-11');
+    expect(snap).toMatchObject({ invoice_id: 'inv2', subtotal_amount: null, tax_amount: null, withholding_amount: 0, payout_amount: 55000, total_amount: 55000 });
+    const [r] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-05T06:00:00Z', paid_via: 'aozora_api', invoice: null, paid_amount: 55000, snapshot: snap }]);
+    expect(r).toMatchObject({ from_snapshot: true, source: 'invoice_inclusive', invoice_number: 'INV-2609-11', gross: 55000, net: 55000, withholding: 0 });
+  });
+  test('請求書なし（invoice_id null）は amount を税込として要確認、gross_amount 無し（旧データ）は null', () => {
+    const snap = snapshotFromTransferItem({ invoice_id: null, amount: 45000, gross_amount: 45000, tax_amount: null, withholding_amount: 0 });
+    expect(snap).toMatchObject({ invoice_id: null, subtotal_amount: null, payout_amount: null, amount: 45000 });
+    const [r] = buildLedgerRows([{ user: suzuki, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: null, paid_amount: 45000, snapshot: snap }]);
+    expect(r).toMatchObject({ source: 'pdf', gross: 45000, net: 45000, withholding: 0, needs_review: true });
+    expect(snapshotFromTransferItem({ invoice_id: 'inv1', amount: 99790, gross_amount: null })).toBeNull();
+    expect(snapshotFromTransferItem(null)).toBeNull();
+  });
+});
+
+describe('applyDupReasons（同月に提出済み請求書が複数）', () => {
+  // fixture（yamada 等）は下で宣言されるので、describe 時ではなく test 実行時に組み立てる
+  const makeRows = () => buildLedgerRows([
+    { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: invExclusive, paid_amount: 149790, payout_record_id: 'pr1' },
+    { user: suzuki, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, paid_amount: 99790, transfer_item_id: 'ti1' },
+    { user: suzuki, paid_at: '2026-10-20T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, paid_amount: 99790, transfer_item_id: 'ti2',
+      snapshot: snapshotFromTransferItem({ invoice_id: 'inv1', amount: 99790, gross_amount: 110000, tax_amount: 10000, withholding_amount: 10210 }, 'INV-2610-03') },
+  ]);
+  test('pr:/ti: のキーで要確認を付け、差額行と凍結済みの行は触らない', () => {
+    const rows = makeRows();
+    const out = applyDupReasons(rows, new Set(['pr:pr1', 'ti:ti1', 'ti:ti2']));
+    const main = out.find(r => r.payout_record_id === 'pr1' && r.source !== 'extra');
+    const extra = out.find(r => r.payout_record_id === 'pr1' && r.source === 'extra');
+    const api = out.find(r => r.transfer_item_id === 'ti1');
+    const frozen = out.find(r => r.transfer_item_id === 'ti2');
+    expect(main.needs_review).toBe(true);
+    expect(main.review_reasons).toContain(DUP_INVOICE_REASON);
+    expect(extra.review_reasons).not.toContain(DUP_INVOICE_REASON);
+    expect(api.review_reasons).toContain(DUP_INVOICE_REASON);         // invoice_id 無しで byKey に落ちた API 行
+    expect(frozen.review_reasons).not.toContain(DUP_INVOICE_REASON);  // 凍結済みは依頼時点で確定
+    expect(applyDupReasons(rows, new Set())).toBe(rows);
+  });
+});
 
 const yamada = { id: 'u1', full_name: '山田 花子', nickname: 'はな', address: '兵庫県神戸市1-2-3', postal_code: '650-0001', business_type: 'sole_proprietor', invoice_registration_number: 'T1234567890123' };
 const suzuki = { id: 'u2', full_name: '鈴木 一郎', nickname: null, address: '', postal_code: '', business_type: 'corporation', invoice_registration_number: '' };
@@ -127,15 +181,21 @@ describe('summarizeMonth / summarizeYearByPayee', () => {
 
 describe('スプレッドシート行', () => {
   const rows = buildLedgerRows([
-    // API 振込の明細は依頼時点のスナップショットなので snapshot_exempt（ローダが付ける）
-    { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, apply_no: 'A1', snapshot_exempt: true },
+    // API 振込の明細は依頼時点の凍結値（gross/tax/withholding/amount）→ ローダが snapshotFromTransferItem で snapshot に変える
+    { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, apply_no: 'A1',
+      snapshot: snapshotFromTransferItem({ invoice_id: 'inv1', amount: 99790, gross_amount: 110000, tax_amount: 10000, withholding_amount: 10210 }, 'INV-2610-03') },
     { user: suzuki, paid_at: '2026-10-31T06:00:00Z', paid_via: null, invoice: null, invoice_amount: 45000 },
   ]);
   test('月次 納付用', () => {
     const sheet = buildMonthlySheetRows({ year: 2026, month: 10, summary: summarizeMonth(rows) });
     expect(sheet[0][0]).toBe('支払年月');
-    expect(sheet[1]).toEqual(['2026年10月', CATEGORY_LABEL, 2, 2, 155000, 10210, 144790, 1, '2026-11-10']);
+    expect(sheet[0][9]).toBe('納付期限の注記');
+    expect(sheet[1]).toEqual(['2026年10月', CATEGORY_LABEL, 2, 2, 155000, 10210, 144790, 1, '2026-11-10', '支払月の翌月10日']);
     expect(sheet.some(r => String(r[0]).includes('税理士'))).toBe(true);
+    // 納付期限は徴収高計算書・リマインドと同じ taxPaymentDueDate（土日祝は翌営業日）: 9 月支払分 → 10/13
+    const sep = buildMonthlySheetRows({ year: 2026, month: 9, summary: summarizeMonth([]) });
+    expect(sep[1][8]).toBe('2026-10-13');
+    expect(sep[1][9]).toBe('2026-10-10 が土日祝のため翌営業日');
   });
   test('年次 支払調書用', () => {
     const sheet = buildYearlySheetRows({ year: 2026, payees: summarizeYearByPayee(rows, { u1: yamada, u2: suzuki }) });
@@ -256,15 +316,26 @@ describe('ledger_snapshot（支払時点の凍結額）優先', () => {
     expect(r).toMatchObject({ source: 'invoice_exclusive', invoice_number: 'INV-2610-03', subtotal: 100000, tax: 10000, withholding: 10210, gross: 110000, net: 99790, from_snapshot: true, needs_review: false });
     expect(r.notes).not.toContain('スナップショット無し（請求書の後編集で変わる可能性）');
   });
-  test('スナップショットが無い行は現在の請求書から組み立てて注記を付ける（API 振込の明細は除外）', () => {
+  test('スナップショットが無い行は現在の請求書から組み立てて注記を付ける（API 振込の行も同じ・snapshot_exempt は無い）', () => {
     const [manual] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: invExclusive, paid_amount: 99790 }]);
     expect(manual.from_snapshot).toBe(false);
     expect(manual.needs_review).toBe(false);
     expect(manual.notes).toContain('スナップショット無し（請求書の後編集で変わる可能性）');
+    // API 行でも凍結値が無ければ注記（旧データ）。snapshot_exempt を渡しても無視される
     const [api] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, paid_amount: 99790, snapshot_exempt: true }]);
-    expect(api.notes).not.toContain('スナップショット無し（請求書の後編集で変わる可能性）');
+    expect(api.from_snapshot).toBe(false);
+    expect(api.notes).toContain('スナップショット無し（請求書の後編集で変わる可能性）');
     const [none] = buildLedgerRows([{ user: suzuki, paid_at: '2026-10-31T06:00:00Z', invoice: null, paid_amount: 45000 }]);
     expect(none.notes).toEqual([]); // 請求書を使っていない行には付けない
+  });
+  test('Stage B の合算スナップショット（invoice_count>1・total_amount あり）は合算注記つきで凍結値を使う', () => {
+    const [r] = buildLedgerRows([{
+      user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: invExclusive, paid_amount: 199580,
+      snapshot: { amount: 199580, invoice_id: 'inv1', invoice_number: 'INV-2610-03, INV-2610-04', invoice_count: 2, subtotal_amount: 200000, tax_amount: 20000, withholding_amount: 20420, payout_amount: 199580, total_amount: 220000, snapshot_at: '2026-10-31T06:00:01Z' },
+    }]);
+    expect(r).toMatchObject({ from_snapshot: true, gross: 220000, withholding: 20420, net: 199580, invoice_number: 'INV-2610-03, INV-2610-04' });
+    expect(r.notes).toContain('同月の請求書 2 枚を合算');
+    expect(r.notes).not.toContain('スナップショット無し（請求書の後編集で変わる可能性）');
   });
   test('スナップショットの請求書なし（invoice_id 無し）は amount を税込として要確認、inclusive は payout_amount を税込', () => {
     const [pdf] = buildLedgerRows([{ user: suzuki, paid_at: '2026-10-31T06:00:00Z', invoice: null, snapshot: { amount: 45000, snapshot_at: '2026-10-31T06:00:01Z' } }]);
