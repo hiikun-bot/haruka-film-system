@@ -178,7 +178,9 @@ function verifyIdToken(idToken, { nonce, now = Math.floor(Date.now() / 1000), en
   const given = b64urlDecode(s);
   if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return { ok: false, reason: 'signature' };
   if (String(payload.iss || '').replace(/\/+$/, '') !== c.issuer.replace(/\/+$/, '')) return { ok: false, reason: 'iss' };
-  if (payload.aud !== c.clientId) return { ok: false, reason: 'aud' };
+  // aud は OIDC 仕様上「文字列または配列」（レビュー #7）
+  const audOk = Array.isArray(payload.aud) ? payload.aud.includes(c.clientId) : payload.aud === c.clientId;
+  if (!audOk) return { ok: false, reason: 'aud' };
   if (payload.azp && payload.azp !== c.clientId) return { ok: false, reason: 'azp' };
   if (typeof payload.exp !== 'number' || payload.exp <= now) return { ok: false, reason: 'exp' };
   if (typeof payload.iat !== 'number' || payload.iat < now - ID_TOKEN_MAX_AGE_SEC) return { ok: false, reason: 'iat' };
@@ -252,13 +254,24 @@ async function saveConnection({ tokens, accountId, accountLabel, connectedBy, en
   return data;
 }
 
-/** 更新したトークンを保存して最新の行を返す */
+/**
+ * 更新したトークンを compare-and-set で保存する（レビュー #6）。
+ * 読んだときの access_token_expires_at と一致する行だけ更新し、別プロセスが先に更新していれば null を返す
+ * （負けた側は再読込して相手のトークンを使う。古いトークンでの上書きを防ぐ）。
+ */
 async function persistRefreshedTokens(conn, tokens) {
   const patch = { ...encryptTokens(tokens), updated_at: new Date().toISOString() };
-  const { data, error } = await supabase
-    .from('bank_api_connections').update(patch).eq('id', conn.id).select(CONNECTION_COLUMNS).single();
+  let q = supabase.from('bank_api_connections').update(patch).eq('id', conn.id).is('revoked_at', null);
+  q = conn.access_token_expires_at ? q.eq('access_token_expires_at', conn.access_token_expires_at) : q.is('access_token_expires_at', null);
+  const { data, error } = await q.select(CONNECTION_COLUMNS).maybeSingle();
   if (error) throw new Error(`bank_api_connections トークン更新の保存に失敗: ${error.message}`);
-  return data;
+  return data || null;
+}
+
+async function reloadConnection(connId) {
+  const { data, error } = await supabase.from('bank_api_connections').select(CONNECTION_COLUMNS).eq('id', connId).maybeSingle();
+  if (error) throw new Error(`bank_api_connections 再読込に失敗: ${error.message}`);
+  return data || null;
 }
 
 /** 切断: トークン列を NULL にして revoked_at を立てる */
@@ -284,20 +297,54 @@ async function touchLastUsed(connId) {
  * @param {{ onRefreshed?: (conn:object)=>Promise<void> }} [opts] 更新後のフック（監査ログ用）
  * @returns {Promise<{ accessToken: string, connection: object, refreshed: boolean }>}
  */
+function tokenNeedsRefresh(conn) {
+  const expiresAt = conn?.access_token_expires_at ? new Date(conn.access_token_expires_at).getTime() : 0;
+  return !conn?.access_token_enc || !expiresAt || expiresAt - Date.now() < REFRESH_MARGIN_MS;
+}
+
+// 同一プロセス内でワーカとルートが同時に refresh しないよう、接続 id ごとに進行中の Promise を共有する（レビュー #6）
+const _refreshInFlight = new Map();
+
+async function refreshConnectionTokens(conn, opts = {}) {
+  // 1) 最新の行を読み直す（別プロセスが先に更新していれば、それを使う）
+  const fresh = (await reloadConnection(conn.id)) || conn;
+  if (fresh.revoked_at) throw new AozoraApiError({ status: 401, errorCode: 'revoked', errorMessage: '銀行 API の接続が切断されています', phase: 'token' });
+  if (!tokenNeedsRefresh(fresh)) return { connection: fresh, refreshed: false };
+  const refreshToken = decryptRefreshToken(fresh);
+  if (!refreshToken) throw new AozoraApiError({ status: 401, errorCode: 'no_refresh_token', errorMessage: 'リフレッシュトークンがありません。銀行 API を接続し直してください', phase: 'token' });
+  // 2) refresh → compare-and-set で保存
+  const tokens = await refreshAccessToken(refreshToken);
+  const saved = await persistRefreshedTokens(fresh, tokens);
+  if (saved) {
+    console.log(`[aozora] アクセストークンを更新しました connection=${fresh.id} expires_in=${tokens.expires_in}`);
+    if (typeof opts.onRefreshed === 'function') {
+      try { await opts.onRefreshed(saved); } catch (e) { console.warn('[aozora] onRefreshed 失敗:', e.message); }
+    }
+    return { connection: saved, refreshed: true };
+  }
+  // 3) CAS に負けた（別プロセスが先に更新）→ 再読込して相手のトークンを使う
+  const latest = await reloadConnection(fresh.id);
+  if (!latest || tokenNeedsRefresh(latest)) throw new AozoraApiError({ status: 401, errorCode: 'refresh_race', errorMessage: 'トークン更新が競合しました。もう一度お試しください', phase: 'token' });
+  console.log(`[aozora] トークン更新が競合したため最新の行を使います connection=${fresh.id}`);
+  return { connection: latest, refreshed: false };
+}
+
+/**
+ * 有効なアクセストークンを返す。期限 5 分前以内なら refresh して DB に保存する。
+ * @param {object} conn bank_api_connections 行
+ * @param {{ onRefreshed?: (conn:object)=>Promise<void> }} [opts] 更新後のフック（監査ログ用）
+ * @returns {Promise<{ accessToken: string, connection: object, refreshed: boolean }>}
+ */
 async function getValidAccessToken(conn, opts = {}) {
   if (!conn) throw new Error('銀行 API に接続されていません');
-  const expiresAt = conn.access_token_expires_at ? new Date(conn.access_token_expires_at).getTime() : 0;
-  const needsRefresh = !conn.access_token_enc || !expiresAt || expiresAt - Date.now() < REFRESH_MARGIN_MS;
-  if (!needsRefresh) return { accessToken: decryptAccessToken(conn), connection: conn, refreshed: false };
-  const refreshToken = decryptRefreshToken(conn);
-  if (!refreshToken) throw new AozoraApiError({ status: 401, errorCode: 'no_refresh_token', errorMessage: 'リフレッシュトークンがありません。銀行 API を接続し直してください', phase: 'token' });
-  const tokens = await refreshAccessToken(refreshToken);
-  const updated = await persistRefreshedTokens(conn, tokens);
-  console.log(`[aozora] アクセストークンを更新しました connection=${conn.id} expires_in=${tokens.expires_in}`);
-  if (typeof opts.onRefreshed === 'function') {
-    try { await opts.onRefreshed(updated); } catch (e) { console.warn('[aozora] onRefreshed 失敗:', e.message); }
+  if (!tokenNeedsRefresh(conn)) return { accessToken: decryptAccessToken(conn), connection: conn, refreshed: false };
+  let p = _refreshInFlight.get(conn.id);
+  if (!p) {
+    p = refreshConnectionTokens(conn, opts).finally(() => _refreshInFlight.delete(conn.id));
+    _refreshInFlight.set(conn.id, p);
   }
-  return { accessToken: tokens.access_token, connection: updated, refreshed: true };
+  const r = await p;
+  return { accessToken: decryptAccessToken(r.connection), connection: r.connection, refreshed: r.refreshed };
 }
 
 // ---------- HTTP ----------
@@ -339,13 +386,14 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  * 銀行 API を呼ぶ（x-access-token・JSON）。429/5xx/タイムアウトは指数バックオフで再試行。
  * @returns {Promise<object>} レスポンス JSON
  */
-async function apiRequest({ method, path, accessToken, query, body, idempotencyKey, env = process.env }) {
+async function apiRequest({ method, path, accessToken, query, body, idempotencyKey, maxAttempts = MAX_ATTEMPTS, env = process.env }) {
   const c = getConfig(env);
   const headers = { 'x-access-token': accessToken, Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   let lastErr = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  const attempts = Math.max(1, Number(maxAttempts) || 1);
+  for (let attempt = 1; attempt <= attempts; attempt++) {
     let res;
     try {
       res = await axios.request({
@@ -374,7 +422,7 @@ async function apiRequest({ method, path, accessToken, query, body, idempotencyK
       console.warn(`[aozora] ${method} ${path} HTTP ${res.status} code=${d.errorCode || '-'} attempt=${attempt}`);
       if (!isRetryable(res.status)) throw lastErr;
     }
-    if (attempt < MAX_ATTEMPTS) await sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1));
+    if (attempt < attempts) await sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1));
   }
   throw lastErr;
 }
@@ -449,7 +497,8 @@ function isLostResponse(err) {
 /** POST /bulktransfer/cancel */
 function bulkTransferCancel(conn, { accountId, applyNo, cancelTargetKeyClass }, opts = {}) {
   const body = { accountId, cancelTargetKeyClass: String(cancelTargetKeyClass || getConfig().cancelTargetKeyClass), applyNo };
-  return withToken(conn, opts, (token) => apiRequest({ method: 'POST', path: '/bulktransfer/cancel', accessToken: token, body }));
+  // 取消依頼には Idempotency-Key が無いので自動リトライしない（レビュー #8）。応答消失は呼び出し側が次の poll で確かめる
+  return withToken(conn, opts, (token) => apiRequest({ method: 'POST', path: '/bulktransfer/cancel', accessToken: token, body, maxAttempts: 1 }));
 }
 
 // ---------- 口座一覧 → 使う口座を選ぶ ----------
@@ -469,46 +518,8 @@ function accountLabelOf(a) {
   return [a.branchName || '', type, a.accountNumber ? last4(a.accountNumber) : ''].filter(Boolean).join(' ');
 }
 
-// ---------- ステータス変換（仕様 p.95〜96） ----------
-// 総合振込状況照会 bulkTransferDetails[].transferStatus → payout_transfer_batches.status
-const TRANSFER_STATUS_TO_BATCH = {
-  '2': 'awaiting_approval', // 申請中
-  '3': 'cancelled',         // 差戻
-  '4': 'cancelled',         // 取下げ
-  '5': 'expired',           // 期限切れ
-  '8': 'cancelled',         // 承認取消/予約取消
-  '11': 'approved',         // 予約中
-  '12': 'processing',       // 手続中
-  '13': 'processing',       // リトライ中
-  '20': 'completed',        // 手続済
-  '30': 'completed',        // 不能・組戻あり（明細ごとに returned / failed）
-  '40': 'failed',           // 手続不成立
-};
-const TRANSFER_STATUS_NAMES = {
-  '2': '申請中', '3': '差戻', '4': '取下げ', '5': '期限切れ', '8': '承認取消/予約取消',
-  '11': '予約中', '12': '手続中', '13': 'リトライ中', '20': '手続済', '30': '不能・組戻あり', '40': '手続不成立',
-};
-
-function mapTransferStatus(code) {
-  return TRANSFER_STATUS_TO_BATCH[String(code)] || null;
-}
-
-/**
- * 状況照会の明細 1 件 → payout_transfer_items.status
- *   unableDetailInfos[].transferDetailStatus 1=手続済 2=手続不成立、refundStatus 1〜3=組戻、isRepayment=資金返却
- */
-function mapItemStatus(info, batchStatus) {
-  const un = Array.isArray(info?.unableDetailInfos) ? info.unableDetailInfos : [];
-  const detailStatus = un.map(u => String(u.transferDetailStatus || '')).find(Boolean) || null;
-  const refund = un.map(u => String(u.refundStatus || '')).find(Boolean) || null;
-  const repaid = un.some(u => u.isRepayment === true);
-  if (detailStatus === '2') return 'failed';
-  if (repaid || refund === '2') return 'returned';
-  if (detailStatus === '1') return 'completed';
-  if (batchStatus === 'completed') return 'completed';
-  if (batchStatus === 'failed') return 'failed';
-  return 'pending';
-}
+// ---------- ステータス変換（仕様 p.95〜96）は utils/bank-transfer-plan.js（純関数・jest）に置き、ここは再エクスポート ----------
+const { TRANSFER_STATUS_TO_BATCH, TRANSFER_STATUS_NAMES, mapTransferStatus, mapItemStatus } = require('./bank-transfer-plan');
 
 module.exports = {
   PROVIDER,

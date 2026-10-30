@@ -15,7 +15,8 @@ const crypto = require('crypto');
 const supabase = require('../supabase');
 const aozora = require('./aozora-api');
 const plan = require('./bank-transfer-plan');
-const { signState, verifyState } = require('./google-login');
+const googleLogin = require('./google-login');
+const { signState, verifyState, getStateSecret } = googleLogin;
 const { maskAccountNumber } = require('./zengin-format');
 const { notifyMember } = require('./member-notify');
 const { buildPayoutMessage } = require('./payout');
@@ -31,7 +32,22 @@ const BATCH_COLUMNS = 'id, connection_id, year, month, idempotency_key, transfer
 const ITEM_COLUMNS = 'id, batch_id, payout_record_id, user_id, item_id, bank_code, branch_code, account_type_code, account_number, beneficiary_name, amount, invoice_id, amount_source, gross_amount, tax_amount, withholding_amount, status, error_detail, created_at, updated_at';
 
 function stateSecret() {
-  return process.env.SESSION_SECRET || 'video-ops-dev-secret-change-in-production';
+  return getStateSecret();
+}
+
+// ---------- 再認証（§1-3）: server.js の /auth/* と routes/bank-transfer.js で同じ判定を使う（レビュー #11） ----------
+/** セッションの reauth_at が 10 分以内か */
+function reauthStatus(req) {
+  const at = Number(req?.session?.reauth_at || 0);
+  const remaining = at ? Math.max(0, REAUTH_TTL_MS - (Date.now() - at)) : 0;
+  return { ok: remaining > 0, remaining_sec: Math.floor(remaining / 1000) };
+}
+
+/** /haruka.html 始まりの next にクエリを足して戻す（オープンリダイレクト防止は safeNext） */
+function reauthRedirect(res, next, params) {
+  const url = new URL(googleLogin.safeNext(next), 'http://x');
+  for (const [k, v] of Object.entries(params || {})) if (v != null) url.searchParams.set(k, String(v));
+  return res.redirect(url.pathname + url.search);
 }
 
 function todayJst(now = new Date()) {
@@ -80,9 +96,12 @@ function chatInfo(title, lines) {
 }
 
 // ---------- preview_token ----------
-function signPreviewToken({ year, month, payoutRecordIds, transferDesignatedDate, hash, requesterId, connectionId, totalCount, totalAmount, totalFee, now = Date.now() }) {
+// ids には「plan に含めた payout_record_id」だけを入れる（除外済みは入れない・レビュー #1）。
+// jti は使い捨て判定用（request が request_summary.preview_jti に保存し、同じ jti の batch があれば 409 preview_used・レビュー #2b）
+function signPreviewToken({ year, month, payoutRecordIds, transferDesignatedDate, hash, requesterId, connectionId, totalCount, totalAmount, totalFee, now = Date.now(), jti = crypto.randomUUID() }) {
   return signState({
-    v: 1,
+    v: 2,
+    jti: String(jti),
     y: Number(year), m: Number(month),
     ids: [...new Set(payoutRecordIds)].map(String).sort(),
     d: String(transferDesignatedDate),
@@ -96,7 +115,7 @@ function signPreviewToken({ year, month, payoutRecordIds, transferDesignatedDate
 
 function verifyPreviewToken(token, now = Date.now()) {
   const p = verifyState(String(token || ''), stateSecret(), now);
-  if (!p || p.v !== 1 || !Array.isArray(p.ids) || !p.h || !p.u || !p.d) return null;
+  if (!p || p.v !== 2 || !p.jti || !Array.isArray(p.ids) || !p.h || !p.u || !p.d) return null;
   return p;
 }
 
@@ -273,6 +292,56 @@ function parseStatusResponse(statusRes) {
  * 1 つの batch を銀行に照会して DB に反映する。
  * @returns {Promise<{ batch: object, items: object[], changed: boolean, resultCode: string|null, transferStatus: string|null }>}
  */
+/**
+ * 明細の status 変更を (batch_id, item_id) の upsert で一括反映する（レビュー #13）。
+ * upsert は INSERT ... ON CONFLICT なので NOT NULL 列をすべて含めた完全な行で送る。
+ */
+async function upsertItemPatches(items, patches, nowIso = new Date().toISOString()) {
+  if (!patches || !patches.length) return;
+  const byId = new Map(items.map(it => [it.id, it]));
+  const rows = patches.map(p => {
+    const it = byId.get(p.id);
+    if (!it) return null;
+    const { created_at, ...rest } = it;
+    return { ...rest, status: p.status, error_detail: p.error_detail ?? null, updated_at: nowIso };
+  }).filter(Boolean);
+  if (!rows.length) return;
+  const { error } = await supabase.from('payout_transfer_items').upsert(rows, { onConflict: 'batch_id,item_id' });
+  if (error) throw new Error(`payout_transfer_items 一括更新に失敗: ${error.message}`);
+}
+
+/**
+ * batch が expired / cancelled / failed になるとき、pending の明細を failed に落とす（レビュー #2）。
+ * 部分ユニークインデックス uq_payout_transfer_items_active_record（pending/completed）から外れ、同じ振込レコードを再依頼できる。
+ */
+async function failPendingItems(batchId, reason, items = null) {
+  const list = items || await loadItems(batchId);
+  const patches = plan.itemsToFailOnTerminal(list, reason);
+  await upsertItemPatches(list, patches);
+  return patches;
+}
+
+/** 状況照会（明細つき）を bulktransferItemKey で全ページ取得する（レビュー #3） */
+async function fetchAllTransferInfos(conn, batch, opts) {
+  let statusRes = null;
+  let infos = [];
+  let key = 1;
+  let pages = 0;
+  const maxPages = Math.ceil((Number(batch.total_count) || 1) / 500) + 1;
+  while (pages < maxPages) {
+    const res = await aozora.bulkTransferStatus(conn, { accountId: conn.account_id, applyNo: batch.apply_no, detail: true, itemKey: key > 1 ? key : undefined }, opts);
+    const parsed = parseStatusResponse(res);
+    if (!statusRes) statusRes = { ...parsed };
+    if (!parsed.detailAvailable) break; // 依頼完了直後は明細が読めない（10 分程度）
+    infos = infos.concat(parsed.infos);
+    pages++;
+    const next = plan.nextItemKeyFor({ startKey: key, fetchedCount: parsed.infos.length, totalCount: batch.total_count });
+    if (!next) break;
+    key = next;
+  }
+  return { ...(statusRes || { transferStatus: null, detailAvailable: false, totalFee: null }), infos, pages };
+}
+
 async function pollBatch(batch, conn, { actorUserId = null, req = null } = {}) {
   const nowIso = new Date().toISOString();
   const prevStatus = batch.status;
@@ -294,88 +363,80 @@ async function pollBatch(batch, conn, { actorUserId = null, req = null } = {}) {
   }
   const resultCode = resultRes.resultCode != null ? String(resultRes.resultCode) : null;
   const patch = { last_polled_at: nowIso, last_error: null, result_code: ['1', '2', '8'].includes(resultCode) ? resultCode : batch.result_code };
-  const cancelRequested = !!(batch.request_summary && batch.request_summary.cancel_requested_at);
+  const summary = batch.request_summary || {};
+  // 取消依頼を出した／出そうとして応答が消えた（cancel_attempted_at）あとは「最後の依頼＝取消」の結果コードになる（レビュー #5 / #8）
+  const cancelRequested = !!(summary.cancel_requested_at || summary.cancel_attempted_at);
   let items = await loadItems(batch.id);
   let transferStatus = null;
   let infos = [];
   let detailAvailable = false;
+  let itemPatches = [];
+  let unresolved = [];
 
-  if (resultCode === '8') {
-    // 期限切（取消依頼の後なら「取消依頼が期限切れ」＝元の依頼はそのまま）
-    if (!cancelRequested) {
-      patch.status = 'expired';
-    } else {
-      patch.last_error = '取消依頼が承認されないまま期限切れになりました（元の依頼は残っています）';
-    }
-  } else if (resultCode === '2') {
-    if (!cancelRequested && ['requested', 'awaiting_approval'].includes(batch.status)) patch.status = 'awaiting_approval';
-  } else if (resultCode === '1') {
+  const decided = plan.decideBatchFromResultCode({ resultCode, status: batch.status, cancelRequested });
+  if (decided.status) patch.status = decided.status;
+  if (decided.note) patch.last_error = decided.note;
+  if (decided.clearCancel) {
+    const { cancel_requested_at, cancel_attempted_at, cancel_result_code, ...rest } = summary;
+    patch.request_summary = { ...rest, cancel_expired_at: nowIso };
+  }
+  if (decided.inquire) {
     if (!batch.approved_at) patch.approved_at = resultRes.applyEndDatetime || nowIso;
-    let statusRes;
+    let fetched;
     try {
-      statusRes = await aozora.bulkTransferStatus(conn, { accountId: conn.account_id, applyNo: batch.apply_no, detail: true }, { onRefreshed });
+      fetched = await fetchAllTransferInfos(conn, batch, { onRefreshed });
     } catch (e) {
       const detail = e instanceof aozora.AozoraApiError ? e.toJSON() : { message: e.message };
       await updateBatch(batch.id, { ...patch, last_error: `状況照会に失敗: ${e.message}` });
       await audit({ actorUserId, action: 'error', batchId: batch.id, connectionId: conn.id, detail: { step: 'status', ...detail }, req });
       throw e;
     }
-    const parsed = parseStatusResponse(statusRes);
-    transferStatus = parsed.transferStatus;
-    infos = parsed.infos;
-    detailAvailable = parsed.detailAvailable;
-    const mapped = aozora.mapTransferStatus(transferStatus);
+    transferStatus = fetched.transferStatus;
+    infos = fetched.infos;
+    detailAvailable = fetched.detailAvailable;
+    const mapped = plan.mapTransferStatus(transferStatus);
     if (mapped) {
-      // 30:不能・組戻あり は明細が読めるまで（依頼完了後 10 分程度）確定させない
-      if (transferStatus === '30' && !detailAvailable) patch.status = 'processing';
-      else patch.status = mapped;
+      patch.status = mapped;
     } else if (!transferStatus) {
       // 承認済みだが状況照会にまだ出てこない（依頼中・作成中は照会対象外）→ approved のまま次回
-      patch.status = ['requested', 'awaiting_approval'].includes(batch.status) ? 'approved' : batch.status;
+      patch.status = ['requesting', 'requested', 'awaiting_approval'].includes(batch.status) ? 'approved' : batch.status;
     }
-    if (parsed.totalFee != null) {
-      patch.fee_precheck = { ...(batch.fee_precheck || {}), actual_total_fee: parsed.totalFee };
+    if (fetched.totalFee != null) patch.fee_precheck = { ...(batch.fee_precheck || {}), actual_total_fee: fetched.totalFee };
+    // 明細の反映。info が無い item が残るあいだは completed にしない（レビュー #3）
+    const resolved = plan.resolveItemStatuses({ items, infos, transferStatus });
+    itemPatches = resolved.patches;
+    unresolved = resolved.unresolved;
+    if (mapped === 'completed' && unresolved.length) {
+      patch.status = 'processing';
+      patch.last_error = detailAvailable
+        ? `明細 ${unresolved.length} 件（番号 ${unresolved.slice(0, 10).join(', ')}${unresolved.length > 10 ? '…' : ''}）が状況照会で確認できません。次回の照会で再確認します`
+        : '銀行側で明細がまだ読めません（依頼完了後 10 分程度）。次回の照会で確認します';
     }
-  } else {
-    patch.last_error = `依頼結果照会の結果コードが不明です（${resultCode}）`;
   }
 
-  // 明細の反映（状況照会の明細が読めたとき、または batch が completed/failed に確定したとき）
   const finalStatus = patch.status || batch.status;
-  const infoByItemId = new Map(infos.map(i => [String(i.itemId), i]));
-  const itemPatches = [];
-  for (const it of items) {
-    if (['completed', 'returned', 'failed'].includes(it.status)) continue;
-    const info = infoByItemId.get(String(it.item_id));
-    let next = null;
-    if (info) next = aozora.mapItemStatus(info, finalStatus);
-    else if (finalStatus === 'completed' && transferStatus === '20') next = 'completed';
-    else if (finalStatus === 'failed') next = 'failed';
-    if (next && next !== it.status) {
-      const errorDetail = next === 'completed' ? null : {
-        transfer_detail_status: info?.unableDetailInfos?.[0]?.transferDetailStatus || null,
-        refund_status: info?.unableDetailInfos?.[0]?.refundStatus || null,
-        is_repayment: info?.unableDetailInfos?.[0]?.isRepayment || null,
-        repayment_date: info?.unableDetailInfos?.[0]?.repaymentDate || null,
-        transfer_status: transferStatus,
-      };
-      itemPatches.push({ id: it.id, status: next, error_detail: errorDetail });
-    }
+  // 終了状態（expired / cancelled / failed）では pending の明細を failed に落として再依頼できるようにする（レビュー #2）
+  if (['expired', 'cancelled', 'failed'].includes(finalStatus)) {
+    const reasonByStatus = { expired: 'batch_expired', cancelled: 'batch_cancelled', failed: 'batch_failed' };
+    const already = new Set(itemPatches.map(p => p.id));
+    for (const p of plan.itemsToFailOnTerminal(items, reasonByStatus[finalStatus])) if (!already.has(p.id)) itemPatches.push(p);
   }
-  for (const p of itemPatches) {
-    const { error } = await supabase.from('payout_transfer_items').update({ status: p.status, error_detail: p.error_detail, updated_at: nowIso }).eq('id', p.id);
-    if (error) console.warn(`[bank-transfer] 明細更新失敗 item=${p.id}: ${error.message}`);
-  }
+  await upsertItemPatches(items, itemPatches, nowIso);
   if (itemPatches.length) items = await loadItems(batch.id);
 
   // 完了（または終了状態）になったら completed_at を必ず立てる（源泉徴収台帳はこれを支払日に使う。items に completed_at 列は無い）
-  if (['completed', 'expired', 'cancelled', 'failed'].includes(finalStatus) && !batch.completed_at) patch.completed_at = nowIso;
+  if (plan.TERMINAL_BATCH_STATUSES.includes(finalStatus) && !batch.completed_at) patch.completed_at = nowIso;
+  // 終了状態になったら取消マーカーは不要
+  if (plan.TERMINAL_BATCH_STATUSES.includes(finalStatus) && (summary.cancel_requested_at || summary.cancel_attempted_at) && !patch.request_summary) {
+    const { cancel_requested_at, cancel_attempted_at, ...rest } = summary;
+    patch.request_summary = rest;
+  }
 
   const updated = await updateBatch(batch.id, patch);
   const changed = updated.status !== prevStatus || itemPatches.length > 0;
   await audit({
     actorUserId, action: 'poll', batchId: batch.id, connectionId: conn.id,
-    detail: { result_code: resultCode, transfer_status: transferStatus, status_before: prevStatus, status_after: updated.status, items_changed: itemPatches.length, detail_available: detailAvailable },
+    detail: { result_code: resultCode, transfer_status: transferStatus, status_before: prevStatus, status_after: updated.status, items_changed: itemPatches.length, unresolved: unresolved.length, detail_available: detailAvailable },
     req,
   });
 
@@ -503,6 +564,7 @@ async function sendBatchRequest(batch, items, conn, { actorUserId = null, req = 
       return { outcome: 'pending', batch: updated, resultCode: null, error: e };
     }
     const failed = await updateBatch(batch.id, { status: 'failed', completed_at: nowIso, last_error: `依頼に失敗: ${e.message}` });
+    await failPendingItems(batch.id, 'request_rejected', items); // 明細を failed に落として再依頼できるようにする
     await audit({ actorUserId, action: 'error', connectionId: conn.id, batchId: batch.id, detail: { step: 'request', outcome: 'failed', attempt, ...detail }, req });
     await sendAdminMyChat(chatInfo('❌ 総合振込の依頼が銀行に受け付けられませんでした', [
       `対象: ${batch.year}年${batch.month}月分（${batch.total_count}件・${yen(batch.total_amount)}）`,
@@ -511,13 +573,24 @@ async function sendBatchRequest(batch, items, conn, { actorUserId = null, req = 
     ]));
     return { outcome: 'failed', batch: failed, resultCode: null, error: e };
   }
-  const resultCode = result?.resultCode != null ? String(result.resultCode) : null;
-  const status = resultCode === '1' ? 'approved' : (resultCode === '2' ? 'awaiting_approval' : 'requested');
+  // 2xx でも受付番号や結果コードが揃っていなければ「応答消失」扱い（requesting のまま・同じキーで再送。レビュー #4）
+  const cls = plan.classifyRequestResponse(result);
+  if (cls.outcome !== 'accepted') {
+    const updated = await updateBatch(batch.id, {
+      status: 'requesting',
+      last_error: `銀行の応答が不完全でした（${cls.reason}）。同じ冪等キーで再送するか、状況照会で確認します`,
+      request_summary: { ...(batch.request_summary || {}), send_attempts: (batch.request_summary?.send_attempts || 0) + 1, last_attempt_at: nowIso },
+    });
+    await audit({ actorUserId, action: 'error', connectionId: conn.id, batchId: batch.id, detail: { step: 'request', outcome: 'pending', attempt, reason: cls.reason, result_code: result?.resultCode ?? null }, req });
+    console.warn(`[bank-transfer] 依頼の応答が不完全 batch=${batch.id} attempt=${attempt}: ${cls.reason}`);
+    return { outcome: 'pending', batch: updated, resultCode: null, error: new aozora.AozoraApiError({ status: null, errorCode: 'incomplete_response', errorMessage: cls.reason }) };
+  }
+  const resultCode = cls.resultCode;
   const updated = await updateBatch(batch.id, {
-    apply_no: result?.applyNo || null,
-    result_code: ['1', '2', '8'].includes(resultCode) ? resultCode : null,
-    status,
-    approved_at: resultCode === '1' ? (result?.applyEndDatetime || nowIso) : null,
+    apply_no: cls.applyNo,
+    result_code: resultCode,
+    status: cls.status,
+    approved_at: resultCode === '1' ? (cls.approvedAt || nowIso) : null,
     last_polled_at: nowIso,
     last_error: null,
     request_summary: { ...(batch.request_summary || {}), send_attempts: (batch.request_summary?.send_attempts || 0) + 1, accepted_at: nowIso },
@@ -543,11 +616,11 @@ async function reconcileRequestingBatch(batch, conn, { actorUserId = null, req =
     const res = await aozora.bulkTransferStatusByDate(conn, { accountId: conn.account_id, dateFrom, dateTo, nextItemKey }, { onRefreshed });
     const hit = plan.matchPendingAcceptance(res, batch);
     if (hit) {
-      const mapped = aozora.mapTransferStatus(hit.transferStatus) || 'awaiting_approval';
+      const mapped = plan.mapTransferStatus(hit.transferStatus) || 'awaiting_approval';
       const nowIso = new Date().toISOString();
       const updated = await updateBatch(batch.id, {
         apply_no: hit.applyNo,
-        status: ['completed', 'expired', 'cancelled', 'failed'].includes(mapped) ? mapped : (mapped === 'awaiting_approval' ? 'awaiting_approval' : mapped),
+        status: mapped,
         result_code: mapped === 'awaiting_approval' ? '2' : (mapped === 'expired' ? '8' : '1'),
         last_polled_at: nowIso,
         last_error: null,
@@ -577,6 +650,7 @@ async function retryRequestingBatch(batch, conn, { actorUserId = null, req = nul
   if (auto && autoRetries >= REQUESTING_MAX_AUTO_RETRIES) {
     const nowIso = new Date().toISOString();
     const failed = await updateBatch(batch.id, { status: 'failed', completed_at: nowIso, last_error: '銀行の応答が無いまま再送しても確認できませんでした。銀行画面で依頼が残っていないか確認してください' });
+    await failPendingItems(batch.id, 'request_unconfirmed');
     await audit({ actorUserId, action: 'error', connectionId: conn.id, batchId: batch.id, detail: { step: 'retry', outcome: 'gave_up', auto_retries: autoRetries } });
     await sendAdminMyChat(chatInfo('⚠ 総合振込の依頼が確認できないまま止まりました', [
       `対象: ${batch.year}年${batch.month}月分（${batch.total_count}件・${yen(batch.total_amount)}）`,
@@ -640,6 +714,11 @@ module.exports = {
   REAUTH_TTL_MS,
   REQUESTING_RETRY_AFTER_MS,
   REQUESTING_MAX_AUTO_RETRIES,
+  reauthStatus,
+  reauthRedirect,
+  upsertItemPatches,
+  failPendingItems,
+  fetchAllTransferInfos,
   loadLedgerSnapshotForRecord,
   sendBatchRequest,
   reconcileRequestingBatch,

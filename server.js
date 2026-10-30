@@ -166,7 +166,7 @@ if (process.env.NODE_ENV === 'production' && !SESSION_SECRET) {
 }
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.db', dir: process.env.DATA_DIR || './data' }),
-  secret: SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
+  secret: require('./utils/google-login').getStateSecret(), // SESSION_SECRET（dev フォールバックは google-login.js の 1 箇所だけ）
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -469,10 +469,7 @@ app.get('/auth/google', (req, res) => {
   const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
   if (!callbackUrl) return googleLoginFail(res, 'google_host');
   const { id, secret } = googleLogin.getClientConfig();
-  const { nonce, state } = googleLogin.newState({
-    secret: SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
-    next: req.query.next,
-  });
+  const { nonce, state } = googleLogin.newState({ secret: googleLogin.getStateSecret(), next: req.query.next });
   // state をこのブラウザのセッションに結びつける（他人が用意したログインリンクを踏ませる攻撃の対策）
   req.session.googleLoginNonce = nonce;
   const client = new google.auth.OAuth2(id, secret, callbackUrl);
@@ -488,22 +485,11 @@ app.get('/auth/google', (req, res) => {
 // 成功すると req.session.reauth_at = Date.now() が立ち、10 分間だけ /admin/payouts/transfer/request が通る。
 // Google ログインが有効なら /auth/google/reauth（ログイン中ユーザーと Google のメールが一致しないと失敗）、
 // 無効ならフロントは POST /auth/reauth-password（bcrypt 照合）にフォールバックする。
-const REAUTH_TTL_MS = 10 * 60 * 1000;
+// 有効期間（10 分）と判定・戻り先の組み立ては utils/bank-transfer.js と共有（routes/bank-transfer.js も同じ関数を使う）
+const { reauthStatus, reauthRedirect } = require('./utils/bank-transfer');
 const REAUTH_PW_MAX_FAILURES = 5;
 const REAUTH_PW_LOCK_MS = 15 * 60 * 1000;
 const _reauthPwFailures = new Map(); // user_id → { count, lockedUntil }
-
-function reauthStatus(req) {
-  const at = Number(req.session?.reauth_at || 0);
-  const remaining = at ? Math.max(0, REAUTH_TTL_MS - (Date.now() - at)) : 0;
-  return { ok: remaining > 0, remaining_sec: Math.floor(remaining / 1000) };
-}
-
-function reauthRedirect(res, next, params) {
-  const url = new URL(googleLogin.safeNext(next), 'http://x');
-  for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, String(v));
-  return res.redirect(url.pathname + url.search);
-}
 
 // 再認証の状態（フロントが「再認証が必要か」を判断する用）
 app.get('/auth/reauth/status', requireAuth, (req, res) => {
@@ -516,10 +502,7 @@ app.get('/auth/google/reauth', requireAuth, (req, res) => {
   const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
   if (!callbackUrl) return reauthRedirect(res, req.query.next, { reauth_error: 'google_host' });
   const { id, secret } = googleLogin.getClientConfig();
-  const { nonce, state } = googleLogin.newState({
-    secret: SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
-    next: req.query.next,
-  });
+  const { nonce, state } = googleLogin.newState({ secret: googleLogin.getStateSecret(), next: req.query.next });
   req.session.googleLoginNonce = nonce;
   req.session.googleReauthUserId = req.user.id; // callback で「再認証モード」と分かるように
   const client = new google.auth.OAuth2(id, secret, callbackUrl);
@@ -564,13 +547,14 @@ app.get('/auth/google/callback', async (req, res) => {
   // 再認証モード（/auth/google/reauth から来た）: ログイン中ユーザーと Google のメールが一致したら reauth_at を立てて戻す
   const reauthUserId = req.session?.googleReauthUserId || null;
   if (req.session) delete req.session.googleReauthUserId;
-  const fail = (code) => (reauthUserId ? reauthRedirect(res, null, { reauth_error: code }) : googleLoginFail(res, code));
+  // state を先に検証して next を取り出す（Google 側でキャンセルされても元の画面へ戻せるように。レビュー #9）
+  const payload = googleLogin.verifyState(String(req.query.state || ''), googleLogin.getStateSecret());
+  const fail = (code) => (reauthUserId ? reauthRedirect(res, payload?.next, { reauth_error: code }) : googleLoginFail(res, code));
 
   if (!googleLogin.isEnabled()) return fail('google_disabled');
   if (req.query.error) return fail(req.query.error === 'access_denied' ? 'google_cancel' : 'google_failed');
   const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
   if (!callbackUrl) return fail('google_host');
-  const payload = googleLogin.verifyState(String(req.query.state || ''), SESSION_SECRET || 'video-ops-dev-secret-change-in-production');
   const expectedNonce = req.session?.googleLoginNonce;
   if (req.session) delete req.session.googleLoginNonce;
   if (!payload || !expectedNonce || payload.nonce !== expectedNonce) return fail('google_state');

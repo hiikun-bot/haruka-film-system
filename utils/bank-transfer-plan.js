@@ -333,12 +333,168 @@ function matchPendingAcceptance(statusRes, batch) {
   return null;
 }
 
+// ---------- 銀行のステータス変換（仕様 p.95〜96）・レビュー対応の純関数（PR #1279） ----------
+// 総合振込状況照会 bulkTransferDetails[].transferStatus → payout_transfer_batches.status
+const TRANSFER_STATUS_TO_BATCH = {
+  '2': 'awaiting_approval', // 申請中
+  '3': 'cancelled',         // 差戻
+  '4': 'cancelled',         // 取下げ
+  '5': 'expired',           // 期限切れ
+  '8': 'cancelled',         // 承認取消/予約取消
+  '11': 'approved',         // 予約中
+  '12': 'processing',       // 手続中
+  '13': 'processing',       // リトライ中
+  '20': 'completed',        // 手続済
+  '30': 'completed',        // 不能・組戻あり（明細ごとに returned / failed）
+  '40': 'failed',           // 手続不成立
+};
+const TRANSFER_STATUS_NAMES = {
+  '2': '申請中', '3': '差戻', '4': '取下げ', '5': '期限切れ', '8': '承認取消/予約取消',
+  '11': '予約中', '12': '手続中', '13': 'リトライ中', '20': '手続済', '30': '不能・組戻あり', '40': '手続不成立',
+};
+const TERMINAL_BATCH_STATUSES = ['completed', 'expired', 'cancelled', 'failed'];
+const TERMINAL_ITEM_STATUSES = ['completed', 'returned', 'failed'];
+
+function mapTransferStatus(code) {
+  return TRANSFER_STATUS_TO_BATCH[String(code)] || null;
+}
+
+/**
+ * 状況照会の明細 1 件 → payout_transfer_items.status
+ *   unableDetailInfos[].transferDetailStatus 1=手続済 2=手続不成立、refundStatus 2=組戻済、isRepayment=資金返却
+ */
+function mapItemStatus(info, batchStatus) {
+  const un = Array.isArray(info?.unableDetailInfos) ? info.unableDetailInfos : [];
+  const detailStatus = un.map(u => String(u.transferDetailStatus || '')).find(Boolean) || null;
+  const refund = un.map(u => String(u.refundStatus || '')).find(Boolean) || null;
+  const repaid = un.some(u => u.isRepayment === true);
+  if (detailStatus === '2') return 'failed';
+  if (repaid || refund === '2') return 'returned';
+  if (detailStatus === '1') return 'completed';
+  if (batchStatus === 'completed') return 'completed';
+  if (batchStatus === 'failed') return 'failed';
+  return 'pending';
+}
+
+/**
+ * レビュー #1: request 時に「preview では含まれていたが今は同月の別依頼に引っかかった人」の user_id。
+ * preview_token には plan に含めた record ids だけ入れるので、ここに出た人は preview 後に別の依頼が入った人。
+ */
+function requestConflicts(planned) {
+  return [...new Set((planned?.excluded || []).filter(e => e.reason_code === 'duplicate_in_month').map(e => e.user_id).filter(Boolean))];
+}
+
+/**
+ * レビュー #4: 総合振込依頼の 2xx 応答を「受付」か「応答消失扱い」かに分ける。
+ * applyNo（16 桁）と resultCode 1/2 が揃っていなければ、受付番号なしで固まらないよう pending（同じキーで再送）にする。
+ */
+function classifyRequestResponse(result) {
+  const applyNo = result && result.applyNo != null ? String(result.applyNo).trim() : '';
+  const resultCode = result && result.resultCode != null ? String(result.resultCode) : null;
+  if (!/^\d{16}$/.test(applyNo)) return { outcome: 'pending', reason: `受付番号が応答に含まれていません（applyNo=${applyNo || '-'}）` };
+  if (!['1', '2'].includes(resultCode)) return { outcome: 'pending', reason: `結果コードが想定外です（resultCode=${resultCode || '-'}）` };
+  return {
+    outcome: 'accepted',
+    applyNo,
+    resultCode,
+    status: resultCode === '1' ? 'approved' : 'awaiting_approval',
+    approvedAt: resultCode === '1' ? (result.applyEndDatetime || null) : null,
+  };
+}
+
+/**
+ * レビュー #5: 依頼結果照会の resultCode → batch の次の状態。
+ * 取消依頼中（cancelRequested）の 8:期限切 は「取消依頼の期限切れ」なので元の依頼の状態を保ち、取消マーカーを消す。
+ * @returns {{ status: string|null, clearCancel: boolean, note: string|null, inquire: boolean }} status=null は変更なし、inquire=true は状況照会へ
+ */
+function decideBatchFromResultCode({ resultCode, status, cancelRequested }) {
+  const code = resultCode != null ? String(resultCode) : null;
+  if (code === '8') {
+    if (cancelRequested) return { status: null, clearCancel: true, note: '取消依頼が承認されないまま期限切れになりました（元の依頼は残っています）', inquire: false };
+    return { status: 'expired', clearCancel: false, note: null, inquire: false };
+  }
+  if (code === '2') {
+    const next = !cancelRequested && ['requesting', 'requested', 'awaiting_approval'].includes(status) ? 'awaiting_approval' : null;
+    return { status: next, clearCancel: false, note: null, inquire: false };
+  }
+  if (code === '1') return { status: null, clearCancel: false, note: null, inquire: true };
+  return { status: null, clearCancel: false, note: `依頼結果照会の結果コードが不明です（${code || '-'}）`, inquire: false };
+}
+
+/**
+ * レビュー #3: 状況照会の明細（全ページ分）から各 item の次の status を決める。
+ * info が無い item は「未確定」として返し、呼び出し側は全件確定するまで batch を completed にしない。
+ * @returns {{ patches: Array<{id, item_id, status, error_detail}>, unresolved: number[] }}
+ */
+function resolveItemStatuses({ items, infos, transferStatus }) {
+  const batchStatus = mapTransferStatus(transferStatus);
+  const infoByItemId = new Map((infos || []).map(i => [String(i.itemId), i]));
+  const patches = [];
+  const unresolved = [];
+  for (const it of items || []) {
+    if (TERMINAL_ITEM_STATUSES.includes(it.status)) continue;
+    const info = infoByItemId.get(String(it.item_id));
+    if (!info) {
+      if (batchStatus === 'failed') { patches.push({ id: it.id, item_id: it.item_id, status: 'failed', error_detail: { transfer_status: transferStatus, reason: 'batch_failed' } }); continue; }
+      unresolved.push(it.item_id);
+      continue;
+    }
+    const next = mapItemStatus(info, batchStatus);
+    if (next === 'pending') { unresolved.push(it.item_id); continue; }
+    const un = info.unableDetailInfos?.[0] || {};
+    patches.push({
+      id: it.id, item_id: it.item_id, status: next,
+      error_detail: next === 'completed' ? null : {
+        transfer_detail_status: un.transferDetailStatus || null,
+        refund_status: un.refundStatus || null,
+        is_repayment: un.isRepayment || null,
+        repayment_date: un.repaymentDate || null,
+        transfer_status: transferStatus,
+      },
+    });
+  }
+  return { patches, unresolved };
+}
+
+/**
+ * レビュー #2: batch が expired / cancelled / failed になるとき、未確定（pending）の item を failed に落とす
+ * （部分ユニークインデックス uq_payout_transfer_items_active_record は pending/completed だけを数えるので、再依頼できるようになる）。
+ */
+function itemsToFailOnTerminal(items, reason) {
+  return (items || []).filter(it => it.status === 'pending').map(it => ({
+    id: it.id, item_id: it.item_id, status: 'failed', error_detail: { reason: reason || 'batch_terminated' },
+  }));
+}
+
+/** 状況照会（明細つき）のページング: 次に渡す bulktransferItemKey。これ以上無ければ null */
+function nextItemKeyFor({ startKey, fetchedCount, totalCount, pageSize = 500 }) {
+  const start = Number(startKey) || 1;
+  const n = Number(fetchedCount) || 0;
+  if (n === 0) return null;
+  const next = start + n;
+  if (next > Number(totalCount)) return null;
+  if (n < pageSize) return null;
+  return next;
+}
+
 module.exports = {
   BANK_INFO_GUARD_DAYS,
   BILLED_INVOICE_STATUSES,
   BLOCKING_BATCH_STATUSES,
   REUSABLE_ITEM_STATUSES,
+  TERMINAL_BATCH_STATUSES,
+  TERMINAL_ITEM_STATUSES,
+  TRANSFER_STATUS_TO_BATCH,
+  TRANSFER_STATUS_NAMES,
   EXCLUDE_REASONS,
+  mapTransferStatus,
+  mapItemStatus,
+  requestConflicts,
+  classifyRequestResponse,
+  decideBatchFromResultCode,
+  resolveItemStatuses,
+  itemsToFailOnTerminal,
+  nextItemKeyFor,
   blockedUserIdsFromItems,
   alreadyRequestedUserIds,
   checkDesignatedDateMatch,
