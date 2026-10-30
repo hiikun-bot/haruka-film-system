@@ -32532,8 +32532,8 @@ function poTrRenderPreview(box, pv) {
 // 「日付が変わった／内容が古い」系は preview を取り直す。already_requested は一覧を取り直してモーダルを閉じる
 function poTrHandleRequestConflict(data, status) {
   const code = data.code || '';
-  if (code === 'date_mismatch') {
-    showToast('日付が変わったので内容を確認し直してください', 'warn', 8000);
+  if (code === 'date_mismatch' || code === 'date_required') {
+    showToast(`日付が変わったので内容を確認し直してください${data.token_date ? `（確認した内容は ${data.token_date} 指定）` : ''}`, 'warn', 8000);
     poTransferPreview();
     return true;
   }
@@ -32548,7 +32548,8 @@ function poTrHandleRequestConflict(data, status) {
   }
   if (code === 'already_requested') {
     const n = Array.isArray(data.user_ids) ? data.user_ids.length : 0;
-    showToast(`すでに依頼済みの人が含まれています${n ? `（${n}名）` : ''}。一覧を読み込み直します`, 'error');
+    const names = Array.isArray(data.excluded) ? data.excluded.map(x => x.display_name || x.full_name).filter(Boolean) : [];
+    showToast(`すでに依頼済みの人が含まれています${names.length ? `（${names.join('・')}）` : (n ? `（${n}名）` : '')}。一覧を読み込み直します`, 'error');
     poTransferClose();
     poBatchesLoad(true);
     poFetch();
@@ -32665,14 +32666,17 @@ function poTransferShowDone(data) {
   const needsApproval = data.needs_bank_approval != null ? !!data.needs_bank_approval : data.result_code !== '1';
   let main;
   if (pending) {
-    main = '<div style="color:#7A5F00">🕓 銀行からの応答を確認中です。数分後に「📋 依頼履歴」の「最新の状態」を押してください。<br>受付が確認できないときは履歴の行に「再送」が出ます（同じ依頼を二重に送らないよう、確認が取れるまでは新しく依頼しないでください）。</div>';
+    // 202 request_pending: 銀行からの応答が取れなかった（送信済みかどうか不明）。再送はサーバーが銀行側の受付有無を確認してから行う
+    main = `<div style="color:#7A5F00">🕓 送信結果を確認中です。数分おいて「📋 依頼履歴」の「再送」を押してください。<br>再送時はサーバーが銀行側の受付を確認し、受付済みならそれを取り込みます（二重には送りません）。確認が取れるまで同じ人を新しく依頼しないでください。${data.bank_error ? `<br><span style="font-size:11px">銀行側: ${esc(typeof data.bank_error === 'string' ? data.bank_error : JSON.stringify(data.bank_error))}</span>` : ''}</div>`;
+  } else if (data.reconciled) {
+    main = `<div>🔁 銀行で受付済みだったので取り込みました（再送していません）${data.status_label ? `。現在の状態: <strong>${esc(data.status_label)}</strong>` : ''}。<br>銀行アプリで内容を確認して承認してください。</div>`;
   } else if (needsApproval) {
     main = '<div>銀行アプリ／ブックマークから入り、<strong>受付番号・件数・合計・各人の金額が一致するか確認して承認</strong>してください（メールのリンクは使わない）。<br>承認するまで送金されません。期限までに承認しないと期限切れになり、再依頼が必要です。</div>';
   } else {
     main = `<div>銀行側で受付が完了しました${data.status_label ? `（${esc(data.status_label)}）` : ''}。</div>`;
   }
   const title = document.querySelector('#modal-po-transfer-done .modal-title span');
-  if (title) title.textContent = pending ? '🕓 送信を確認中です' : '✅ 依頼を受け付けました';
+  if (title) title.textContent = pending ? '🕓 送信結果を確認中です' : (data.reconciled ? '🔁 受付済みの依頼を取り込みました' : '✅ 依頼を受け付けました');
   body.innerHTML =
     '<div style="font-size:13px;line-height:1.9">' +
       (applyNo ? `<div>受付番号 <strong style="font-size:16px;letter-spacing:0.5px">${esc(applyNo)}</strong> <button class="btn-sm" style="padding:1px 6px" onclick="poCopyText('${esc(applyNo)}','受付番号')">📋</button></div>` : '') +
@@ -32689,7 +32693,7 @@ function poTransferShowDone(data) {
 
 // ---------- 依頼履歴（この月） ----------
 const PO_TR_STATUS = {
-  requesting:        { icon: '🕓', label: '送信確認中', bg: '#fff8e1', color: '#7A5F00' },
+  requesting:        { icon: '🕓', label: '送信結果を確認中', bg: '#fff8e1', color: '#7A5F00' }, // 応答消失。poll は何もしない・取消不可・再送のみ
   requested:         { icon: '⏳', label: '依頼中',   bg: '#fff8e1', color: '#7A5F00' },
   awaiting_approval: { icon: '⏳', label: '承認待ち', bg: '#fff8e1', color: '#7A5F00' },
   approved:          { icon: '🟦', label: '予約中',   bg: '#e3f2fd', color: '#1565c0' },
@@ -32699,7 +32703,7 @@ const PO_TR_STATUS = {
   cancelled:         { icon: '🚫', label: '取消',     bg: 'var(--border-light)', color: 'var(--text-muted)' },
   failed:            { icon: '❌', label: '失敗',     bg: '#fdecea', color: '#C0392B' },
 };
-const PO_TR_OPEN_STATUSES = ['requesting', 'requested', 'awaiting_approval', 'approved', 'processing'];
+const PO_TR_OPEN_STATUSES = ['requested', 'awaiting_approval', 'approved', 'processing']; // 「最新の状態」を出す状態（requesting は再送のみ）
 let _poTrBatchesLoading = false;
 let _poTrBatchesMonth = '';
 const _poTrItemsOpen = new Set(); // 明細を開いている batch id
@@ -32754,7 +32758,7 @@ function poRenderBatches() {
     const bid = esc(String(b.id));
     const open = PO_TR_OPEN_STATUSES.includes(b.status);
     let stateCell = poTrStatusBadge(b);
-    if (b.status === 'requesting') stateCell += '<div style="font-size:11px;color:#7A5F00;margin-top:3px">銀行の応答を確認できていません。「最新の状態」で確認し、受付が無ければ「再送」</div>';
+    if (b.status === 'requesting') stateCell += '<div style="font-size:11px;color:#7A5F00;margin-top:3px">銀行の応答を確認できていません。数分おいて「再送」を押してください（受付済みなら取り込み、無ければ送り直します）</div>';
     if ((b.status === 'failed' || b.status === 'expired') && b.last_error) stateCell += `<div style="font-size:11px;color:#C0392B;margin-top:3px">${esc(b.last_error)}</div>`;
     if (b.last_polled_at) stateCell += `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">確認 ${esc(poJstDT(b.last_polled_at))}</div>`;
     if (b.completed_at) stateCell += `<div style="font-size:11px;color:var(--text-muted)">完了 ${esc(poJstDT(b.completed_at))}</div>`;
@@ -32844,11 +32848,13 @@ async function poBatchPoll(id, btn) {
   }
 }
 
-// 応答消失（requesting）の再送。POST .../batches/:id/retry（サーバーが銀行側の受付有無を確認してから同じ冪等キーで送り直す）
+// 応答消失（requesting）の再送。POST .../batches/:id/retry（requesting のみ。サーバーが銀行側の受付有無を確認してから同じ冪等キーで送り直す）
+// 応答は request と同じ形: 201 {ok:true, reconciled, apply_no, status_label, batch} / 202 {pending:true, code:'request_pending'} /
+// 422・502 request_failed / 409 not_retryable・connection_changed
 async function poBatchRetry(id, btn) {
   const b = poTrBatch(id);
   const amt = b ? `${Number(b.total_count || 0)}件・${Number(b.total_amount || 0).toLocaleString()}円` : '';
-  if (!confirm(`この依頼（${amt}）を銀行に送り直します。銀行側に同じ受付がある場合はサーバーがそれを採用し、二重には送りません。よろしいですか？`)) return;
+  if (!confirm(`この依頼（${amt}）を銀行に送り直します。銀行側に同じ受付がある場合はサーバーがそれを取り込み、二重には送りません。よろしいですか？`)) return;
   if (btn) { btn.disabled = true; btn.textContent = '再送中…'; }
   try {
     const res = await apiFetch(`${API}/admin/payouts/transfer/batches/${encodeURIComponent(id)}/retry`, { method: 'POST' });
@@ -32857,15 +32863,21 @@ async function poBatchRetry(id, btn) {
       showToast('本人確認が必要です。いったん総合振込の依頼画面から再認証してください', 'warn', 8000);
       return;
     }
-    if (!res.ok) throw new Error(data.error || '再送に失敗しました');
-    const nb = data.batch || data;
-    if (nb && nb.id) poApplyBatch(nb);
-    if (data.pending || (nb && nb.status === 'requesting')) {
-      showToast('銀行からの応答をまだ確認できません。数分後に「最新の状態」を押してください', 'warn', 8000);
-    } else {
-      showToast(`再送しました${nb && nb.apply_no ? `（受付番号 ${nb.apply_no}）` : ''}。銀行アプリで内容を確認して承認してください`, 'success', 8000);
-      poTransferShowDone(Object.assign({ apply_no: nb && nb.apply_no, status: nb && nb.status, status_label: nb && nb.status_label }, data));
+    if (!res.ok) {
+      if (data.code === 'not_retryable') throw new Error('この依頼は再送できる状態ではありません（履歴を 🔄 で読み直してください）');
+      if (data.code === 'connection_changed') throw new Error('依頼時と銀行の接続が変わっているため再送できません。新しく依頼し直してください');
+      if (data.code === 'request_failed') throw new Error(`再送に失敗しました${data.bank_error ? `（銀行側: ${typeof data.bank_error === 'string' ? data.bank_error : JSON.stringify(data.bank_error)}）` : data.error ? `: ${data.error}` : ''}`);
+      throw new Error(data.error || '再送に失敗しました');
     }
+    if (data.batch) poApplyBatch(data.batch);
+    if (data.pending || data.status === 'requesting') {
+      showToast('送信結果を確認中です。数分おいて「再送」を押してください', 'warn', 8000);
+    } else if (data.reconciled) {
+      showToast('銀行で受付済みだったので取り込みました（再送していません）', 'success', 8000);
+    } else {
+      showToast(`再送しました${data.apply_no ? `（受付番号 ${data.apply_no}）` : ''}。銀行アプリで内容を確認して承認してください`, 'success', 8000);
+    }
+    poTransferShowDone(data);
     poBatchesLoad(true);
   } catch (e) {
     showToast(e.message, 'error');
