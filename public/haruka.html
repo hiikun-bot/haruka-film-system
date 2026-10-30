@@ -11721,14 +11721,17 @@ async function applyDeepLinkOnLoad() {
       } catch (e) { console.warn('[deepLink pricing-approvals]', e); }
       return;
     }
-    // ?page=payout&bank=connected|error|reauth_ok : あおぞら銀行の認可画面／Google 再認証から振込管理へ戻る（ADR 054）。
-    // bank の値は loadPayoutPage が読んで toast・確認モーダルの復元を行う
-    if (pageParam === 'payout') {
-      const bankParam = params.get('bank');
+    // ?page=payout（&bank=connected / &bank_error=<code>&bank_error_detail=… / &reauth=ok / &reauth_error=…）:
+    // あおぞら銀行の認可画面／Google 再認証から振込管理へ戻る（ADR 054）。値は loadPayoutPage → poHandleBankReturn が
+    // 読んで toast・確認モーダルの復元を行う。next に付く戻りパラメータだけで page が無いケースも振込管理として扱う
+    const bankReturnKeys = ['bank', 'bank_error', 'bank_error_detail', 'reauth', 'reauth_error'];
+    if (pageParam === 'payout' || bankReturnKeys.some(k => params.has(k))) {
+      const ret = {};
+      bankReturnKeys.forEach(k => { if (params.has(k)) ret[k] = params.get(k); });
       stripQueryParam('page');
-      stripQueryParam('bank');
+      bankReturnKeys.forEach(stripQueryParam);
       try {
-        window._poBankReturn = bankParam || null;
+        window._poBankReturn = Object.keys(ret).length ? ret : null;
         const navBtn = document.querySelector('.nav-btn[data-page="payout"]');
         if (navBtn && navBtn.style.display !== 'none') showPage('payout', navBtn);
         else window._poBankReturn = null;
@@ -31243,10 +31246,11 @@ let _poTrSelected = new Set();   // 選択中の payout_record_id（文字列）
 let _poTrSelectMonth = '';       // 選択の対象月 'YYYY-M'（月が替わったら選択をリセット）
 let _poTrAutoSelect = false;     // 月を開いた直後に依頼可能な行を全選択する（1回だけ）
 let _poTrPreview = null;         // 確認モーダルで表示中の preview 結果
-let _poTrPreviewing = false;
+let _poTrPreviewSeq = 0;         // preview 要求の連番。日付を変えたら古い応答は捨てる（token と画面の日付の不一致防止）
 let _poTrRequesting = false;
 let _poTrBatches = null;         // GET /admin/payouts/transfer/batches の結果（この月）
 let _poTrRestore = null;         // 再認証から戻ったときに確認モーダルを復元するための {date}
+let _poTrReauth = null;          // GET /auth/reauth/status の {ok, remaining_sec, google_reauth_available}（ボタン文言の切替）
 const PO_TR_PENDING_KEY = 'hfs_po_transfer_pending'; // sessionStorage: 再認証前の選択・指定日
 
 function poYen(n) { return '¥' + Number(n || 0).toLocaleString(); }
@@ -32063,27 +32067,29 @@ async function poUnpay(id) {
 
 // ==================== 🏦 あおぞら総合振込（ADR 054 Stage C） ====================
 //
-// 振込管理の行を選んで GMOあおぞらネット銀行の総合振込を依頼する。サーバー（routes/bank-transfer.js・Stage B）が
+// 振込管理の行を選んで GMOあおぞらネット銀行の総合振込を依頼する。サーバー（routes/bank-transfer.js・Stage B #1279）が
 // 金額・口座を請求書と users から組み立てるので、画面が送るのは payout_record_id の配列と振込指定日だけ。
 // - 権限: permission 'payout.transfer'（admin のみ）＋サーバー側 requireSuperAdmin。VIEW AS では hasPermission が
 //   実効ロールで判定するため非表示になる（ADR 015）。GET /admin/bank/connection が enabled=false（機能フラグ OFF）／
-//   403／404（ルート未配備）のときも UI 全体を出さない。
+//   403／404（ルート未配備）のときも UI 全体を出さない。configured=false（環境変数未設定）は接続ボタンを無効にして理由を出す。
 // - 依頼の直前にサーバーが再認証を求める（401 reauth_required）。Google 再認証へ飛ぶ前に選択と指定日を sessionStorage へ
-//   保存し、?page=payout&bank=reauth_ok で戻ってきたら確認モーダルを復元する（依頼ボタンは本人がもう一度押す）。
+//   保存し、?page=payout&reauth=ok で戻ってきたら確認モーダルを復元する（依頼ボタンは本人がもう一度押す）。
+//   Google ログインが無い環境は POST /auth/reauth-password（パスワード再入力）。
+// - preview_token は「日付・選択を変えた瞬間に捨てる」。request には token と画面の日付を両方送り、サーバーが突き合わせる。
 // - 受付＝送金ではない。本人が銀行アプリで承認して初めて送金される（モーダルと受付後の案内に明記）。
 
 function poTransferAvailable() {
   return !!(_poBank && _poBank.loaded && _poBank.enabled && !_poBank.forbidden) && hasPermission('payout.transfer');
 }
 
-// 口座変更からの経過日数（users.bank_info_updated_at・無ければ null）
+// 口座変更からの経過日数（users.bank_info_updated_at が一覧に載っているときだけ。無ければ null＝判定しない）
 function poTrBankDays(r) {
   if (!r || !r.bank_info_updated_at) return null;
   const ms = Date.now() - new Date(r.bank_info_updated_at).getTime();
   return isNaN(ms) ? null : Math.floor(ms / 86400000);
 }
 
-// 行が総合振込の依頼対象にできるか（サーバー §4 の除外条件と同じ観点で、画面側は選択可否の目安として判定）
+// 行が総合振込の依頼対象にできるか（サーバー §4 の除外条件の目安。確定はサーバーの preview の excluded[]）
 function poTrEligibility(r) {
   if (!r) return { ok: false, reason: '' };
   if (r.status === 'paid') return { ok: false, reason: r.paid_via === 'aozora_api' ? 'API で振込済み' : '振込済み' };
@@ -32096,7 +32102,7 @@ function poTrEligibility(r) {
   return { ok: true, days };
 }
 
-// 振込先セルの先頭に出す状態バッジ（✅ 依頼可 / ⚠ 口座変更からN日 / ❌ 口座未登録 / 🏦 振込済み(API)）
+// 振込先セルの先頭に出す状態バッジ（✅ ****下4桁 / ⚠ 口座変更からN日 / ❌ 口座未登録 / 🏦 振込済み(API)）
 function poTrBankStatusHtml(r, elig, trOn) {
   const badge = (bg, color, text, title) => `<div><span class="po-badge" style="background:${bg};color:${color}" title="${esc(title || '')}">${text}</span></div>`;
   if (r.status === 'paid' && r.paid_via === 'aozora_api') return badge('#e6f8f8', '#1a7f7c', '🏦 振込済み(API)', 'あおぞら銀行 API の総合振込で振込済み');
@@ -32105,7 +32111,7 @@ function poTrBankStatusHtml(r, elig, trOn) {
   if (elig && elig.missing) return badge('#fdecea', '#C0392B', '❌ 口座未登録', elig.reason);
   if (elig && elig.ok) {
     const last4 = String(r.account_number || '').replace(/\D/g, '').slice(-4);
-    return badge('var(--em-pale)', 'var(--em-dark)', `✅ ****${esc(last4)}`, 'API 振込の依頼対象にできます');
+    return badge('var(--em-pale)', 'var(--em-dark)', `✅ ****${esc(last4)}`, 'API 振込の依頼対象にできます（7日以内の口座変更など最終判定は依頼時にサーバーが行います）');
   }
   return '';
 }
@@ -32113,6 +32119,7 @@ function poTrBankStatusHtml(r, elig, trOn) {
 function poTrToggle(id, checked) {
   const key = String(id);
   if (checked) _poTrSelected.add(key); else _poTrSelected.delete(key);
+  poTrInvalidatePreview(); // 選択が変わったら preview_token は捨てる
   const tr = Array.from(document.querySelectorAll('#po-table tr[data-poid]')).find(el => el.getAttribute('data-poid') === key);
   if (tr) tr.classList.toggle('po-tr-selected', !!checked);
   const all = document.getElementById('po-tr-all');
@@ -32127,6 +32134,7 @@ function poTrToggleAll(checked) {
   if (!_poData) return;
   const eligible = (_poData.records || []).filter(r => poTrEligibility(r).ok);
   _poTrSelected = checked ? new Set(eligible.map(r => String(r.id))) : new Set();
+  poTrInvalidatePreview();
   renderPayout();
 }
 
@@ -32145,7 +32153,8 @@ function poRenderTransferBar() {
   const eligibleCount = ((_poData.records) || []).filter(r => poTrEligibility(r).ok).length;
   const connected = !!_poBank.connected;
   let note;
-  if (!connected) note = '🏦 あおぞら銀行と接続すると依頼できます（上の「接続する」）';
+  if (!_poBank.configured) note = '⚠ サーバーの設定（環境変数）が未完了のため依頼できません';
+  else if (!connected) note = '🏦 あおぞら銀行と接続すると依頼できます（上の「接続する」）';
   else if (eligibleCount === 0) note = '依頼できる行がありません（未振込で、請求額と口座が揃っている行が対象）';
   else note = '依頼後は銀行アプリで内容を確認して承認してください。承認するまで送金されません';
   el.style.display = '';
@@ -32156,6 +32165,27 @@ function poRenderTransferBar() {
 }
 
 // ---------- 接続状態（GET /admin/bank/connection） ----------
+// 応答: {enabled, environment, configured, config_problems[], scopes_requested, callback_url, reauth:{ok,remaining_sec},
+//        google_reauth_available, connection:{account_id_last4, account_label, scopes, access_token_expires_at,
+//        has_refresh_token, connected_by, connected_by_name, connected_at, last_used_at}|null}。接続中かは connection != null
+function poBankNormalize(data) {
+  const c = data.connection || null;
+  return {
+    loaded: true,
+    enabled: !!data.enabled,
+    environment: data.environment || (c && c.environment) || null,
+    configured: data.configured !== false,
+    config_problems: Array.isArray(data.config_problems) ? data.config_problems : [],
+    connected: !!c,
+    connection: c,
+    account_label: c ? (c.account_label || (c.account_id_last4 ? `口座 ****${c.account_id_last4}` : '')) : '',
+    access_token_expires_at: c ? c.access_token_expires_at : null,
+    connected_by_name: c ? (c.connected_by_name || (c.connected_by && c.connected_by.full_name) || '') : '',
+    reauth: data.reauth || null,
+    google_reauth_available: data.google_reauth_available !== false,
+  };
+}
+
 async function poBankLoad(force) {
   const bar = document.getElementById('po-bank-bar');
   if (!hasPermission('payout.transfer')) {
@@ -32172,12 +32202,13 @@ async function poBankLoad(force) {
   try {
     const res = await apiFetch(`${API}/admin/bank/connection`);
     if (res.status === 403 || res.status === 404) {
-      // 403=権限なし（ボタン非表示）／404=Stage B 未配備。どちらも UI を出さない
+      // 403=権限なし（ボタン非表示）／404=機能フラグ OFF または Stage B 未配備。どちらも UI を出さない
       _poBank = { loaded: true, enabled: false, forbidden: true };
     } else {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '接続状態の取得に失敗しました');
-      _poBank = Object.assign({ loaded: true }, data);
+      _poBank = poBankNormalize(data);
+      if (_poBank.reauth) _poTrReauth = Object.assign({ google_reauth_available: _poBank.google_reauth_available }, _poBank.reauth);
     }
   } catch (e) {
     console.warn('[payout][bank]', e);
@@ -32209,8 +32240,16 @@ function poRenderBankBar() {
   const envBadge = _poBank.environment === 'production'
     ? '<span class="po-bank-env" style="background:var(--em-pale);color:var(--em-dark)">本番</span>'
     : '<span class="po-bank-env" title="検証環境（sunabar）。実際の送金は行われません">検証環境</span>';
+  if (!_poBank.configured) {
+    const problems = (_poBank.config_problems || []).map(esc).join(' / ');
+    bar.innerHTML =
+      `<span>🏦 あおぞら: <strong style="color:#C0392B">環境変数が未設定</strong></span>` + envBadge +
+      `<span style="color:#C0392B;font-size:11px">${problems || 'サーバー側の設定を確認してください'}</span>` +
+      `<div class="po-bank-actions"><button class="btn-primary" style="font-size:12px;padding:6px 12px" disabled title="環境変数を設定すると接続できます">接続する</button><button class="btn-sm" onclick="poBankLoad(true)">再確認</button></div>`;
+    return;
+  }
   if (_poBank.connected) {
-    const by = _poBank.connected_by && _poBank.connected_by.full_name ? `接続者: ${esc(_poBank.connected_by.full_name)}` : '';
+    const by = _poBank.connected_by_name ? `接続者: ${esc(_poBank.connected_by_name)}` : '';
     const exp = _poBank.access_token_expires_at ? `トークン期限: ${esc(poJstDT(_poBank.access_token_expires_at))}` : '';
     bar.innerHTML =
       `<span>🏦 あおぞら: <strong style="color:var(--em-dark)">接続中</strong>${_poBank.account_label ? `（${esc(_poBank.account_label)}）` : ''}</span>` + envBadge +
@@ -32227,10 +32266,15 @@ function poRenderBankBar() {
   }
 }
 
+// 振込管理へ戻るための相対 URL（銀行の認可／Google 再認証の next に渡す。同一オリジンの相対パスのみ）
+function poTrReturnUrl() {
+  return `${window.location.pathname}?page=payout`;
+}
+
 function poBankConnect() {
-  if (!hasPermission('payout.transfer')) return;
-  // GET /admin/bank/connect は銀行の認可画面へリダイレクトする。戻りは ?page=payout&bank=connected|error
-  window.location.href = `${API}/admin/bank/connect`;
+  if (!hasPermission('payout.transfer') || !_poBank || !_poBank.configured) return;
+  // GET /admin/bank/connect?next= は銀行の認可画面へリダイレクトする。戻りは next に ?bank=connected または ?bank_error=<code>
+  window.location.href = `${API}/admin/bank/connect?next=${encodeURIComponent(poTrReturnUrl())}`;
 }
 
 async function poBankDisconnect() {
@@ -32245,15 +32289,30 @@ async function poBankDisconnect() {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-// ?page=payout&bank=… で戻ってきたときの処理（loadPayoutPage から）
-function poHandleBankReturn(kind) {
-  if (kind === 'connected') {
+const PO_BANK_ERROR_TEXT = {
+  not_configured: 'サーバーの環境変数が未設定です',
+  host: '許可されていないホストからの接続です',
+  state: '認可の状態確認に失敗しました（時間切れの可能性）。もう一度やり直してください',
+  cancelled: '銀行側でキャンセルされました',
+  id_token: '銀行からの本人情報を検証できませんでした',
+  no_account: '口座情報を取得できませんでした',
+  bank_failed: '銀行側でエラーが返されました',
+};
+
+// ?page=payout&bank=connected / &bank_error=<code>&bank_error_detail=… / &reauth=ok / &reauth_error=… で戻ってきたときの処理（loadPayoutPage から）
+function poHandleBankReturn(ret) {
+  if (!ret) return;
+  if (typeof ret === 'string') ret = { bank: ret };
+  if (ret.bank === 'connected') {
     showToast('あおぞら銀行と接続しました', 'success');
     _poBank = null; // 次の poBankLoad で取り直す
-  } else if (kind === 'error') {
-    showToast('あおぞら銀行との接続に失敗しました。もう一度「接続する」からやり直してください', 'error');
+  }
+  if (ret.bank_error) {
+    const text = PO_BANK_ERROR_TEXT[ret.bank_error] || ret.bank_error;
+    showToast(`あおぞら銀行との接続に失敗しました: ${text}${ret.bank_error_detail ? `（${ret.bank_error_detail}）` : ''}。もう一度「接続する」からやり直してください`, 'error');
     _poBank = null;
-  } else if (kind === 'reauth_ok') {
+  }
+  if (ret.reauth === 'ok') {
     const pending = poTrLoadPending();
     if (pending) {
       _poYear = pending.year; _poMonth = pending.month;
@@ -32261,11 +32320,15 @@ function poHandleBankReturn(kind) {
       _poTrSelected = new Set((pending.ids || []).map(String));
       _poTrAutoSelect = false;
       _poTrRestore = { date: pending.date };
-      _poBank = null; // 再認証の反映を含めて取り直す
+      _poBank = null; // 再認証の反映（reauth.ok）を含めて取り直す
       showToast('本人確認ができました。内容をもう一度確認して「依頼する」を押してください', 'success', 8000);
     } else {
       showToast('本人確認ができました', 'success');
     }
+  }
+  if (ret.reauth_error) {
+    poTrLoadPending(); // 退避データは破棄
+    showToast(`本人確認に失敗しました（${ret.reauth_error}）。もう一度依頼からやり直してください`, 'error');
   }
 }
 
@@ -32285,6 +32348,25 @@ function poTrLoadPending() {
     if (Date.now() - (p.saved_at || 0) > 30 * 60 * 1000) return null; // 30分を過ぎた復元はしない
     return p;
   } catch (_) { return null; }
+}
+
+// ---------- 再認証の状態（GET /auth/reauth/status）→ ボタン文言 ----------
+async function poTrLoadReauthStatus() {
+  try {
+    const res = await apiFetch('/auth/reauth/status');
+    const data = await res.json();
+    if (res.ok) _poTrReauth = { ok: !!data.ok, remaining_sec: data.remaining_sec, google_reauth_available: data.google_reauth_available !== false };
+  } catch (e) { console.warn('[payout][transfer][reauth-status]', e); }
+  poTrApplySubmitLabel();
+}
+function poTrSubmitLabel() {
+  if (_poTrReauth && _poTrReauth.ok) return '🏦 依頼する';
+  if (_poTrReauth && _poTrReauth.google_reauth_available === false) return '🔐 パスワードを確認して依頼する';
+  return '🔐 Google で再認証して依頼する';
+}
+function poTrApplySubmitLabel() {
+  const btn = document.getElementById('po-tr-submit');
+  if (btn && !_poTrRequesting) btn.textContent = poTrSubmitLabel();
 }
 
 // ---------- 確認モーダル（preview → request） ----------
@@ -32309,89 +32391,132 @@ function poTransferOpen(dateOverride) {
   body.innerHTML =
     '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px">' +
       '<label style="display:flex;align-items:center;gap:6px">振込指定日 ' +
-        `<input type="date" class="form-input" id="po-tr-date" value="${esc(date)}" min="${esc(todayJst)}" style="width:auto;padding:4px 8px;font-size:13px" onchange="poTransferPreview()"></label>` +
-      '<span style="font-size:11px;color:var(--text-muted)">既定は翌営業日。銀行休業日を指定すると銀行側で受け付けられません</span>' +
+        `<input type="date" class="form-input" id="po-tr-date" value="${esc(date)}" min="${esc(todayJst)}" style="width:auto;padding:4px 8px;font-size:13px" oninput="poTrInvalidatePreview()" onchange="poTransferPreview()"></label>` +
+      '<span style="font-size:11px;color:var(--text-muted)">既定は翌営業日。日付を変えると明細を照会し直します（銀行休業日は受け付けられません）</span>' +
     '</div>' +
     '<div id="po-tr-preview" style="margin-top:12px"></div>';
   openModal('modal-po-transfer');
+  poTrLoadReauthStatus(); // await しない（取れ次第ボタン文言を切り替える）
   poTransferPreview();
 }
 
 function poTransferClose() {
   _poTrPreview = null;
+  _poTrPreviewSeq++; // 閉じた後に返ってくる応答は捨てる
   closeModal('modal-po-transfer');
+}
+
+// 日付・選択が変わった瞬間に preview_token を捨てて「依頼する」を無効化する（古い token を送らない）
+function poTrInvalidatePreview() {
+  _poTrPreview = null;
+  const btn = document.getElementById('po-tr-submit');
+  if (btn) btn.disabled = true;
 }
 
 async function poTransferPreview() {
   const box = document.getElementById('po-tr-preview');
   const dateEl = document.getElementById('po-tr-date');
-  if (!box || !dateEl || _poTrPreviewing) return;
+  if (!box || !dateEl) return;
   const date = dateEl.value;
   const { rows } = poTrSelection();
+  // 要求ごとに連番を振り、応答が返ったときに「最新の要求か」「画面の日付と一致するか」を確かめてから採用する。
+  // 照会中に日付を変えると前の要求は捨てられる（進行中フラグで後続を止めると、画面 11/5 なのに 11/2 の token が残る）
+  const seq = ++_poTrPreviewSeq;
+  poTrInvalidatePreview();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { box.innerHTML = '<div class="po-tr-alert error">振込指定日を入力してください</div>'; return; }
   if (rows.length === 0) { box.innerHTML = '<div class="po-tr-alert error">依頼する行がありません</div>'; return; }
-  _poTrPreviewing = true;
-  _poTrPreview = null;
-  box.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px">明細を組み立てて手数料を照会しています…</div>';
+  box.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px">${esc(date)} 指定の明細を組み立てて手数料を照会しています…</div>`;
+  let res, data;
   try {
-    const res = await apiFetch(`${API}/admin/payouts/transfer/preview`, {
+    res = await apiFetch(`${API}/admin/payouts/transfer/preview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ year: _poYear, month: _poMonth, payout_record_ids: rows.map(r => String(r.id)), transfer_designated_date: date }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '事前照会に失敗しました');
-    _poTrPreview = Object.assign({ date }, data);
-    poTrRenderPreview(box, _poTrPreview);
+    data = await res.json().catch(() => ({}));
   } catch (e) {
+    if (seq !== _poTrPreviewSeq) return;
     console.error('[payout][transfer][preview]', e);
-    box.innerHTML = `<div class="po-tr-alert error">${esc(e.message)}</div>` +
-      '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">' +
-        '<button class="btn-sm" onclick="poTransferClose()">キャンセル</button>' +
-        '<button class="btn-sm" onclick="poTransferPreview()">もう一度照会する</button>' +
-      '</div>';
-  } finally {
-    _poTrPreviewing = false;
+    poTrRenderPreviewError(box, { error: e.message });
+    return;
   }
+  if (seq !== _poTrPreviewSeq) return; // 後から出した要求がある＝この応答は古い。捨てる
+  const curEl = document.getElementById('po-tr-date');
+  if (!curEl || curEl.value !== date) return; // 画面の日付が変わっている（新しい要求が走る／走った）
+  if (data.reauth) _poTrReauth = Object.assign({}, _poTrReauth || {}, data.reauth);
+  if (!res.ok) { poTrRenderPreviewError(box, data, res.status); return; }
+  if (data.transfer_designated_date && data.transfer_designated_date !== date) { poTrRenderPreviewError(box, { error: `サーバーの指定日（${data.transfer_designated_date}）と画面の日付が一致しません。もう一度照会してください` }); return; }
+  _poTrPreview = Object.assign({ date }, data);
+  poTrRenderPreview(box, _poTrPreview);
 }
 
+// preview の失敗: 409 bank_not_connected / 422 no_items（excluded）/ 422 precheck_failed（bank_error, item_errors）/ 502 bank_api|bank_auth
+function poTrRenderPreviewError(box, data, status) {
+  const code = data.code || '';
+  let msg = data.error || '事前照会に失敗しました';
+  if (code === 'bank_not_connected') msg = 'あおぞら銀行と接続されていません。モーダルを閉じて「接続する」からやり直してください';
+  else if (code === 'no_items') msg = '依頼できる明細がありません（下の除外理由を確認してください）';
+  else if (code === 'precheck_failed') msg = `銀行の手数料事前照会でエラーになりました${data.bank_error ? `: ${typeof data.bank_error === 'string' ? data.bank_error : JSON.stringify(data.bank_error)}` : ''}`;
+  else if (code === 'bank_auth') msg = '銀行の認証が切れています。「切断」→「接続する」で再接続してください';
+  else if (code === 'bank_api') msg = `銀行 API との通信に失敗しました${data.error ? `: ${data.error}` : ''}`;
+  let html = `<div class="po-tr-alert error">${esc(msg)}</div>`;
+  if (Array.isArray(data.item_errors) && data.item_errors.length) {
+    html += '<div class="po-tr-alert warn">' + data.item_errors.map(x => `⚠ ${esc(typeof x === 'string' ? x : (x.display_name ? `${x.display_name}: ` : '') + (x.error || x.message || JSON.stringify(x)))}`).join('<br>') + '</div>';
+  }
+  html += poTrExcludedHtml(data.excluded);
+  html +=
+    '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">' +
+      '<button class="btn-sm" onclick="poTransferClose()">キャンセル</button>' +
+      '<button class="btn-sm" onclick="poTransferPreview()">もう一度照会する</button>' +
+    '</div>';
+  box.innerHTML = html;
+}
+
+// excluded[]: {payout_record_id, user_id, display_name, reason_code, reason, days_remaining?, errors?}
+function poTrExcludedHtml(excluded) {
+  if (!Array.isArray(excluded) || excluded.length === 0) return '';
+  return '<div class="po-tr-alert warn">' + excluded.map(x => {
+    let reason = x.reason || x.reason_code || '';
+    if (x.reason_code === 'bank_info_recent' && x.days_remaining != null) reason += `・${x.days_remaining}日後に可`;
+    if (Array.isArray(x.errors) && x.errors.length) reason += `（${x.errors.join(' / ')}）`;
+    return `⚠ 除外: ${esc(x.display_name || x.full_name || '')}（${esc(reason)}）`;
+  }).join('<br>') + '</div>';
+}
+
+// items[]: {item_id, payout_record_id, user_id, display_name, account_number_last4, beneficiary_name, amount, amount_source,
+//           invoice_id, invoice_numbers[], warnings[], fee}  fee: {total_fee, base_date, base_time}
 function poTrRenderPreview(box, pv) {
   const items = pv.items || [];
-  const excluded = pv.excluded || [];
   const warnings = pv.warnings || [];
   const fee = pv.fee || {};
-  const feeText = (fee.total_fee == null) ? '照会できませんでした' : `${Number(fee.total_fee).toLocaleString()}円（事前照会）`;
-  const acct = it => {
-    const type = it.account_type || '';
-    const last4 = it.account_number_last4 ? `****${it.account_number_last4}` : '';
-    return [it.bank_name, it.branch_name, type, last4].filter(Boolean).map(esc).join(' ');
-  };
+  const feeText = (fee.total_fee == null) ? '照会できませんでした' : `${Number(fee.total_fee).toLocaleString()}円（事前照会${fee.base_date ? ` ${fee.base_date}${fee.base_time ? ' ' + fee.base_time : ''} 時点` : ''}）`;
   let html =
     '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;padding:10px 12px;background:var(--bg);border-radius:8px">' +
+      `<span>指定日 <strong>${esc(pv.transfer_designated_date || pv.date)}</strong></span>` +
       `<span>件数 <strong>${Number(pv.total_count ?? items.length)}件</strong></span>` +
       `<span>合計 <strong style="font-size:15px">${Number(pv.total_amount ?? items.reduce((s, i) => s + (Number(i.amount) || 0), 0)).toLocaleString()}円</strong></span>` +
       `<span>手数料 <strong>${esc(feeText)}</strong></span>` +
+      (pv.account_label ? `<span style="color:var(--text-muted)">出金 ${esc(pv.account_label)}</span>` : '') +
     '</div>';
   if (items.length === 0) {
     html += '<div class="po-tr-alert error">依頼できる明細がありません（下の除外理由を確認してください）</div>';
   } else {
     html += '<table class="po-tr-tbl" style="margin-top:10px"><thead><tr><th>氏名</th><th>請求書</th><th style="text-align:right">金額</th><th>口座</th></tr></thead><tbody>';
     items.forEach(it => {
-      const nm = it.nickname ? `${it.nickname}（${it.full_name}）` : (it.full_name || '');
-      const inv = it.invoice_number ? esc(it.invoice_number) : '<span style="color:#7A5F00">なし(PDF)</span>';
+      const nums = Array.isArray(it.invoice_numbers) ? it.invoice_numbers.filter(Boolean) : (it.invoice_number ? [it.invoice_number] : []);
+      const inv = nums.length ? esc(nums.join(', ')) : (it.amount_source === 'invoice' ? '<span style="color:var(--text-muted)">請求書</span>' : '<span style="color:#7A5F00">なし(PDF)</span>');
       const warn = (it.warnings || []).length ? `<div style="font-size:11px;color:#7A5F00">⚠ ${it.warnings.map(esc).join(' / ')}</div>` : '';
+      const itemFee = (it.fee != null && it.fee !== '') ? `<div style="font-size:11px;color:var(--text-muted)">手数料 ${Number(typeof it.fee === 'object' ? (it.fee.fee ?? it.fee.total_fee ?? 0) : it.fee).toLocaleString()}円</div>` : '';
       html += '<tr>' +
-        `<td data-label="氏名" style="font-weight:600">${esc(nm)}</td>` +
+        `<td data-label="氏名" style="font-weight:600">${esc(it.display_name || it.full_name || '')}</td>` +
         `<td data-label="請求書">${inv}</td>` +
-        `<td data-label="金額" style="text-align:right;white-space:nowrap">${Number(it.amount || 0).toLocaleString()}</td>` +
-        `<td data-label="口座"><div>${acct(it)}</div><div style="font-size:11px;color:var(--text-muted)">${esc(it.beneficiary_name || '')}</div>${warn}</td>` +
+        `<td data-label="金額" style="text-align:right;white-space:nowrap">${Number(it.amount || 0).toLocaleString()}${itemFee}</td>` +
+        `<td data-label="口座"><div>${esc(it.beneficiary_name || '')} <span style="color:var(--text-muted)">****${esc(it.account_number_last4 || '')}</span></div>${warn}</td>` +
         '</tr>';
     });
     html += '</tbody></table>';
   }
-  if (excluded.length) {
-    html += '<div class="po-tr-alert warn">' + excluded.map(x => `⚠ 除外: ${esc(x.full_name || '')}（${esc(x.reason || '')}）`).join('<br>') + '</div>';
-  }
+  html += poTrExcludedHtml(pv.excluded);
   if (warnings.length) {
     html += '<div class="po-tr-alert warn">' + warnings.map(w => `⚠ 警告: ${esc(w)}`).join('<br>') + '</div>';
   }
@@ -32399,26 +32524,56 @@ function poTrRenderPreview(box, pv) {
   html +=
     '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">' +
       '<button class="btn-sm" onclick="poTransferClose()">キャンセル</button>' +
-      `<button class="btn-primary" id="po-tr-submit" style="font-size:13px;padding:8px 14px" ${items.length === 0 || !pv.preview_token ? 'disabled' : ''} onclick="poTransferRequest()">🔐 Google で再認証して依頼する</button>` +
+      `<button class="btn-primary" id="po-tr-submit" style="font-size:13px;padding:8px 14px" ${items.length === 0 || !pv.preview_token ? 'disabled' : ''} onclick="poTransferRequest()">${esc(poTrSubmitLabel())}</button>` +
     '</div>';
   box.innerHTML = html;
 }
 
-// 再認証 URL の next を「振込管理へ戻って確認モーダルを復元」に固定する
-function poTrReauthUrl(reauthUrl) {
-  const next = `${window.location.pathname}?page=payout&bank=reauth_ok`;
-  try {
-    const u = new URL(reauthUrl || '/auth/google/reauth', window.location.origin);
-    u.searchParams.set('next', next);
-    return u.pathname + u.search;
-  } catch (_) {
-    return `/auth/google/reauth?next=${encodeURIComponent(next)}`;
+// 「日付が変わった／内容が古い」系は preview を取り直す。already_requested は一覧を取り直してモーダルを閉じる
+function poTrHandleRequestConflict(data, status) {
+  const code = data.code || '';
+  if (code === 'date_mismatch') {
+    showToast('日付が変わったので内容を確認し直してください', 'warn', 8000);
+    poTransferPreview();
+    return true;
   }
+  if (code === 'preview_expired' || code === 'preview_stale') {
+    showToast(code === 'preview_expired' ? '確認内容の有効期限が切れました。明細を照会し直します' : '確認した内容が変わっています（請求書や口座の更新）。明細を照会し直します', 'warn', 8000);
+    poTransferPreview();
+    return true;
+  }
+  if (code === 'preview_owner') {
+    showToast('この確認内容は別のログインで作られたものです。モーダルを閉じて最初からやり直してください', 'error');
+    return true;
+  }
+  if (code === 'already_requested') {
+    const n = Array.isArray(data.user_ids) ? data.user_ids.length : 0;
+    showToast(`すでに依頼済みの人が含まれています${n ? `（${n}名）` : ''}。一覧を読み込み直します`, 'error');
+    poTransferClose();
+    poBatchesLoad(true);
+    poFetch();
+    return true;
+  }
+  if (code === 'bank_not_connected') {
+    showToast('あおぞら銀行と接続されていません。「接続する」からやり直してください', 'error');
+    poTransferClose();
+    _poBank = null; poBankLoad(true);
+    return true;
+  }
+  return false;
 }
 
 async function poTransferRequest() {
   const pv = _poTrPreview;
   if (!pv || !pv.preview_token || _poTrRequesting) return;
+  const dateEl = document.getElementById('po-tr-date');
+  const date = dateEl ? dateEl.value : pv.date;
+  if (date !== pv.date) {
+    // 画面の日付と token の日付が食い違う（照会中に変えた等）。送らずに照会し直す
+    showToast('日付が変わったので内容を確認し直してください', 'warn', 8000);
+    poTransferPreview();
+    return;
+  }
   const btn = document.getElementById('po-tr-submit');
   const label = btn ? btn.textContent : '';
   _poTrRequesting = true;
@@ -32427,13 +32582,14 @@ async function poTransferRequest() {
     const res = await apiFetch(`${API}/admin/payouts/transfer/request`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preview_token: pv.preview_token }),
+      body: JSON.stringify({ preview_token: pv.preview_token, transfer_designated_date: date }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401 && data.code === 'reauth_required') {
       // 依頼直前の本人確認（ADR 054 §1-3）。戻ってきたときに復元できるよう選択と指定日を保存してから遷移
-      poTrSavePending(pv.date);
-      if (data.reauth_mode === 'password') {
+      poTrSavePending(date);
+      _poTrReauth = Object.assign({}, _poTrReauth || {}, { ok: false, google_reauth_available: data.google_reauth_available !== false });
+      if (data.google_reauth_available === false) {
         const pw = document.getElementById('po-reauth-pw');
         if (pw) pw.value = '';
         openModal('modal-po-reauth-pw');
@@ -32441,14 +32597,18 @@ async function poTransferRequest() {
         return;
       }
       showToast('本人確認のため Google ログインへ移動します', 'info');
-      window.location.href = poTrReauthUrl(data.reauth_url);
+      window.location.href = `/auth/google/reauth?next=${encodeURIComponent(poTrReturnUrl())}`;
       return;
     }
-    if (!res.ok) throw new Error(data.error || '総合振込の依頼に失敗しました');
+    if (!res.ok) {
+      if (poTrHandleRequestConflict(data, res.status)) return;
+      throw new Error(data.error || '総合振込の依頼に失敗しました');
+    }
     try { sessionStorage.removeItem(PO_TR_PENDING_KEY); } catch (_) {}
     _poTrPreview = null;
     closeModal('modal-po-transfer');
     (pv.items || []).forEach(it => _poTrSelected.delete(String(it.payout_record_id)));
+    if (data.batch) poApplyBatch(data.batch);
     poTransferShowDone(data);
     poBatchesLoad(true);
     poFetch(); // 一覧側の状態（依頼済みの行）を取り直す
@@ -32458,11 +32618,12 @@ async function poTransferRequest() {
   } finally {
     _poTrRequesting = false;
     const b = document.getElementById('po-tr-submit');
-    if (b && b.disabled && b.textContent === '依頼中…') { b.disabled = false; b.textContent = label; }
+    if (b && b.textContent === '依頼中…') { b.disabled = !_poTrPreview; b.textContent = label || poTrSubmitLabel(); }
   }
 }
 
 // Google ログインが無効な環境: パスワード再入力 → POST /auth/reauth-password → 依頼を再送
+// 応答 {ok, method, remaining_sec} / 401 reauth_failed（remaining_attempts）/ 429 reauth_locked
 async function poReauthPasswordSubmit() {
   const pw = document.getElementById('po-reauth-pw');
   const btn = document.getElementById('po-reauth-pw-submit');
@@ -32476,9 +32637,15 @@ async function poReauthPasswordSubmit() {
       body: JSON.stringify({ password }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'パスワードが確認できませんでした');
+    if (!res.ok) {
+      if (data.code === 'reauth_locked') throw new Error('パスワードの確認が連続して失敗したため、しばらくロックされています。時間をおいてやり直してください');
+      if (data.code === 'reauth_failed') throw new Error(`パスワードが違います${data.remaining_attempts != null ? `（あと ${data.remaining_attempts} 回）` : ''}`);
+      throw new Error(data.error || 'パスワードが確認できませんでした');
+    }
     if (pw) pw.value = '';
     closeModal('modal-po-reauth-pw');
+    _poTrReauth = Object.assign({}, _poTrReauth || {}, { ok: true, remaining_sec: data.remaining_sec });
+    poTrApplySubmitLabel();
     try { sessionStorage.removeItem(PO_TR_PENDING_KEY); } catch (_) {}
     await poTransferRequest();
   } catch (e) {
@@ -32488,18 +32655,31 @@ async function poReauthPasswordSubmit() {
   }
 }
 
+// 受付後: 201 {ok, batch_id, apply_no, result_code, status, status_label, needs_bank_approval, summary_sent, batch}
+//         応答消失: {batch_id, status:'requesting', pending:true}
 function poTransferShowDone(data) {
   const body = document.getElementById('po-transfer-done-body');
   if (!body) return;
   const applyNo = data.apply_no ? String(data.apply_no) : '';
-  const completedNow = data.result_code === '1'; // 1=完了（承認不要のケース）/ 2=未完了（本人の承認待ち）
+  const pending = !!data.pending || data.status === 'requesting';
+  const needsApproval = data.needs_bank_approval != null ? !!data.needs_bank_approval : data.result_code !== '1';
+  let main;
+  if (pending) {
+    main = '<div style="color:#7A5F00">🕓 銀行からの応答を確認中です。数分後に「📋 依頼履歴」の「最新の状態」を押してください。<br>受付が確認できないときは履歴の行に「再送」が出ます（同じ依頼を二重に送らないよう、確認が取れるまでは新しく依頼しないでください）。</div>';
+  } else if (needsApproval) {
+    main = '<div>銀行アプリ／ブックマークから入り、<strong>受付番号・件数・合計・各人の金額が一致するか確認して承認</strong>してください（メールのリンクは使わない）。<br>承認するまで送金されません。期限までに承認しないと期限切れになり、再依頼が必要です。</div>';
+  } else {
+    main = `<div>銀行側で受付が完了しました${data.status_label ? `（${esc(data.status_label)}）` : ''}。</div>`;
+  }
+  const title = document.querySelector('#modal-po-transfer-done .modal-title span');
+  if (title) title.textContent = pending ? '🕓 送信を確認中です' : '✅ 依頼を受け付けました';
   body.innerHTML =
     '<div style="font-size:13px;line-height:1.9">' +
       (applyNo ? `<div>受付番号 <strong style="font-size:16px;letter-spacing:0.5px">${esc(applyNo)}</strong> <button class="btn-sm" style="padding:1px 6px" onclick="poCopyText('${esc(applyNo)}','受付番号')">📋</button></div>` : '') +
-      (completedNow
-        ? '<div>銀行側で受付が完了しました。</div>'
-        : '<div>銀行アプリ／ブックマークから入り、<strong>受付番号・件数・合計・各人の金額が一致するか確認して承認</strong>してください（メールのリンクは使わない）。<br>承認するまで送金されません。期限までに承認しないと期限切れになり、再依頼が必要です。</div>') +
-      '<div style="color:var(--text-muted)">マイチャットに明細の要約を送りました。承認はそれと照らし合わせて行ってください。</div>' +
+      main +
+      (data.summary_sent === false
+        ? '<div style="color:#C05A0A">⚠ マイチャットへの要約送信に失敗しました。承認前に「📋 依頼履歴」の明細と照らし合わせてください。</div>'
+        : (pending ? '' : '<div style="color:var(--text-muted)">マイチャットに明細の要約を送りました。承認はそれと照らし合わせて行ってください。</div>')) +
     '</div>' +
     '<div style="display:flex;justify-content:flex-end;margin-top:14px">' +
       `<button class="btn-primary" style="font-size:13px;padding:8px 14px" onclick="closeModal('modal-po-transfer-done')">閉じる</button>` +
@@ -32509,6 +32689,7 @@ function poTransferShowDone(data) {
 
 // ---------- 依頼履歴（この月） ----------
 const PO_TR_STATUS = {
+  requesting:        { icon: '🕓', label: '送信確認中', bg: '#fff8e1', color: '#7A5F00' },
   requested:         { icon: '⏳', label: '依頼中',   bg: '#fff8e1', color: '#7A5F00' },
   awaiting_approval: { icon: '⏳', label: '承認待ち', bg: '#fff8e1', color: '#7A5F00' },
   approved:          { icon: '🟦', label: '予約中',   bg: '#e3f2fd', color: '#1565c0' },
@@ -32518,10 +32699,11 @@ const PO_TR_STATUS = {
   cancelled:         { icon: '🚫', label: '取消',     bg: 'var(--border-light)', color: 'var(--text-muted)' },
   failed:            { icon: '❌', label: '失敗',     bg: '#fdecea', color: '#C0392B' },
 };
-const PO_TR_OPEN_STATUSES = ['requested', 'awaiting_approval', 'approved', 'processing'];
+const PO_TR_OPEN_STATUSES = ['requesting', 'requested', 'awaiting_approval', 'approved', 'processing'];
 let _poTrBatchesLoading = false;
 let _poTrBatchesMonth = '';
 const _poTrItemsOpen = new Set(); // 明細を開いている batch id
+const _poTrItemsCache = {};       // batch id → GET .../batches/:id の items（明細は一覧に載らないので開いたときに取る）
 
 async function poBatchesLoad(force) {
   if (!poTransferAvailable() || _poYear == null) { poRenderBatches(); return; }
@@ -32549,6 +32731,12 @@ function poTrBatch(id) {
   return (_poTrBatches || []).find(b => String(b.id) === String(id)) || null;
 }
 
+function poTrStatusBadge(b) {
+  const st = PO_TR_STATUS[b.status] || { icon: '❔', label: b.status || '不明', bg: 'var(--border-light)', color: 'var(--text-muted)' };
+  const label = b.status_label || st.label; // サーバーの status_label を優先
+  return `<span class="po-badge" style="background:${st.bg};color:${st.color}">${st.icon} ${esc(label)}</span>`;
+}
+
 function poRenderBatches() {
   const el = document.getElementById('po-batches');
   if (!el) return;
@@ -32563,26 +32751,33 @@ function poRenderBatches() {
   }
   html += '<div class="card" style="padding:0"><table class="po-batch-tbl"><thead><tr><th>受付番号</th><th>指定日</th><th style="text-align:right">件数</th><th style="text-align:right">合計</th><th>状態</th><th>依頼</th><th>操作</th></tr></thead><tbody>';
   _poTrBatches.forEach(b => {
-    const st = PO_TR_STATUS[b.status] || { icon: '❔', label: b.status || '不明', bg: 'var(--border-light)', color: 'var(--text-muted)' };
     const bid = esc(String(b.id));
     const open = PO_TR_OPEN_STATUSES.includes(b.status);
-    let stateCell = `<span class="po-badge" style="background:${st.bg};color:${st.color}">${st.icon} ${esc(st.label)}</span>`;
-    if (b.status === 'failed' && b.last_error) stateCell += `<div style="font-size:11px;color:#C0392B;margin-top:3px">${esc(b.last_error)}</div>`;
+    let stateCell = poTrStatusBadge(b);
+    if (b.status === 'requesting') stateCell += '<div style="font-size:11px;color:#7A5F00;margin-top:3px">銀行の応答を確認できていません。「最新の状態」で確認し、受付が無ければ「再送」</div>';
+    if ((b.status === 'failed' || b.status === 'expired') && b.last_error) stateCell += `<div style="font-size:11px;color:#C0392B;margin-top:3px">${esc(b.last_error)}</div>`;
     if (b.last_polled_at) stateCell += `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">確認 ${esc(poJstDT(b.last_polled_at))}</div>`;
     if (b.completed_at) stateCell += `<div style="font-size:11px;color:var(--text-muted)">完了 ${esc(poJstDT(b.completed_at))}</div>`;
     const reqCell = `<div style="font-size:12px">${esc(b.requested_by_name || '')}</div><div style="font-size:11px;color:var(--text-muted)">${esc(poJstDT(b.requested_at))}</div>`;
     let ops = '';
     if (open) ops += `<button class="btn-sm" style="font-size:11px" onclick="poBatchPoll('${bid}',this)">最新の状態</button> `;
+    if (b.status === 'requesting') ops += `<button class="btn-sm" style="font-size:11px;color:#7A5F00;border-color:#fb8c00" onclick="poBatchRetry('${bid}',this)" title="銀行に受付が無いことを確認してから、同じ内容を送り直します">再送</button> `;
     if (['requested', 'awaiting_approval', 'approved'].includes(b.status)) ops += `<button class="btn-sm" style="font-size:11px;color:#A32D2D;border-color:#F09595" onclick="poBatchCancel('${bid}',this)">取消依頼</button> `;
     const itemsOpen = _poTrItemsOpen.has(String(b.id));
     ops += `<button class="btn-sm" style="font-size:11px" onclick="poBatchToggleItems('${bid}')">明細 ${itemsOpen ? '▴' : '▾'}</button>`;
     let itemsHtml = '';
     if (itemsOpen) {
-      const items = b.items || [];
-      itemsHtml = '<div class="po-batch-items">' + (items.length === 0 ? '<span style="color:var(--text-muted)">明細がありません</span>' :
+      // 詳細（GET .../batches/:id）が取れていればそれ、まだなら request_summary.items の要約
+      const detail = _poTrItemsCache[String(b.id)];
+      const items = Array.isArray(detail) ? detail : (Array.isArray(b.items) ? b.items : ((b.request_summary && b.request_summary.items) || []));
+      itemsHtml = '<div class="po-batch-items">' +
+        (detail === undefined ? '<div style="color:var(--text-muted)">明細を取得中…</div>' : '') +
+        (items.length === 0 ? '<span style="color:var(--text-muted)">明細がありません</span>' :
         items.map(it => {
-          const ist = it.status === 'completed' ? '✅' : it.status === 'returned' ? '↩ 組戻' : it.status === 'failed' ? '❌' : '・';
-          return `<div>${ist} ${esc(it.full_name || '')} ${Number(it.amount || 0).toLocaleString()}円 <span style="color:var(--text-muted)">****${esc(it.account_number_last4 || '')}</span></div>`;
+          const ist = it.status === 'completed' ? '✅' : it.status === 'returned' ? '↩' : it.status === 'failed' ? '❌' : '・';
+          const stl = it.status_label ? `<span style="color:var(--text-muted)">${esc(it.status_label)}</span> ` : '';
+          const err = it.error_detail ? `<span style="color:#C0392B">${esc(typeof it.error_detail === 'string' ? it.error_detail : (it.error_detail.message || JSON.stringify(it.error_detail)))}</span>` : '';
+          return `<div>${ist} ${stl}${esc(it.display_name || it.full_name || '')} ${Number(it.amount || 0).toLocaleString()}円 <span style="color:var(--text-muted)">${esc(it.beneficiary_name || '')} ****${esc(it.account_number_last4 || '')}</span> ${err}</div>`;
         }).join('')) + '</div>';
     }
     html += '<tr>' +
@@ -32600,19 +32795,37 @@ function poRenderBatches() {
   el.innerHTML = html;
 }
 
-function poBatchToggleItems(id) {
+async function poBatchToggleItems(id) {
   const key = String(id);
-  if (_poTrItemsOpen.has(key)) _poTrItemsOpen.delete(key); else _poTrItemsOpen.add(key);
+  if (_poTrItemsOpen.has(key)) { _poTrItemsOpen.delete(key); poRenderBatches(); return; }
+  _poTrItemsOpen.add(key);
   poRenderBatches();
+  if (_poTrItemsCache[key] !== undefined) return;
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/transfer/batches/${encodeURIComponent(id)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '明細の取得に失敗しました');
+    const b = data.batch || data;
+    _poTrItemsCache[key] = Array.isArray(b.items) ? b.items : [];
+    poApplyBatch(Object.assign({}, poTrBatch(id) || {}, b, { items: undefined }));
+  } catch (e) {
+    console.warn('[payout][transfer][batch-detail]', e);
+    _poTrItemsCache[key] = null; // 要約で代替
+    showToast(e.message, 'error');
+    poRenderBatches();
+  }
 }
 
 function poApplyBatch(batch) {
-  if (!batch || !_poTrBatches) return;
+  if (!batch) return;
+  if (!_poTrBatches) _poTrBatches = [];
   const i = _poTrBatches.findIndex(b => String(b.id) === String(batch.id));
-  if (i >= 0) _poTrBatches[i] = batch; else _poTrBatches.unshift(batch);
+  if (i >= 0) _poTrBatches[i] = Object.assign({}, _poTrBatches[i], batch); else _poTrBatches.unshift(batch);
+  if (Array.isArray(batch.items)) _poTrItemsCache[String(batch.id)] = batch.items;
   poRenderBatches();
 }
 
+// 手動で結果照会→状況照会。応答 {ok, changed, result_code, transfer_status, batch}
 async function poBatchPoll(id, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '確認中…'; }
   try {
@@ -32621,8 +32834,9 @@ async function poBatchPoll(id, btn) {
     if (!res.ok) throw new Error(data.error || '状態の取得に失敗しました');
     const b = data.batch || data;
     poApplyBatch(b);
-    const st = PO_TR_STATUS[b.status];
-    showToast(`状態: ${st ? st.icon + ' ' + st.label : b.status}`, 'success');
+    const label = b.status_label || (PO_TR_STATUS[b.status] ? PO_TR_STATUS[b.status].label : b.status);
+    const icon = PO_TR_STATUS[b.status] ? PO_TR_STATUS[b.status].icon + ' ' : '';
+    showToast(data.changed === false ? `状態に変化はありません（${icon}${label}）` : `状態: ${icon}${label}`, 'success');
     if (b.status === 'completed') poFetch(); // 消し込みが反映された一覧を取り直す
   } catch (e) {
     showToast(e.message, 'error');
@@ -32630,6 +32844,38 @@ async function poBatchPoll(id, btn) {
   }
 }
 
+// 応答消失（requesting）の再送。POST .../batches/:id/retry（サーバーが銀行側の受付有無を確認してから同じ冪等キーで送り直す）
+async function poBatchRetry(id, btn) {
+  const b = poTrBatch(id);
+  const amt = b ? `${Number(b.total_count || 0)}件・${Number(b.total_amount || 0).toLocaleString()}円` : '';
+  if (!confirm(`この依頼（${amt}）を銀行に送り直します。銀行側に同じ受付がある場合はサーバーがそれを採用し、二重には送りません。よろしいですか？`)) return;
+  if (btn) { btn.disabled = true; btn.textContent = '再送中…'; }
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/transfer/batches/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && data.code === 'reauth_required') {
+      showToast('本人確認が必要です。いったん総合振込の依頼画面から再認証してください', 'warn', 8000);
+      return;
+    }
+    if (!res.ok) throw new Error(data.error || '再送に失敗しました');
+    const nb = data.batch || data;
+    if (nb && nb.id) poApplyBatch(nb);
+    if (data.pending || (nb && nb.status === 'requesting')) {
+      showToast('銀行からの応答をまだ確認できません。数分後に「最新の状態」を押してください', 'warn', 8000);
+    } else {
+      showToast(`再送しました${nb && nb.apply_no ? `（受付番号 ${nb.apply_no}）` : ''}。銀行アプリで内容を確認して承認してください`, 'success', 8000);
+      poTransferShowDone(Object.assign({ apply_no: nb && nb.apply_no, status: nb && nb.status, status_label: nb && nb.status_label }, data));
+    }
+    poBatchesLoad(true);
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    const b2 = document.querySelector(`#po-batches button[onclick*="poBatchRetry('${String(id).replace(/'/g, '')}'"]`);
+    if (b2) { b2.disabled = false; b2.textContent = '再送'; }
+  }
+}
+
+// 総合振込取消依頼。応答 {ok, result_code, needs_bank_approval, batch}（409 not_cancellable / cancel_pending）
 async function poBatchCancel(id, btn) {
   const b = poTrBatch(id);
   const no = b && b.apply_no ? `受付番号 ${b.apply_no} ` : '';
@@ -32637,9 +32883,14 @@ async function poBatchCancel(id, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '取消依頼中…'; }
   try {
     const res = await apiFetch(`${API}/admin/payouts/transfer/batches/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '取消依頼に失敗しました');
-    showToast('取消依頼を出しました。銀行アプリで取消を承認すると確定します', 'success', 8000);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (data.code === 'not_cancellable') throw new Error('この依頼は取消できる状態ではありません（最新の状態を確認してください）');
+      if (data.code === 'cancel_pending') throw new Error('すでに取消依頼が出ています。銀行アプリで取消を承認してください');
+      throw new Error(data.error || '取消依頼に失敗しました');
+    }
+    if (data.batch) poApplyBatch(data.batch);
+    showToast(data.needs_bank_approval === false ? '取消が完了しました' : '取消依頼を出しました。銀行アプリで取消を承認すると確定します', 'success', 8000);
     poBatchesLoad(true);
   } catch (e) {
     showToast(e.message, 'error');
