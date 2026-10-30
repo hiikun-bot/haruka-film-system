@@ -288,6 +288,8 @@ app.use('/api/', (req, res, next) => {
 
 // 契約管理 API（ADR 035）。/api/haruka の汎用ルートより前に mount する
 app.use('/api/haruka/contracts', require('./routes/contracts'));
+// 🧾 源泉徴収台帳（ADR 054 §5 Stage D）: payout.page ＋ 最高管理者のみ
+app.use('/api/haruka/admin/withholding', require('./routes/withholding'));
 // 🎞 思い出アルバム API（ADR 052）。保存先は Drive のみ・DB テーブルなし
 app.use('/api/haruka/memories', require('./routes/memories'));
 // 🏦 あおぞら銀行 API 総合振込（ADR 054）。/admin/bank/* と /admin/payouts/transfer/* だけを受け、
@@ -970,6 +972,13 @@ const runSchemaSync = require('./db/migrate');
         console.error('[startup] bank-transfer-poller 起動失敗:', e.message);
       }
     }
+    // 源泉所得税（ADR 054 §5）: 毎月1日 JST 10時以降に前月分の集計を管理者のマイチャットへ 1 通
+    try {
+      const { startWithholdingMonthlyReminder } = require('./workers/withholding-monthly-reminder');
+      startWithholdingMonthlyReminder();
+    } catch (e) {
+      console.error('[startup] withholding-monthly-reminder 起動失敗:', e.message);
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
@@ -1012,6 +1021,12 @@ const runSchemaSync = require('./db/migrate');
       stopPricingPendingReminder();
     } catch (e) {
       console.error('[shutdown] pricing-pending-reminder 停止失敗:', e.message);
+    }
+    try {
+      const { stopWithholdingMonthlyReminder } = require('./workers/withholding-monthly-reminder');
+      stopWithholdingMonthlyReminder();
+    } catch (e) {
+      console.error('[shutdown] withholding-monthly-reminder 停止失敗:', e.message);
     }
     try {
       const { stopR2EvictionSweep } = require('./workers/r2-eviction-sweep');

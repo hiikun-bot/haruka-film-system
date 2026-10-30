@@ -9647,6 +9647,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       </div>
       <button class="btn-sm" id="po-rescan" onclick="poScan(true)">🔄 再スキャン</button>
       <button class="btn-sm" id="po-cw-sync" onclick="poChatworkSync(this)" title="ChatworkのDMルームを自動取得してメンバーに紐付けます">🔗 ChatworkDM同期</button>
+      <button class="btn-sm" id="po-withholding-btn" onclick="openWithholdingModal()" title="支払日ベースの源泉徴収税額の集計・納付用／支払調書用スプレッドシート出力（ADR 054）">🧾 源泉徴収</button>
       <span id="po-updated" style="margin-left:auto;font-size:11px;color:var(--text-muted)"></span>
     </div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">メンバーの月次請求書PDF（Drive）と振込状況の消し込みを管理します。読み込み時にDriveを再スキャンします（新しいPDFがある月は数十秒かかることがあります）。</div>
@@ -9750,6 +9751,14 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div id="ob-d-body">
       <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div>
     </div>
+  </div>
+</div>
+
+<!-- 🧾 源泉徴収（ADR 054 §5 Stage D）: 振込管理ヘッダーの「🧾 源泉徴収」から開く。描画は public/js/withholding.js の openWithholdingModal() -->
+<div class="modal-overlay" id="modal-withholding" style="z-index:300">
+  <div class="modal-card" style="width:min(1080px,96vw);max-height:90vh;overflow-y:auto">
+    <div class="modal-title"><span>🧾 源泉徴収（支払日ベース）</span><button class="modal-close" onclick="closeModal('modal-withholding')">×</button></div>
+    <div id="wh-body"><div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div></div>
   </div>
 </div>
 
@@ -31279,6 +31288,8 @@ function poName(r) {
 function loadPayoutPage() {
   const tableEl = document.getElementById('po-table');
   if (!tableEl) return;
+  // 🧾 源泉徴収ボタン（ADR 054 §5）: VIEW AS で admin 以外のときは出さない（本体は public/js/withholding.js）
+  { const _wh = document.getElementById('po-withholding-btn'); if (_wh) _wh.style.display = hasPermission('payout.page') ? '' : 'none'; }
   // VIEW AS 追従: 権限のないロールでは中身を出さない（ナビも applyRoleBasedUI で非表示・ADR 015）
   if (!hasPermission('payout.page')) {
     _poData = null;
@@ -63329,6 +63340,8 @@ function votStatusBadge(status) {
 <script src="/js/contract-wizard.js"></script>
 <script src="/js/contract-admin.js"></script>
 <script src="/js/memories.js"></script>
+<!-- 🧾 源泉徴収（ADR 054 §5）: 振込管理の「🧾 源泉徴収」モーダル（集計・スプレッドシート出力） -->
+<script src="/js/withholding.js"></script>
 <!-- 🧾 請求書エディタ（ADR 046）: 計算・判定はサーバーと同じ utils/invoice-editor.js を server.js が配信 → 画面 -->
 <script src="/js/invoice-editor-calc.js"></script>
 <script src="/js/invoice-editor.js"></script>
