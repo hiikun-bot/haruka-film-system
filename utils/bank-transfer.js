@@ -1,0 +1,539 @@
+// utils/bank-transfer.js — 総合振込の業務ロジック（DB・通知つき。ADR 054 Stage B）
+// =============================================================
+// routes/bank-transfer.js（管理者操作）と workers/bank-transfer-poller.js（10 分ごとの照会）が共用する。
+//   - 明細の入力集め（payout_records / users / invoices / 同月の依頼済み）→ utils/bank-transfer-plan.js で組み立て
+//   - preview_token（HMAC 署名・10 分期限・明細ハッシュ・依頼者 id）
+//   - bank_api_audit_logs への記録（秘密情報なし）
+//   - 管理者マイチャットへの一報（バグ報告・単価承認待ちと同じ経路: resolveAdminMyChatRoomId → sendChatworkRoom）
+//   - 依頼結果照会 → 状況照会 → batch / items の更新 → 完了時の payout_records 消し込み＋本人通知
+//   - 口座情報が変わったときの本人・管理者通知（§1-4）
+//
+// ログに口座番号・受取人名・トークンを出さない（口座番号は下4桁のみ）。
+// =============================================================
+
+const crypto = require('crypto');
+const supabase = require('../supabase');
+const aozora = require('./aozora-api');
+const plan = require('./bank-transfer-plan');
+const { signState, verifyState } = require('./google-login');
+const { maskAccountNumber } = require('./zengin-format');
+const { notifyMember } = require('./member-notify');
+const { buildPayoutMessage } = require('./payout');
+
+const PREVIEW_TOKEN_TTL_MS = 10 * 60 * 1000;
+const REAUTH_TTL_MS = 10 * 60 * 1000;
+const STALE_REQUESTED_MS = 60 * 60 * 1000; // apply_no が付かないまま 1 時間 → failed 扱い
+
+const USER_COLUMNS = 'id, full_name, nickname, is_active, bank_code, branch_code, account_type, account_number, account_holder_kana, bank_info_updated_at, chatwork_dm_id, chatwork_direct_room_id, slack_dm_id';
+const INVOICE_COLUMNS = 'id, invoice_number, issuer_id, status, year, month, invoice_type, tax_mode, subtotal_amount, tax_amount, total_amount, withholding_amount, payout_amount';
+const BATCH_COLUMNS = 'id, connection_id, year, month, idempotency_key, transfer_designated_date, transfer_data_name, total_count, total_amount, fee_precheck, request_summary, apply_no, result_code, status, requested_by, requested_at, approved_at, completed_at, last_polled_at, last_error, created_at, updated_at';
+const ITEM_COLUMNS = 'id, batch_id, payout_record_id, user_id, item_id, bank_code, branch_code, account_type_code, account_number, beneficiary_name, amount, invoice_id, amount_source, gross_amount, tax_amount, withholding_amount, status, error_detail, created_at, updated_at';
+
+function stateSecret() {
+  return process.env.SESSION_SECRET || 'video-ops-dev-secret-change-in-production';
+}
+
+function todayJst(now = new Date()) {
+  return now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+}
+
+function yen(n) {
+  return `${Number(n || 0).toLocaleString('ja-JP')}円`;
+}
+
+// ---------- 監査ログ ----------
+async function audit({ actorUserId = null, action, connectionId = null, batchId = null, detail = null, req = null }) {
+  const row = {
+    actor_user_id: actorUserId,
+    action,
+    connection_id: connectionId,
+    batch_id: batchId,
+    detail: detail || null,
+  };
+  if (req) {
+    try {
+      const { getClientIP, getUserAgent } = require('./client-ip');
+      row.ip_address = getClientIP(req) || null;
+      row.user_agent = (getUserAgent(req) || '').slice(0, 500) || null;
+    } catch (_) { /* noop */ }
+  }
+  const { error } = await supabase.from('bank_api_audit_logs').insert(row);
+  if (error) console.warn(`[bank-transfer] 監査ログの保存に失敗 action=${action}: ${error.message}`);
+}
+
+// ---------- 管理者マイチャット ----------
+/** バグ報告・単価承認待ちと同じ経路で管理者（CHATWORK_API_TOKEN 名義人）のマイチャットへ送る */
+async function sendAdminMyChat(text) {
+  const notif = require('../notifications');
+  const token = process.env.CHATWORK_API_TOKEN;
+  if (!token) return { ok: false, reason: 'no_token' };
+  const roomId = await notif.resolveAdminMyChatRoomId(token);
+  if (!roomId) return { ok: false, reason: 'no_room' };
+  const r = await notif.sendChatworkRoom(roomId, text, { token });
+  if (!r.ok) console.warn(`[bank-transfer] マイチャット送信に失敗 reason=${r.reason}`);
+  return r;
+}
+
+function chatInfo(title, lines) {
+  return `[info][title]${title}[/title]${lines.filter(Boolean).join('\n')}[/info]`;
+}
+
+// ---------- preview_token ----------
+function signPreviewToken({ year, month, payoutRecordIds, transferDesignatedDate, hash, requesterId, connectionId, totalCount, totalAmount, totalFee, now = Date.now() }) {
+  return signState({
+    v: 1,
+    y: Number(year), m: Number(month),
+    ids: [...new Set(payoutRecordIds)].map(String).sort(),
+    d: String(transferDesignatedDate),
+    h: hash,
+    u: String(requesterId),
+    c: String(connectionId),
+    n: Number(totalCount), t: Number(totalAmount), f: totalFee == null ? null : Number(totalFee),
+    exp: now + PREVIEW_TOKEN_TTL_MS,
+  }, stateSecret());
+}
+
+function verifyPreviewToken(token, now = Date.now()) {
+  const p = verifyState(String(token || ''), stateSecret(), now);
+  if (!p || p.v !== 1 || !Array.isArray(p.ids) || !p.h || !p.u || !p.d) return null;
+  return p;
+}
+
+// ---------- 明細の入力集め ----------
+async function loadPlanInputs({ year, month, payoutRecordIds }) {
+  const ids = [...new Set((payoutRecordIds || []).map(String))];
+  if (!ids.length) return { records: [], notFoundIds: [], users: [], invoices: [], blockedUserIds: new Set() };
+
+  const { data: records, error: rErr } = await supabase
+    .from('payout_records').select('id, user_id, year, month, status, invoice_amount, amount_source, paid_at').in('id', ids);
+  if (rErr) throw new Error(`payout_records 取得失敗: ${rErr.message}`);
+  const found = new Set((records || []).map(r => r.id));
+  const notFoundIds = ids.filter(id => !found.has(id));
+  const userIds = [...new Set((records || []).map(r => r.user_id).filter(Boolean))];
+  if (!userIds.length) return { records: records || [], notFoundIds, users: [], invoices: [], blockedUserIds: new Set() };
+
+  const [{ data: users, error: uErr }, { data: invoices, error: iErr }, blockedUserIds] = await Promise.all([
+    supabase.from('users').select(USER_COLUMNS).in('id', userIds),
+    supabase.from('invoices').select(INVOICE_COLUMNS).in('issuer_id', userIds).eq('year', year).eq('month', month)
+      .is('invoice_type', null).in('status', plan.BILLED_INVOICE_STATUSES),
+    loadBlockedUserIds({ year, month, userIds }),
+  ]);
+  if (uErr) throw new Error(`users 取得失敗: ${uErr.message}`);
+  if (iErr) throw new Error(`invoices 取得失敗: ${iErr.message}`);
+  return { records: records || [], notFoundIds, users: users || [], invoices: invoices || [], blockedUserIds };
+}
+
+/** 同月に有効な依頼（requested〜completed）の明細がある user_id */
+async function loadBlockedUserIds({ year, month, userIds }) {
+  const { data: batches, error } = await supabase
+    .from('payout_transfer_batches').select('id').eq('year', year).eq('month', month).in('status', plan.BLOCKING_BATCH_STATUSES);
+  if (error) throw new Error(`payout_transfer_batches 取得失敗: ${error.message}`);
+  const batchIds = (batches || []).map(b => b.id);
+  if (!batchIds.length) return new Set();
+  const { data: items, error: iErr } = await supabase
+    .from('payout_transfer_items').select('user_id, status').in('batch_id', batchIds).in('user_id', userIds);
+  if (iErr) throw new Error(`payout_transfer_items 取得失敗: ${iErr.message}`);
+  // 明細が failed / returned で終わった人は再依頼できる
+  return new Set((items || []).filter(it => !['failed', 'returned'].includes(it.status)).map(it => it.user_id));
+}
+
+/** 明細を組み立てる（preview / request 共用） */
+async function buildPlan({ year, month, payoutRecordIds, now = Date.now() }) {
+  const inputs = await loadPlanInputs({ year, month, payoutRecordIds });
+  return plan.planTransferItems({ ...inputs, year, month, now });
+}
+
+// ---------- API レスポンス整形（口座は下4桁のみ） ----------
+function batchToJson(b, items) {
+  if (!b) return null;
+  const out = {
+    id: b.id,
+    connection_id: b.connection_id,
+    year: b.year,
+    month: b.month,
+    transfer_designated_date: b.transfer_designated_date,
+    transfer_data_name: b.transfer_data_name,
+    total_count: b.total_count,
+    total_amount: b.total_amount,
+    total_fee: b.fee_precheck && b.fee_precheck.total_fee != null ? Number(b.fee_precheck.total_fee) : null,
+    fee_precheck: b.fee_precheck || null,
+    request_summary: b.request_summary || null,
+    apply_no: b.apply_no || null,
+    result_code: b.result_code || null,
+    status: b.status,
+    status_label: BATCH_STATUS_LABELS[b.status] || b.status,
+    requested_by: b.requested_by || null,
+    requested_at: b.requested_at || null,
+    approved_at: b.approved_at || null,
+    completed_at: b.completed_at || null,
+    last_polled_at: b.last_polled_at || null,
+    last_error: b.last_error || null,
+    created_at: b.created_at || null,
+    updated_at: b.updated_at || null,
+  };
+  if (items) out.items = items.map(itemToJson);
+  return out;
+}
+
+const BATCH_STATUS_LABELS = {
+  requested: '依頼中', awaiting_approval: '承認待ち', approved: '承認済（予約中）', processing: '手続中',
+  completed: '完了', expired: '期限切れ', cancelled: '取消', failed: '失敗',
+};
+const ITEM_STATUS_LABELS = { pending: '未完了', completed: '完了', returned: '資金返却', failed: '不成立' };
+
+function itemToJson(it, user) {
+  if (!it) return null;
+  return {
+    id: it.id,
+    batch_id: it.batch_id,
+    payout_record_id: it.payout_record_id,
+    user_id: it.user_id,
+    display_name: user ? plan.displayNameOf(user) : (it.display_name || null),
+    item_id: it.item_id,
+    bank_code: it.bank_code,
+    branch_code: it.branch_code,
+    account_type_code: it.account_type_code,
+    account_number_last4: maskAccountNumber(it.account_number),
+    beneficiary_name: it.beneficiary_name,
+    amount: it.amount,
+    invoice_id: it.invoice_id || null,
+    amount_source: it.amount_source,
+    gross_amount: it.gross_amount,
+    tax_amount: it.tax_amount,
+    withholding_amount: it.withholding_amount,
+    status: it.status,
+    status_label: ITEM_STATUS_LABELS[it.status] || it.status,
+    error_detail: it.error_detail || null,
+    created_at: it.created_at || null,
+    updated_at: it.updated_at || null,
+  };
+}
+
+async function loadBatch(id) {
+  const { data, error } = await supabase.from('payout_transfer_batches').select(BATCH_COLUMNS).eq('id', id).maybeSingle();
+  if (error) throw new Error(`payout_transfer_batches 取得失敗: ${error.message}`);
+  return data || null;
+}
+
+async function loadItems(batchId) {
+  const { data, error } = await supabase.from('payout_transfer_items').select(ITEM_COLUMNS).eq('batch_id', batchId).order('item_id', { ascending: true });
+  if (error) throw new Error(`payout_transfer_items 取得失敗: ${error.message}`);
+  return data || [];
+}
+
+async function loadUsersMap(userIds) {
+  const ids = [...new Set((userIds || []).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const { data } = await supabase.from('users').select(USER_COLUMNS).in('id', ids);
+  return new Map((data || []).map(u => [u.id, u]));
+}
+
+async function updateBatch(id, patch) {
+  const { data, error } = await supabase
+    .from('payout_transfer_batches').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select(BATCH_COLUMNS).single();
+  if (error) throw new Error(`payout_transfer_batches 更新失敗: ${error.message}`);
+  return data;
+}
+
+// ---------- 依頼受付後の要約（§1-6） ----------
+function buildRequestSummaryText({ batch, items, envName }) {
+  const lines = [
+    `受付番号: ${batch.apply_no || '-'}`,
+    `対象: ${batch.year}年${batch.month}月分 ／ 振込指定日 ${batch.transfer_designated_date}`,
+    `件数: ${batch.total_count}件 ／ 合計: ${yen(batch.total_amount)}${batch.fee_precheck && batch.fee_precheck.total_fee != null ? `（手数料 ${yen(batch.fee_precheck.total_fee)}）` : ''}`,
+    `状態: ${BATCH_STATUS_LABELS[batch.status] || batch.status}${batch.result_code === '2' ? '（銀行画面での承認が必要です）' : ''}`,
+    envName === 'staging' ? '※ 開発環境（sunabar）への依頼です' : null,
+    '',
+    ...items.map(it => `・${it.display_name || it.beneficiary_name} ${it.account_number_last4 || maskAccountNumber(it.account_number)} ${yen(it.amount)}${it.amount_source === 'pdf' ? '（請求書なし・PDF額）' : ''}`),
+    '',
+    '銀行アプリ／ブックマークから入って、この内容と一致することを確認してから承認してください（メールのリンクは踏まない）。',
+  ];
+  return chatInfo('🏦 総合振込を依頼しました', lines);
+}
+
+// ---------- 依頼結果照会 → 状況照会 → 反映 ----------
+function parseStatusResponse(statusRes) {
+  const details = Array.isArray(statusRes?.bulkTransferDetails) ? statusRes.bulkTransferDetails : [];
+  const d = details[0] || null;
+  if (!d) return { transferStatus: null, infos: [], detailAvailable: false, totalFee: null };
+  const responses = Array.isArray(d.bulktransferResponses) ? d.bulktransferResponses : [];
+  const infos = responses.flatMap(r => (Array.isArray(r.bulkTransferInfos) ? r.bulkTransferInfos : []));
+  return {
+    transferStatus: d.transferStatus != null ? String(d.transferStatus) : null,
+    transferStatusName: d.transferStatusName || aozora.TRANSFER_STATUS_NAMES[String(d.transferStatus)] || null,
+    infos,
+    detailAvailable: statusRes.detailInfoResult === true,
+    totalFee: d.totalFee != null ? Number(d.totalFee) : null,
+    applyStatus: (((d.transferApplies || [])[0] || {}).transferApplyDetails || []).map(x => x.applyStatus).find(Boolean) || null,
+  };
+}
+
+/**
+ * 1 つの batch を銀行に照会して DB に反映する。
+ * @returns {Promise<{ batch: object, items: object[], changed: boolean, resultCode: string|null, transferStatus: string|null }>}
+ */
+async function pollBatch(batch, conn, { actorUserId = null, req = null } = {}) {
+  const nowIso = new Date().toISOString();
+  const prevStatus = batch.status;
+  const onRefreshed = (c) => audit({ actorUserId, action: 'token_refresh', connectionId: c.id, detail: { expires_at: c.access_token_expires_at } });
+
+  if (!batch.apply_no) {
+    // 依頼の途中で落ちた等（1 時間たっても受付番号なし）→ failed にして知らせる
+    if (batch.status === 'requested' && Date.now() - new Date(batch.requested_at || batch.created_at).getTime() > STALE_REQUESTED_MS) {
+      const updated = await updateBatch(batch.id, { status: 'failed', last_polled_at: nowIso, last_error: '受付番号が記録されないまま 1 時間経過しました。銀行画面で依頼が残っていないか確認してください' });
+      await audit({ actorUserId, action: 'error', batchId: batch.id, connectionId: conn?.id || null, detail: { reason: 'stale_requested' } });
+      await sendAdminMyChat(chatInfo('⚠ 総合振込の依頼が受付番号なしで止まっています', [
+        `対象: ${batch.year}年${batch.month}月分（${batch.total_count}件・${yen(batch.total_amount)}）`,
+        '銀行画面で同じ依頼が残っていないか確認してください。残っていなければ、振込管理からもう一度依頼できます。',
+      ]));
+      return { batch: updated, items: await loadItems(batch.id), changed: true, resultCode: null, transferStatus: null };
+    }
+    return { batch, items: await loadItems(batch.id), changed: false, resultCode: null, transferStatus: null };
+  }
+
+  let resultRes;
+  try {
+    resultRes = await aozora.bulkTransferRequestResult(conn, { accountId: conn.account_id, applyNo: batch.apply_no }, { onRefreshed });
+  } catch (e) {
+    const detail = e instanceof aozora.AozoraApiError ? e.toJSON() : { message: e.message };
+    await updateBatch(batch.id, { last_polled_at: nowIso, last_error: `依頼結果照会に失敗: ${e.message}` });
+    await audit({ actorUserId, action: 'error', batchId: batch.id, connectionId: conn.id, detail: { step: 'request-result', ...detail }, req });
+    throw e;
+  }
+  const resultCode = resultRes.resultCode != null ? String(resultRes.resultCode) : null;
+  const patch = { last_polled_at: nowIso, last_error: null, result_code: ['1', '2', '8'].includes(resultCode) ? resultCode : batch.result_code };
+  const cancelRequested = !!(batch.request_summary && batch.request_summary.cancel_requested_at);
+  let items = await loadItems(batch.id);
+  let transferStatus = null;
+  let infos = [];
+  let detailAvailable = false;
+
+  if (resultCode === '8') {
+    // 期限切（取消依頼の後なら「取消依頼が期限切れ」＝元の依頼はそのまま）
+    if (!cancelRequested) {
+      patch.status = 'expired';
+    } else {
+      patch.last_error = '取消依頼が承認されないまま期限切れになりました（元の依頼は残っています）';
+    }
+  } else if (resultCode === '2') {
+    if (!cancelRequested && ['requested', 'awaiting_approval'].includes(batch.status)) patch.status = 'awaiting_approval';
+  } else if (resultCode === '1') {
+    if (!batch.approved_at) patch.approved_at = resultRes.applyEndDatetime || nowIso;
+    let statusRes;
+    try {
+      statusRes = await aozora.bulkTransferStatus(conn, { accountId: conn.account_id, applyNo: batch.apply_no, detail: true }, { onRefreshed });
+    } catch (e) {
+      const detail = e instanceof aozora.AozoraApiError ? e.toJSON() : { message: e.message };
+      await updateBatch(batch.id, { ...patch, last_error: `状況照会に失敗: ${e.message}` });
+      await audit({ actorUserId, action: 'error', batchId: batch.id, connectionId: conn.id, detail: { step: 'status', ...detail }, req });
+      throw e;
+    }
+    const parsed = parseStatusResponse(statusRes);
+    transferStatus = parsed.transferStatus;
+    infos = parsed.infos;
+    detailAvailable = parsed.detailAvailable;
+    const mapped = aozora.mapTransferStatus(transferStatus);
+    if (mapped) {
+      // 30:不能・組戻あり は明細が読めるまで（依頼完了後 10 分程度）確定させない
+      if (transferStatus === '30' && !detailAvailable) patch.status = 'processing';
+      else patch.status = mapped;
+    } else if (!transferStatus) {
+      // 承認済みだが状況照会にまだ出てこない（依頼中・作成中は照会対象外）→ approved のまま次回
+      patch.status = ['requested', 'awaiting_approval'].includes(batch.status) ? 'approved' : batch.status;
+    }
+    if (parsed.totalFee != null) {
+      patch.fee_precheck = { ...(batch.fee_precheck || {}), actual_total_fee: parsed.totalFee };
+    }
+  } else {
+    patch.last_error = `依頼結果照会の結果コードが不明です（${resultCode}）`;
+  }
+
+  // 明細の反映（状況照会の明細が読めたとき、または batch が completed/failed に確定したとき）
+  const finalStatus = patch.status || batch.status;
+  const infoByItemId = new Map(infos.map(i => [String(i.itemId), i]));
+  const itemPatches = [];
+  for (const it of items) {
+    if (['completed', 'returned', 'failed'].includes(it.status)) continue;
+    const info = infoByItemId.get(String(it.item_id));
+    let next = null;
+    if (info) next = aozora.mapItemStatus(info, finalStatus);
+    else if (finalStatus === 'completed' && transferStatus === '20') next = 'completed';
+    else if (finalStatus === 'failed') next = 'failed';
+    if (next && next !== it.status) {
+      const errorDetail = next === 'completed' ? null : {
+        transfer_detail_status: info?.unableDetailInfos?.[0]?.transferDetailStatus || null,
+        refund_status: info?.unableDetailInfos?.[0]?.refundStatus || null,
+        is_repayment: info?.unableDetailInfos?.[0]?.isRepayment || null,
+        repayment_date: info?.unableDetailInfos?.[0]?.repaymentDate || null,
+        transfer_status: transferStatus,
+      };
+      itemPatches.push({ id: it.id, status: next, error_detail: errorDetail });
+    }
+  }
+  for (const p of itemPatches) {
+    const { error } = await supabase.from('payout_transfer_items').update({ status: p.status, error_detail: p.error_detail, updated_at: nowIso }).eq('id', p.id);
+    if (error) console.warn(`[bank-transfer] 明細更新失敗 item=${p.id}: ${error.message}`);
+  }
+  if (itemPatches.length) items = await loadItems(batch.id);
+
+  // 全件が確定（completed/returned/failed）していれば completed_at
+  const allDone = items.length > 0 && items.every(it => ['completed', 'returned', 'failed'].includes(it.status));
+  if (finalStatus === 'completed' && allDone && !batch.completed_at) patch.completed_at = nowIso;
+  if (['expired', 'cancelled', 'failed'].includes(finalStatus) && !batch.completed_at) patch.completed_at = nowIso;
+
+  const updated = await updateBatch(batch.id, patch);
+  const changed = updated.status !== prevStatus || itemPatches.length > 0;
+  await audit({
+    actorUserId, action: 'poll', batchId: batch.id, connectionId: conn.id,
+    detail: { result_code: resultCode, transfer_status: transferStatus, status_before: prevStatus, status_after: updated.status, items_changed: itemPatches.length, detail_available: detailAvailable },
+    req,
+  });
+
+  // 完了 → payout_records 消し込み＋本人へ通知（既存の「振込完了→送信」と同じ文面・経路）
+  if (updated.status === 'completed' && (prevStatus !== 'completed' || itemPatches.length)) {
+    await settleCompletedItems(updated, items, { actorUserId });
+  }
+  // 期限切れ・失敗・取消・返却 → 管理者マイチャットへ
+  if (changed) await notifyBatchOutcome(updated, items, { prevStatus, itemPatches });
+
+  return { batch: updated, items, changed, resultCode, transferStatus };
+}
+
+/** completed の明細 → payout_records を paid にして本人へ振込完了メッセージ */
+async function settleCompletedItems(batch, items, { actorUserId = null } = {}) {
+  const done = items.filter(it => it.status === 'completed' && it.payout_record_id);
+  if (!done.length) return;
+  const { data: recs } = await supabase.from('payout_records').select('id, user_id, status, month, memo, paid_via').in('id', done.map(it => it.payout_record_id));
+  const recById = new Map((recs || []).map(r => [r.id, r]));
+  const users = await loadUsersMap(done.map(it => it.user_id));
+  const paidAt = batch.transfer_designated_date ? `${batch.transfer_designated_date}T00:00:00+09:00` : new Date().toISOString();
+  let notified = 0;
+  for (const it of done) {
+    const rec = recById.get(it.payout_record_id);
+    if (!rec || rec.status === 'paid') continue; // 手動で消し込み済みなら触らない（二重通知防止）
+    const user = users.get(it.user_id);
+    const text = buildPayoutMessage({ month: batch.month });
+    let sent = { ok: false, body: null };
+    if (user) {
+      try { sent = await notifyMember(user, { chatwork: text, slack: text }); } catch (e) { sent = { ok: false, reason: e.message }; }
+    }
+    const patch = {
+      status: 'paid',
+      paid_at: new Date(paidAt).toISOString(),
+      paid_via: 'aozora_api',
+      transfer_item_id: it.id,
+      updated_at: new Date().toISOString(),
+    };
+    if (sent.ok) { patch.message_sent_at = new Date().toISOString(); patch.message_body = sent.body || text; notified++; }
+    const { error } = await supabase.from('payout_records').update(patch).eq('id', rec.id);
+    if (error) console.warn(`[bank-transfer] payout_records 消し込み失敗 record=${rec.id}: ${error.message}`);
+    if (!sent.ok) console.warn(`[bank-transfer] 振込完了の本人通知に失敗 user=${it.user_id}: ${sent.reason || '-'}`);
+  }
+  await audit({ actorUserId, action: 'complete', batchId: batch.id, connectionId: batch.connection_id, detail: { settled: done.length, notified } });
+}
+
+async function notifyBatchOutcome(batch, items, { prevStatus, itemPatches }) {
+  const head = `受付番号 ${batch.apply_no || '-'} ／ ${batch.year}年${batch.month}月分 ${batch.total_count}件・${yen(batch.total_amount)}`;
+  if (batch.status === 'expired' && prevStatus !== 'expired') {
+    await sendAdminMyChat(chatInfo('⏰ 総合振込の依頼が期限切れになりました', [head, '承認されないまま期限が切れたため、送金されていません。振込管理からもう一度依頼してください。']));
+    return;
+  }
+  if (batch.status === 'failed' && prevStatus !== 'failed') {
+    await sendAdminMyChat(chatInfo('❌ 総合振込が手続不成立になりました', [head, batch.last_error || '残高不足・限度額超過・出金口座規制などが考えられます。銀行画面で原因を確認してください。']));
+    return;
+  }
+  if (batch.status === 'cancelled' && prevStatus !== 'cancelled') {
+    await sendAdminMyChat(chatInfo('🚫 総合振込の依頼が取り消されました', [head]));
+    return;
+  }
+  const bad = (itemPatches || []).filter(p => p.status === 'returned' || p.status === 'failed');
+  if (bad.length) {
+    const users = await loadUsersMap(items.map(it => it.user_id));
+    const lines = bad.map(p => {
+      const it = items.find(x => x.id === p.id);
+      const u = it ? users.get(it.user_id) : null;
+      return `・${plan.displayNameOf(u)} ${maskAccountNumber(it?.account_number)} ${yen(it?.amount)} → ${ITEM_STATUS_LABELS[p.status]}`;
+    });
+    await sendAdminMyChat(chatInfo('⚠ 総合振込で振り込めなかった明細があります', [head, ...lines, '口座情報を本人に確認し、手動振込か再依頼で対応してください。']));
+  }
+  if (batch.status === 'completed' && prevStatus !== 'completed') {
+    const okCount = items.filter(it => it.status === 'completed').length;
+    await sendAdminMyChat(chatInfo('✅ 総合振込が完了しました', [head, `完了 ${okCount}件 ／ 振込管理を自動で消し込み、本人へ振込完了メッセージを送りました。`]));
+  }
+}
+
+// ---------- 口座変更の通知（§1-4） ----------
+const BANK_COLS = ['bank_name', 'bank_code', 'branch_name', 'branch_code', 'account_type', 'account_number', 'account_holder_kana'];
+
+function bankInfoChanged(before, after) {
+  return BANK_COLS.some(c => String(before?.[c] ?? '') !== String(after?.[c] ?? ''));
+}
+
+/**
+ * users の口座列が変わったとき、本人（privateOnly）と管理者マイチャットへ知らせる。
+ * 呼び出し側は await しなくてよい（失敗してもメンバー更新は成功扱い）。
+ */
+async function notifyBankInfoChanged({ user, before, after, actor }) {
+  if (!bankInfoChanged(before, after)) return { ok: false, reason: 'unchanged' };
+  const from = maskAccountNumber(before?.account_number) || '（未設定）';
+  const to = maskAccountNumber(after?.account_number) || '（未設定）';
+  const changedCols = BANK_COLS.filter(c => String(before?.[c] ?? '') !== String(after?.[c] ?? ''));
+  const when = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+  const actorName = actor ? (actor.nickname || actor.full_name || '') : '';
+  const selfChange = actor && user && String(actor.id) === String(user.id);
+  const memberText = [
+    '口座情報が変更されました。',
+    `口座番号: ${from} → ${to}`,
+    `変更日時: ${when}${selfChange ? '' : `（変更した人: ${actorName || '管理者'}）`}`,
+    '心当たりがなければ、すぐに髙橋まで連絡してください。',
+    '※ 安全のため、変更から 7 日間は自動振込の対象になりません。',
+  ].join('\n');
+  const results = {};
+  try {
+    results.member = await notifyMember(user, { chatwork: memberText, slack: memberText }, { privateOnly: true });
+  } catch (e) { results.member = { ok: false, reason: e.message }; }
+  try {
+    results.admin = await sendAdminMyChat(chatInfo('🏦 メンバーの口座情報が変更されました', [
+      `メンバー: ${plan.displayNameOf(user)}`,
+      `口座番号: ${from} → ${to}`,
+      `変更した項目: ${changedCols.join(', ')}`,
+      `変更した人: ${selfChange ? '本人' : (actorName || '不明')} ／ ${when}`,
+      '本人に心当たりがあるか確認してください。7 日間は総合振込の対象外になります。',
+    ]));
+  } catch (e) { results.admin = { ok: false, reason: e.message }; }
+  return { ok: true, results };
+}
+
+module.exports = {
+  PREVIEW_TOKEN_TTL_MS,
+  REAUTH_TTL_MS,
+  USER_COLUMNS,
+  BATCH_COLUMNS,
+  ITEM_COLUMNS,
+  BATCH_STATUS_LABELS,
+  ITEM_STATUS_LABELS,
+  BANK_COLS,
+  todayJst,
+  yen,
+  audit,
+  sendAdminMyChat,
+  chatInfo,
+  signPreviewToken,
+  verifyPreviewToken,
+  loadPlanInputs,
+  loadBlockedUserIds,
+  buildPlan,
+  batchToJson,
+  itemToJson,
+  loadBatch,
+  loadItems,
+  loadUsersMap,
+  updateBatch,
+  buildRequestSummaryText,
+  parseStatusResponse,
+  pollBatch,
+  settleCompletedItems,
+  notifyBatchOutcome,
+  bankInfoChanged,
+  notifyBankInfoChanged,
+};
