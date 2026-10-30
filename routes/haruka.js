@@ -24832,6 +24832,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'analytics.billing_recon.view',
   'team_load.page',
   'payout.page',
+  'payout.transfer', // ADR 054 あおぞら総合振込の依頼（migration 2026-10-29_aozora_bank_transfer.sql）
   'invoice_folder.view_own','invoice_folder.view_any','invoice_folder.generate_own','invoice_folder.generate_any',
   // ADR 035 契約管理（migration 2026-09-07_contracts.sql）
   'contract.page','contract.view','contract.bank_reveal',
