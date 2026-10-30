@@ -3179,6 +3179,147 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items_creative_cost
   ON invoice_items (creative_id, cost_type)
   WHERE creative_id IS NOT NULL;
 
+-- ==================== GMOあおぞらネット銀行 API 総合振込（ADR 054 Stage A） ====================
+-- migrations/2026-10-29_aozora_bank_transfer.sql と同内容（COMMENT ON は migration 側のみ）
+CREATE TABLE IF NOT EXISTS bank_api_connections (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider                 TEXT NOT NULL DEFAULT 'gmo_aozora' CHECK (provider IN ('gmo_aozora')),
+  environment              TEXT NOT NULL CHECK (environment IN ('staging', 'production')),
+  account_id               TEXT NOT NULL,
+  account_label            TEXT,
+  scopes                   TEXT,
+  access_token_enc         TEXT,
+  access_token_iv          TEXT,
+  access_token_tag         TEXT,
+  refresh_token_enc        TEXT,
+  refresh_token_iv         TEXT,
+  refresh_token_tag        TEXT,
+  access_token_expires_at  TIMESTAMPTZ,
+  connected_by             UUID REFERENCES users(id) ON DELETE SET NULL,
+  connected_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at               TIMESTAMPTZ,
+  last_used_at             TIMESTAMPTZ,
+  updated_at               TIMESTAMPTZ DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_api_connections_active
+  ON bank_api_connections(provider, environment) WHERE revoked_at IS NULL;
+ALTER TABLE bank_api_connections ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS payout_transfer_batches (
+  id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  connection_id             UUID REFERENCES bank_api_connections(id) ON DELETE SET NULL,
+  year                      INT NOT NULL,
+  month                     INT NOT NULL CHECK (month BETWEEN 1 AND 12),
+  idempotency_key           UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+  transfer_designated_date  DATE NOT NULL,
+  transfer_data_name        TEXT,
+  total_count               INT NOT NULL DEFAULT 0,
+  total_amount              BIGINT NOT NULL DEFAULT 0,
+  fee_precheck              JSONB,
+  request_summary           JSONB,
+  apply_no                  TEXT,
+  result_code               TEXT CHECK (result_code IN ('1', '2', '8')),
+  status                    TEXT NOT NULL DEFAULT 'requested'
+                            CHECK (status IN ('requested', 'awaiting_approval', 'approved', 'processing',
+                                              'completed', 'expired', 'cancelled', 'failed')),
+  requested_by              UUID REFERENCES users(id) ON DELETE SET NULL,
+  requested_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  approved_at               TIMESTAMPTZ,
+  completed_at              TIMESTAMPTZ,
+  last_polled_at            TIMESTAMPTZ,
+  last_error                TEXT,
+  created_at                TIMESTAMPTZ DEFAULT now(),
+  updated_at                TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_payout_transfer_batches_year_month ON payout_transfer_batches(year, month);
+CREATE INDEX IF NOT EXISTS idx_payout_transfer_batches_status     ON payout_transfer_batches(status);
+ALTER TABLE payout_transfer_batches ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS payout_transfer_items (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  batch_id            UUID NOT NULL REFERENCES payout_transfer_batches(id) ON DELETE CASCADE,
+  payout_record_id    UUID REFERENCES payout_records(id) ON DELETE SET NULL,
+  user_id             UUID REFERENCES users(id) ON DELETE SET NULL,
+  item_id             INT NOT NULL CHECK (item_id >= 1),
+  bank_code           TEXT NOT NULL,
+  branch_code         TEXT NOT NULL,
+  account_type_code   TEXT NOT NULL,
+  account_number      TEXT NOT NULL,
+  beneficiary_name    TEXT NOT NULL,
+  amount              BIGINT NOT NULL CHECK (amount >= 0),
+  invoice_id          UUID REFERENCES invoices(id) ON DELETE SET NULL,
+  amount_source       TEXT NOT NULL DEFAULT 'invoice' CHECK (amount_source IN ('invoice', 'pdf')),
+  gross_amount        BIGINT,
+  tax_amount          BIGINT,
+  withholding_amount  BIGINT,
+  status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'returned', 'failed')),
+  error_detail        JSONB,
+  created_at          TIMESTAMPTZ DEFAULT now(),
+  updated_at          TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (batch_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_payout_transfer_items_batch  ON payout_transfer_items(batch_id);
+CREATE INDEX IF NOT EXISTS idx_payout_transfer_items_user   ON payout_transfer_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_payout_transfer_items_record ON payout_transfer_items(payout_record_id);
+ALTER TABLE payout_transfer_items ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS bank_api_audit_logs (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+  action         TEXT NOT NULL CHECK (action IN ('connect', 'disconnect', 'token_refresh', 'precheck',
+                                                 'request', 'poll', 'cancel', 'complete', 'error')),
+  connection_id  UUID REFERENCES bank_api_connections(id) ON DELETE SET NULL,
+  batch_id       UUID REFERENCES payout_transfer_batches(id) ON DELETE SET NULL,
+  detail         JSONB,
+  ip_address     TEXT,
+  user_agent     TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_bank_api_audit_logs_created ON bank_api_audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bank_api_audit_logs_batch   ON bank_api_audit_logs(batch_id);
+ALTER TABLE bank_api_audit_logs ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_info_updated_at TIMESTAMPTZ;
+
+CREATE OR REPLACE FUNCTION users_touch_bank_info_updated_at() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.bank_code           IS DISTINCT FROM OLD.bank_code
+  OR NEW.branch_code         IS DISTINCT FROM OLD.branch_code
+  OR NEW.account_type        IS DISTINCT FROM OLD.account_type
+  OR NEW.account_number      IS DISTINCT FROM OLD.account_number
+  OR NEW.account_holder_kana IS DISTINCT FROM OLD.account_holder_kana
+  OR NEW.bank_name           IS DISTINCT FROM OLD.bank_name
+  OR NEW.branch_name         IS DISTINCT FROM OLD.branch_name THEN
+    NEW.bank_info_updated_at := now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_users_touch_bank_info_updated_at ON users;
+CREATE TRIGGER trg_users_touch_bank_info_updated_at
+  BEFORE UPDATE ON users
+  FOR EACH ROW EXECUTE FUNCTION users_touch_bank_info_updated_at();
+
+ALTER TABLE payout_records ADD COLUMN IF NOT EXISTS paid_via TEXT;
+ALTER TABLE payout_records DROP CONSTRAINT IF EXISTS payout_records_paid_via_check;
+ALTER TABLE payout_records ADD CONSTRAINT payout_records_paid_via_check CHECK (paid_via IN ('manual', 'aozora_api'));
+ALTER TABLE payout_records ADD COLUMN IF NOT EXISTS transfer_item_id UUID REFERENCES payout_transfer_items(id) ON DELETE SET NULL;
+
+INSERT INTO role_permissions (role, permission_key, allowed) VALUES
+  ('admin',             'payout.transfer', true),
+  ('secretary',         'payout.transfer', false),
+  ('producer',          'payout.transfer', false),
+  ('producer_director', 'payout.transfer', false),
+  ('director',          'payout.transfer', false),
+  ('editor',            'payout.transfer', false),
+  ('designer',          'payout.transfer', false),
+  ('external_director', 'payout.transfer', false)
+ON CONFLICT (role, permission_key) DO UPDATE SET allowed = EXCLUDED.allowed;
+
 -- ============================================================
 -- ADR 048: public スキーマの全テーブルで RLS を有効化（migrations/2026-10-07_enable_rls_all_public_tables.sql）
 -- 本ファイル途中（「セキュリティ：全 public テーブルで RLS 有効化」）にも同じループがあるが、
