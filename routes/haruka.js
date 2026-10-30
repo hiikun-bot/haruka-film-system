@@ -29701,6 +29701,16 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
       .from('payout_records').update(patch).eq('id', rec.id).select('*').maybeSingle();
     if (upErr) throw new Error(upErr.message);
 
+    // 台帳の元データを支払時点で凍結（ADR 054 §5 追補・API 振込の完了時と同じ形）。
+    // 列が無い（migration 2026-10-30_aozora_transfer_followup.sql 未適用）環境でも消し込み自体は成功させる
+    try {
+      const { loadLedgerSnapshotForRecord } = require('../utils/bank-transfer');
+      const snapshot = await loadLedgerSnapshotForRecord(rec, rec.invoice_amount);
+      const { error: lsErr } = await supabase.from('payout_records').update({ ledger_snapshot: snapshot }).eq('id', rec.id);
+      if (lsErr) console.warn('[payouts] ledger_snapshot の保存に失敗（列未追加の可能性）:', lsErr.message);
+      else updated.ledger_snapshot = snapshot;
+    } catch (e) { console.warn('[payouts] ledger_snapshot 作成に失敗:', e?.message); }
+
     res.json({ ok: true, sent, sent_via: sentVia, sent_reason: sentReason, record: payoutRecordToJson(updated, user) });
   } catch (e) {
     console.error('[payouts][POST pay]', e);

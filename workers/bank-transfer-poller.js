@@ -21,7 +21,7 @@ const aozora = require('../utils/aozora-api');
 const bt = require('../utils/bank-transfer');
 
 const TICK_MS = 10 * 60_000; // 10 分
-const ACTIVE_STATUSES = ['requested', 'awaiting_approval', 'approved', 'processing'];
+const ACTIVE_STATUSES = ['requesting', 'requested', 'awaiting_approval', 'approved', 'processing'];
 const QUIET_HOURS_JST = { from: 0, to: 6 }; // この時間帯は照会しない
 
 let intervalHandle = null;
@@ -34,6 +34,18 @@ function jstHour(now = new Date()) {
 /** この tick で照会してよいか（純関数・テスト用） */
 function shouldPoll({ hour }) {
   return !(hour >= QUIET_HOURS_JST.from && hour < QUIET_HOURS_JST.to);
+}
+
+/**
+ * requesting（応答待ち）の batch を自動で再送してよいか（純関数・テスト用）。
+ * 最後の送信（request_summary.last_attempt_at・無ければ requested_at）から 15 分以上たっていること。
+ */
+function shouldRetryRequesting(batch, now = Date.now()) {
+  if (!batch || batch.status !== 'requesting') return false;
+  const last = batch.request_summary?.last_attempt_at || batch.requested_at || batch.created_at;
+  const t = last ? new Date(last).getTime() : 0;
+  if (!t) return true;
+  return now - t >= bt.REQUESTING_RETRY_AFTER_MS;
 }
 
 async function loadActiveBatches() {
@@ -63,10 +75,18 @@ async function tick() {
     let changed = 0;
     for (const batch of batches) {
       try {
+        if (batch.status === 'requesting') {
+          // 応答待ち（§3-2-3）: 15 分以上続いていれば「照会 → 無ければ同じ idempotency_key で 1 回だけ再送」。
+          // それでも確認できなければ retryRequestingBatch が failed にして管理者マイチャットへ知らせる
+          if (!shouldRetryRequesting(batch, Date.now())) continue;
+          const r = await bt.retryRequestingBatch(batch, conn, { auto: true });
+          if (r.outcome !== 'pending') changed++;
+          continue;
+        }
         const r = await bt.pollBatch(batch, conn);
         if (r.changed) changed++;
       } catch (e) {
-        // pollBatch 内で last_error と監査ログは残している。次の tick で再試行
+        // pollBatch / retryRequestingBatch 内で last_error と監査ログは残している。次の tick で再試行
         console.warn(`[bank-transfer-poller] batch=${batch.id} 照会失敗: ${e.message}`);
       }
     }
@@ -107,6 +127,7 @@ module.exports = {
   stopBankTransferPoller,
   tick,
   shouldPoll,
+  shouldRetryRequesting,
   ACTIVE_STATUSES,
   TICK_MS,
 };

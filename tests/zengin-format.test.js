@@ -129,3 +129,19 @@ describe('buildBeneficiary', () => {
     expect(z.buildBeneficiary(null).ok).toBe(false);
   });
 });
+
+describe('ワーカの再送判定（workers/bank-transfer-poller.js）', () => {
+  // supabase 等を読み込まずに済むよう、ここでは純関数だけを個別に require する
+  test('shouldRetryRequesting: requesting かつ最後の送信から 15 分以上', () => {
+    jest.resetModules();
+    jest.doMock('../supabase', () => ({ from: () => ({}) }), { virtual: false });
+    const w = require('../workers/bank-transfer-poller');
+    const now = Date.UTC(2026, 10, 1, 1, 0, 0);
+    const min = 60 * 1000;
+    expect(w.shouldRetryRequesting({ status: 'requesting', requested_at: new Date(now - 16 * min).toISOString() }, now)).toBe(true);
+    expect(w.shouldRetryRequesting({ status: 'requesting', requested_at: new Date(now - 5 * min).toISOString() }, now)).toBe(false);
+    expect(w.shouldRetryRequesting({ status: 'requesting', requested_at: new Date(now - 60 * min).toISOString(), request_summary: { last_attempt_at: new Date(now - 3 * min).toISOString() } }, now)).toBe(false);
+    expect(w.shouldRetryRequesting({ status: 'awaiting_approval', requested_at: new Date(now - 60 * min).toISOString() }, now)).toBe(false);
+    expect(w.ACTIVE_STATUSES).toContain('requesting');
+  });
+});

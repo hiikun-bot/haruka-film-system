@@ -423,6 +423,29 @@ function bulkTransferStatus(conn, { accountId, applyNo, detail = true, itemKey }
   return withToken(conn, opts, (token) => apiRequest({ method: 'GET', path: '/bulktransfer/status', accessToken: token, query }));
 }
 
+/**
+ * GET /bulktransfer/status（一括照会・振込申請受付日の範囲）。応答が消えた依頼が受け付けられていないかを探す用。
+ * 明細は取らない（queryKeyClass=2 では detailInfoNecessity=true が 400 になる）。
+ */
+function bulkTransferStatusByDate(conn, { accountId, dateFrom, dateTo, nextItemKey }, opts = {}) {
+  const query = { accountId, queryKeyClass: '2', requestTransferTerm: '1' };
+  if (dateFrom) query.dateFrom = String(dateFrom);
+  if (dateTo) query.dateTo = String(dateTo);
+  if (nextItemKey) query.nextItemKey = String(nextItemKey);
+  return withToken(conn, opts, (token) => apiRequest({ method: 'GET', path: '/bulktransfer/status', accessToken: token, query }));
+}
+
+/**
+ * 「応答が消えた」エラーか（timeout / 接続断 / 5xx）。true なら銀行側で受け付けられている可能性があるので、
+ * 同じ Idempotency-Key で再送するか、状況照会で確かめてから再送する（仕様 共通仕様＜更新処理に関する注意事項＞）。
+ * 4xx（400 明細エラー・401・403 など）は確定した拒否なので false。
+ */
+function isLostResponse(err) {
+  if (!(err instanceof AozoraApiError)) return false;
+  if (err.phase === 'token') return false;
+  return err.status == null || (err.status >= 500 && err.status <= 599) || err.status === 429;
+}
+
 /** POST /bulktransfer/cancel */
 function bulkTransferCancel(conn, { accountId, applyNo, cancelTargetKeyClass }, opts = {}) {
   const body = { accountId, cancelTargetKeyClass: String(cancelTargetKeyClass || getConfig().cancelTargetKeyClass), applyNo };
@@ -514,7 +537,9 @@ module.exports = {
   bulkTransferRequest,
   bulkTransferRequestResult,
   bulkTransferStatus,
+  bulkTransferStatusByDate,
   bulkTransferCancel,
+  isLostResponse,
   pickTransferAccount,
   accountLabelOf,
   mapTransferStatus,

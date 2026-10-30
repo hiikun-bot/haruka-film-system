@@ -22,7 +22,8 @@ const { buildPayoutMessage } = require('./payout');
 
 const PREVIEW_TOKEN_TTL_MS = 10 * 60 * 1000;
 const REAUTH_TTL_MS = 10 * 60 * 1000;
-const STALE_REQUESTED_MS = 60 * 60 * 1000; // apply_no が付かないまま 1 時間 → failed 扱い
+const REQUESTING_RETRY_AFTER_MS = 15 * 60 * 1000; // requesting（応答待ち）が 15 分続いたらワーカが同じキーで 1 回だけ再送
+const REQUESTING_MAX_AUTO_RETRIES = 1;
 
 const USER_COLUMNS = 'id, full_name, nickname, is_active, bank_code, branch_code, account_type, account_number, account_holder_kana, bank_info_updated_at, chatwork_dm_id, chatwork_direct_room_id, slack_dm_id';
 const INVOICE_COLUMNS = 'id, invoice_number, issuer_id, status, year, month, invoice_type, tax_mode, subtotal_amount, tax_amount, total_amount, withholding_amount, payout_amount';
@@ -131,10 +132,10 @@ async function loadBlockedUserIds({ year, month, userIds }) {
   const batchIds = (batches || []).map(b => b.id);
   if (!batchIds.length) return new Set();
   const { data: items, error: iErr } = await supabase
-    .from('payout_transfer_items').select('user_id, status').in('batch_id', batchIds).in('user_id', userIds);
+    .from('payout_transfer_items').select('batch_id, user_id, status').in('batch_id', batchIds).in('user_id', userIds);
   if (iErr) throw new Error(`payout_transfer_items 取得失敗: ${iErr.message}`);
-  // 明細が failed / returned で終わった人は再依頼できる
-  return new Set((items || []).filter(it => !['failed', 'returned'].includes(it.status)).map(it => it.user_id));
+  // 明細が failed / returned で終わった人は再依頼できる（判定は純関数・jest あり）
+  return plan.blockedUserIdsFromItems(batches, items);
 }
 
 /** 明細を組み立てる（preview / request 共用） */
@@ -176,7 +177,7 @@ function batchToJson(b, items) {
 }
 
 const BATCH_STATUS_LABELS = {
-  requested: '依頼中', awaiting_approval: '承認待ち', approved: '承認済（予約中）', processing: '手続中',
+  requesting: '送信結果を確認中', requested: '依頼中', awaiting_approval: '承認待ち', approved: '承認済（予約中）', processing: '手続中',
   completed: '完了', expired: '期限切れ', cancelled: '取消', failed: '失敗',
 };
 const ITEM_STATUS_LABELS = { pending: '未完了', completed: '完了', returned: '資金返却', failed: '不成立' };
@@ -278,16 +279,7 @@ async function pollBatch(batch, conn, { actorUserId = null, req = null } = {}) {
   const onRefreshed = (c) => audit({ actorUserId, action: 'token_refresh', connectionId: c.id, detail: { expires_at: c.access_token_expires_at } });
 
   if (!batch.apply_no) {
-    // 依頼の途中で落ちた等（1 時間たっても受付番号なし）→ failed にして知らせる
-    if (batch.status === 'requested' && Date.now() - new Date(batch.requested_at || batch.created_at).getTime() > STALE_REQUESTED_MS) {
-      const updated = await updateBatch(batch.id, { status: 'failed', last_polled_at: nowIso, last_error: '受付番号が記録されないまま 1 時間経過しました。銀行画面で依頼が残っていないか確認してください' });
-      await audit({ actorUserId, action: 'error', batchId: batch.id, connectionId: conn?.id || null, detail: { reason: 'stale_requested' } });
-      await sendAdminMyChat(chatInfo('⚠ 総合振込の依頼が受付番号なしで止まっています', [
-        `対象: ${batch.year}年${batch.month}月分（${batch.total_count}件・${yen(batch.total_amount)}）`,
-        '銀行画面で同じ依頼が残っていないか確認してください。残っていなければ、振込管理からもう一度依頼できます。',
-      ]));
-      return { batch: updated, items: await loadItems(batch.id), changed: true, resultCode: null, transferStatus: null };
-    }
+    // requesting（応答待ち）は retryRequestingBatch の担当。ここでは触らない
     return { batch, items: await loadItems(batch.id), changed: false, resultCode: null, transferStatus: null };
   }
 
@@ -376,10 +368,8 @@ async function pollBatch(batch, conn, { actorUserId = null, req = null } = {}) {
   }
   if (itemPatches.length) items = await loadItems(batch.id);
 
-  // 全件が確定（completed/returned/failed）していれば completed_at
-  const allDone = items.length > 0 && items.every(it => ['completed', 'returned', 'failed'].includes(it.status));
-  if (finalStatus === 'completed' && allDone && !batch.completed_at) patch.completed_at = nowIso;
-  if (['expired', 'cancelled', 'failed'].includes(finalStatus) && !batch.completed_at) patch.completed_at = nowIso;
+  // 完了（または終了状態）になったら completed_at を必ず立てる（源泉徴収台帳はこれを支払日に使う。items に completed_at 列は無い）
+  if (['completed', 'expired', 'cancelled', 'failed'].includes(finalStatus) && !batch.completed_at) patch.completed_at = nowIso;
 
   const updated = await updateBatch(batch.id, patch);
   const changed = updated.status !== prevStatus || itemPatches.length > 0;
@@ -403,7 +393,7 @@ async function pollBatch(batch, conn, { actorUserId = null, req = null } = {}) {
 async function settleCompletedItems(batch, items, { actorUserId = null } = {}) {
   const done = items.filter(it => it.status === 'completed' && it.payout_record_id);
   if (!done.length) return;
-  const { data: recs } = await supabase.from('payout_records').select('id, user_id, status, month, memo, paid_via').in('id', done.map(it => it.payout_record_id));
+  const { data: recs } = await supabase.from('payout_records').select('id, user_id, year, month, status, memo, paid_via').in('id', done.map(it => it.payout_record_id));
   const recById = new Map((recs || []).map(r => [r.id, r]));
   const users = await loadUsersMap(done.map(it => it.user_id));
   const paidAt = batch.transfer_designated_date ? `${batch.transfer_designated_date}T00:00:00+09:00` : new Date().toISOString();
@@ -417,11 +407,15 @@ async function settleCompletedItems(batch, items, { actorUserId = null } = {}) {
     if (user) {
       try { sent = await notifyMember(user, { chatwork: text, slack: text }); } catch (e) { sent = { ok: false, reason: e.message }; }
     }
+    // 台帳の元データを支払時点で凍結（§5 追補）。請求書を後から直しても源泉額は変わらない
+    let ledgerSnapshot = null;
+    try { ledgerSnapshot = await loadLedgerSnapshotForRecord(rec, it.amount); } catch (e) { console.warn(`[bank-transfer] ledger_snapshot 作成失敗 record=${rec.id}: ${e.message}`); }
     const patch = {
       status: 'paid',
       paid_at: new Date(paidAt).toISOString(),
       paid_via: 'aozora_api',
       transfer_item_id: it.id,
+      ledger_snapshot: ledgerSnapshot,
       updated_at: new Date().toISOString(),
     };
     if (sent.ok) { patch.message_sent_at = new Date().toISOString(); patch.message_body = sent.body || text; notified++; }
@@ -460,6 +454,143 @@ async function notifyBatchOutcome(batch, items, { prevStatus, itemPatches }) {
     const okCount = items.filter(it => it.status === 'completed').length;
     await sendAdminMyChat(chatInfo('✅ 総合振込が完了しました', [head, `完了 ${okCount}件 ／ 振込管理を自動で消し込み、本人へ振込完了メッセージを送りました。`]));
   }
+}
+
+// ---------- 台帳スナップショット（§5 追補） ----------
+/** 同月の提出済/承認済メンバー請求書から ledger_snapshot を組み立てる（手動消し込みと API 完了で共用） */
+async function loadLedgerSnapshotForRecord(rec, amount) {
+  if (!rec || !rec.user_id) return plan.buildLedgerSnapshot({ amount, invoices: [] });
+  const { data: invoices, error } = await supabase
+    .from('invoices').select(INVOICE_COLUMNS)
+    .eq('issuer_id', rec.user_id).eq('year', rec.year).eq('month', rec.month)
+    .is('invoice_type', null).in('status', plan.BILLED_INVOICE_STATUSES);
+  if (error) throw new Error(`invoices 取得失敗: ${error.message}`);
+  return plan.buildLedgerSnapshot({ amount, invoices: invoices || [] });
+}
+
+// ---------- 依頼の送信（§3-2: DB に書いてから銀行へ・同じ idempotency_key で再送） ----------
+/**
+ * requesting の batch を銀行へ送り、応答を DB に反映する。request ルート・retry ルート・ワーカで共用。
+ * @returns {Promise<{ outcome: 'accepted'|'pending'|'failed', batch: object, resultCode: string|null, error: Error|null }>}
+ *   accepted … 受付（apply_no あり・status は result_code 1→approved / 2→awaiting_approval）
+ *   pending  … 応答が消えた（timeout / 接続断 / 5xx）。requesting のまま last_error を記録
+ *   failed   … 銀行が確定的に拒否（4xx）。status=failed
+ */
+async function sendBatchRequest(batch, items, conn, { actorUserId = null, req = null, attempt = 1 } = {}) {
+  if (!batch.idempotency_key) throw new Error('idempotency_key がありません');
+  const nowIso = new Date().toISOString();
+  const onRefreshed = (c) => audit({ actorUserId, action: 'token_refresh', connectionId: c.id, detail: { expires_at: c.access_token_expires_at } });
+  const body = plan.buildBulkTransferBody({
+    accountId: conn.account_id,
+    transferDesignatedDate: batch.transfer_designated_date,
+    transferDataName: batch.transfer_data_name,
+    items: items.map(it => ({ ...it, amount: Number(it.amount) })),
+  });
+  let result;
+  try {
+    result = await aozora.bulkTransferRequest(conn, body, batch.idempotency_key, { onRefreshed });
+  } catch (e) {
+    const detail = e instanceof aozora.AozoraApiError ? e.toJSON() : { message: e.message };
+    if (aozora.isLostResponse(e) || !(e instanceof aozora.AozoraApiError)) {
+      // 受け付けられている可能性がある → requesting のまま残し、同じキーで再送できるようにする
+      const updated = await updateBatch(batch.id, {
+        status: 'requesting',
+        last_error: `銀行の応答が返りませんでした（${e.message}）。同じ冪等キーで再送するか、状況照会で確認します`,
+        request_summary: { ...(batch.request_summary || {}), send_attempts: (batch.request_summary?.send_attempts || 0) + 1, last_attempt_at: nowIso },
+      });
+      await audit({ actorUserId, action: 'error', connectionId: conn.id, batchId: batch.id, detail: { step: 'request', outcome: 'pending', attempt, ...detail }, req });
+      console.warn(`[bank-transfer] 依頼の応答が消えました batch=${batch.id} attempt=${attempt}: ${e.message}`);
+      return { outcome: 'pending', batch: updated, resultCode: null, error: e };
+    }
+    const failed = await updateBatch(batch.id, { status: 'failed', completed_at: nowIso, last_error: `依頼に失敗: ${e.message}` });
+    await audit({ actorUserId, action: 'error', connectionId: conn.id, batchId: batch.id, detail: { step: 'request', outcome: 'failed', attempt, ...detail }, req });
+    await sendAdminMyChat(chatInfo('❌ 総合振込の依頼が銀行に受け付けられませんでした', [
+      `対象: ${batch.year}年${batch.month}月分（${batch.total_count}件・${yen(batch.total_amount)}）`,
+      `理由: ${e.message}`,
+      '依頼は登録されていません。内容を直してからもう一度依頼してください。',
+    ]));
+    return { outcome: 'failed', batch: failed, resultCode: null, error: e };
+  }
+  const resultCode = result?.resultCode != null ? String(result.resultCode) : null;
+  const status = resultCode === '1' ? 'approved' : (resultCode === '2' ? 'awaiting_approval' : 'requested');
+  const updated = await updateBatch(batch.id, {
+    apply_no: result?.applyNo || null,
+    result_code: ['1', '2', '8'].includes(resultCode) ? resultCode : null,
+    status,
+    approved_at: resultCode === '1' ? (result?.applyEndDatetime || nowIso) : null,
+    last_polled_at: nowIso,
+    last_error: null,
+    request_summary: { ...(batch.request_summary || {}), send_attempts: (batch.request_summary?.send_attempts || 0) + 1, accepted_at: nowIso },
+  });
+  await audit({ actorUserId, action: 'request', connectionId: conn.id, batchId: batch.id, detail: { apply_no: updated.apply_no, result_code: resultCode, count: updated.total_count, total_amount: updated.total_amount, idempotency_key: batch.idempotency_key, attempt }, req });
+  console.log(`[bank-transfer] 総合振込を依頼しました batch=${batch.id} apply_no=${updated.apply_no} result=${resultCode} count=${updated.total_count} attempt=${attempt}`);
+  const summaryItems = (updated.request_summary && updated.request_summary.items) || plan.summarizeItems(items);
+  await sendAdminMyChat(buildRequestSummaryText({ batch: updated, items: summaryItems, envName: conn.environment }));
+  return { outcome: 'accepted', batch: updated, resultCode, error: null };
+}
+
+/**
+ * 応答が消えた requesting の batch が、実は銀行に受け付けられていないかを一括照会で確かめる。
+ * 同じ振込データ名＋件数＋合計の受付があれば apply_no を取り込んで awaiting_approval（または状況に応じた status）にする。
+ * @returns {Promise<{ found: boolean, batch: object }>}
+ */
+async function reconcileRequestingBatch(batch, conn, { actorUserId = null, req = null } = {}) {
+  const onRefreshed = (c) => audit({ actorUserId, action: 'token_refresh', connectionId: c.id, detail: { expires_at: c.access_token_expires_at } });
+  const dateFrom = todayJst(new Date(batch.requested_at || batch.created_at));
+  const dateTo = todayJst();
+  let nextItemKey = null;
+  for (let page = 0; page < 5; page++) {
+    const res = await aozora.bulkTransferStatusByDate(conn, { accountId: conn.account_id, dateFrom, dateTo, nextItemKey }, { onRefreshed });
+    const hit = plan.matchPendingAcceptance(res, batch);
+    if (hit) {
+      const mapped = aozora.mapTransferStatus(hit.transferStatus) || 'awaiting_approval';
+      const nowIso = new Date().toISOString();
+      const updated = await updateBatch(batch.id, {
+        apply_no: hit.applyNo,
+        status: ['completed', 'expired', 'cancelled', 'failed'].includes(mapped) ? mapped : (mapped === 'awaiting_approval' ? 'awaiting_approval' : mapped),
+        result_code: mapped === 'awaiting_approval' ? '2' : (mapped === 'expired' ? '8' : '1'),
+        last_polled_at: nowIso,
+        last_error: null,
+        request_summary: { ...(batch.request_summary || {}), reconciled_at: nowIso },
+      });
+      await audit({ actorUserId, action: 'poll', connectionId: conn.id, batchId: batch.id, detail: { step: 'reconcile', apply_no: hit.applyNo, transfer_status: hit.transferStatus, status_after: updated.status }, req });
+      console.log(`[bank-transfer] 応答待ちの依頼が受付済みでした batch=${batch.id} apply_no=${hit.applyNo}`);
+      const summaryItems = (updated.request_summary && updated.request_summary.items) || [];
+      await sendAdminMyChat(buildRequestSummaryText({ batch: updated, items: summaryItems, envName: conn.environment }));
+      return { found: true, batch: updated };
+    }
+    if (!res?.hasNext || !res.nextItemKey) break;
+    nextItemKey = res.nextItemKey;
+  }
+  return { found: false, batch };
+}
+
+/**
+ * requesting の batch を「照会 → 無ければ同じキーで再送」する（retry ルートとワーカで共用）。
+ * @param {{ auto?: boolean }} opts auto=true はワーカからの自動再送（上限 REQUESTING_MAX_AUTO_RETRIES 回・超えたら failed）
+ */
+async function retryRequestingBatch(batch, conn, { actorUserId = null, req = null, auto = false } = {}) {
+  if (batch.status !== 'requesting') throw new Error(`requesting ではありません（${batch.status}）`);
+  const rec = await reconcileRequestingBatch(batch, conn, { actorUserId, req });
+  if (rec.found) return { outcome: 'accepted', reconciled: true, batch: rec.batch, resultCode: rec.batch.result_code };
+  const autoRetries = Number(batch.request_summary?.auto_retries || 0);
+  if (auto && autoRetries >= REQUESTING_MAX_AUTO_RETRIES) {
+    const nowIso = new Date().toISOString();
+    const failed = await updateBatch(batch.id, { status: 'failed', completed_at: nowIso, last_error: '銀行の応答が無いまま再送しても確認できませんでした。銀行画面で依頼が残っていないか確認してください' });
+    await audit({ actorUserId, action: 'error', connectionId: conn.id, batchId: batch.id, detail: { step: 'retry', outcome: 'gave_up', auto_retries: autoRetries } });
+    await sendAdminMyChat(chatInfo('⚠ 総合振込の依頼が確認できないまま止まりました', [
+      `対象: ${batch.year}年${batch.month}月分（${batch.total_count}件・${yen(batch.total_amount)}）`,
+      '銀行画面で同じ依頼（振込データ名 ' + (batch.transfer_data_name || '-') + '）が残っていないか確認してください。残っていなければ、振込管理からもう一度依頼できます。',
+    ]));
+    return { outcome: 'failed', reconciled: false, batch: failed, resultCode: null };
+  }
+  const items = await loadItems(batch.id);
+  const marked = auto
+    ? await updateBatch(batch.id, { request_summary: { ...(batch.request_summary || {}), auto_retries: autoRetries + 1 } })
+    : batch;
+  const attempt = Number(marked.request_summary?.send_attempts || 0) + 1;
+  const r = await sendBatchRequest(marked, items, conn, { actorUserId, req, attempt });
+  return { ...r, reconciled: false };
 }
 
 // ---------- 口座変更の通知（§1-4） ----------
@@ -507,6 +638,12 @@ async function notifyBankInfoChanged({ user, before, after, actor }) {
 module.exports = {
   PREVIEW_TOKEN_TTL_MS,
   REAUTH_TTL_MS,
+  REQUESTING_RETRY_AFTER_MS,
+  REQUESTING_MAX_AUTO_RETRIES,
+  loadLedgerSnapshotForRecord,
+  sendBatchRequest,
+  reconcileRequestingBatch,
+  retryRequestingBatch,
   USER_COLUMNS,
   BATCH_COLUMNS,
   ITEM_COLUMNS,

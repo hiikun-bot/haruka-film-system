@@ -167,3 +167,98 @@ describe('summarizeItems / validateDesignatedDate', () => {
     expect(plan.validateDesignatedDate('2027-03-01', '2026-11-01').ok).toBe(false);
   });
 });
+
+describe('二重依頼の除外（ADR 054 §3-2 追補）', () => {
+  const batches = [
+    { id: 'b-requesting', status: 'requesting' },
+    { id: 'b-await', status: 'awaiting_approval' },
+    { id: 'b-done', status: 'completed' },
+    { id: 'b-expired', status: 'expired' },
+    { id: 'b-cancel', status: 'cancelled' },
+    { id: 'b-failed', status: 'failed' },
+  ];
+  const items = [
+    { batch_id: 'b-requesting', user_id: 'u-req', status: 'pending' },
+    { batch_id: 'b-await', user_id: 'u-await', status: 'pending' },
+    { batch_id: 'b-done', user_id: 'u-done', status: 'completed' },
+    { batch_id: 'b-done', user_id: 'u-returned', status: 'returned' },
+    { batch_id: 'b-done', user_id: 'u-failed-item', status: 'failed' },
+    { batch_id: 'b-expired', user_id: 'u-expired', status: 'pending' },
+    { batch_id: 'b-cancel', user_id: 'u-cancel', status: 'pending' },
+    { batch_id: 'b-failed', user_id: 'u-failed-batch', status: 'pending' },
+  ];
+  test('requesting / awaiting_approval / completed の未確定・完了明細を持つ人だけブロック', () => {
+    const blocked = plan.blockedUserIdsFromItems(batches, items);
+    expect([...blocked].sort()).toEqual(['u-await', 'u-done', 'u-req']);
+  });
+  test('BLOCKING_BATCH_STATUSES に requesting が含まれる', () => {
+    expect(plan.BLOCKING_BATCH_STATUSES).toContain('requesting');
+    expect(plan.BLOCKING_BATCH_STATUSES).not.toContain('expired');
+  });
+  test('request 時の再評価: ブロック対象の user_id を返す（空なら OK）', () => {
+    const blocked = plan.blockedUserIdsFromItems(batches, items);
+    expect(plan.alreadyRequestedUserIds([{ user_id: 'u-await' }, { user_id: 'u-new' }, { user_id: 'u-await' }], blocked)).toEqual(['u-await']);
+    expect(plan.alreadyRequestedUserIds([{ user_id: 'u-new' }, { user_id: 'u-expired' }], blocked)).toEqual([]);
+  });
+  test('planTransferItems でも blockedUserIds の人は duplicate_in_month で除外', () => {
+    const blocked = plan.blockedUserIdsFromItems(batches, items);
+    const r = plan.planTransferItems({
+      records: [record({ id: 'r1', user_id: 'u-await' }), record({ id: 'r2', user_id: 'u-expired' })],
+      users: [user({ id: 'u-await' }), user({ id: 'u-expired' })],
+      invoices: [invoice({ issuer_id: 'u-await' }), invoice({ id: 'i2', issuer_id: 'u-expired' })],
+      blockedUserIds: blocked, year: 2026, month: 10, now: NOW,
+    });
+    expect(r.items.map(i => i.user_id)).toEqual(['u-expired']);
+    expect(r.excluded[0]).toMatchObject({ payout_record_id: 'r1', reason_code: 'duplicate_in_month' });
+  });
+});
+
+describe('checkDesignatedDateMatch（token の日付と body の日付）', () => {
+  test('一致すれば ok', () => {
+    expect(plan.checkDesignatedDateMatch('2026-11-05', '2026-11-05')).toEqual({ ok: true, value: '2026-11-05' });
+    expect(plan.checkDesignatedDateMatch('2026-11-05', ' 2026-11-05 ')).toEqual({ ok: true, value: '2026-11-05' });
+  });
+  test('違えば date_mismatch、無ければ date_required', () => {
+    expect(plan.checkDesignatedDateMatch('2026-11-05', '2026-11-06')).toMatchObject({ ok: false, code: 'date_mismatch' });
+    expect(plan.checkDesignatedDateMatch('2026-11-05', '')).toMatchObject({ ok: false, code: 'date_required' });
+    expect(plan.checkDesignatedDateMatch('2026-11-05', undefined)).toMatchObject({ ok: false, code: 'date_required' });
+  });
+});
+
+describe('buildLedgerSnapshot（支払時点の凍結）', () => {
+  test('exclusive の請求書から内訳を写す', () => {
+    const s = plan.buildLedgerSnapshot({ amount: 99790, invoices: [invoice()], now: new Date(NOW) });
+    expect(s).toEqual({
+      amount: 99790, invoice_id: 'i1', invoice_number: 'INV-2610-01', invoice_count: 1,
+      subtotal_amount: 100000, tax_amount: 10000, withholding_amount: 10210, payout_amount: 99790, total_amount: 110000,
+      snapshot_at: new Date(NOW).toISOString(),
+    });
+  });
+  test('inclusive は源泉 0、複数は合算、請求書なしは null', () => {
+    const inc = plan.buildLedgerSnapshot({ amount: 110000, invoices: [invoice({ tax_mode: 'inclusive', subtotal_amount: null, tax_amount: null, withholding_amount: null, payout_amount: null })] });
+    expect(inc.withholding_amount).toBe(0);
+    expect(inc.payout_amount).toBe(110000);
+    expect(inc.subtotal_amount).toBeNull();
+    const two = plan.buildLedgerSnapshot({ amount: 109790, invoices: [invoice(), invoice({ id: 'i2', invoice_number: 'INV-2610-02', payout_amount: 10000, total_amount: 11000, withholding_amount: 1000, tax_amount: 1000, subtotal_amount: 10000 })] });
+    expect(two.invoice_number).toBe('INV-2610-01, INV-2610-02');
+    expect(two.withholding_amount).toBe(11210);
+    expect(two.payout_amount).toBe(109790);
+    const none = plan.buildLedgerSnapshot({ amount: 45000, invoices: [] });
+    expect(none).toMatchObject({ amount: 45000, invoice_id: null, invoice_number: null, invoice_count: 0, withholding_amount: null, payout_amount: null });
+  });
+});
+
+describe('matchPendingAcceptance（応答が消えた依頼の受付確認）', () => {
+  const batch = { transfer_data_name: '26年10月分報酬', total_count: 2, total_amount: 150000, transfer_designated_date: '2026-11-05' };
+  const res = (over) => ({ bulkTransferDetails: [{ transferStatus: '2', transferApplies: [{ applyNo: '2026110112345678' }], bulktransferResponses: [{ transferDataName: '26年10月分報酬', totalCount: '2', totalAmount: '150000', transferDesignatedDate: '2026-11-05', ...over }] }] });
+  test('振込データ名＋件数＋合計が一致すれば applyNo を返す', () => {
+    expect(plan.matchPendingAcceptance(res(), batch)).toEqual({ applyNo: '2026110112345678', transferStatus: '2' });
+  });
+  test('件数・合計・データ名・指定日のどれかが違えば null', () => {
+    expect(plan.matchPendingAcceptance(res({ totalCount: '3' }), batch)).toBeNull();
+    expect(plan.matchPendingAcceptance(res({ totalAmount: '150001' }), batch)).toBeNull();
+    expect(plan.matchPendingAcceptance(res({ transferDataName: '26年9月分報酬' }), batch)).toBeNull();
+    expect(plan.matchPendingAcceptance(res({ transferDesignatedDate: '2026-11-06' }), batch)).toBeNull();
+    expect(plan.matchPendingAcceptance({}, batch)).toBeNull();
+  });
+});

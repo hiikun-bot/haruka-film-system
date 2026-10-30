@@ -283,7 +283,10 @@ router.post('/payouts/transfer/preview', async (req, res) => {
   }
 });
 
-// POST /api/haruka/admin/payouts/transfer/request  body { preview_token }
+// POST /api/haruka/admin/payouts/transfer/request  body { preview_token, transfer_designated_date }
+// 順序（ADR 054 §3-2）: 再認証 → token 検証 → 日付の突き合わせ → 明細を再構築してハッシュ一致 → 同月の未確定明細を再評価
+//   → batches を status='requesting'（idempotency_key 確定）＋ items を INSERT → そのキーで銀行へ依頼 → 応答を UPDATE。
+//   応答が消えたら requesting のまま `{pending:true}` を返し、POST .../batches/:id/retry（または 15 分後のワーカ）が同じキーで再送する
 router.post('/payouts/transfer/request', async (req, res) => {
   const re = reauthState(req);
   if (!re.ok) return res.status(401).json({ error: '依頼の前に本人確認（再認証）が必要です', code: 'reauth_required', google_reauth_available: googleLogin.isEnabled() });
@@ -291,13 +294,20 @@ router.post('/payouts/transfer/request', async (req, res) => {
     const tok = bt.verifyPreviewToken(req.body?.preview_token);
     if (!tok) return res.status(400).json({ error: '確認内容の有効期限が切れました。もう一度「依頼内容を確認」からやり直してください', code: 'preview_expired' });
     if (String(tok.u) !== String(req.user.id)) return res.status(403).json({ error: '確認した本人だけが依頼できます', code: 'preview_owner' });
+    const dateCheck = plan.checkDesignatedDateMatch(tok.d, req.body?.transfer_designated_date);
+    if (!dateCheck.ok) return res.status(dateCheck.code === 'date_required' ? 400 : 409).json({ error: dateCheck.error, code: dateCheck.code, token_date: tok.d });
 
     const conn = await aozora.loadActiveConnection();
     if (!conn) return res.status(409).json({ error: '銀行 API に接続されていません', code: 'bank_not_connected' });
     if (String(conn.id) !== String(tok.c)) return res.status(409).json({ error: '銀行の接続が変わりました。もう一度確認からやり直してください', code: 'preview_stale' });
 
-    // 同じ明細を組み立て直してハッシュ一致を確認（確認後に口座・金額・状態が変わっていたら止める）
+    // 同じ明細を組み立て直す。同月の未確定明細（他の依頼）に引っかかった人がいれば 409 already_requested
     const planned = await bt.buildPlan({ year: tok.y, month: tok.m, payoutRecordIds: tok.ids });
+    const dup = planned.excluded.filter(e => e.reason_code === 'duplicate_in_month');
+    if (dup.length) {
+      return res.status(409).json({ error: 'この月はすでに総合振込を依頼済みのメンバーがいます。依頼履歴を確認してください', code: 'already_requested', user_ids: [...new Set(dup.map(e => e.user_id))], excluded: planned.excluded });
+    }
+    // ハッシュ一致を確認（確認後に口座・金額・対象が変わっていたら止める）
     const hash = plan.planHash(planned.items, tok.d);
     if (hash !== tok.h || planned.total_count !== tok.n || planned.total_amount !== tok.t) {
       return res.status(409).json({ error: '確認した時点から明細（口座・金額・対象）が変わっています。もう一度確認からやり直してください', code: 'preview_stale', items: plan.summarizeItems(planned.items), excluded: planned.excluded });
@@ -315,12 +325,12 @@ router.post('/payouts/transfer/request', async (req, res) => {
       total_count: planned.total_count,
       total_amount: planned.total_amount,
       fee_precheck: { total_fee: tok.f, prechecked_at: nowIso },
-      request_summary: { items: plan.summarizeItems(planned.items) },
-      status: 'requested',
+      request_summary: { items: plan.summarizeItems(planned.items), send_attempts: 0 },
+      status: 'requesting',
       requested_by: req.user.id,
       requested_at: nowIso,
     }).select(bt.BATCH_COLUMNS).single();
-    if (bErr) throw new Error(`payout_transfer_batches 保存失敗: ${bErr.message}`);
+    if (bErr) throw new Error(`payout_transfer_batches 保存失敗: ${bErr.message}（status='requesting' を許す migration 2026-10-30_aozora_transfer_followup.sql が未適用の可能性）`);
 
     const { data: items, error: iErr } = await supabase.from('payout_transfer_items').insert(planned.items.map(it => ({
       batch_id: batch.id,
@@ -341,56 +351,75 @@ router.post('/payouts/transfer/request', async (req, res) => {
       status: 'pending',
     }))).select(bt.ITEM_COLUMNS);
     if (iErr) {
-      await bt.updateBatch(batch.id, { status: 'failed', last_error: `明細の保存に失敗: ${iErr.message}` });
+      await bt.updateBatch(batch.id, { status: 'failed', completed_at: new Date().toISOString(), last_error: `明細の保存に失敗: ${iErr.message}` });
       throw new Error(`payout_transfer_items 保存失敗: ${iErr.message}`);
     }
 
-    const body = plan.buildBulkTransferBody({ accountId: conn.account_id, transferDesignatedDate: tok.d, transferDataName, items: planned.items });
-    const onRefreshed = (c) => bt.audit({ actorUserId: req.user.id, action: 'token_refresh', connectionId: c.id, detail: { expires_at: c.access_token_expires_at } });
-    let result;
-    try {
-      result = await aozora.bulkTransferRequest(conn, body, idempotencyKey, { onRefreshed });
-    } catch (e) {
-      const detail = e instanceof aozora.AozoraApiError ? e.toJSON() : { message: e.message };
-      const failed = await bt.updateBatch(batch.id, { status: 'failed', last_error: `依頼に失敗: ${e.message}` });
-      await bt.audit({ actorUserId: req.user.id, action: 'error', connectionId: conn.id, batchId: batch.id, detail: { step: 'request', ...detail }, req });
-      await bt.sendAdminMyChat(bt.chatInfo('❌ 総合振込の依頼が銀行に受け付けられませんでした', [
-        `対象: ${tok.y}年${tok.m}月分（${planned.total_count}件・${bt.yen(planned.total_amount)}）`,
-        `理由: ${e.message}`,
-        '依頼は登録されていません。内容を直してからもう一度依頼してください。',
-      ]));
-      if (e instanceof aozora.AozoraApiError) {
-        return res.status(e.status === 400 ? 422 : 502).json({ error: e.message, code: 'request_failed', bank_error: e.toJSON(), batch: bt.batchToJson(failed) });
-      }
-      throw e;
-    }
+    // DB に書けたので、この batch の idempotency_key で銀行へ送る（応答が消えても同じキーで再送できる）
+    const r = await bt.sendBatchRequest(batch, items, conn, { actorUserId: req.user.id, req, attempt: 1 });
+    return respondSendOutcome(res, r, items);
+  } catch (e) {
+    return apiErrorResponse(res, e);
+  }
+});
 
-    const resultCode = result?.resultCode != null ? String(result.resultCode) : null;
-    const status = resultCode === '1' ? 'approved' : 'awaiting_approval';
-    const updated = await bt.updateBatch(batch.id, {
-      apply_no: result?.applyNo || null,
-      result_code: ['1', '2', '8'].includes(resultCode) ? resultCode : null,
-      status,
-      approved_at: resultCode === '1' ? (result?.applyEndDatetime || nowIso) : null,
-      last_polled_at: nowIso,
-    });
-    await bt.audit({ actorUserId: req.user.id, action: 'request', connectionId: conn.id, batchId: batch.id, detail: { apply_no: updated.apply_no, result_code: resultCode, count: updated.total_count, total_amount: updated.total_amount, idempotency_key: idempotencyKey }, req });
-    console.log(`[bank-transfer] 総合振込を依頼しました batch=${batch.id} apply_no=${updated.apply_no} result=${resultCode} count=${updated.total_count}`);
-
-    const summary = plan.summarizeItems(planned.items);
-    const chat = await bt.sendAdminMyChat(bt.buildRequestSummaryText({ batch: updated, items: summary, envName: conn.environment }));
-
-    res.status(201).json({
+/** sendBatchRequest / retryRequestingBatch の結果を HTTP に写す（request と retry で同じ形） */
+function respondSendOutcome(res, r, items) {
+  const b = r.batch;
+  if (r.outcome === 'accepted') {
+    return res.status(201).json({
       ok: true,
-      batch_id: updated.id,
-      apply_no: updated.apply_no,
-      result_code: resultCode,
-      status: updated.status,
-      status_label: bt.BATCH_STATUS_LABELS[updated.status],
-      needs_bank_approval: resultCode !== '1',
-      summary_sent: !!chat.ok,
-      batch: bt.batchToJson(updated, items || []),
+      pending: false,
+      reconciled: !!r.reconciled,
+      batch_id: b.id,
+      apply_no: b.apply_no,
+      result_code: r.resultCode,
+      status: b.status,
+      status_label: bt.BATCH_STATUS_LABELS[b.status],
+      needs_bank_approval: r.resultCode !== '1',
+      batch: bt.batchToJson(b, items || []),
     });
+  }
+  if (r.outcome === 'pending') {
+    // 銀行の応答が消えた。受付済みかもしれないので失敗にはせず、「送信結果を確認中」として retry を案内
+    return res.status(202).json({
+      ok: false,
+      pending: true,
+      batch_id: b.id,
+      status: 'requesting',
+      status_label: bt.BATCH_STATUS_LABELS.requesting,
+      error: '銀行からの応答が返りませんでした。依頼は受け付けられている可能性があるため、数分おいて「送信結果を確認」（retry）を押してください。15 分たっても確認できなければ自動で 1 回だけ再送します',
+      code: 'request_pending',
+      bank_error: r.error instanceof aozora.AozoraApiError ? r.error.toJSON() : { message: r.error?.message || null },
+      batch: bt.batchToJson(b, items || []),
+    });
+  }
+  const e = r.error;
+  return res.status(e instanceof aozora.AozoraApiError && e.status === 400 ? 422 : 502).json({
+    ok: false,
+    pending: false,
+    error: e?.message || '依頼に失敗しました',
+    code: 'request_failed',
+    bank_error: e instanceof aozora.AozoraApiError ? e.toJSON() : { message: e?.message || null },
+    batch: bt.batchToJson(b, items || []),
+  });
+}
+
+// POST /api/haruka/admin/payouts/transfer/batches/:id/retry
+// requesting（応答待ち）の batch を、状況照会で受付済みか確かめてから同じ idempotency_key で再送する
+router.post('/payouts/transfer/batches/:id/retry', async (req, res) => {
+  try {
+    const batch = await bt.loadBatch(req.params.id);
+    if (!batch) return res.status(404).json({ error: '依頼が見つかりません' });
+    if (batch.status !== 'requesting') {
+      return res.status(409).json({ error: `再送できるのは「${bt.BATCH_STATUS_LABELS.requesting}」の依頼だけです（現在: ${bt.BATCH_STATUS_LABELS[batch.status] || batch.status}）`, code: 'not_retryable', batch: bt.batchToJson(batch) });
+    }
+    const conn = await aozora.loadActiveConnection();
+    if (!conn) return res.status(409).json({ error: '銀行 API に接続されていません', code: 'bank_not_connected' });
+    if (String(conn.id) !== String(batch.connection_id)) return res.status(409).json({ error: '依頼したときと銀行の接続が違います', code: 'connection_changed' });
+    const r = await bt.retryRequestingBatch(batch, conn, { actorUserId: req.user.id, req, auto: false });
+    const items = await bt.loadItems(batch.id);
+    return respondSendOutcome(res, r, items);
   } catch (e) {
     return apiErrorResponse(res, e);
   }

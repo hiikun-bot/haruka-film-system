@@ -20,8 +20,10 @@ const { buildBeneficiary, maskAccountNumber } = require('./zengin-format');
 
 const BANK_INFO_GUARD_DAYS = 7;
 const BILLED_INVOICE_STATUSES = ['submitted', 'approved'];
-// 同月の二重振込防止: これらの状態の batch に明細がある人は除外（expired / cancelled / failed は再依頼できる）
-const BLOCKING_BATCH_STATUSES = ['requested', 'awaiting_approval', 'approved', 'processing', 'completed'];
+// 同月の二重振込防止（§3-2 / §4 追補）: これらの状態の batch に failed/returned でない明細がある人は除外
+// （expired / cancelled / failed の batch の明細だけが再依頼できる）
+const BLOCKING_BATCH_STATUSES = ['requesting', 'requested', 'awaiting_approval', 'approved', 'processing', 'completed'];
+const REUSABLE_ITEM_STATUSES = ['failed', 'returned'];
 
 const EXCLUDE_REASONS = {
   record_not_found: '振込レコードが見つかりません',
@@ -249,11 +251,99 @@ function validateDesignatedDate(value, todayJst) {
   return { ok: true, value: s };
 }
 
+// ---------- 二重依頼の除外（§3-2-4）・指定日の突き合わせ（§3-2-5）・台帳スナップショット（§5） ----------
+
+/**
+ * 同月の batch と明細から「新しい依頼に含めてはいけない user_id」を求める（純関数）。
+ * @param {Array<{id:string,status:string}>} batches 同月の payout_transfer_batches
+ * @param {Array<{batch_id:string,user_id:string,status:string}>} items それらの明細
+ * @returns {Set<string>}
+ */
+function blockedUserIdsFromItems(batches, items) {
+  const blockingBatch = new Set((batches || []).filter(b => BLOCKING_BATCH_STATUSES.includes(String(b.status))).map(b => b.id));
+  const out = new Set();
+  for (const it of items || []) {
+    if (!blockingBatch.has(it.batch_id)) continue;
+    if (REUSABLE_ITEM_STATUSES.includes(String(it.status))) continue;
+    if (it.user_id) out.add(it.user_id);
+  }
+  return out;
+}
+
+/** request 時の再評価: 明細の user_id が blocked に含まれていれば、その user_id の一覧（空なら OK） */
+function alreadyRequestedUserIds(items, blockedUserIds) {
+  const blocked = blockedUserIds instanceof Set ? blockedUserIds : new Set(blockedUserIds || []);
+  return [...new Set((items || []).map(it => it.user_id).filter(id => blocked.has(id)))];
+}
+
+/**
+ * preview_token の日付と request body の日付の突き合わせ。
+ * @returns {{ ok: true, value: string } | { ok: false, code: 'date_required'|'date_mismatch', error: string }}
+ */
+function checkDesignatedDateMatch(tokenDate, bodyDate) {
+  const body = String(bodyDate || '').trim();
+  if (!body) return { ok: false, code: 'date_required', error: 'transfer_designated_date を指定してください（確認画面の振込指定日）' };
+  if (body !== String(tokenDate || '').trim()) {
+    return { ok: false, code: 'date_mismatch', error: '振込指定日が確認した内容と違います。日付を変えたときは、もう一度「依頼内容を確認」からやり直してください' };
+  }
+  return { ok: true, value: body };
+}
+
+/**
+ * payout_records.ledger_snapshot の中身（支払時点で凍結する台帳の元データ）。
+ * @param {{ amount:number, invoices?:Array<object>, now?:Date }} p invoices は同月の提出済/承認済の請求書（複数なら合算）
+ */
+function buildLedgerSnapshot({ amount, invoices = [], now = new Date() }) {
+  const invs = (invoices || []).filter(Boolean);
+  const sum = (key) => (invs.some(i => i[key] != null) ? invs.reduce((s, i) => s + (Number(i[key]) || 0), 0) : null);
+  const exclusive = invs.filter(i => String(i.tax_mode || 'inclusive') === 'exclusive');
+  return {
+    amount: Number(amount) || 0,
+    invoice_id: invs[0]?.id || null,
+    invoice_number: invs.map(i => i.invoice_number).filter(Boolean).join(', ') || null,
+    invoice_count: invs.length,
+    subtotal_amount: sum('subtotal_amount'),
+    tax_amount: sum('tax_amount'),
+    withholding_amount: exclusive.length ? exclusive.reduce((s, i) => s + (Number(i.withholding_amount) || 0), 0) : (invs.length ? 0 : null),
+    payout_amount: invs.length ? invs.reduce((s, i) => s + invoicePayout(i).amount, 0) : null,
+    total_amount: sum('total_amount'),
+    snapshot_at: now.toISOString(),
+  };
+}
+
+/**
+ * 応答が消えた依頼（requesting）が銀行に受け付けられていないか、総合振込状況照会（一括照会）の結果から探す。
+ * 振込データ名＋件数＋合計が一致する受付があれば、その受付番号と振込ステータスを返す（純関数）。
+ * @returns {{ applyNo: string, transferStatus: string|null } | null}
+ */
+function matchPendingAcceptance(statusRes, batch) {
+  const details = Array.isArray(statusRes?.bulkTransferDetails) ? statusRes.bulkTransferDetails : [];
+  for (const d of details) {
+    const responses = Array.isArray(d.bulktransferResponses) ? d.bulktransferResponses : [];
+    const hit = responses.find(r =>
+      String(r.transferDataName || '') === String(batch.transfer_data_name || '')
+      && Number(r.totalCount) === Number(batch.total_count)
+      && Number(r.totalAmount) === Number(batch.total_amount)
+      && (!batch.transfer_designated_date || !r.transferDesignatedDate || String(r.transferDesignatedDate) === String(batch.transfer_designated_date)));
+    if (!hit) continue;
+    const applyNo = ((d.transferApplies || [])[0] || {}).applyNo || null;
+    if (!applyNo) continue;
+    return { applyNo: String(applyNo), transferStatus: d.transferStatus != null ? String(d.transferStatus) : null };
+  }
+  return null;
+}
+
 module.exports = {
   BANK_INFO_GUARD_DAYS,
   BILLED_INVOICE_STATUSES,
   BLOCKING_BATCH_STATUSES,
+  REUSABLE_ITEM_STATUSES,
   EXCLUDE_REASONS,
+  blockedUserIdsFromItems,
+  alreadyRequestedUserIds,
+  checkDesignatedDateMatch,
+  buildLedgerSnapshot,
+  matchPendingAcceptance,
   displayNameOf,
   invoicePayout,
   planTransferItems,
