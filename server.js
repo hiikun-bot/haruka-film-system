@@ -429,9 +429,11 @@ const rolesUtil = require('./utils/roles');
 const loginGuard = loginGuardUtil.createLoginGuard();
 const ADMIN_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-function loginLockResponse(res, retryAfterSec) {
+// reason: 'locked'（5 回失敗で 15 分）/ 'busy'（同一メール・IP の照合が同時に重なりすぎ）
+function loginLockResponse(res, { reason, retryAfterSec }) {
   res.setHeader('Retry-After', String(retryAfterSec));
-  return res.status(429).json({ error: loginGuardUtil.LOCK_MESSAGE, retry_after_sec: retryAfterSec });
+  const error = reason === 'busy' ? loginGuardUtil.BUSY_MESSAGE : loginGuardUtil.LOCK_MESSAGE;
+  return res.status(429).json({ error, retry_after_sec: retryAfterSec });
 }
 
 // user_activity_logs に失敗・ロックを記録する（パスワードや入力メールは書かない）。
@@ -470,12 +472,22 @@ async function applySessionLifetime(req, user) {
 
 // メール＋パスワード ログイン
 app.post('/auth/login', (req, res, next) => {
-  const guardIdent = { email: loginGuardUtil.normalizeEmail(req.body?.email), ip: getClientIP(req) };
-  // ロック中はパスワード照合に進まない（存在しないメールでも同じ 429 を返す＝登録有無を漏らさない）
-  const lock = loginGuard.check(guardIdent);
-  if (lock.locked) return loginLockResponse(res, lock.retryAfterSec);
+  // 認証（passport-local は body → query の順で拾う）とロック判定が同じ入力を見るよう、ここで body に 1 本化し query 側は消す
+  const input = loginGuardUtil.resolveLoginInput(req);
+  if (!input.ok) return res.status(400).json({ error: 'メールアドレスとパスワードを入力してください' });
+  const guardIdent = { email: input.guardEmail, ip: getClientIP(req) };
+
+  // ロック中・同時照合が多すぎるときはパスワード照合に進まない
+  // （存在しないメールでも同じ 429 を返す＝登録有無を漏らさない）。
+  // allowed のときは鍵ごとに「照合中」を予約するので、照合が終わったら必ず endAttempt する
+  const attempt = loginGuard.beginAttempt(guardIdent);
+  if (!attempt.allowed) return loginLockResponse(res, attempt);
+  let attemptEnded = false;
+  const endAttempt = () => { if (!attemptEnded) { attemptEnded = true; loginGuard.endAttempt(guardIdent); } };
+  res.once('close', endAttempt); // 照合中に切断されても予約を返す
 
   passportInstance.authenticate('local', (err, user, info) => {
+    endAttempt();
     if (err)    return next(err);
     if (!user) {
       // DB 接続障害など本人の入力ミスでない失敗（info.transient）は回数に数えない
@@ -486,7 +498,7 @@ app.post('/auth/login', (req, res, next) => {
         console.warn(`[auth] login locked: ${r.lockedKeys.join(',')} (${r.failures} failures)`);
         logLoginEvent(req, 'login_locked', info?.user_id);
       }
-      if (r.locked) return loginLockResponse(res, r.retryAfterSec);
+      if (r.locked) return loginLockResponse(res, { reason: 'locked', retryAfterSec: r.retryAfterSec });
       return res.status(401).json({ error: info?.message || 'ログインに失敗しました' });
     }
     req.logIn(user, async err => {

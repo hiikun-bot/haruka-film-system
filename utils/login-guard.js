@@ -22,6 +22,16 @@ const MAX_FAILURES = 5;
 const LOCK_MS = 15 * 60 * 1000;
 const LOCK_MESSAGE = 'ログインの失敗が続いたため、15分ほど待ってからやり直してください';
 
+// 同時に照合へ進める試行数（同一メール or 同一 IP あたり）。
+// check() は照合（bcrypt・DB）より前に通るので、並列で大量に投げると「5 回」を超えて照合に進めてしまう。
+// beginAttempt() で照合中の試行を鍵ごとに予約し、(失敗数 + 照合中) が MAX_FAILURES に達した分と
+// MAX_CONCURRENT を超えた分は照合に進ませない。
+const MAX_CONCURRENT = 2;
+const BUSY_MESSAGE = 'ログインの処理が重なっています。少し待ってからやり直してください';
+const BUSY_RETRY_SEC = 5;
+// endAttempt() の呼び忘れ・ハング対策: これより古い予約は無かったことにする
+const ATTEMPT_TTL_MS = 30 * 1000;
+
 // メモリ保護: これ以上キーが増えたら古いものから掃除する
 const STORE_MAX_KEYS = 5000;
 
@@ -64,10 +74,19 @@ function extractClientIp(req) {
 function createLoginGuard(opts = {}) {
   const maxFailures = opts.maxFailures ?? MAX_FAILURES;
   const lockMs = opts.lockMs ?? LOCK_MS;
+  const maxConcurrent = opts.maxConcurrent ?? MAX_CONCURRENT;
+  const attemptTtlMs = opts.attemptTtlMs ?? ATTEMPT_TTL_MS;
   const now = typeof opts.now === 'function' ? opts.now : Date.now;
 
-  // key -> { count, lastFailedAt, lockedUntil }
+  // key -> { count, lastFailedAt, lockedUntil, inFlight: number[]（照合中の試行の開始時刻） }
   const store = new Map();
+
+  // 古い予約（endAttempt 漏れ・ハング）を落として、生きている照合中の件数を返す
+  function liveInFlight(entry, t) {
+    if (!entry.inFlight || !entry.inFlight.length) return 0;
+    entry.inFlight = entry.inFlight.filter(at => t - at < attemptTtlMs);
+    return entry.inFlight.length;
+  }
 
   function keysOf({ email, ip } = {}) {
     const keys = [];
@@ -81,6 +100,7 @@ function createLoginGuard(opts = {}) {
   // 失敗から lockMs 以上経った記録は「連続」とみなさないので捨てる（ロック中のものは残す）
   function isStale(entry, t) {
     if (entry.lockedUntil && entry.lockedUntil > t) return false;
+    if (liveInFlight(entry, t) > 0) return false;
     return t - entry.lastFailedAt >= lockMs;
   }
 
@@ -134,7 +154,7 @@ function createLoginGuard(opts = {}) {
     for (const k of keysOf(ident)) {
       let e = store.get(k);
       if (!e || isStale(e, t)) {
-        e = { count: 0, lastFailedAt: t, lockedUntil: 0 };
+        e = { count: 0, lastFailedAt: t, lockedUntil: 0, inFlight: e?.inFlight || [] };
         store.set(k, e);
       }
       if (e.lockedUntil && e.lockedUntil > t) {
@@ -165,6 +185,50 @@ function createLoginGuard(opts = {}) {
     };
   }
 
+  /**
+   * 照合に進む前に呼ぶ。ロック中、または (失敗数 + 照合中) が maxFailures に達している、
+   * または照合中が maxConcurrent に達している鍵があれば allowed=false。
+   * allowed=true のときは鍵ごとに照合中を 1 件予約するので、照合が終わったら必ず endAttempt() を呼ぶこと。
+   * @returns {{ allowed: boolean, reason: null|'locked'|'busy', retryAfterSec: number, key: string|null }}
+   */
+  function beginAttempt(ident) {
+    const t = now();
+    const lock = check(ident);
+    if (lock.locked) return { allowed: false, reason: 'locked', retryAfterSec: lock.retryAfterSec, key: lock.key };
+    const keys = keysOf(ident);
+    for (const k of keys) {
+      const e = store.get(k);
+      if (!e) continue;
+      const inFlight = liveInFlight(e, t);
+      if (inFlight >= maxConcurrent || e.count + inFlight >= maxFailures) {
+        return { allowed: false, reason: 'busy', retryAfterSec: BUSY_RETRY_SEC, key: k };
+      }
+    }
+    for (const k of keys) {
+      let e = store.get(k);
+      if (!e) {
+        e = { count: 0, lastFailedAt: 0, lockedUntil: 0, inFlight: [] };
+        store.set(k, e);
+      }
+      if (!e.inFlight) e.inFlight = [];
+      e.inFlight.push(t);
+    }
+    if (store.size > STORE_MAX_KEYS) prune(t);
+    return { allowed: true, reason: null, retryAfterSec: 0, key: null };
+  }
+
+  /** beginAttempt() の予約を 1 件返す（照合の成否に関わらず finally で呼ぶ） */
+  function endAttempt(ident) {
+    const t = now();
+    for (const k of keysOf(ident)) {
+      const e = store.get(k);
+      if (!e) continue;
+      if (e.inFlight && e.inFlight.length) e.inFlight.shift();
+      // 失敗もロックも照合中も無い鍵は残さない
+      if (!e.count && !(e.lockedUntil > t) && !liveInFlight(e, t)) store.delete(k);
+    }
+  }
+
   /** 成功したので、そのメール・IP のカウンタを消す */
   function recordSuccess(ident) {
     for (const k of keysOf(ident)) store.delete(k);
@@ -176,15 +240,51 @@ function createLoginGuard(opts = {}) {
   /** テスト用: 現在のキー数 */
   function size() { return store.size; }
 
-  return { check, recordFailure, recordSuccess, reset, size, maxFailures, lockMs };
+  /** テスト用: 鍵の照合中件数 */
+  function inFlightOf(key) {
+    const e = store.get(key);
+    return e ? liveInFlight(e, now()) : 0;
+  }
+
+  return {
+    check, beginAttempt, endAttempt, recordFailure, recordSuccess,
+    reset, size, inFlightOf, maxFailures, lockMs, maxConcurrent,
+  };
+}
+
+/**
+ * /auth/login の入力を 1 本にまとめる。
+ * passport-local は req.body に無ければ req.query からも username/password を拾う。
+ * ロック判定が body しか見ていないと、メールを URL のクエリで渡されたときに鍵が空になり
+ * アカウント単位のロックを素通りして照合まで進んでしまう。
+ * ここで body に固定して query 側は消し、認証とロックが必ず同じ入力を見るようにする。
+ * メールは照合用（入力のまま・既存の完全一致検索を変えない）と、ロック鍵用（normalizeEmail）の 2 つを返す。
+ * @returns {{ ok: boolean, email: string, password: string, guardEmail: string|null }}
+ */
+function resolveLoginInput(req) {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const query = req.query && typeof req.query === 'object' ? req.query : null;
+  const rawEmail = body.email ?? query?.email;
+  const rawPassword = body.password ?? query?.password;
+  if (query) { delete query.email; delete query.password; }
+  const email = typeof rawEmail === 'string' ? rawEmail : '';
+  const password = typeof rawPassword === 'string' ? rawPassword : '';
+  req.body = { ...body, email, password };
+  const guardEmail = normalizeEmail(email);
+  return { ok: !!(guardEmail && password), email, password, guardEmail };
 }
 
 module.exports = {
   MAX_FAILURES,
   LOCK_MS,
   LOCK_MESSAGE,
+  MAX_CONCURRENT,
+  BUSY_MESSAGE,
+  BUSY_RETRY_SEC,
+  ATTEMPT_TTL_MS,
   normalizeEmail,
   normalizeIp,
   extractClientIp,
+  resolveLoginInput,
   createLoginGuard,
 };
