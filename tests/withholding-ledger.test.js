@@ -6,6 +6,7 @@ const {
   buildLedgerRows, summarizeMonth, summarizeYearByPayee,
   buildMonthlySheetRows, buildYearlySheetRows, buildLedgerSheetRows,
   buildWithholdingReminderText, CATEGORY_LABEL, DETAIL_LABEL,
+  taxPaymentDueDate, summarizeWithholdingTargets, buildTaxPaymentFormRows, TAX_FORM_CATEGORY,
 } = require('../utils/withholding-ledger');
 
 const yamada = { id: 'u1', full_name: '山田 花子', nickname: 'はな', address: '兵庫県神戸市1-2-3', postal_code: '650-0001', business_type: 'sole_proprietor', invoice_registration_number: 'T1234567890123' };
@@ -152,24 +153,96 @@ describe('スプレッドシート行', () => {
 });
 
 describe('buildWithholdingReminderText', () => {
-  test('人数・支払金額・源泉税額・要確認・納付期限・税理士確認を含む', () => {
+  const rows = buildLedgerRows([
+    { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, apply_no: 'A1' },
+    { user: yamada, paid_at: '2026-10-05T06:00:00Z', paid_via: 'manual', invoice: invInclusive },
+    { user: suzuki, paid_at: '2026-10-31T06:00:00Z', paid_via: null, invoice: null, invoice_amount: 45000 },
+  ]);
+  test('徴収高計算書の人員・支払額・税額（源泉対象のみ）・納付期限（e-Tax）・要確認・ディープリンクを含む', () => {
     const text = buildWithholdingReminderText({
       year: 2026, month: 10,
-      summary: { payee_count: 7, payment_count: 8, gross_total: 1234560, withholding_total: 98765, net_total: 1135795, needs_review_count: 1 },
+      summary: summarizeMonth(rows), rows,
       pageUrl: 'https://hfs.example.com/haruka.html?page=payout&withholding=2026-10',
     });
     expect(text).toContain('[title]🧾 源泉所得税の納付リマインド（2026年10月支払分）[/title]');
-    expect(text).toContain('人数: 7名（8件）');
-    expect(text).toContain('支払金額（税込）: 1,234,560円');
-    expect(text).toContain('源泉徴収税額: 98,765円');
+    // 源泉対象は山田の exclusive 1 件だけ（inclusive・請求書なしは数えない）
+    expect(text).toContain('人員: 1名');
+    expect(text).toContain('支払額: 110,000円');
+    expect(text).toContain('税額: 10,210円');
+    expect(text).toContain('（台帳全体: 2名・3件 ／ 支払金額（税込） 210,000円 ／ 差引支払額 199,790円）');
     expect(text).toContain('⚠ 要確認: 1件');
-    expect(text).toContain('納付期限: 2026-11-10');
+    expect(text).toContain('納付期限 2026/11/10（e-Tax で徴収高計算書を送信→ダイレクト納付/ペイジー）');
     expect(text).toContain('税理士に確認');
     expect(text).toContain('台帳・出力: https://hfs.example.com/haruka.html?page=payout&withholding=2026-10');
   });
-  test('支払 0 件のときは消し込み確認を促す', () => {
-    const text = buildWithholdingReminderText({ year: 2026, month: 9, summary: summarizeMonth([]) });
+  test('10日が土日祝なら繰り下げた期限を出す（2027/1/10 は日曜・11日は成人の日 → 1/12）', () => {
+    const text = buildWithholdingReminderText({ year: 2026, month: 12, summary: summarizeMonth([]), rows: [] });
+    expect(text).toContain('納付期限 2027/01/12（2027/01/10 が土日祝のため繰り下げ）（e-Tax で徴収高計算書を送信→ダイレクト納付/ペイジー）');
+  });
+  test('支払 0 件のときは消し込み確認を促しつつ人員 0 名を出す', () => {
+    const text = buildWithholdingReminderText({ year: 2026, month: 9, summary: summarizeMonth([]), rows: [] });
     expect(text).toContain('支払の記録がありません');
-    expect(text).not.toContain('人数:');
+    expect(text).toContain('人員: 0名');
+    expect(text).toContain('税額: 0円');
+    expect(text).toContain('納付期限 2026/10/13（2026/10/10 が土日祝のため繰り下げ）'); // 10/10 土・10/12 スポーツの日
+  });
+});
+
+describe('taxPaymentDueDate / summarizeWithholdingTargets / buildTaxPaymentFormRows', () => {
+  test('納付期限は翌月10日。土日祝は翌営業日へ（祝日表のある年）、無い年は土日だけ繰り下げて holiday_checked=false', () => {
+    // 9月支払分 → 10/10 土・10/11 日・10/12 スポーツの日 → 10/13
+    expect(taxPaymentDueDate(2026, 9)).toEqual({ date: '2026-10-13', base: '2026-10-10', holiday_checked: true, shifted: true });
+    expect(taxPaymentDueDate(2026, 10)).toEqual({ date: '2026-11-10', base: '2026-11-10', holiday_checked: true, shifted: false });
+    expect(taxPaymentDueDate(2026, 12)).toEqual({ date: '2027-01-12', base: '2027-01-10', holiday_checked: true, shifted: true });
+    // 2030 は祝日表に無い: 2030-01-10 は木曜なのでそのまま、holiday_checked=false
+    expect(taxPaymentDueDate(2029, 12)).toEqual({ date: '2030-01-10', base: '2030-01-10', holiday_checked: false, shifted: false });
+  });
+  const rows = buildLedgerRows([
+    { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, apply_no: 'A1' },
+    { user: yamada, paid_at: '2026-10-05T06:00:00Z', paid_via: 'manual', invoice: invInclusive },
+    { user: suzuki, paid_at: '2026-10-31T06:00:00Z', paid_via: null, invoice: null, invoice_amount: 45000 },
+    { user: suzuki, paid_at: '2026-10-20T06:00:00Z', paid_via: 'manual', invoice: { ...invExclusive, id: 'inv9', invoice_number: 'INV-2610-09', subtotal_amount: 50000, tax_amount: 5000, total_amount: 55000, withholding_amount: 5105, payout_amount: 49895 } },
+  ]);
+  test('源泉対象（源泉>0）だけを数える', () => {
+    expect(summarizeWithholdingTargets(rows)).toEqual({
+      payee_count: 2, payment_count: 2, gross_total: 165000, withholding_total: 15315,
+      first_paid_date: '2026-10-20', last_paid_date: '2026-10-31', excluded_count: 2,
+    });
+    expect(summarizeWithholdingTargets([]).first_paid_date).toBeNull();
+  });
+  test('徴収高計算書 転記用は e-Tax の入力順', () => {
+    const sheet = buildTaxPaymentFormRows(summarizeMonth(rows), rows, { year: 2026, month: 10 });
+    const byLabel = Object.fromEntries(sheet.filter(r => r.length >= 2).map(r => [r[0], r[1]]));
+    expect(sheet[0]).toEqual(['項目', '値', '注記']);
+    expect(sheet.slice(1, 13).map(r => r[0])).toEqual([
+      '納期等の区分（支払年月）', '区分', '区分コード', '支払年月日', '人員', '支払額', '税額', '本税', '延滞税', '合計額', '納付の目的（摘要）', '納付期限',
+    ]);
+    expect(byLabel['納期等の区分（支払年月）']).toBe('2026-10');
+    expect(byLabel['区分']).toBe(TAX_FORM_CATEGORY);
+    expect(TAX_FORM_CATEGORY).toBe('原稿料・講演料等');
+    expect(byLabel['区分コード']).toBe('');
+    expect(sheet.find(r => r[0] === '区分コード')[2]).toBe('様式で確認');
+    expect(byLabel['支払年月日']).toBe('2026/10/20〜2026/10/31');
+    expect(byLabel['人員']).toBe(2);
+    expect(byLabel['支払額']).toBe(165000);
+    expect(byLabel['税額']).toBe(15315);
+    expect(byLabel['本税']).toBe(15315);
+    expect(byLabel['延滞税']).toBe(0);
+    expect(byLabel['合計額']).toBe(15315);
+    expect(byLabel['納付の目的（摘要）']).toBe('2026年10月分報酬');
+    expect(byLabel['納付期限']).toBe('2026/11/10'); // 火曜・祝日でないのでそのまま
+    expect(sheet.find(r => r[0] === '納付期限')[2]).toBe('支払月の翌月10日');
+    // 繰り下げの注記は 9 月支払分（10/10 土 → 10/13）で確認
+    const sep = buildTaxPaymentFormRows(summarizeMonth([]), [], { year: 2026, month: 9 });
+    expect(sep.find(r => r[0] === '納付期限')[1]).toBe('2026/10/13');
+    expect(sep.find(r => r[0] === '納付期限')[2]).toContain('翌営業日に繰り下げ');
+    expect(sheet.some(r => String(r[0]).startsWith('要確認 1件（請求書なし・源泉 0 で計上）'))).toBe(true);
+  });
+  test('支払日が1日だけなら範囲でなく1つ', () => {
+    const one = buildLedgerRows([{ user: yamada, paid_at: '2026-11-30T06:00:00Z', paid_via: 'manual', invoice: invExclusive }]);
+    const sheet = buildTaxPaymentFormRows(summarizeMonth(one), one, { year: 2026, month: 11 });
+    expect(sheet.find(r => r[0] === '支払年月日')[1]).toBe('2026/11/30');
+    expect(sheet.find(r => r[0] === '納付期限')[1]).toBe('2026/12/10');
+    expect(sheet.some(r => String(r[0]).startsWith('要確認 0件'))).toBe(true);
   });
 });

@@ -125,6 +125,8 @@ router.post('/export-sheet', ...guard, async (req, res) => {
     if (month) {
       const rep = await source.buildMonthReport(year, month);
       const ym = `${year}-${String(month).padStart(2, '0')}`;
+      // 先頭: e-Tax「報酬・料金等の所得税徴収高計算書」に打ち込む順の転記用
+      tabs.push({ title: `徴収高計算書 転記用 ${ym}`, rows: ledger.buildTaxPaymentFormRows(rep.summary, rep.rows, { year, month }) });
       tabs.push({ title: `納付用 ${ym}`, rows: ledger.buildMonthlySheetRows({ year, month, summary: rep.summary }) });
       tabs.push({ title: `支払台帳 ${ym}`, rows: ledger.buildLedgerSheetRows({ rows: rep.rows }) });
       title = `源泉徴収 ${year}年${month}月支払分（${new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })} 出力）`;

@@ -74,6 +74,7 @@ async function sendWithholdingReminder({ year, month, trigger = 'auto' }) {
   const text = buildWithholdingReminderText({
     year, month,
     summary: rep.summary,
+    rows: rep.rows,
     warnings: rep.warnings,
     pageUrl: buildAppUrl(`haruka.html?page=payout&withholding=${monthKey}`),
   });
