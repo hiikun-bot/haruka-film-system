@@ -160,12 +160,45 @@ function entityTypeLabel(user) {
  *   needs_review, review_reasons: string[], notes: string[]
  * }}
  */
+/**
+ * payout_records.ledger_snapshot（支払時点で凍結した請求書の金額・ADR 054 追補 2026-10-30）を
+ * invoices 行と同じ形に直す。snapshot が無ければ null。
+ *   { amount, invoice_id, invoice_number, subtotal_amount, tax_amount, withholding_amount, payout_amount, snapshot_at }
+ *   subtotal_amount があれば exclusive、無くて invoice_id があれば inclusive（payout_amount＝税込）、どちらも無ければ請求書なし
+ */
+function invoiceFromSnapshot(snap) {
+  if (!snap || typeof snap !== 'object') return null;
+  if (!snap.invoice_id && snap.subtotal_amount == null && snap.payout_amount == null) return null;
+  const subtotal = toInt(snap.subtotal_amount);
+  const tax = toInt(snap.tax_amount);
+  const withholding = toInt(snap.withholding_amount);
+  const payout = toInt(snap.payout_amount);
+  if (subtotal != null) {
+    const total = subtotal + (tax ?? 0);
+    return {
+      id: snap.invoice_id || null, invoice_number: snap.invoice_number || null, tax_mode: 'exclusive',
+      subtotal_amount: subtotal, tax_amount: tax ?? 0, total_amount: total,
+      withholding_amount: withholding ?? 0, payout_amount: payout ?? (total - (withholding ?? 0)),
+      withholding_enabled: (withholding ?? 0) > 0 ? true : null,
+    };
+  }
+  return {
+    id: snap.invoice_id || null, invoice_number: snap.invoice_number || null, tax_mode: 'inclusive',
+    total_amount: payout ?? toInt(snap.amount) ?? 0,
+  };
+}
+
 function buildLedgerRow(payment) {
   const p = payment || {};
   const user = p.user || {};
-  const inv = p.invoice || null;
   const reasons = [];
   const notes = [];
+
+  // 支払時点のスナップショット優先。無い行だけ現在の請求書から組み立てる（請求書の後編集で変わりうる）
+  const snapInv = invoiceFromSnapshot(p.snapshot);
+  const fromSnapshot = !!snapInv;
+  const inv = snapInv || p.invoice || null;
+  if (!fromSnapshot && inv && !p.snapshot_exempt) notes.push('スナップショット無し（請求書の後編集で変わる可能性）');
 
   const paidDate = isoToJstYmd(p.paid_at);
   if (!paidDate) reasons.push('支払日が未設定');
@@ -194,7 +227,7 @@ function buildLedgerRow(payment) {
     notes.push('旧方式（内税）・源泉なし');
   } else {
     source = 'pdf';
-    const amt = toInt(p.invoice_amount);
+    const amt = toInt(p.snapshot?.amount) ?? toInt(p.paid_amount) ?? toInt(p.invoice_amount);
     if (amt == null) {
       reasons.push('請求書なし・金額不明');
     } else {
@@ -227,18 +260,57 @@ function buildLedgerRow(payment) {
     apply_no: p.apply_no || null,
     payout_record_id: p.payout_record_id || null,
     transfer_item_id: p.transfer_item_id || null,
+    from_snapshot: fromSnapshot,
+    // 実際に支払った額（消し込み額／振込額）。請求書の差引と違えば buildLedgerRows が差額行を足す
+    paid_amount: toInt(p.snapshot?.amount) ?? toInt(p.paid_amount) ?? null,
     needs_review: reasons.length > 0,
     review_reasons: reasons,
     notes,
   };
 }
 
-/** 支払行の配列 → 台帳行（支払日→氏名の順） */
+const EXTRA_REASON = '請求書外の支払（PDF 抽出額との差額）';
+
+/**
+ * 支払額（消し込み額）と請求書の差引額が一致しない支払 → 差額の独立行（税込＝差額・源泉 0・要確認）。
+ * 差額が負（請求書より少なく払った）も負の行で出す。差額を黙って落とさない（ADR 054 追補 2026-10-30）。
+ */
+function buildExtraRow(base) {
+  const diff = base.paid_amount - base.net;
+  const reasons = [EXTRA_REASON];
+  if (diff < 0) reasons.push('請求書の差引額より少なく支払っています');
+  return {
+    ...base,
+    invoice_id: null,
+    invoice_number: null,
+    tax_mode: null,
+    source: 'extra',
+    subtotal: null,
+    tax: null,
+    withholding: 0,
+    gross: diff,
+    net: diff,
+    paid_amount: null,
+    extra_of_payout_record_id: base.payout_record_id || null,
+    needs_review: true,
+    review_reasons: reasons,
+    notes: [`請求書 ${base.invoice_number || '(番号なし)'} の差引 ${base.net.toLocaleString('ja-JP')}円 に対し支払 ${base.paid_amount.toLocaleString('ja-JP')}円`],
+  };
+}
+
+/** 支払行の配列 → 台帳行（支払日→氏名の順）。請求書と支払額がずれた分は差額行を続けて出す */
 function buildLedgerRows(payments) {
-  const rows = (payments || []).map(buildLedgerRow);
+  const rows = [];
+  for (const p of payments || []) {
+    const row = buildLedgerRow(p);
+    rows.push(row);
+    const hasInvoice = row.source === 'invoice_exclusive' || row.source === 'invoice_inclusive';
+    if (hasInvoice && row.paid_amount != null && row.paid_amount !== row.net) rows.push(buildExtraRow(row));
+  }
   rows.sort((a, b) =>
     String(a.paid_date || '9999').localeCompare(String(b.paid_date || '9999'))
-    || String(a.user_name).localeCompare(String(b.user_name), 'ja'));
+    || String(a.user_name).localeCompare(String(b.user_name), 'ja')
+    || (a.source === 'extra') - (b.source === 'extra'));
   return rows;
 }
 
@@ -260,6 +332,8 @@ function summarizeMonth(rows) {
     gross_total: gross,
     withholding_total: withholding,
     net_total: net,
+    // 実際に支払った額の合計（差額行込み）。net_total と同値だが「実支払＝台帳」を明示するために別名で返す
+    paid_total: net,
     needs_review_count: review,
   };
 }
@@ -353,7 +427,7 @@ function buildLedgerSheetRows({ rows }) {
   const header = ['支払日', '氏名', '請求書番号', '方式', '税抜', '消費税', '源泉徴収税額', '税込', '差引支払額', '経路', '受付番号', '要確認', '備考'];
   const body = (rows || []).map(r => [
     r.paid_date || '', r.user_name, r.invoice_number || 'なし',
-    r.source === 'invoice_exclusive' ? '税抜' : r.source === 'invoice_inclusive' ? '内税' : '請求書なし',
+    r.source === 'invoice_exclusive' ? '税抜' : r.source === 'invoice_inclusive' ? '内税' : r.source === 'extra' ? '請求書外' : '請求書なし',
     r.subtotal ?? '', r.tax ?? '', r.withholding, r.gross, r.net,
     r.paid_via_label, r.apply_no || '',
     r.needs_review ? '⚠' : '',
@@ -463,6 +537,8 @@ module.exports = {
   TAX_FORM_CATEGORY_CODE,
   buildTaxPaymentFormRows,
   entityTypeLabel,
+  EXTRA_REASON,
+  invoiceFromSnapshot,
   buildLedgerRow,
   buildLedgerRows,
   summarizeMonth,

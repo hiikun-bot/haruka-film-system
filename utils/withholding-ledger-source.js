@@ -82,22 +82,31 @@ function filterItemsByRange(items, startIso, endIso) {
     .filter(it => it._paid_at && it._paid_at >= startIso && it._paid_at < endIso);
 }
 
-/** 2) 手動振込の payout_records（paid）。paid_via 列が無い環境でも動く */
+/**
+ * 2) 手動振込の payout_records（paid）。
+ *    Stage A の paid_via / transfer_item_id、Stage A2 の ledger_snapshot（支払時点の凍結額）は
+ *    無い環境でも動くように、列を減らしながら順に試す（既存のフォールバック方式）。
+ */
+const PAYOUT_RECORD_SELECTS = [
+  { cols: 'id, user_id, year, month, invoice_amount, amount_source, status, paid_at, paid_via, transfer_item_id, ledger_snapshot', hasPaidVia: true, hasSnapshot: true },
+  { cols: 'id, user_id, year, month, invoice_amount, amount_source, status, paid_at, paid_via, transfer_item_id', hasPaidVia: true, hasSnapshot: false },
+  { cols: 'id, user_id, year, month, invoice_amount, amount_source, status, paid_at, ledger_snapshot', hasPaidVia: false, hasSnapshot: true },
+  { cols: 'id, user_id, year, month, invoice_amount, amount_source, status, paid_at', hasPaidVia: false, hasSnapshot: false },
+];
 async function loadManualPayoutRecords({ startIso, endIso }) {
-  const q1 = supabase.from('payout_records')
-    .select('id, user_id, year, month, invoice_amount, amount_source, status, paid_at, paid_via, transfer_item_id')
-    .eq('status', 'paid').gte('paid_at', startIso).lt('paid_at', endIso).limit(5000);
-  const { data, error } = await q1;
-  if (!error) {
-    return { records: (data || []).filter(r => !r.paid_via || r.paid_via === 'manual'), hasPaidVia: true };
+  let lastErr = null;
+  for (const v of PAYOUT_RECORD_SELECTS) {
+    const { data, error } = await supabase.from('payout_records')
+      .select(v.cols)
+      .eq('status', 'paid').gte('paid_at', startIso).lt('paid_at', endIso).limit(5000);
+    if (!error) {
+      const records = v.hasPaidVia ? (data || []).filter(r => !r.paid_via || r.paid_via === 'manual') : (data || []);
+      return { records, hasPaidVia: v.hasPaidVia, hasSnapshot: v.hasSnapshot };
+    }
+    if (!isMissingColumn(error)) throw new Error(`payout_records 取得失敗: ${error.message}`);
+    lastErr = error;
   }
-  if (!isMissingColumn(error)) throw new Error(`payout_records 取得失敗: ${error.message}`);
-  const q2 = supabase.from('payout_records')
-    .select('id, user_id, year, month, invoice_amount, amount_source, status, paid_at')
-    .eq('status', 'paid').gte('paid_at', startIso).lt('paid_at', endIso).limit(5000);
-  const r2 = await q2;
-  if (r2.error) throw new Error(`payout_records 取得失敗: ${r2.error.message}`);
-  return { records: r2.data || [], hasPaidVia: false };
+  throw new Error(`payout_records 取得失敗: ${lastErr?.message || 'unknown'}`);
 }
 
 /** 3) invoices を (issuer_id, year, month) と id で引けるように取得 */
@@ -154,6 +163,9 @@ async function loadPayments(range) {
   if (!manual.hasPaidVia) {
     warnings.push('payout_records.paid_via 列は未作成のため、振込済みはすべて手動振込として扱っています');
   }
+  if (!manual.hasSnapshot) {
+    warnings.push('payout_records.ledger_snapshot 列は未作成のため、台帳は現在の請求書から組み立てています（請求書の後編集で源泉額が変わる可能性）');
+  }
   // API 振込で消し込まれた payout_records は明細側で数える（二重計上防止）
   const itemRecordIds = new Set(items.map(it => it.payout_record_id).filter(Boolean));
   const manualRecords = manual.records.filter(r => !itemRecordIds.has(r.id) && !r.transfer_item_id);
@@ -182,6 +194,9 @@ async function loadPayments(range) {
       paid_via: 'aozora_api',
       invoice: inv,
       invoice_amount: inv ? null : (it.gross_amount ?? it.amount ?? null),
+      paid_amount: it.amount ?? null,       // 実際の振込額。請求書の差引とずれていれば差額行になる
+      snapshot: null,
+      snapshot_exempt: true,                // 明細自体が依頼時点のスナップショット（ADR 054 §2）
       apply_no: b.apply_no || null,
       payout_record_id: it.payout_record_id || null,
       transfer_item_id: it.id,
@@ -198,6 +213,8 @@ async function loadPayments(range) {
       paid_via: 'manual',
       invoice: inv,
       invoice_amount: inv ? null : (r.invoice_amount ?? null),
+      paid_amount: r.invoice_amount ?? null,                 // 消し込み額（HFS 請求書＋外部 PDF の合算もここ）
+      snapshot: r.ledger_snapshot || null,                   // 支払時点で凍結した請求書の金額（Stage A2）。あれば優先
       apply_no: null,
       payout_record_id: r.id,
       transfer_item_id: null,

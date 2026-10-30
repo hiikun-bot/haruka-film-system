@@ -106,9 +106,10 @@ describe('summarizeMonth / summarizeYearByPayee', () => {
       gross_total: 110000 + 55000 + 45000,
       withholding_total: 10210,
       net_total: 99790 + 55000 + 45000,
+      paid_total: 99790 + 55000 + 45000,
       needs_review_count: 1,
     });
-    expect(summarizeMonth([])).toEqual({ payee_count: 0, payment_count: 0, gross_total: 0, withholding_total: 0, net_total: 0, needs_review_count: 0 });
+    expect(summarizeMonth([])).toEqual({ payee_count: 0, payment_count: 0, gross_total: 0, withholding_total: 0, net_total: 0, paid_total: 0, needs_review_count: 0 });
   });
   test('支払調書用は支払先ごとに住所・区分・細目・個人/法人・インボイス番号を付けて合算', () => {
     const payees = summarizeYearByPayee(rows, new Map([[yamada.id, yamada], [suzuki.id, suzuki]]));
@@ -126,7 +127,8 @@ describe('summarizeMonth / summarizeYearByPayee', () => {
 
 describe('スプレッドシート行', () => {
   const rows = buildLedgerRows([
-    { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, apply_no: 'A1' },
+    // API 振込の明細は依頼時点のスナップショットなので snapshot_exempt（ローダが付ける）
+    { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, apply_no: 'A1', snapshot_exempt: true },
     { user: suzuki, paid_at: '2026-10-31T06:00:00Z', paid_via: null, invoice: null, invoice_amount: 45000 },
   ]);
   test('月次 納付用', () => {
@@ -185,6 +187,96 @@ describe('buildWithholdingReminderText', () => {
     expect(text).toContain('人員: 0名');
     expect(text).toContain('税額: 0円');
     expect(text).toContain('納付期限 2026/10/13（2026/10/10 が土日祝のため繰り下げ）'); // 10/10 土・10/12 スポーツの日
+  });
+});
+
+describe('合算支払の差額行（ADR 054 追補 2026-10-30）', () => {
+  test('消し込み額 149,790（請求書 99,790 ＋ 外部 PDF 50,000）→ 請求書行＋「請求書外の支払」行、summary の実支払は 149,790', () => {
+    const rows = buildLedgerRows([
+      { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: invExclusive, paid_amount: 149790, payout_record_id: 'pr1' },
+    ]);
+    expect(rows).toHaveLength(2);
+    const [main, extra] = rows;
+    expect(main).toMatchObject({ source: 'invoice_exclusive', invoice_number: 'INV-2610-03', gross: 110000, withholding: 10210, net: 99790, paid_amount: 149790, needs_review: false });
+    expect(extra).toMatchObject({
+      source: 'extra', invoice_number: null, subtotal: null, tax: null, withholding: 0, gross: 50000, net: 50000,
+      user_id: 'u1', paid_date: '2026-10-31', paid_via: 'manual', payout_record_id: 'pr1', extra_of_payout_record_id: 'pr1',
+      needs_review: true,
+    });
+    expect(extra.review_reasons).toEqual(['請求書外の支払（PDF 抽出額との差額）']);
+    expect(extra.notes[0]).toContain('差引 99,790円 に対し支払 149,790円');
+    const s = summarizeMonth(rows);
+    expect(s.paid_total).toBe(149790);
+    expect(s.net_total).toBe(149790);
+    expect(s.gross_total).toBe(160000);      // 税込 110,000 ＋ 差額 50,000
+    expect(s.withholding_total).toBe(10210); // 差額行は源泉 0
+    expect(s.payee_count).toBe(1);
+    expect(s.needs_review_count).toBe(1);
+    // 支払台帳シートの方式列
+    const sheet = buildLedgerSheetRows({ rows });
+    expect(sheet[2][3]).toBe('請求書外');
+    expect(sheet[2][11]).toBe('⚠');
+  });
+  test('請求書より少なく払った場合は負の差額行で要確認', () => {
+    const rows = buildLedgerRows([
+      { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: invExclusive, paid_amount: 90000, payout_record_id: 'pr1' },
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ source: 'extra', gross: -9790, net: -9790, withholding: 0, needs_review: true });
+    expect(rows[1].review_reasons).toEqual(['請求書外の支払（PDF 抽出額との差額）', '請求書の差引額より少なく支払っています']);
+    expect(summarizeMonth(rows).paid_total).toBe(90000);
+  });
+  test('inclusive は total_amount と比較。一致すれば差額行なし・API 振込も同じ', () => {
+    const same = buildLedgerRows([
+      { user: yamada, paid_at: '2026-10-05T06:00:00Z', paid_via: 'manual', invoice: invInclusive, paid_amount: 55000 },
+      { user: suzuki, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, paid_amount: 99790, snapshot_exempt: true, transfer_item_id: 'ti1' },
+    ]);
+    expect(same).toHaveLength(2);
+    expect(same.every(r => r.source !== 'extra')).toBe(true);
+    const diff = buildLedgerRows([{ user: yamada, paid_at: '2026-10-05T06:00:00Z', paid_via: 'manual', invoice: invInclusive, paid_amount: 60000 }]);
+    expect(diff).toHaveLength(2);
+    expect(diff[1]).toMatchObject({ source: 'extra', gross: 5000 });
+  });
+  test('請求書なし・支払額不明（paid_amount null）は差額行を作らない', () => {
+    expect(buildLedgerRows([{ user: suzuki, paid_at: '2026-10-31T06:00:00Z', invoice: null, paid_amount: 45000 }])).toHaveLength(1);
+    expect(buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', invoice: invExclusive, paid_amount: null }])).toHaveLength(1);
+  });
+});
+
+describe('ledger_snapshot（支払時点の凍結額）優先', () => {
+  const snapshot = {
+    amount: 99790, invoice_id: 'inv1', invoice_number: 'INV-2610-03',
+    subtotal_amount: 100000, tax_amount: 10000, withholding_amount: 10210, payout_amount: 99790, snapshot_at: '2026-10-31T06:00:01Z',
+  };
+  test('スナップショットがあれば、後から編集された現在の請求書ではなくスナップショットの額を使う', () => {
+    const editedInvoice = { ...invExclusive, subtotal_amount: 200000, tax_amount: 20000, total_amount: 220000, withholding_amount: 20420, payout_amount: 199580 };
+    const [r] = buildLedgerRows([
+      { user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: editedInvoice, paid_amount: 99790, snapshot },
+    ]);
+    expect(r).toMatchObject({ source: 'invoice_exclusive', invoice_number: 'INV-2610-03', subtotal: 100000, tax: 10000, withholding: 10210, gross: 110000, net: 99790, from_snapshot: true, needs_review: false });
+    expect(r.notes).not.toContain('スナップショット無し（請求書の後編集で変わる可能性）');
+  });
+  test('スナップショットが無い行は現在の請求書から組み立てて注記を付ける（API 振込の明細は除外）', () => {
+    const [manual] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: invExclusive, paid_amount: 99790 }]);
+    expect(manual.from_snapshot).toBe(false);
+    expect(manual.needs_review).toBe(false);
+    expect(manual.notes).toContain('スナップショット無し（請求書の後編集で変わる可能性）');
+    const [api] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', invoice: invExclusive, paid_amount: 99790, snapshot_exempt: true }]);
+    expect(api.notes).not.toContain('スナップショット無し（請求書の後編集で変わる可能性）');
+    const [none] = buildLedgerRows([{ user: suzuki, paid_at: '2026-10-31T06:00:00Z', invoice: null, paid_amount: 45000 }]);
+    expect(none.notes).toEqual([]); // 請求書を使っていない行には付けない
+  });
+  test('スナップショットの請求書なし（invoice_id 無し）は amount を税込として要確認、inclusive は payout_amount を税込', () => {
+    const [pdf] = buildLedgerRows([{ user: suzuki, paid_at: '2026-10-31T06:00:00Z', invoice: null, snapshot: { amount: 45000, snapshot_at: '2026-10-31T06:00:01Z' } }]);
+    expect(pdf).toMatchObject({ source: 'pdf', gross: 45000, net: 45000, needs_review: true, from_snapshot: false });
+    const [inc] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-05T06:00:00Z', invoice: null, snapshot: { amount: 55000, invoice_id: 'inv2', invoice_number: 'INV-2609-11', payout_amount: 55000 } }]);
+    expect(inc).toMatchObject({ source: 'invoice_inclusive', invoice_number: 'INV-2609-11', gross: 55000, net: 55000, withholding: 0, from_snapshot: true });
+  });
+  test('スナップショットの額と支払額がずれていれば差額行（スナップショットの差引と比較）', () => {
+    const rows = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: invExclusive, paid_amount: 149790, snapshot: { ...snapshot, amount: 149790 } }]);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ source: 'extra', gross: 50000 });
+    expect(summarizeMonth(rows).paid_total).toBe(149790);
   });
 });
 
