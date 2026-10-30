@@ -15607,7 +15607,10 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   const requesterLevel = rankOfRoleCodes(requesterCodes);
 
   // 対象メンバーを取得して権限チェック
-  const { data: target } = await supabase.from('users').select('id,role').eq('id', req.params.id).maybeSingle();
+  // 口座列は変更検知（ADR 054 §1-4: 変わったら本人と管理者へ通知）のため更新前の値も持っておく
+  const { data: target } = await supabase.from('users')
+    .select('id,role,full_name,nickname,bank_name,bank_code,branch_name,branch_code,account_type,account_number,account_holder_kana')
+    .eq('id', req.params.id).maybeSingle();
   if (!target) return res.status(404).json({ error: 'メンバーが見つかりません' });
 
   // 対象のロールも user_roles ベースで取得
@@ -15799,6 +15802,17 @@ router.put('/members/:id', requireAuth, async (req, res) => {
   // users 行が変わった → deserializeUser の短TTLキャッシュを即時無効化
   // （role / is_active / rank / team_id / nickname 等、req.user に載る列の変更を即反映）
   invalidateUserCache(req.params.id);
+  // 口座列が変わっていたら本人（個別通知）と管理者マイチャットへ知らせる（ADR 054 §1-4・乗っ取り検知）。
+  // 通知の失敗でメンバー更新を失敗にはしない（await しない）
+  if ((isSelf || isAdmin) && target && data) {
+    try {
+      const bankTransfer = require('../utils/bank-transfer');
+      if (bankTransfer.bankInfoChanged(target, data)) {
+        bankTransfer.notifyBankInfoChanged({ user: data, before: target, after: data, actor: req.user })
+          .catch(e => console.warn('[members:update] 口座変更通知に失敗:', e?.message));
+      }
+    } catch (e) { console.warn('[members:update] 口座変更通知の呼び出しに失敗:', e?.message); }
+  }
   // dual-write: users.role が更新された場合は user_roles も同期する。
   // 'role' フィールドが updateData に含まれていた場合のみ実施（admin による変更時のみ）。
   // 失敗してもアプリは止めない（ログ警告のみ）。
@@ -29686,6 +29700,16 @@ router.post('/admin/payouts/:id/pay', requireAuth, requirePermission('payout.pag
     const { data: updated, error: upErr } = await supabase
       .from('payout_records').update(patch).eq('id', rec.id).select('*').maybeSingle();
     if (upErr) throw new Error(upErr.message);
+
+    // 台帳の元データを支払時点で凍結（ADR 054 §5 追補・API 振込の完了時と同じ形）。
+    // 列が無い（migration 2026-10-30_aozora_transfer_followup.sql 未適用）環境でも消し込み自体は成功させる
+    try {
+      const { loadLedgerSnapshotForRecord } = require('../utils/bank-transfer');
+      const snapshot = await loadLedgerSnapshotForRecord(rec, rec.invoice_amount);
+      const { error: lsErr } = await supabase.from('payout_records').update({ ledger_snapshot: snapshot }).eq('id', rec.id);
+      if (lsErr) console.warn('[payouts] ledger_snapshot の保存に失敗（列未追加の可能性）:', lsErr.message);
+      else updated.ledger_snapshot = snapshot;
+    } catch (e) { console.warn('[payouts] ledger_snapshot 作成に失敗:', e?.message); }
 
     res.json({ ok: true, sent, sent_via: sentVia, sent_reason: sentReason, record: payoutRecordToJson(updated, user) });
   } catch (e) {

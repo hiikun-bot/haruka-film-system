@@ -65,6 +65,15 @@ function safeNext(next) {
   return /^\/haruka\.html(\?|$)/.test(s) ? s : '/haruka.html';
 }
 
+/**
+ * state / preview_token の HMAC 鍵（セッション署名と同じ SESSION_SECRET）。本番は SESSION_SECRET 必須（server.js が起動時に検査）。
+ * dev 用のフォールバック文字列はここだけに置く（他ファイルにコピーしない）。
+ */
+const DEV_FALLBACK_SECRET = 'video-ops-dev-secret-change-in-production';
+function getStateSecret(env = process.env) {
+  return env.SESSION_SECRET || DEV_FALLBACK_SECRET;
+}
+
 function signState(payload, secret) {
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url');
@@ -158,6 +167,7 @@ module.exports = {
   normalizeHost,
   resolveCallbackUrl,
   safeNext,
+  getStateSecret,
   signState,
   verifyState,
   newState,

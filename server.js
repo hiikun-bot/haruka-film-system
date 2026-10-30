@@ -166,7 +166,7 @@ if (process.env.NODE_ENV === 'production' && !SESSION_SECRET) {
 }
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.db', dir: process.env.DATA_DIR || './data' }),
-  secret: SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
+  secret: require('./utils/google-login').getStateSecret(), // SESSION_SECRET（dev フォールバックは google-login.js の 1 箇所だけ）
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -290,6 +290,9 @@ app.use('/api/', (req, res, next) => {
 app.use('/api/haruka/contracts', require('./routes/contracts'));
 // 🎞 思い出アルバム API（ADR 052）。保存先は Drive のみ・DB テーブルなし
 app.use('/api/haruka/memories', require('./routes/memories'));
+// 🏦 あおぞら銀行 API 総合振込（ADR 054）。/admin/bank/* と /admin/payouts/transfer/* だけを受け、
+// それ以外の /api/haruka/admin/* は next() で harukaRouter へ流れる。ENABLE_AOZORA_TRANSFER=true でなければ 404
+app.use('/api/haruka/admin', require('./routes/bank-transfer'));
 
 // HARUKA FILM SYSTEM API
 app.use('/api/haruka', harukaRouter);
@@ -466,10 +469,7 @@ app.get('/auth/google', (req, res) => {
   const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
   if (!callbackUrl) return googleLoginFail(res, 'google_host');
   const { id, secret } = googleLogin.getClientConfig();
-  const { nonce, state } = googleLogin.newState({
-    secret: SESSION_SECRET || 'video-ops-dev-secret-change-in-production',
-    next: req.query.next,
-  });
+  const { nonce, state } = googleLogin.newState({ secret: googleLogin.getStateSecret(), next: req.query.next });
   // state をこのブラウザのセッションに結びつける（他人が用意したログインリンクを踏ませる攻撃の対策）
   req.session.googleLoginNonce = nonce;
   const client = new google.auth.OAuth2(id, secret, callbackUrl);
@@ -481,26 +481,108 @@ app.get('/auth/google', (req, res) => {
   req.session.save(() => res.redirect(url));
 });
 
-app.get('/auth/google/callback', async (req, res) => {
-  if (!googleLogin.isEnabled()) return googleLoginFail(res, 'google_disabled');
-  if (req.query.error) return googleLoginFail(res, req.query.error === 'access_denied' ? 'google_cancel' : 'google_failed');
+// ==================== 再認証（ADR 054 §1-3: 総合振込の依頼直前に本人確認） ====================
+// 成功すると req.session.reauth_at = Date.now() が立ち、10 分間だけ /admin/payouts/transfer/request が通る。
+// Google ログインが有効なら /auth/google/reauth（ログイン中ユーザーと Google のメールが一致しないと失敗）、
+// 無効ならフロントは POST /auth/reauth-password（bcrypt 照合）にフォールバックする。
+// 有効期間（10 分）と判定・戻り先の組み立ては utils/bank-transfer.js と共有（routes/bank-transfer.js も同じ関数を使う）
+const { reauthStatus, reauthRedirect } = require('./utils/bank-transfer');
+const REAUTH_PW_MAX_FAILURES = 5;
+const REAUTH_PW_LOCK_MS = 15 * 60 * 1000;
+const _reauthPwFailures = new Map(); // user_id → { count, lockedUntil }
+
+// 再認証の状態（フロントが「再認証が必要か」を判断する用）
+app.get('/auth/reauth/status', requireAuth, (req, res) => {
+  res.json({ ...reauthStatus(req), google_reauth_available: googleLogin.isEnabled() && !!googleLogin.resolveCallbackUrl(googleLoginHost(req)) });
+});
+
+// Google で再認証: 成功時は next（/haruka.html 始まりのみ）へ ?reauth=ok、失敗時は ?reauth_error=<code> を付けて戻す
+app.get('/auth/google/reauth', requireAuth, (req, res) => {
+  if (!googleLogin.isEnabled()) return reauthRedirect(res, req.query.next, { reauth_error: 'google_disabled' });
   const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
-  if (!callbackUrl) return googleLoginFail(res, 'google_host');
-  const payload = googleLogin.verifyState(String(req.query.state || ''), SESSION_SECRET || 'video-ops-dev-secret-change-in-production');
+  if (!callbackUrl) return reauthRedirect(res, req.query.next, { reauth_error: 'google_host' });
+  const { id, secret } = googleLogin.getClientConfig();
+  const { nonce, state } = googleLogin.newState({ secret: googleLogin.getStateSecret(), next: req.query.next });
+  req.session.googleLoginNonce = nonce;
+  req.session.googleReauthUserId = req.user.id; // callback で「再認証モード」と分かるように
+  const client = new google.auth.OAuth2(id, secret, callbackUrl);
+  const url = client.generateAuthUrl({
+    scope: ['openid', 'email', 'profile'],
+    prompt: 'select_account',
+    login_hint: req.user.email || undefined,
+    state,
+  });
+  req.session.save(() => res.redirect(url));
+});
+
+// パスワードで再認証（Google ログイン無効時のフォールバック）。5 回失敗で 15 分ロック
+app.post('/auth/reauth-password', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  const now = Date.now();
+  const st = _reauthPwFailures.get(uid) || { count: 0, lockedUntil: 0 };
+  if (st.lockedUntil > now) {
+    return res.status(429).json({ error: 'パスワードの再入力に失敗が続いたため、しばらく待ってからやり直してください', code: 'reauth_locked', retry_after_sec: Math.ceil((st.lockedUntil - now) / 1000) });
+  }
+  try {
+    const { data: u } = await supabase.from('users').select('password_hash').eq('id', uid).maybeSingle();
+    if (!u?.password_hash) return res.status(400).json({ error: 'パスワードが設定されていないため、Google で再認証してください', code: 'no_password' });
+    const ok = await bcrypt.compare(String(req.body?.password ?? ''), u.password_hash);
+    if (!ok) {
+      st.count += 1;
+      if (st.count >= REAUTH_PW_MAX_FAILURES) { st.count = 0; st.lockedUntil = now + REAUTH_PW_LOCK_MS; }
+      _reauthPwFailures.set(uid, st);
+      try { await supabase.from('user_activity_logs').insert({ user_id: uid, action: 'reauth_failed', ip_address: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip, user_agent: req.headers['user-agent'] || '' }); } catch (_) { /* noop */ }
+      return res.status(401).json({ error: 'パスワードが正しくありません', code: 'reauth_failed', remaining_attempts: st.lockedUntil > now ? 0 : REAUTH_PW_MAX_FAILURES - st.count });
+    }
+    _reauthPwFailures.delete(uid);
+    req.session.reauth_at = Date.now();
+    req.session.save(() => res.json({ ok: true, method: 'password', ...reauthStatus(req) }));
+  } catch (e) {
+    console.warn('[auth/reauth-password] 失敗:', e?.message);
+    res.status(500).json({ error: '再認証に失敗しました' });
+  }
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  // 再認証モード（/auth/google/reauth から来た）: ログイン中ユーザーと Google のメールが一致したら reauth_at を立てて戻す
+  const reauthUserId = req.session?.googleReauthUserId || null;
+  if (req.session) delete req.session.googleReauthUserId;
+  // state を先に検証して next を取り出す（Google 側でキャンセルされても元の画面へ戻せるように。レビュー #9）
+  const payload = googleLogin.verifyState(String(req.query.state || ''), googleLogin.getStateSecret());
+  const fail = (code) => (reauthUserId ? reauthRedirect(res, payload?.next, { reauth_error: code }) : googleLoginFail(res, code));
+
+  if (!googleLogin.isEnabled()) return fail('google_disabled');
+  if (req.query.error) return fail(req.query.error === 'access_denied' ? 'google_cancel' : 'google_failed');
+  const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
+  if (!callbackUrl) return fail('google_host');
   const expectedNonce = req.session?.googleLoginNonce;
   if (req.session) delete req.session.googleLoginNonce;
-  if (!payload || !expectedNonce || payload.nonce !== expectedNonce) return googleLoginFail(res, 'google_state');
-  if (!req.query.code) return googleLoginFail(res, 'google_failed');
+  if (!payload || !expectedNonce || payload.nonce !== expectedNonce) return fail('google_state');
+  if (!req.query.code) return fail('google_failed');
 
   try {
     const { id, secret } = googleLogin.getClientConfig();
     const client = new google.auth.OAuth2(id, secret, callbackUrl);
     const { tokens } = await client.getToken(String(req.query.code));
-    if (!tokens?.id_token) return googleLoginFail(res, 'google_failed');
+    if (!tokens?.id_token) return fail('google_failed');
     // 署名・発行者・宛先（自分のクライアントID）・期限を Google の公開鍵で検証
     const ticket = await client.verifyIdToken({ idToken: tokens.id_token, audience: id });
     const em = googleLogin.extractVerifiedEmail(ticket.getPayload());
-    if (em.error) return googleLoginFail(res, em.error);
+    if (em.error) return fail(em.error);
+
+    if (reauthUserId) {
+      if (!req.isAuthenticated?.() || String(req.user?.id) !== String(reauthUserId)) return reauthRedirect(res, payload.next, { reauth_error: 'session' });
+      if (String(req.user.email || '').trim().toLowerCase() !== em.email) {
+        console.log('[auth/google/reauth] rejected: email mismatch');
+        return reauthRedirect(res, payload.next, { reauth_error: 'email_mismatch' });
+      }
+      req.session.reauth_at = Date.now();
+      try {
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+        await supabase.from('user_activity_logs').insert({ user_id: req.user.id, action: 'reauth', ip_address: ip, user_agent: req.headers['user-agent'] || '' });
+      } catch (e) { console.warn('[auth/google/reauth] log failed:', e?.message); }
+      return req.session.save(() => reauthRedirect(res, payload.next, { reauth: 'ok' }));
+    }
 
     const { data: rows, error } = await supabase
       .from('users').select('*').ilike('email', googleLogin.escapeLike(em.email)).limit(5);
@@ -528,7 +610,7 @@ app.get('/auth/google/callback', async (req, res) => {
     });
   } catch (e) {
     console.warn('[auth/google] callback failed:', e?.message);
-    return googleLoginFail(res, 'google_failed');
+    return fail('google_failed');
   }
 });
 
@@ -879,6 +961,15 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] pricing-pending-reminder 起動失敗:', e.message);
     }
+    // 総合振込（ADR 054）: 承認待ち・手続中の依頼を 10 分ごとに銀行へ照会（ENABLE_AOZORA_TRANSFER=true のときだけ）
+    if (require('./utils/aozora-api').isEnabled()) {
+      try {
+        const { startBankTransferPoller } = require('./workers/bank-transfer-poller');
+        startBankTransferPoller();
+      } catch (e) {
+        console.error('[startup] bank-transfer-poller 起動失敗:', e.message);
+      }
+    }
   });
 
   // Node 18+ の server.requestTimeout デフォルト 300000ms (5分) のままだと
@@ -951,6 +1042,12 @@ const runSchemaSync = require('./db/migrate');
       stopContractReminder();
     } catch (e) {
       console.error('[shutdown] contract-reminder 停止失敗:', e.message);
+    }
+    try {
+      const { stopBankTransferPoller } = require('./workers/bank-transfer-poller');
+      stopBankTransferPoller();
+    } catch (e) {
+      console.error('[shutdown] bank-transfer-poller 停止失敗:', e.message);
     }
     // 新規接続の受付を止め、処理中のリクエスト完了を待って終了
     server.close((err) => {
