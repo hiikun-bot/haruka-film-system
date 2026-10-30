@@ -424,6 +424,40 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
     <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 振込管理はあなたの操作は不要です。フォルダに PDF を入れ、URL をひーくんに DM するところまでで完了。金額が読み取れない PDF の場合は管理者側で確認が入ります。</p>
   </div>
 
+  <div class="step-card" style="margin-top:14px">
+    <div class="step-card-title">🏦 あおぞら銀行への総合振込（管理者だけの操作）</div>
+    <p>振込管理ページには、振込を <b>GMOあおぞらネット銀行にまとめて依頼する</b> 仕組みがあります（管理者だけに表示されます）。メンバー側の操作は変わりませんが、流れを知っておくと「いつ振り込まれるか」が分かりやすくなります。</p>
+    <div class="flow-row" style="margin-top:10px">
+      <div class="flow-step">
+        <div class="flow-step-icon">🏦</div>
+        <div class="flow-step-label">銀行と<br>接続する</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">☑</div>
+        <div class="flow-step-label">振り込む人を<br>選んで依頼</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">🔐</div>
+        <div class="flow-step-label">本人確認<br>（再ログイン）</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">📱</div>
+        <div class="flow-step-label">銀行アプリで<br>内容を確認して承認</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-step-icon">✅</div>
+        <div class="flow-step-label">振込済みになり<br>通知が届く</div>
+      </div>
+    </div>
+    <p style="margin-top:10px">管理者が振込管理ページの「<b>接続する</b>」で銀行とつなぎ、一覧の <b>チェックボックス</b> で振り込む人を選んで「<b>🏦 あおぞらに総合振込を依頼</b>」を押します。確認画面に <b>振込指定日・件数・合計・手数料・一人ひとりの金額と口座（下4桁）</b> が出るので、内容を見てから「<b>Google で再認証して依頼する</b>」。本人確認のあと受付番号が表示され、管理者のマイチャットにも明細の要約が届きます。</p>
+    <p style="margin-top:6px">ここまでで <b>送金はまだ行われません</b>。管理者が <b>銀行アプリ／ブックマークから入って</b> 受付番号・件数・合計が一致するか確かめ、承認して初めて振り込まれます。振込が終わると一覧が「<b>🏦 振込済み(API)</b>」になり、これまでと同じ <b>振込完了のお知らせ</b> が届きます。</p>
+    <p style="margin-top:6px;font-size:12px;color:var(--text-muted)">💡 振込額は提出済みの請求書から自動で決まります（手で書き換えられません）。金額を直したいときは請求書側を直し戻してもらってください。また <b>口座情報を変えてから 7 日間</b> は一覧に「⚠ 口座変更から◯日」と出て、この仕組みでの振込対象から外れます（なりすまし対策）。急ぎのときは管理者に連絡を。依頼の状況は一覧の下の「<b>📋 依頼履歴</b>」で「承認待ち → 手続中 → 完了」と追えます。</p>
+  </div>
+
   <div class="wanpoint">
     <div class="wanpoint-title">提出後に間違いに気づいたら？</div>
     <p>提出済みになると <strong>自分では明細を編集・削除できません</strong>（修正画面を開いても読み取り専用になります）。間違いに気づいたら <strong>管理者に連絡して「差し戻し」にしてもらう</strong> のが正規ルート。差し戻しになれば自分で修正して再提出できます。</p>
