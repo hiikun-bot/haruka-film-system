@@ -164,6 +164,9 @@ if (process.env.NODE_ENV === 'production' && !SESSION_SECRET) {
   console.error('[FATAL] SESSION_SECRET is required in production. Refusing to start.');
   process.exit(1);
 }
+// セッション寿命: 通常 7 日。admin ロール保有者は 24 時間（ログイン時に applySessionLifetime が決める。ADR 054 Stage E）
+const DEFAULT_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const ADMIN_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.db', dir: process.env.DATA_DIR || './data' }),
   secret: require('./utils/google-login').getStateSecret(), // SESSION_SECRET（dev フォールバックは google-login.js の 1 箇所だけ）
@@ -173,7 +176,7 @@ app.use(session({
     secure: process.env.NODE_ENV === 'production', // 本番ではHTTPS必須
     httpOnly: true, // JavaScriptからCookieを読めないようにしてXSS対策
     sameSite: 'lax', // 通常の遷移ログインを壊さずに CSRF 耐性を底上げ
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7日間
+    maxAge: DEFAULT_SESSION_MAX_AGE_MS, // 7日間
   },
 }));
 
@@ -182,6 +185,24 @@ app.set('trust proxy', 1);
 
 app.use(passportInstance.initialize());
 app.use(passportInstance.session());
+
+// ログインからの絶対有効期間（ADR 054 Stage E）。
+// express-session はセッションを保存するたびに期限を延ばしうるので、cookie.maxAge だけでは
+// 「ログインから 24 時間」にならない。ログイン時に session.login_at / login_max_age_ms を記録し
+// （applySessionLifetime）、毎リクエストここで超過を見てログアウトさせる。
+// 以降の requireAuth が API には 401、画面にはログイン画面へのリダイレクトを返す。
+// この変更より前にログインしたセッション（login_at 無し）は従来どおり cookie の期限だけで切れる。
+app.use((req, res, next) => {
+  const s = req.session;
+  if (!req.isAuthenticated?.() || !s?.login_at) return next();
+  const maxAge = Number(s.login_max_age_ms) || DEFAULT_SESSION_MAX_AGE_MS;
+  if (Date.now() - Number(s.login_at) <= maxAge) return next();
+  console.log(`[auth] session expired (absolute lifetime ${Math.round(maxAge / 3600000)}h): user=${req.user?.id}`);
+  req.logout(err => {
+    if (err) console.warn('[auth] logout on session expiry failed:', err.message);
+    next();
+  });
+});
 
 // ==================== IPベース自動ログイン ====================
 // 環境変数:
@@ -200,6 +221,12 @@ function getClientIP(req) {
   const fwd = req.headers['x-forwarded-for'];
   if (fwd) return normalizeIP(String(fwd).split(',')[0]);
   return normalizeIP(req.ip || req.connection?.remoteAddress || '');
+}
+// ログイン失敗ロックの鍵に使う IP。getClientIP の X-Forwarded-For 先頭はクライアントが自由に書ける
+// （毎回変えればロックを素通りでき、他人の IP を書けば他人をロックできる）ので、ロックには使わない。
+// trust proxy 設定済みの req.ip（プロキシが付けた直前ホップの値）だけを使う。
+function getLockIP(req) {
+  return normalizeIP(req.ip || req.connection?.remoteAddress || '') || null;
 }
 
 // 自分のIPを確認するためのデバッグエンドポイント。
@@ -251,8 +278,9 @@ app.use(async (req, res, next) => {
     const { data: user } = await supabase.from('users').select('*').eq('email', AUTO_LOGIN_EMAIL).maybeSingle();
     if (!user) { console.log(`[AUTO-LOGIN] skip: user not found for email=${AUTO_LOGIN_EMAIL}`); return next(); }
     if (!user.is_active) { console.log(`[AUTO-LOGIN] skip: user is_active=false`); return next(); }
-    req.login(user, (err) => {
+    req.login(user, async (err) => {
       if (err) { console.log(`[AUTO-LOGIN] login error:`, err.message); return next(); }
+      await applySessionLifetime(req, user); // admin なら 24 時間（/auth/login と同じ）
       console.log(`[AUTO-LOGIN] success: ${user.email} from IP ${ip}`);
       // ログイン直後はログイン画面に来た場合 haruka.html へリダイレクト
       // ?next=/haruka.html?creative=xxx 形式で指定があれば、許可済みパターンに限り尊重する
@@ -426,13 +454,97 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 // ==================== 認証ルート ====================
 
+// ---- ログイン強化（ADR 054 §1 末尾 / Stage E）----
+// 1) 失敗ロック（utils/login-guard.js・メモリ保持）:
+//      メール×IP で 5 回失敗 → 15 分ロック／メール単独は 5 回で 2 秒の減速のみ（本人を締め出さない）／
+//      IP 単独は 20 回で 15 分ロック（NAT の巻き込み対策で緩め）。同時照合はメール 2 件・IP 10 件まで
+// 2) 管理者セッション: admin ロール保有者（または最高管理者）は 24 時間、他は従来の 7 日。
+//    ログインからの絶対時間で切る（session.login_at。上の共通ミドルウェア参照）
+const loginGuardUtil = require('./utils/login-guard');
+const rolesUtil = require('./utils/roles');
+const loginGuard = loginGuardUtil.createLoginGuard();
+
+// reason: 'locked'（失敗が続いて 15 分）/ 'busy'（同一メール・IP の照合が同時に重なりすぎ）
+function loginLockResponse(res, { reason, retryAfterSec }) {
+  res.setHeader('Retry-After', String(retryAfterSec));
+  const error = reason === 'busy' ? loginGuardUtil.BUSY_MESSAGE : loginGuardUtil.LOCK_MESSAGE;
+  return res.status(429).json({ error, retry_after_sec: retryAfterSec });
+}
+
+// user_activity_logs に失敗・ロックを記録する（パスワードや入力メールは書かない）。
+// 既存の login 記録と同じ列だけ使う。未登録メールのときは user_id が無いので null。
+// 本番の列制約で失敗しても認証処理は止めない（warn のみ）。
+async function logLoginEvent(req, action, userId) {
+  try {
+    const ip = getClientIP(req) || null;
+    const ua = req.headers['user-agent'] || '';
+    const { error } = await supabase.from('user_activity_logs')
+      .insert({ user_id: userId || null, action, ip_address: ip, user_agent: ua });
+    if (error) console.warn(`[auth] ${action} log failed:`, error.message);
+  } catch (e) {
+    console.warn(`[auth] ${action} log failed:`, e?.message);
+  }
+}
+
+// ログイン成功直後に、そのユーザーのセッション寿命を決める。
+// ここは VIEW AS（X-View-As）とは無関係に「実アカウントが admin か」で決めるべき箇所なので、
+// getEffectiveRoleCodes ではなく getUserRoleCodes（user_roles が空なら users.role に dual-read）を使う（ADR 015 の例外: 実ユーザー判定）。
+// cookie.maxAge と、絶対期限判定用の session.login_at / login_max_age_ms の両方を設定する。
+// req.login / req.logIn を使う全経路（/auth/login・/auth/google/callback・IP 自動ログイン・招待登録）から呼ぶこと。
+async function applySessionLifetime(req, user) {
+  if (!req.session) return;
+  let isAdmin = isSuperAdminUser(user);
+  if (!isAdmin) {
+    try {
+      const codes = await rolesUtil.getUserRoleCodes(user.id);
+      const effective = codes.length ? codes : [user.role].filter(Boolean);
+      isAdmin = effective.includes('admin');
+    } catch (e) {
+      console.warn('[auth] role lookup for session lifetime failed:', e?.message);
+      isAdmin = user.role === 'admin';
+    }
+  }
+  const maxAge = isAdmin ? ADMIN_SESSION_MAX_AGE_MS : DEFAULT_SESSION_MAX_AGE_MS;
+  if (req.session.cookie) req.session.cookie.maxAge = maxAge;
+  req.session.login_at = Date.now();
+  req.session.login_max_age_ms = maxAge;
+}
+
 // メール＋パスワード ログイン
 app.post('/auth/login', (req, res, next) => {
-  passportInstance.authenticate('local', (err, user, info) => {
+  // 認証（passport-local は body → query の順で拾う）とロック判定が同じ入力を見るよう、ここで body に 1 本化し query 側は消す
+  const input = loginGuardUtil.resolveLoginInput(req);
+  if (!input.ok) return res.status(400).json({ error: 'メールアドレスとパスワードを入力してください' });
+  const guardIdent = { email: input.guardEmail, ip: getLockIP(req) };
+
+  // ロック中・同時照合が多すぎるときはパスワード照合に進まない
+  // （存在しないメールでも同じ 429 を返す＝登録有無を漏らさない）。
+  // allowed のときは鍵ごとに「照合中」を予約するので、照合が終わったら必ず endAttempt する
+  const attempt = loginGuard.beginAttempt(guardIdent);
+  if (!attempt.allowed) return loginLockResponse(res, attempt);
+  let attemptEnded = false;
+  const endAttempt = () => { if (!attemptEnded) { attemptEnded = true; loginGuard.endAttempt(attempt.token); } };
+  res.once('close', endAttempt); // 照合中に切断されても予約を返す
+
+  const authenticate = () => passportInstance.authenticate('local', (err, user, info) => {
+    endAttempt();
     if (err)    return next(err);
-    if (!user)  return res.status(401).json({ error: info?.message || 'ログインに失敗しました' });
+    if (!user) {
+      // DB 接続障害など本人の入力ミスでない失敗（info.transient）は回数に数えない
+      if (info?.transient) return res.status(401).json({ error: info?.message || 'ログインに失敗しました' });
+      const r = loginGuard.recordFailure(guardIdent);
+      logLoginEvent(req, 'login_failed', info?.user_id);
+      if (r.lockedNow) {
+        console.warn(`[auth] login locked: ${r.lockedKeys.join(',')} (${r.failures} failures)`);
+        logLoginEvent(req, 'login_locked', info?.user_id);
+      }
+      if (r.locked) return loginLockResponse(res, { reason: 'locked', retryAfterSec: r.retryAfterSec });
+      return res.status(401).json({ error: info?.message || 'ログインに失敗しました' });
+    }
     req.logIn(user, async err => {
       if (err) return next(err);
+      loginGuard.recordSuccess(guardIdent);
+      await applySessionLifetime(req, user);
       // 手動ログインしたので自動ログイン抑止クッキーをクリア
       res.setHeader('Set-Cookie', `auto_login_off=; Max-Age=0; Path=/`);
       // ログイン記録
@@ -443,6 +555,13 @@ app.post('/auth/login', (req, res, next) => {
       res.json({ ok: true, user: safeUser(user) });
     });
   })(req, res, next);
+
+  // メール単独で失敗が続いているときは照合の前に少し待たせる（総当たりの減速。本人は別 IP からでも入れる）
+  if (attempt.delayMs > 0) {
+    setTimeout(() => { if (!res.destroyed) authenticate(); }, attempt.delayMs);
+  } else {
+    authenticate();
+  }
 });
 
 // ==================== Google でログイン（招待済みメンバーのみ） ====================
@@ -600,6 +719,8 @@ app.get('/auth/google/callback', async (req, res) => {
     const user = picked.user;
     req.logIn(user, async err => {
       if (err) { console.warn('[auth/google] login error:', err.message); return googleLoginFail(res, 'google_failed'); }
+      // 管理者は 24 時間セッション（/auth/login と同じ）。失敗ロックは Google ログインには掛けない
+      await applySessionLifetime(req, user);
       // 手動ログインしたので自動ログイン抑止クッキーをクリア（/auth/login と同じ）
       res.setHeader('Set-Cookie', `auto_login_off=; Max-Age=0; Path=/`);
       const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
@@ -740,8 +861,9 @@ app.post('/api/invitations/register', async (req, res) => {
         .catch(e => console.warn('[invitations/register] onboarding-autolink 失敗:', e?.message));
     } catch (e) { console.warn('[invitations/register] onboarding-autolink 呼び出し失敗:', e?.message); }
 
-    req.logIn(newUser, err => {
+    req.logIn(newUser, async err => {
       if (err) return res.status(500).json({ error: 'ログインに失敗しました' });
+      await applySessionLifetime(req, newUser); // 招待登録直後のログインにも同じ寿命（admin なら 24 時間）
       res.json({ ok: true, user: safeUser(newUser) });
     });
   } catch(e) {
