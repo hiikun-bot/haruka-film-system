@@ -16,6 +16,11 @@
 const axios = require('axios');
 const supabase = require('./supabase');
 const { createBulkNotifications } = require('./utils/notification');
+// ADR 055: 納品完了メッセージの「当月の案件内 納品カウント（積み上げ台帳）」
+const {
+  loadProjectDeliveryLedger, buildDeliveryLedgerBlock, renderLedgerSlack, renderLedgerChatwork,
+  jstYearMonthOf: ledgerJstYearMonthOf,
+} = require('./utils/delivery-ledger');
 
 // =============== Slack URL parser ===============
 // 受け付ける形式（バグ報告 #5cf4ce3e）:
@@ -642,7 +647,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
     .select(`
       id, file_name, memo, team_id, client_review_url,
       client_comment, editor_comment,
-      project_id,
+      project_id, delivered_at,
       teams(id, director_id, producer_id),
       projects(id, name, producer_id, director_id, slack_channel_url, chatwork_room_id, clients(id, name, slack_channel_url, chatwork_room_id)),
       creative_assignments(role, users(id, full_name, slack_dm_id, chatwork_dm_id))
@@ -1306,9 +1311,105 @@ ${msgLines.join('\n')}
   //    バグ報告 #82b1c20d で統一フォーマットへ揃える。クライアント承認コメントは
   //    buildCreativeNotifBody の comment フィールドにそのまま流し込む。
   else if (newStatus === '納品') {
-    const { slackBody, cwBody } = tpl('クライアントOK！納品完了', '🎉', editorAssignees);
-    // 担当者全員（editor・designer）に1メッセージで通知
-    await sendNotifMulti(editorAssignees, slackBody, cwBody);
+    // ADR 055: 宛先に担当ディレクター（案件 D ＋ creative_assignments の director）も加える。
+    // 納品完了＝その案件の当月カウントが 1 つ進むので、ディレクターにも同じ台帳が届くようにする。
+    const deliveryRecipients = [...editorAssignees, ...directorAssignees, director].filter(Boolean);
+    const { slackBody, cwBody } = tpl('クライアントOK！納品完了', '🎉', deliveryRecipients);
+
+    // ADR 055: 「この案件で今月は何件目か」を積み上げ台帳として本文に追記する。
+    // 当月は delivered_at（今回の納品完了日時）の JST 月。手動補正で過去月に入れた場合はその月の台帳になる。
+    const ym = ledgerJstYearMonthOf(detail.delivered_at) || ledgerJstYearMonthOf(new Date().toISOString());
+    const ledger = await _buildDeliveryLedgerTexts({ projectId: detail.project_id, creativeIds: [detail.id], ym });
+    const slackFull = ledger ? `${slackBody}\n\n${ledger.slack}` : slackBody;
+    const cwFull = ledger ? _appendInsideChatworkInfo(cwBody, ledger.cw) : cwBody;
+
+    // 担当者・ディレクター全員に1メッセージで通知
+    const sent = await sendNotifMulti(deliveryRecipients, slackFull, cwFull);
+    // 誰にも DM ID が無いプラットフォームでも、台帳は案件チャンネル／ルームに必ず残す
+    // （あとから AI が Slack / Chatwork のログだけで当月件数を追えるようにするのが目的のため）。
+    if (ledger) {
+      if (channelUrl && sent.reachableSlackCount === 0) await postSlackResilient(slackFull);
+      if (roomId && sent.reachableCwCount === 0) await postChatworkResilient(cwFull);
+    }
+  }
+}
+
+// =============== ADR 055: 納品カウント（積み上げ台帳）ヘルパ ===============
+
+// 当月の案件内 納品台帳を取り、Slack / Chatwork 向け本文を組む。失敗時は null（通知本体は止めない）。
+// @param {object} p
+// @param {string|null} p.projectId
+// @param {string[]} p.creativeIds 今回納品した creative の id（単件なら「⬅ 今回」印）
+// @param {string} p.ym 'YYYY-MM'（JST）
+// @param {boolean} [p.bulk] 一括納品（月次消込）なら true
+async function _buildDeliveryLedgerTexts({ projectId, creativeIds, ym, bulk }) {
+  if (!projectId || !ym) return null;
+  try {
+    const ledger = await loadProjectDeliveryLedger(supabase, { projectId, ym });
+    const block = buildDeliveryLedgerBlock({ ledger, projectId, currentIds: creativeIds, bulk: !!bulk });
+    return { slack: renderLedgerSlack(block), cw: renderLedgerChatwork(block), block, ledger };
+  } catch (e) {
+    console.warn('[notif/ledger] failed:', e?.message || e);
+    return null;
+  }
+}
+
+// Chatwork の [info]...[/info] の末尾（[/info] の直前）に本文を差し込む。
+// [/info] で終わっていなければ末尾に追記。
+function _appendInsideChatworkInfo(cwBody, extra) {
+  const body = String(cwBody || '');
+  if (body.endsWith('[/info]')) {
+    return `${body.slice(0, -'[/info]'.length)}\n\n${extra}\n[/info]`;
+  }
+  return `${body}\n\n${extra}`;
+}
+
+// 一括納品完了（月次消込）で案件ごとに1通だけ、案件チャンネル／ルームへ台帳を投稿する。
+// routes/haruka.js の POST /creatives/bulk-deliver から案件ごとに呼ばれる。
+// 投稿先は notifyCreativeStatusChange と同じ（案件 > クライアントの slack_channel_url / chatwork_room_id）。
+// 担当ディレクターに DM ID があればメンションを付ける。失敗しても throw しない。
+// 戻り値: { ledger } （ダイジェスト通知で「当月累計」を出すために返す）／失敗時 { ledger: null }
+async function notifyProjectDeliveryLedger({ projectId, creativeIds, actorUserId, ym }) {
+  try {
+    if (!projectId || !Array.isArray(creativeIds) || creativeIds.length === 0) return { ledger: null };
+    const { data: project, error: pErr } = await supabase
+      .from('projects')
+      .select('id, name, director_id, slack_channel_url, chatwork_room_id, clients(id, name, slack_channel_url, chatwork_room_id)')
+      .eq('id', projectId)
+      .maybeSingle();
+    if (pErr) console.warn('[notif/ledger] projects select failed:', pErr.message);
+    if (!project) return { ledger: null };
+    const client = project.clients;
+    const channelUrl = project.slack_channel_url || client?.slack_channel_url || null;
+    const roomId = project.chatwork_room_id || client?.chatwork_room_id || null;
+
+    const built = await _buildDeliveryLedgerTexts({ projectId, creativeIds, ym, bulk: true });
+    if (!built) return { ledger: null };
+    if (!channelUrl && !roomId) return { ledger: built.ledger };
+
+    const actor = await loadUser(actorUserId);
+    const director = await loadUser(project.director_id);
+    const projectLabel = `${client?.name ? `【${client.name}】` : ''}${project.name || ''}` || '-';
+    const actorName = actor?.full_name || '不明';
+    const SEP = '━━━━━━━━━━━━━━━';
+
+    if (channelUrl) {
+      const mention = director?.slack_dm_id ? `<@${director.slack_dm_id}>\n\n` : '';
+      const text = `${mention}${SEP}\n📦 *一括納品完了（月次消込）*\n${SEP}\n\n案件: ${projectLabel}\n実行者: ${actorName}\n\n${built.slack}`;
+      const r = await sendSlackChannel(channelUrl, text);
+      if (!r.ok) console.warn('[notif/ledger] slack push failed:', r.reason);
+    }
+    if (roomId) {
+      const mention = director?.chatwork_dm_id ? `[To:${director.chatwork_dm_id}]\n` : '';
+      const cwPost = await resolveChatworkPostToken(roomId, actor);
+      const text = `${mention}[info][title]📦 一括納品完了（月次消込）[/title]案件: ${projectLabel}\n実行者: ${actorName}\n\n${built.cw}\n[/info]`;
+      const r = await sendChatworkRoom(roomId, text, { token: cwPost.token });
+      if (!r.ok) console.warn('[notif/ledger] chatwork push failed:', r.reason);
+    }
+    return { ledger: built.ledger };
+  } catch (e) {
+    console.warn('[notif/ledger] bulk failed:', e?.message || e);
+    return { ledger: null };
   }
 }
 
@@ -1344,7 +1445,9 @@ async function notifyBulkDelivered({ actor, batchId, projects, total, deliveredA
     if (deliveredAtLabel) lines.push(`納品完了日: ${deliveredAtLabel}（JST）`);
     for (const p of (projects || [])) {
       const clientPart = p?.clientName ? `（${p.clientName}）` : '';
-      lines.push(`・${p?.projectName || '(案件不明)'}${clientPart}: ${p?.count || 0}件`);
+      // ADR 055: 当月（JST）の案件累計も併記（bulk-deliver 側が notifyProjectDeliveryLedger の結果を monthTotal に入れる）
+      const monthPart = (p && Number.isFinite(p.monthTotal)) ? `（当月累計 ${p.monthTotal}件）` : '';
+      lines.push(`・${p?.projectName || '(案件不明)'}${clientPart}: ${p?.count || 0}件${monthPart}`);
     }
     if (batchId) lines.push(`batch: ${batchId}`);
     const text = lines.join('\n');
@@ -1680,6 +1783,9 @@ async function notifyAutoError(payload) {
 module.exports = {
   notifyCreativeStatusChange,
   notifyBulkDelivered,
+  // ADR 055: 納品カウント（積み上げ台帳）
+  notifyProjectDeliveryLedger,
+  _appendInsideChatworkInfo,     // テスト用
   parseSlackChannelUrl,
   sendSlackChannel,
   sendSlackChannelWithFile,
