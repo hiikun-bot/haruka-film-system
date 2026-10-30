@@ -53,6 +53,8 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // ==================== Local Strategy（メール＋パスワード） ====================
+const LOGIN_FAILED_MESSAGE = 'メールアドレスまたはパスワードが正しくありません';
+const GOOGLE_ONLY_MESSAGE = 'このアカウントは Google でログインしてください';
 passport.use(new LocalStrategy(
   { usernameField: 'email', passwordField: 'password' },
   async (email, password, done) => {
@@ -70,13 +72,17 @@ passport.use(new LocalStrategy(
         return done(null, false, { message: '一時的に接続できません。少し時間をおいて再度お試しください。', transient: true });
       }
 
+      // 失敗文言は 1 種類に統一（未登録・無効化・パスワード違いを区別しない＝登録済みメールの列挙を防ぐ）。
+      // 例外: パスワード未設定（Google ログイン専用）のアカウントだけは「Google でログインしてください」と案内する。
+      //   メンバーは招待制で、このアドレスにパスワードは存在しないので、分かっても総当たりの足掛かりにならない。
+      //   一方で本人がパスワード欄で詰まる事故は実際に起きているので、案内の価値を優先する。
       // info.user_id は失敗ログ（user_activity_logs.login_failed）の紐付け用。未登録メールのときは付けない
-      if (!user)               return done(null, false, { message: 'メールアドレスが見つかりません' });
-      if (!user.password_hash) return done(null, false, { message: 'このアカウントはGoogleログイン専用です', user_id: user.id });
-      if (!user.is_active)     return done(null, false, { message: 'このアカウントは無効化されています', user_id: user.id });
+      if (!user)               return done(null, false, { message: LOGIN_FAILED_MESSAGE });
+      if (!user.password_hash) return done(null, false, { message: GOOGLE_ONLY_MESSAGE, user_id: user.id });
+      if (!user.is_active)     return done(null, false, { message: LOGIN_FAILED_MESSAGE, user_id: user.id });
 
       const ok = await bcrypt.compare(password, user.password_hash);
-      if (!ok) return done(null, false, { message: 'パスワードが正しくありません', user_id: user.id });
+      if (!ok) return done(null, false, { message: LOGIN_FAILED_MESSAGE, user_id: user.id });
 
       done(null, user);
     } catch(e) { done(e); }
