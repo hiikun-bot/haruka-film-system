@@ -183,3 +183,22 @@ describe('parseLedgerTags', () => {
     expect(L.parseLedgerTags(null)).toEqual([]);
   });
 });
+
+describe('latestLedgerTag', () => {
+  test('最後に投稿されたタグを返す（最大値ではない）: 5件→3件に訂正したログで 3 を採る', () => {
+    const text = [
+      '[HFS-LEDGER] project=p1 month=2026-10 seq=4 month_total=4 project_total=10 creative=c4',
+      '[HFS-LEDGER] project=p1 month=2026-10 seq=5 month_total=5 project_total=11 creative=c5',
+      '（c4・c5 の納品を戻して再納品）',
+      '[HFS-LEDGER] project=p1 month=2026-10 seq=3 month_total=3 project_total=9 creative=c3',
+    ].join('\n');
+    const tags = L.parseLedgerTags(text);
+    expect(L.latestLedgerTag(tags)).toMatchObject({ month_total: 3, creative: 'c3' });
+  });
+  test('month_total が読めないタグは飛ばし、無ければ null', () => {
+    const tags = [{ project: 'p1', month: '2026-10', month_total: 2 }, { project: 'p1', month: '2026-10', month_total: null }];
+    expect(L.latestLedgerTag(tags).month_total).toBe(2);
+    expect(L.latestLedgerTag([])).toBeNull();
+    expect(L.latestLedgerTag(null)).toBeNull();
+  });
+});

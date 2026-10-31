@@ -104,8 +104,11 @@ async function main() {
     const ledger = await L.loadProjectDeliveryLedger(supabase, { projectId: project, ym });
     const block = L.buildDeliveryLedgerBlock({ ledger, projectId: project, currentIds: [] });
 
-    // ログ側のまとめ: 最後（最大）の month_total と、タグに出てきた creative 集合
-    const logMax = tags.reduce((m, t) => Math.max(m, Number.isFinite(t.month_total) ? t.month_total : -1), -1);
+    // ログ側のまとめ: 「最後に投稿された」タグの month_total と、タグに出てきた creative 集合。
+    // 最大値は使わない（5件→3件に訂正した場合、最大値 5 だと訂正後の 3件を不一致と誤判定する）。
+    // ログは貼り付け順＝時系列が前提（Slack / Chatwork の画面から上→下にコピーしたもの）。
+    const latest = L.latestLedgerTag(tags);
+    const logLast = latest ? latest.month_total : null;
     const logCreatives = new Set(tags.map(t => t.creative).filter(Boolean));
     const dbCreatives = new Set(ledger.items.map(it => it.id));
     const onlyInLog = [...logCreatives].filter(id => !dbCreatives.has(id));
@@ -113,7 +116,7 @@ async function main() {
 
     const verdict = tags.length === 0
       ? 'DB_ONLY'
-      : (logMax === ledger.monthTotal && onlyInLog.length === 0 ? 'MATCH' : 'MISMATCH');
+      : (logLast === ledger.monthTotal && onlyInLog.length === 0 ? 'MATCH' : 'MISMATCH');
 
     report.push({
       project_id: project,
@@ -121,7 +124,7 @@ async function main() {
       client_name: proj?.clients?.name || null,
       month: ym,
       db: { month_total: ledger.monthTotal, project_total: ledger.projectTotal, items: ledger.items, tag: block.tag },
-      log: { tag_count: tags.length, last_month_total: logMax >= 0 ? logMax : null, creatives: [...logCreatives] },
+      log: { tag_count: tags.length, last_month_total: logLast, creatives: [...logCreatives] },
       diff: { only_in_log: onlyInLog, only_in_db_unmentioned: onlyInDb },
       verdict,
     });

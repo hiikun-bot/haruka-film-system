@@ -139,6 +139,20 @@ function parseLedgerTags(text) {
   return out;
 }
 
+// タグ列（parseLedgerTags の戻り値。ログの出現順＝投稿の時系列）から「最後に投稿されたタグ」を返す。
+// 突合で DB と比べるのは必ずこの 1 件の month_total（最大値ではない）。
+//   納品を戻して 5件→3件 に訂正した場合、ログには month_total=5 のあとに month_total=3 が残る。
+//   最大値 5 を使うと「訂正後の正しい 3件」を不一致、「古い 5件」を一致と誤判定してしまう。
+// month_total が数値でないタグは飛ばす。該当なしは null。
+function latestLedgerTag(tags) {
+  const list = Array.isArray(tags) ? tags : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const t = list[i];
+    if (t && Number.isFinite(t.month_total)) return t;
+  }
+  return null;
+}
+
 // 表示ブロックを組む（Slack / Chatwork 共通の行配列を返す。装飾は呼び出し側）。
 //
 // @param {object} p
@@ -248,6 +262,7 @@ module.exports = {
   loadProjectDeliveryLedger,
   formatLedgerTag,
   parseLedgerTags,
+  latestLedgerTag,
   buildDeliveryLedgerBlock,
   renderLedgerSlack,
   renderLedgerChatwork,
