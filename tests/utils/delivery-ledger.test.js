@@ -174,6 +174,10 @@ describe('parseLedgerTags', () => {
     const [t] = L.parseLedgerTags(`前後の文章 ${tag} 後ろ`);
     expect(t).toMatchObject({ project: 'p9', month: '2026-11', seq: 4, month_total: 4, project_total: 50, creative: 'c9' });
   });
+  test('Chatwork の [/info] が直後に続いても値に含めない', () => {
+    const [t] = L.parseLedgerTags('[info][HFS-LEDGER] project=p1 month=2026-10 seq=2 month_total=2 project_total=30 creative=c2[/info]');
+    expect(t).toMatchObject({ project: 'p1', month: '2026-10', seq: 2, month_total: 2, project_total: 30, creative: 'c2' });
+  });
   test('タグが無ければ空配列', () => {
     expect(L.parseLedgerTags('なにもない')).toEqual([]);
     expect(L.parseLedgerTags(null)).toEqual([]);

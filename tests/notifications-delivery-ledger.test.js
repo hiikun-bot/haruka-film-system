@@ -7,11 +7,13 @@ jest.mock('../utils/notification', () => ({ createBulkNotifications: jest.fn() }
 
 // テーブルごとに返す行を差し替えられる最小の Supabase mock
 const mockTables = {};
+const mockInserted = {};
 function mockMakeQuery(table) {
   const q = { _table: table, _filters: [], _head: false };
   const chain = (name) => (...a) => { q._filters.push([name, ...a]); return q; };
   ['eq', 'gte', 'lt', 'not', 'order', 'limit', 'in'].forEach(n => { q[n] = chain(n); });
   q.select = (_cols, opts) => { q._head = !!(opts && opts.head); return q; };
+  q.insert = (row) => { (mockInserted[table] = mockInserted[table] || []).push(row); return Promise.resolve({ data: null, error: null }); };
   q.maybeSingle = () => Promise.resolve({ data: (mockTables[table] || [])[0] || null, error: null });
   q.then = (resolve, reject) => {
     if (q._head) return Promise.resolve({ data: null, error: null, count: (mockTables[table] || []).length }).then(resolve, reject);
@@ -38,6 +40,7 @@ describe('notifyProjectDeliveryLedger', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     for (const k of Object.keys(mockTables)) delete mockTables[k];
+    for (const k of Object.keys(mockInserted)) delete mockInserted[k];
     process.env.CHATWORK_API_TOKEN = 'cw-token';
     mockTables.projects = [{
       id: 'p1', name: 'LP制作', director_id: 'u-dir',
@@ -74,6 +77,13 @@ describe('notifyProjectDeliveryLedger', () => {
     expect(body).toContain('　③10/30 C.mp4 🆕');
     expect(body).toContain('[HFS-LEDGER] project=p1 month=2026-10 added=2 month_total=3 project_total=3');
     expect(body.trim().endsWith('[/info]')).toBe(true);
+    // ADR 055 追補: 投稿記録（delivery_ledger_posts）に Chatwork 分 1 行
+    expect(mockInserted.delivery_ledger_posts).toHaveLength(1);
+    expect(mockInserted.delivery_ledger_posts[0]).toMatchObject({
+      project_id: 'p1', ym: '2026-10', platform: 'chatwork', channel_ref: '12345', message_id: '1',
+      kind: 'bulk', creative_ids: ['c2', 'c3'], seq: null, added: 2, month_total: 3, project_total: 3, posted_by: 'u-dir',
+    });
+    expect(mockInserted.delivery_ledger_posts[0].tag).toBe('[HFS-LEDGER] project=p1 month=2026-10 added=2 month_total=3 project_total=3');
   });
 
   test('通知先が未設定でも ledger は返す（ダイジェストの当月累計用）、投稿はしない', async () => {

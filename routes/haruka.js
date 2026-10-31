@@ -1070,6 +1070,38 @@ router.get('/projects/:id/delivery-ledger', async (req, res) => {
   }
 });
 
+// ADR 055 追補: 納品カウントの自動突合（管理者）。HFS が案件の Slack / Chatwork を自分で読んで DB と照らす。
+//   GET  /admin/delivery-ledger/recon?month=YYYY-MM[&project_id=<uuid>]   → 結果 JSON（送信はしない）
+//   POST /admin/delivery-ledger/recon/notify { month }                     → 突合して今すぐ管理者マイチャットへ
+router.get('/admin/delivery-ledger/recon', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const L = require('../utils/delivery-ledger');
+    const R = require('../utils/delivery-ledger-recon');
+    const ym = (req.query.month && String(req.query.month).trim()) || L.jstYearMonthOf(new Date().toISOString());
+    if (!L.jstMonthRangeIso(ym)) return res.status(400).json({ error: 'month は YYYY-MM 形式で指定してください' });
+    const projectIds = req.query.project_id ? [String(req.query.project_id)] : null;
+    const result = await R.reconMonth({ supabase, notifications: require('../notifications') }, { ym, projectIds });
+    res.json(result);
+  } catch (e) {
+    console.error('[delivery-ledger/recon] failed:', e?.message || e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+router.post('/admin/delivery-ledger/recon/notify', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const L = require('../utils/delivery-ledger');
+    const ym = (req.body?.month && String(req.body.month).trim()) || null;
+    if (ym && !L.jstMonthRangeIso(ym)) return res.status(400).json({ error: 'month は YYYY-MM 形式で指定してください' });
+    const { runOnce } = require('../workers/delivery-ledger-recon');
+    const r = await runOnce({ ym: ym || undefined, force: true });
+    res.json(r);
+  } catch (e) {
+    console.error('[delivery-ledger/recon/notify] failed:', e?.message || e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
 router.get('/projects/:id', async (req, res) => {
   // ADR 017: liaison + director に is_external / external_company を含めて返す
   const detailSelectWith = `

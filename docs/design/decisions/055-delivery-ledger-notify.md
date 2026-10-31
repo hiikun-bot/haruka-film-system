@@ -98,3 +98,28 @@ URL: https://…/haruka.html?creative=…
 - **月末に 1 通だけ集計を投稿する**: 途中の納品メッセージと対応付けられず、ログを読む AI が
   「どの投稿がどの 1 件か」を追えない。積み上げ方式なら各投稿が自己完結する
 - **Slack スレッドに返信で積む**: Chatwork にスレッドが無く、2 媒体で挙動が割れるため不採用
+
+## 追補（2026-10-31）: 人が URL を渡さない全自動の突合
+
+**HFS は案件ごとの Slack チャンネル／Chatwork ルームを既に持っている**（projects → clients のフォールバック）ので、
+突合も HFS 自身が行う。人が URL やログを AI に渡す工程は無くす。
+
+- **投稿記録** `delivery_ledger_posts`（migration `2026-10-31_delivery_ledger_posts.sql`）:
+  台帳を投稿するたびに platform / channel_ref / message_id（Slack は ts・Chatwork は message_id）/ 投稿時点の件数 / タグ を 1 行残す。
+  Chatwork の一覧 API は最新 100 件しか返さないため、古い投稿は message_id で 1 件ずつ読み直す
+- **自動突合** `utils/delivery-ledger-recon.js`:
+  案件×月ごとに (1) DB の納品数 (2) 投稿記録 (3) チャンネルの本文（Slack `conversations.history` ／ Chatwork `rooms/{id}/messages`）の
+  `[HFS-LEDGER]` を読み比べ、`match / mismatch / no_posts / fetch_error / no_channel` を判定する。
+  不一致の理由（最後の投稿の件数と DB の件数、投稿にあって DB に無い creative、DB にあって投稿に無い creative、
+  投稿記録があるのにチャンネルに無い message_id）を付ける
+- **月初ワーカー** `workers/delivery-ledger-recon.js`: 毎月 1〜3 日の JST 10 時台に前月分を突合し、
+  管理者の Chatwork マイチャットへ 1 通（不一致を先頭に）。二重送信ガード `system_settings.delivery_ledger_recon_last_ym`、
+  無効化 `DELIVERY_LEDGER_RECON_ENABLED=false`
+- **手動** `GET /api/haruka/admin/delivery-ledger/recon?month=YYYY-MM[&project_id=]`（結果 JSON）、
+  `POST /api/haruka/admin/delivery-ledger/recon/notify { month }`（今すぐマイチャットへ）、
+  `node scripts/delivery-ledger-check.js --fetch --month YYYY-MM`
+- **Slack の権限**: bot に `channels:history`（非公開は `groups:history`）が必要。無ければ `missing_scope` を
+  `fetch_error` の理由として報告し、ダイジェストにスコープ追加の案内を出す（Chatwork は投稿用トークンで読める）
+- **AI による会話文の読み取り**（「今月は 5 本お願いします」のような人の文章との照合）は LLM 呼び出し＝課金が要るため本追補では自動化しない。
+  必要なら `include_messages` を API に足して本文を渡す設計にできる（課金は事前承諾）
+- 不一致のときは DB（HFS）が正。納品完了日の手動補正で月をまたいだ案件は投稿側が古いままになる

@@ -1085,6 +1085,13 @@ const runSchemaSync = require('./db/migrate');
     } catch (e) {
       console.error('[startup] pricing-pending-reminder 起動失敗:', e.message);
     }
+    // 納品カウントの自動突合（ADR 055 追補）: 毎月 1〜3 日の JST 10時台に前月分を Slack / Chatwork と DB で読み比べ、管理者マイチャットへ
+    try {
+      const { startDeliveryLedgerRecon } = require('./workers/delivery-ledger-recon');
+      startDeliveryLedgerRecon();
+    } catch (e) {
+      console.error('[startup] delivery-ledger-recon 起動失敗:', e.message);
+    }
     // 総合振込（ADR 054）: 承認待ち・手続中の依頼を 10 分ごとに銀行へ照会（ENABLE_AOZORA_TRANSFER=true のときだけ）
     if (require('./utils/aozora-api').isEnabled()) {
       try {

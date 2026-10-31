@@ -122,7 +122,7 @@ function parseLedgerTags(text) {
   while ((m = re.exec(String(text || ''))) !== null) {
     const body = m[1];
     const rec = { raw: `${LEDGER_TAG}${body}`.trim() };
-    const kv = /(\w+)=([^\s*`>]+)/g;
+    const kv = /(\w+)=([^\s*`>\[\]]+)/g; // Slack の装飾・Chatwork の [/info] が続いても値に含めない
     let p;
     while ((p = kv.exec(body)) !== null) {
       const key = p[1];
@@ -186,7 +186,42 @@ function buildDeliveryLedgerBlock({ ledger, projectId, currentIds, bulk }) {
     added: bulk ? ids.size : null,
     creativeId: (!bulk && current) ? current.id : null,
   });
-  return { headline, lines, tag };
+  return { headline, lines, tag, seq, monthTotal, projectTotal };
+}
+
+// ADR 055 追補: 台帳投稿の記録（delivery_ledger_posts に 1 行）。
+// 月初の自動突合（utils/delivery-ledger-recon.js）が「どこに・どの message_id で・どの数字を」投稿したかを
+// 読み直す手がかり。失敗（テーブル未作成・接続失敗）は warn のみで通知本体を止めない。
+// p: { projectId, ym, platform('slack'|'chatwork'), channelRef(Slack: channel_id / Chatwork: room_id),
+//      messageId(Slack: ts / Chatwork: message_id), kind('single'|'bulk'), creativeIds, seq, added,
+//      monthTotal, projectTotal, tag, postedBy }
+async function recordLedgerPost(supabase, p) {
+  try {
+    const row = {
+      project_id: p.projectId,
+      ym: p.ym,
+      platform: p.platform,
+      channel_ref: String(p.channelRef || '-'),
+      message_id: p.messageId != null ? String(p.messageId) : null,
+      kind: p.kind,
+      creative_ids: Array.isArray(p.creativeIds) ? p.creativeIds.filter(Boolean) : [],
+      seq: p.seq ?? null,
+      added: p.added ?? null,
+      month_total: Number(p.monthTotal) || 0,
+      project_total: Number(p.projectTotal) || 0,
+      tag: String(p.tag || ''),
+      posted_by: p.postedBy || null,
+    };
+    const { error } = await supabase.from('delivery_ledger_posts').insert(row);
+    if (error) {
+      console.warn('[delivery-ledger] record post failed:', error.message);
+      return { ok: false, reason: error.message };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.warn('[delivery-ledger] record post failed:', e?.message || e);
+    return { ok: false, reason: e?.message || String(e) };
+  }
 }
 
 // Slack 用: mrkdwn で見出しを太字、タグはコードスパン（装飾されても parseLedgerTags が拾える）。
@@ -216,4 +251,5 @@ module.exports = {
   buildDeliveryLedgerBlock,
   renderLedgerSlack,
   renderLedgerChatwork,
+  recordLedgerPost,
 };
