@@ -126,7 +126,7 @@ URL: https://…/haruka.html?creative=…
 - **手動** `GET /api/haruka/admin/delivery-ledger/recon?month=YYYY-MM[&project_id=]`（結果 JSON）、
   `POST /api/haruka/admin/delivery-ledger/recon/notify { month }`（今すぐマイチャットへ）、
   `node scripts/delivery-ledger-check.js --fetch --month YYYY-MM`
-- **Slack の権限**: bot に `channels:history`（非公開は `groups:history`）が必要。無ければ `missing_scope` を
+- **Slack の権限**: bot に `channels:history`（非公開は `groups:history`）と、未参加の公開チャンネルへ自動参加するための `channels:join` が必要。未参加（`not_in_channel`）なら `conversations.join` を一度試し、できなければ「/invite @haruka_film_notifier」をダイジェストで案内する（投稿は `chat:write.public` で参加なしでもできるため、読み取りで初めて露見する）。無ければ `missing_scope` を
   `fetch_error` の理由として報告し、ダイジェストにスコープ追加の案内を出す（Chatwork は投稿用トークンで読める）
 - **AI による会話文の読み取り**（「今月は 5 本お願いします」のような人の文章との照合）は LLM 呼び出し＝課金が要るため本追補では自動化しない。
   必要なら `include_messages` を API に足して本文を渡す設計にできる（課金は事前承諾）

@@ -138,6 +138,28 @@ describe('fetchSlackHistory / fetchChatworkRecent / fetchChatworkMessage', () =>
     expect(http.get.mock.calls[1][1].params.cursor).toBe('C1');
     expect(http.get.mock.calls[0][1].params).toMatchObject({ channel: 'C123', oldest: '1', latest: '9' });
   });
+  test('Slack の not_in_channel は一度 conversations.join してから読み直す', async () => {
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { ok: false, error: 'not_in_channel' } })
+        .mockResolvedValueOnce({ data: { ok: true, messages: [{ ts: '1.0', text: 'a' }], has_more: false } }),
+      post: jest.fn().mockResolvedValue({ data: { ok: true } }),
+    };
+    const r = await R.fetchSlackHistory({ token: 't', channelId: 'C1', http });
+    expect(r.ok).toBe(true);
+    expect(r.messages).toHaveLength(1);
+    expect(http.post).toHaveBeenCalledWith('https://slack.com/api/conversations.join', { channel: 'C1' }, expect.anything());
+    expect(http.get).toHaveBeenCalledTimes(2);
+  });
+  test('自動参加できない（スコープ無し・非公開）ときは not_in_channel を理由付きで報告', async () => {
+    const http = {
+      get: jest.fn().mockResolvedValue({ data: { ok: false, error: 'not_in_channel' } }),
+      post: jest.fn().mockResolvedValue({ data: { ok: false, error: 'missing_scope' } }),
+    };
+    const r = await R.fetchSlackHistory({ token: 't', channelId: 'C1', http });
+    expect(r).toMatchObject({ ok: false, reason: 'not_in_channel（自動参加できず: missing_scope）' });
+    expect(http.get).toHaveBeenCalledTimes(1);
+  });
   test('Slack のエラー（missing_scope）は理由付きで失敗', async () => {
     const http = { get: jest.fn().mockResolvedValue({ data: { ok: false, error: 'missing_scope' } }) };
     const r = await R.fetchSlackHistory({ token: 't', channelId: 'C1', http });
@@ -315,6 +337,8 @@ describe('buildReconDigestText', () => {
     expect(lines[idxNg + 1]).toBe('　└ Chatwork: 最後の投稿は当月 4件、DB は 5件');
     expect(text).toContain('🚫 取得不可 スコープ無し：DB 1件 ／ Slack 取得不可');
     expect(text).toContain('channels:history');
+    const withNotIn = [...results, { project_id: 'd', client_name: 'D', project_name: '未参加', month: YM, db: { month_total: 2 }, slack: { verdict: 'fetch_error', last_month_total: null, reason: 'not_in_channel' }, chatwork: null, verdict: 'fetch_error' }];
+    expect(R.buildReconDigestText({ month: YM, results: withNotIn, summary: R.summarize(withNotIn), pageUrl: null })).toContain('/invite @haruka_film_notifier');
     expect(text).toContain('不一致は DB（HFS）が正です');
     expect(text).toContain('読めなかった投稿先がある案件が 1件あります');
     expect(text).toContain('詳細（JSON）: https://x/api/haruka/admin/delivery-ledger/recon?month=2026-10');
