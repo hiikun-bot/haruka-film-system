@@ -16,6 +16,13 @@
 // Chatwork: GET /rooms/{id}/messages?force=1 は最新 100 件のみ。それより古い投稿は
 //        投稿記録の message_id で GET /rooms/{id}/messages/{message_id} を 1 件ずつ読む。
 //
+// 読む場所は「今の設定のチャンネル」だけではない。投稿記録（delivery_ledger_posts.channel_ref）に
+// 残っている投稿先（案件ルームが落ちてクライアント共通ルームへ代替投稿した分／当月途中でルームを
+// 変更する前の投稿）も全部読む。今の設定だけ読むと、正常な投稿を「投稿なし・不一致」と誤判定する。
+//
+// 取得に失敗した投稿先が 1 つでもあれば、そのプラットフォームの判定は 'fetch_error'（欠落ではない）。
+// 一時的な通信エラーを「投稿なし／記録があるのに無い」として数えない。
+//
 // 書き込みなし（読むだけ）。呼び出し: workers/delivery-ledger-recon.js（月初）、
 // GET /admin/delivery-ledger/recon（手動）、scripts/delivery-ledger-check.js --fetch。
 
@@ -118,6 +125,13 @@ function judgePlatform({ fetched, db, posts, projectId, ym }) {
     out.reason = fetched?.reason || 'unknown';
     return out;
   }
+  // 投稿先が複数（代替投稿・ルーム変更前）で一部だけ読めなかった場合も取得不可。
+  // 読めなかった先の投稿を「無い」と数えると正常な投稿を欠落扱いしてしまう。
+  if (Array.isArray(fetched.failures) && fetched.failures.length) {
+    out.verdict = 'fetch_error';
+    out.reason = fetched.failures.map(f => `${f.ref}: ${f.reason}`).join('／');
+    return out;
+  }
   // タグ付きメッセージ（この案件・この月のものだけ）を時刻順に
   const tagged = [];
   for (const m of fetched.messages) {
@@ -165,16 +179,24 @@ function judgePlatform({ fetched, db, posts, projectId, ym }) {
 }
 
 // 案件×月の総合判定（Slack / Chatwork の個別判定から）。
-//   どちらかが mismatch → 'mismatch'、全部 fetch_error → 'fetch_error'、
-//   チャンネル設定なし → 'no_channel'、どれも投稿なし → 'no_posts'、それ以外 → 'match'
+//   どちらかが mismatch → 'mismatch'、どちらかが match → 'match'（読めた側で一致の証拠がある）、
+//   チャンネル設定なし → 'no_channel'、
+//   fetch_error が混ざり match が無い → 'fetch_error'（読めていないのに「投稿なし」とは言わない）、
+//   全部 no_posts → 'no_posts'
 function overallVerdict({ slack, chatwork }) {
   const vs = [slack, chatwork].filter(Boolean).map(x => x.verdict);
   if (vs.length === 0) return 'no_channel';
   if (vs.includes('mismatch')) return 'mismatch';
-  if (vs.every(v => v === 'fetch_error')) return 'fetch_error';
   if (vs.includes('match')) return 'match';
+  if (vs.includes('fetch_error')) return 'fetch_error';
   if (vs.includes('no_posts')) return 'no_posts';
   return 'fetch_error';
+}
+
+// 案件の結果に 1 つでも取得不可（Slack / Chatwork いずれか、または例外）が含まれるか。
+// 総合判定が match でも、読めなかった側がある月は「突合完了」として記録しない（翌日に再突合）。
+function hasFetchError(r) {
+  return !!(r?.error || r?.slack?.verdict === 'fetch_error' || r?.chatwork?.verdict === 'fetch_error');
 }
 
 // ---------- 案件×月の突合 ----------
@@ -187,6 +209,111 @@ function fetchWindowSec(ym, now = new Date()) {
   const graceEnd = new Date(r.endIso).getTime() + GRACE_DAYS_AFTER_MONTH * 24 * 3600 * 1000;
   const latest = Math.floor(Math.min(graceEnd, now.getTime()) / 1000);
   return { oldestSec: oldest, latestSec: latest };
+}
+
+// Slack の投稿先 ref（投稿記録の channel_ref は channel_id か URL、未取得は '-'）→ channel_id。解釈不能は null。
+function slackChannelIdOf(ref, notifications) {
+  const v = String(ref || '').trim();
+  if (!v || v === '-') return null;
+  if (/^[CDG][A-Z0-9]+$/i.test(v)) return v.toUpperCase();
+  const parsed = notifications?.parseSlackChannelUrl ? notifications.parseSlackChannelUrl(v) : null;
+  return parsed?.channel_id || null;
+}
+
+// Chatwork の投稿先 ref → room_id（数字のみ）。解釈不能は null。
+function chatworkRoomIdOf(ref) {
+  const v = String(ref || '').trim();
+  return /^\d+$/.test(v) ? v : null;
+}
+
+// 読むべき投稿先の一覧: 今の設定 ∪ 投稿記録に残っている投稿先（重複除去・順序は今の設定が先）。
+// 戻り値: { refs: string[], unresolved: string[]（解釈できなかった channel_ref） }
+function collectRefs({ current, posts, toId }) {
+  const refs = [];
+  const unresolved = [];
+  const push = (id) => { if (id && !refs.includes(id)) refs.push(id); };
+  push(current);
+  for (const p of posts || []) {
+    const id = toId(p.channel_ref);
+    if (id) push(id);
+    else if (p.channel_ref && p.channel_ref !== '-') unresolved.push(String(p.channel_ref));
+  }
+  return { refs, unresolved };
+}
+
+// Slack の bot token を決める。今の設定 URL（team_id / domain）が最優先。
+// 今の設定が無い（通知先を外した）場合は、投稿記録の channel_ref が URL ならそれで、
+// それも無ければ登録ワークスペースが 1 つだけのときにその token を使う。
+async function resolveSlackTokenFor({ channelUrl, posts, notifications, supabase }) {
+  const tryUrl = async (url) => {
+    const parsed = notifications.parseSlackChannelUrl(url);
+    if (!parsed) return { token: null, reason: 'invalid_url' };
+    return notifications.resolveSlackWorkspace(parsed);
+  };
+  let lastReason = null;
+  if (channelUrl) {
+    const r = await tryUrl(channelUrl);
+    if (r.token) return r;
+    lastReason = r.reason;
+  }
+  for (const p of posts || []) {
+    if (/^https?:\/\//i.test(String(p.channel_ref || ''))) {
+      const r = await tryUrl(p.channel_ref);
+      if (r.token) return r;
+    }
+  }
+  try {
+    const { data, error } = await supabase.from('slack_workspaces').select('team_id, bot_token');
+    if (error) return { token: null, reason: 'workspace_lookup_failed' };
+    const rows = (data || []).filter(w => w.bot_token);
+    if (rows.length === 1) return { token: rows[0].bot_token, reason: null };
+  } catch (_) { /* fallthrough */ }
+  return { token: null, reason: lastReason || 'no_workspace_token' };
+}
+
+// Slack: 複数チャンネルを読んで 1 つの fetched にまとめる。
+// 1 つでも失敗したら failures に積む（judgePlatform が fetch_error にする）。
+async function fetchSlackAll({ token, channelIds, oldestSec, latestSec, http }) {
+  const out = { ok: true, messages: [], failures: [], reason: null };
+  for (const channelId of channelIds) {
+    const r = await fetchSlackHistory({ token, channelId, oldestSec, latestSec, http });
+    if (!r.ok) { out.failures.push({ ref: channelId, reason: r.reason || 'request_failed' }); continue; }
+    for (const m of r.messages) out.messages.push({ ...m, channel_ref: channelId });
+  }
+  return out;
+}
+
+// Chatwork: 複数ルームの最新 100 件 ＋ そこに無い投稿記録を message_id で 1 件ずつ。
+// 1 件取得の失敗（404 以外）も failures に積む。404（削除済み）だけは「無い」として扱う。
+async function fetchChatworkAll({ token, roomIds, posts, oldestMs, http }) {
+  const out = { ok: true, messages: [], failures: [], reason: null };
+  const have = new Set();
+  for (const roomId of roomIds) {
+    const r = await fetchChatworkRecent({ token, roomId, http });
+    if (!r.ok) { out.failures.push({ ref: roomId, reason: r.reason || 'request_failed' }); continue; }
+    for (const m of r.messages) {
+      const key = `${roomId}:${m.id}`;
+      if (have.has(key)) continue;
+      have.add(key);
+      out.messages.push({ ...m, channel_ref: roomId });
+    }
+  }
+  for (const p of posts || []) {
+    if (!p.message_id) continue;
+    // 投稿記録に残っている投稿先（代替投稿先・変更前のルーム）を優先。無ければ今の設定の先頭ルーム
+    const roomId = chatworkRoomIdOf(p.channel_ref) || roomIds[0];
+    if (!roomId) continue;
+    if (out.failures.some(f => f.ref === roomId)) continue; // そのルーム自体が読めていない（既に failure）
+    const key = `${roomId}:${p.message_id}`;
+    if (have.has(key)) continue;
+    const one = await fetchChatworkMessage({ token, roomId, messageId: p.message_id, http });
+    if (!one.ok) { out.failures.push({ ref: `${roomId}/${p.message_id}`, reason: one.reason || 'request_failed' }); continue; }
+    if (one.message) { have.add(key); out.messages.push({ ...one.message, channel_ref: roomId }); }
+    // one.message === null（404）は削除済み → judgePlatform の missing_posts で拾う
+  }
+  // 範囲外（当月より前）の古いメッセージは判定に使わない
+  if (oldestMs != null) out.messages = out.messages.filter(m => !m.at || m.at >= oldestMs);
+  return out;
 }
 
 // @param {object} deps { supabase, notifications（parseSlackChannelUrl / resolveSlackWorkspace）, chatworkToken, http }
@@ -212,43 +339,44 @@ async function reconProjectMonth(deps, { project, ym, now = new Date() }) {
   const channelUrl = project.slack_channel_url || client?.slack_channel_url || null;
   const roomId = project.chatwork_room_id || client?.chatwork_room_id || null;
   const win = fetchWindowSec(ym, now);
+  const slackPosts = posts.filter(p => p.platform === 'slack');
+  const cwPosts = posts.filter(p => p.platform === 'chatwork');
 
-  // Slack
+  // Slack: 今の設定のチャンネル ∪ 投稿記録に残っている投稿先（代替投稿・変更前）を全部読む
   let slack = null;
-  if (channelUrl) {
-    const parsed = notifications.parseSlackChannelUrl(channelUrl);
+  const slackRefs = collectRefs({
+    current: channelUrl ? slackChannelIdOf(channelUrl, notifications) : null,
+    posts: slackPosts, toId: (ref) => slackChannelIdOf(ref, notifications),
+  });
+  if (channelUrl || slackRefs.refs.length) {
     let fetched;
-    if (!parsed) fetched = { ok: false, messages: [], reason: 'invalid_url' };
-    else {
-      const { token, reason } = await notifications.resolveSlackWorkspace(parsed);
+    if (channelUrl && !notifications.parseSlackChannelUrl(channelUrl) && slackRefs.refs.length === 0) {
+      fetched = { ok: false, messages: [], reason: 'invalid_url' };
+    } else {
+      const { token, reason } = await resolveSlackTokenFor({ channelUrl, posts: slackPosts, notifications, supabase });
       fetched = token
-        ? await fetchSlackHistory({ token, channelId: parsed.channel_id, oldestSec: win.oldestSec, latestSec: win.latestSec, http })
+        ? await fetchSlackAll({ token, channelIds: slackRefs.refs, oldestSec: win.oldestSec, latestSec: win.latestSec, http })
         : { ok: false, messages: [], reason: reason || 'no_workspace_token' };
     }
     slack = {
-      channel: parsed?.channel_id || channelUrl,
-      ...judgePlatform({ fetched, db, posts: posts.filter(p => p.platform === 'slack'), projectId, ym }),
+      channel: slackRefs.refs[0] || channelUrl,
+      channels: slackRefs.refs,
+      unresolved_refs: slackRefs.unresolved,
+      ...judgePlatform({ fetched, db, posts: slackPosts, projectId, ym }),
     };
   }
 
-  // Chatwork
+  // Chatwork: 今の設定のルーム ∪ 投稿記録に残っている投稿先
   let chatwork = null;
-  if (roomId) {
-    const cwPosts = posts.filter(p => p.platform === 'chatwork');
-    let fetched = await fetchChatworkRecent({ token: chatworkToken, roomId, http });
-    if (fetched.ok) {
-      // 最新 100 件に無い投稿記録は 1 件ずつ読み直す（Chatwork はページングが無い）
-      const have = new Set(fetched.messages.map(m => String(m.id)));
-      for (const p of cwPosts) {
-        if (!p.message_id || have.has(String(p.message_id))) continue;
-        const one = await fetchChatworkMessage({ token: chatworkToken, roomId, messageId: p.message_id, http });
-        if (one.ok && one.message) { fetched.messages.push(one.message); have.add(one.message.id); }
-      }
-      // 範囲外（当月より前）の古いメッセージは判定に使わない
-      fetched = { ...fetched, messages: fetched.messages.filter(m => !m.at || m.at >= win.oldestSec * 1000) };
-    }
+  const cwRefs = collectRefs({ current: chatworkRoomIdOf(roomId), posts: cwPosts, toId: chatworkRoomIdOf });
+  if (roomId || cwRefs.refs.length) {
+    const fetched = cwRefs.refs.length
+      ? await fetchChatworkAll({ token: chatworkToken, roomIds: cwRefs.refs, posts: cwPosts, oldestMs: win.oldestSec * 1000, http })
+      : { ok: false, messages: [], reason: 'no_room' };
     chatwork = {
-      room: String(roomId),
+      room: cwRefs.refs[0] || String(roomId),
+      rooms: cwRefs.refs,
+      unresolved_refs: cwRefs.unresolved,
       ...judgePlatform({ fetched, db, posts: cwPosts, projectId, ym }),
     };
   }
@@ -259,7 +387,7 @@ async function reconProjectMonth(deps, { project, ym, now = new Date() }) {
     client_name: client?.name || null,
     month: ym,
     db: { month_total: db.monthTotal, project_total: db.projectTotal, items: db.items },
-    posts: posts.map(p => ({ platform: p.platform, message_id: p.message_id, kind: p.kind, month_total: p.month_total, posted_at: p.posted_at })),
+    posts: posts.map(p => ({ platform: p.platform, channel_ref: p.channel_ref, message_id: p.message_id, kind: p.kind, month_total: p.month_total, posted_at: p.posted_at })),
     slack,
     chatwork,
     verdict: overallVerdict({ slack, chatwork }),
@@ -314,8 +442,11 @@ async function reconMonth(deps, { ym, projectIds = null, now = new Date() }) {
 }
 
 function summarize(results) {
-  const s = { total: results.length, match: 0, mismatch: 0, no_posts: 0, no_channel: 0, fetch_error: 0 };
-  for (const r of results) if (s[r.verdict] != null) s[r.verdict]++;
+  const s = { total: results.length, match: 0, mismatch: 0, no_posts: 0, no_channel: 0, fetch_error: 0, incomplete: 0 };
+  for (const r of results) {
+    if (s[r.verdict] != null) s[r.verdict]++;
+    if (hasFetchError(r)) s.incomplete++; // 一部でも読めなかった案件（この月は完了扱いにしない）
+  }
   return s;
 }
 
@@ -355,6 +486,9 @@ function buildReconDigestText({ month, results, summary, pageUrl }) {
   if (results.some(r => r.verdict === 'mismatch')) {
     hints.push('※ 不一致は DB（HFS）が正です。納品完了日を後から補正した案件は投稿側が古いままになります');
   }
+  if (s.incomplete > 0) {
+    hints.push(`※ 読めなかった投稿先がある案件が ${s.incomplete}件あります。この月はまだ「突合完了」にせず、月初 1〜3 日の間は翌日にもう一度自動で突合します（手動: 管理者 API の recon/notify）`);
+  }
   if (hints.length) { lines.push(''); lines.push(...hints); }
   if (pageUrl) { lines.push(''); lines.push(`詳細（JSON）: ${pageUrl}`); }
   lines.push('[/info]');
@@ -365,8 +499,14 @@ module.exports = {
   fetchSlackHistory,
   fetchChatworkRecent,
   fetchChatworkMessage,
+  fetchSlackAll,
+  fetchChatworkAll,
+  collectRefs,
+  slackChannelIdOf,
+  chatworkRoomIdOf,
   judgePlatform,
   overallVerdict,
+  hasFetchError,
   fetchWindowSec,
   reconProjectMonth,
   reconMonth,

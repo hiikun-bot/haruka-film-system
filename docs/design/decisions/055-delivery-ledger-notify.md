@@ -112,9 +112,17 @@ URL: https://…/haruka.html?creative=…
   `[HFS-LEDGER]` を読み比べ、`match / mismatch / no_posts / fetch_error / no_channel` を判定する。
   不一致の理由（最後の投稿の件数と DB の件数、投稿にあって DB に無い creative、DB にあって投稿に無い creative、
   投稿記録があるのにチャンネルに無い message_id）を付ける
+- **読む場所は投稿記録が正**: 今の設定のチャンネル／ルームだけでなく、投稿記録の `channel_ref` に残っている投稿先
+  （案件ルームが落ちてクライアント共通ルームへ代替投稿した分、当月途中でルームを変更する前の投稿）も全部読む。
+  今の設定だけ読むと正常な投稿を「投稿なし・不一致」と誤判定する（レビュー指摘 2026-10-31）
+- **通信エラーは欠落ではない**: 投稿先が 1 つでも読めなければ（Chatwork の古い投稿の 1 件取得が 404 以外で失敗した場合も）
+  そのプラットフォームは `fetch_error`。片方が `fetch_error` でもう片方が `no_posts` の総合判定も `no_posts` ではなく `fetch_error`。
+  「最後の投稿」の件数は時系列で最後の 1 件で、過去最大値ではない（5件→3件に訂正した案件を誤判定しない。PR #1285 と同じ）
 - **月初ワーカー** `workers/delivery-ledger-recon.js`: 毎月 1〜3 日の JST 10 時台に前月分を突合し、
-  管理者の Chatwork マイチャットへ 1 通（不一致を先頭に）。二重送信ガード `system_settings.delivery_ledger_recon_last_ym`、
-  無効化 `DELIVERY_LEDGER_RECON_ENABLED=false`
+  管理者の Chatwork マイチャットへ 1 通（不一致を先頭に）。無効化 `DELIVERY_LEDGER_RECON_ENABLED=false`。
+  **完了の記録** `system_settings.delivery_ledger_recon_last_ym` は取得不可（`summary.incomplete`）がゼロのときだけ書く。
+  取得不可が混ざった月は `delivery_ledger_recon_last_attempt`（`YYYY-MM|YYYY-MM-DD`）に「その日に送った」ことだけ残し、
+  1〜3 日の翌日にもう一度突合する（1 日 1 通まで。ダイジェストにその旨を注記）
 - **手動** `GET /api/haruka/admin/delivery-ledger/recon?month=YYYY-MM[&project_id=]`（結果 JSON）、
   `POST /api/haruka/admin/delivery-ledger/recon/notify { month }`（今すぐマイチャットへ）、
   `node scripts/delivery-ledger-check.js --fetch --month YYYY-MM`
