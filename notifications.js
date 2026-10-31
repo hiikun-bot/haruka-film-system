@@ -561,7 +561,9 @@ if (!process.env.APP_URL && !process.env.RAILWAY_PUBLIC_DOMAIN) {
 //            複数受信者を1メッセージにまとめる場合は配列を渡す（カンマ区切りで表示）。
 // comment: ステータス遷移時に付与されたコメント。空なら「（コメントなし）」表示。
 // creativeUrl: ディープリンク URL。未設定なら URL 行を出さない。
-function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackName, actor, recipient, comment, creativeUrl }) {
+// roleLines: 「担当者: A → B」の代わりに役割ごとの行を出す（納品完了・ADR 055 追補 2026-10-31）。
+//            例: ['担当者: 伊東', 'ディレクター: 片山 紗季', 'プロデューサー: 川崎 かおり']
+function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackName, actor, recipient, comment, creativeUrl, roleLines }) {
   const projectLabel = (() => {
     const cn = client?.name ? `【${client.name}】` : '';
     const pn = project?.name || '';
@@ -596,7 +598,7 @@ function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackN
     '',
     `案件: ${projectLabel}`,
     `ファイル: ${slackName}`,
-    `担当者: ${fromTo}`,
+    ...(Array.isArray(roleLines) && roleLines.length ? roleLines : [`担当者: ${fromTo}`]),
     `コメント: ${commentBlock}`,
   ];
   if (creativeUrl) slackLines.push(`URL: ${creativeUrl}`);
@@ -608,7 +610,7 @@ function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackN
     `[info][title]${emoji} ${kind}[/title]`,
     `案件: ${projectLabel}`,
     `ファイル: ${fileName}`,
-    `担当者: ${fromTo}`,
+    ...(Array.isArray(roleLines) && roleLines.length ? roleLines : [`担当者: ${fromTo}`]),
     `コメント:`,
     commentBlock,
   ];
@@ -617,6 +619,38 @@ function buildCreativeNotifBody({ kind, emoji, project, client, fileName, slackN
   const cwBody = cwLines.join('\n');
 
   return { slackBody, cwBody };
+}
+
+// 納品完了メッセージの役割別の行（純関数・テスト対象）。
+//   担当者: 編集者・デザイナー（director_as_editor 含む）
+//   ディレクター: 案件のディレクター ＋ creative_assignments の director
+//   プロデューサー: 案件のプロデューサー ＋ creative_assignments の producer
+//   ダブルチェック: wcheck 担当（いるときだけ行を出す）
+// 同じ人が重複したら 1 回だけ。空なら「（未設定）」。
+function buildDeliveryRoleLines({ editors, directors, producers, wchecks }) {
+  const names = (users) => {
+    const seen = new Set();
+    const out = [];
+    for (const u of (users || [])) {
+      const n = u && (u.full_name || '').trim();
+      if (!n || seen.has(u.id || n)) continue;
+      seen.add(u.id || n);
+      out.push(n);
+    }
+    return out;
+  };
+  const line = (label, users) => {
+    const ns = names(users);
+    return `${label}: ${ns.length ? ns.join(', ') : '（未設定）'}`;
+  };
+  const lines = [
+    line('担当者', editors),
+    line('ディレクター', directors),
+    line('プロデューサー', producers),
+  ];
+  const wc = names(wchecks);
+  if (wc.length) lines.push(`ダブルチェック: ${wc.join(', ')}`);
+  return lines;
 }
 
 // クライアント指摘コメントを「①…\n②…」の番号付きリストに整形する。
@@ -1314,7 +1348,17 @@ ${msgLines.join('\n')}
     // ADR 055: 宛先に担当ディレクター（案件 D ＋ creative_assignments の director）も加える。
     // 納品完了＝その案件の当月カウントが 1 つ進むので、ディレクターにも同じ台帳が届くようにする。
     const deliveryRecipients = [...editorAssignees, ...directorAssignees, director].filter(Boolean);
-    const { slackBody, cwBody } = tpl('クライアントOK！納品完了', '🎉', deliveryRecipients);
+    // 「担当者: A → B」ではなく役割ごとに明示する（2026-10-31 指示）
+    const roleLines = buildDeliveryRoleLines({
+      editors: editorAssignees,
+      directors: [director, ...directorAssignees],
+      producers: [producer, ...producerAssignees],
+      wchecks: wcheckAssignees,
+    });
+    const { slackBody, cwBody } = buildCreativeNotifBody({
+      kind: 'クライアントOK！納品完了', emoji: '🎉', project, client, fileName, slackName,
+      actor, recipient: deliveryRecipients, comment, creativeUrl, roleLines,
+    });
 
     // ADR 055: 「この案件で今月は何件目か」を積み上げ台帳として本文に追記する。
     // 当月は delivered_at（今回の納品完了日時）の JST 月。手動補正で過去月に入れた場合はその月の台帳になる。
@@ -1795,6 +1839,7 @@ module.exports = {
   sendChatworkRoom,
   // テスト・他モジュールから再利用可能にするためエクスポート
   buildCreativeNotifBody,
+  buildDeliveryRoleLines,        // 納品完了の役割別の行（テスト用）
   buildCreativeUrl,
   buildAppUrl,
   // バグ報告の新規登録 → 管理者 Chatwork マイチャットへ一報
