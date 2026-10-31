@@ -42,6 +42,7 @@ async function fetchSlackHistory({ token, channelId, oldestSec, latestSec, http 
   if (!channelId) return { ok: false, messages: [], reason: 'no_channel' };
   const messages = [];
   let cursor = null;
+  let joined = false;
   for (let page = 0; page < SLACK_MAX_PAGES; page++) {
     const params = { channel: channelId, limit: SLACK_HISTORY_LIMIT, inclusive: true };
     if (oldestSec != null) params.oldest = String(oldestSec);
@@ -55,7 +56,17 @@ async function fetchSlackHistory({ token, channelId, oldestSec, latestSec, http 
     } catch (e) {
       return { ok: false, messages, reason: e?.message || 'request_failed' };
     }
-    if (!res.data?.ok) return { ok: false, messages, reason: res.data?.error || 'slack_error' };
+    if (!res.data?.ok) {
+      // bot が未参加の公開チャンネル: 一度だけ conversations.join を試して読み直す（channels:join スコープが要る。
+      // 無い／非公開チャンネルなら not_in_channel のまま報告し、ダイジェストで /invite を案内する）
+      if (res.data?.error === 'not_in_channel' && !joined) {
+        joined = true;
+        const j = await joinSlackChannel({ token, channelId, http });
+        if (j.ok) { page--; continue; }
+        return { ok: false, messages, reason: `not_in_channel（自動参加できず: ${j.reason}）` };
+      }
+      return { ok: false, messages, reason: res.data?.error || 'slack_error' };
+    }
     for (const m of (res.data.messages || [])) {
       messages.push({ id: m.ts, text: String(m.text || ''), at: Number(m.ts) * 1000 });
     }
@@ -63,6 +74,20 @@ async function fetchSlackHistory({ token, channelId, oldestSec, latestSec, http 
     if (!res.data.has_more || !cursor) break;
   }
   return { ok: true, messages, reason: null };
+}
+
+// Slack: 公開チャンネルに bot を参加させる（conversations.join・channels:join スコープ）。
+// 非公開チャンネルは API では参加できない（人が /invite @bot する）。戻り値: { ok, reason }
+async function joinSlackChannel({ token, channelId, http = axios }) {
+  try {
+    const res = await http.post('https://slack.com/api/conversations.join', { channel: channelId }, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 15000,
+    });
+    if (res.data?.ok) return { ok: true, reason: null };
+    return { ok: false, reason: res.data?.error || 'slack_error' };
+  } catch (e) {
+    return { ok: false, reason: e?.message || 'request_failed' };
+  }
 }
 
 // Chatwork: ルームの最新 100 件。戻り値: { ok, messages: [{ id, text, at }], reason }
@@ -481,7 +506,10 @@ function buildReconDigestText({ month, results, summary, pageUrl }) {
   if (sorted.length > shown.length) lines.push(`…ほか ${sorted.length - shown.length}案件（画面で確認）`);
   const hints = [];
   if (results.some(r => (r.slack?.reason || '').includes('missing_scope'))) {
-    hints.push('※ Slack が missing_scope: Slack アプリに channels:history（非公開は groups:history）スコープを追加して再インストールしてください');
+    hints.push('※ Slack が missing_scope: Slack アプリに channels:history（非公開は groups:history）・channels:join スコープを追加して再インストールしてください');
+  }
+  if (results.some(r => (r.slack?.reason || '').includes('not_in_channel'))) {
+    hints.push('※ Slack が not_in_channel: bot がそのチャンネルに参加していません。チャンネルで「/invite @haruka_film_notifier」を実行してください（公開チャンネルは channels:join スコープがあれば次回から自動参加します）');
   }
   if (results.some(r => r.verdict === 'mismatch')) {
     hints.push('※ 不一致は DB（HFS）が正です。納品完了日を後から補正した案件は投稿側が古いままになります');
@@ -497,6 +525,7 @@ function buildReconDigestText({ month, results, summary, pageUrl }) {
 
 module.exports = {
   fetchSlackHistory,
+  joinSlackChannel,
   fetchChatworkRecent,
   fetchChatworkMessage,
   fetchSlackAll,
