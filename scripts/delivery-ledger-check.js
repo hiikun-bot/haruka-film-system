@@ -67,7 +67,7 @@ async function mainFetch() {
   }
   const s = result.summary;
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log(`合計 ${s.total}案件 ／ ✅${s.match} ❌${s.mismatch} ⚠️投稿なし${s.no_posts} 🚫取得不可${s.fetch_error} ➖通知先なし${s.no_channel}`);
+  console.log(`合計 ${s.total}案件 ／ ✅${s.match} ❌${s.mismatch} ⚠️投稿なし${s.no_posts} 🚫取得不可${s.fetch_error} ➖通知先なし${s.no_channel}${s.incomplete ? ` ／ 一部読めず ${s.incomplete}件（再実行推奨）` : ''}`);
 }
 
 async function main() {

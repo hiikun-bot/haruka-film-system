@@ -8,7 +8,10 @@
 // を HFS 自身が読み比べ、結果を管理者の Chatwork マイチャットへ 1 通にまとめて送る。
 // 人が URL を渡す工程は無い（全自動）。
 //
-// 二重送信ガード: system_settings 'delivery_ledger_recon_last_ym'（突合済みの対象月 'YYYY-MM'）。
+// 二重送信ガード: system_settings 'delivery_ledger_recon_last_ym'（突合「完了」した対象月 'YYYY-MM'）。
+//   完了＝読めなかった投稿先（取得不可）が 1 件も無かったとき。Slack / Chatwork の一時的な通信エラーで
+//   取得不可が混ざった月は完了として記録せず、'delivery_ledger_recon_last_attempt'（'YYYY-MM|YYYY-MM-DD'）
+//   に「その日に 1 回送った」ことだけ残して、1〜3 日の翌日にもう一度突合する（1 日 1 通まで）。
 // 無効化: env DELIVERY_LEDGER_RECON_ENABLED=false
 // 手動実行: GET /api/haruka/admin/delivery-ledger/recon?month=YYYY-MM（結果 JSON）
 //           POST /api/haruka/admin/delivery-ledger/recon/notify { month }（今すぐマイチャットへ）
@@ -23,10 +26,12 @@ const RUN_HOUR_FROM = 10;
 const RUN_HOUR_TO = 18;
 const RUN_DAYS = [1, 2, 3];  // 1 日に失敗しても 2〜3 日に再試行できる
 const LAST_YM_KEY = 'delivery_ledger_recon_last_ym';
+const LAST_ATTEMPT_KEY = 'delivery_ledger_recon_last_attempt';
 
 let intervalHandle = null;
 let isRunning = false;
-let lastRunYm = null;
+let lastRunYm = null;        // 完了した対象月
+let lastAttemptDay = null;   // 未完了のまま送った日（'YYYY-MM-DD'）。同日は再送しない
 
 function isEnabled() {
   const v = String(process.env.DELIVERY_LEDGER_RECON_ENABLED ?? 'true').toLowerCase();
@@ -46,33 +51,56 @@ function previousYm(now = new Date()) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-/** 月初（1〜3 日）の実行時間帯で、その対象月をまだ突合していなければ true（純関数・テスト対象） */
-function shouldRunNow({ now = new Date(), lastRunYm: last }) {
+/** 月初（1〜3 日）の実行時間帯で、その対象月をまだ完了しておらず、今日まだ送っていなければ true（純関数・テスト対象） */
+function shouldRunNow({ now = new Date(), lastRunYm: last, lastAttemptDay: attempted = null }) {
   const hour = jstHour(now);
   if (hour < RUN_HOUR_FROM || hour > RUN_HOUR_TO) return false;
-  const day = Number(jstToday(now).slice(8, 10));
+  const today = jstToday(now);
+  const day = Number(today.slice(8, 10));
   if (!RUN_DAYS.includes(day)) return false;
-  return previousYm(now) !== last;
+  if (previousYm(now) === last) return false;   // 完了済み
+  return attempted !== today;                    // 未完了でも 1 日 1 通まで
+}
+
+async function readSetting(key) {
+  const { data } = await supabase.from('system_settings').select('value').eq('key', key).maybeSingle();
+  return data?.value ?? null;
+}
+
+async function writeSetting(key, value, label) {
+  const { error } = await supabase.from('system_settings').upsert(
+    { key, value, updated_at: new Date().toISOString() },
+    { onConflict: 'key' },
+  );
+  if (error) console.warn(`[ledger-recon] ${label}の記録に失敗:`, error.message);
 }
 
 async function alreadyDone(ym) {
-  const { data } = await supabase.from('system_settings').select('value').eq('key', LAST_YM_KEY).maybeSingle();
-  return data?.value === ym;
+  return (await readSetting(LAST_YM_KEY)) === ym;
 }
 
+// 完了（取得不可ゼロ）のときだけ呼ぶ
 async function markDone(ym) {
-  const { error } = await supabase.from('system_settings').upsert(
-    { key: LAST_YM_KEY, value: ym, updated_at: new Date().toISOString() },
-    { onConflict: 'key' },
-  );
-  if (error) console.warn('[ledger-recon] 突合済み月の記録に失敗:', error.message);
+  await writeSetting(LAST_YM_KEY, ym, '突合済み月');
+}
+
+// 未完了のまま送った日を残す（同日の再送防止。翌日は再突合する）
+async function markAttempt(ym, today) {
+  await writeSetting(LAST_ATTEMPT_KEY, `${ym}|${today}`, '突合試行日');
+}
+
+async function alreadyAttemptedToday(ym, today) {
+  return (await readSetting(LAST_ATTEMPT_KEY)) === `${ym}|${today}`;
 }
 
 // 突合してマイチャットへ送る（worker と手動 API の共通本体）。
 // @param {object} p { ym, now?, force?（true なら二重送信ガードを無視） }
+// 戻り値: { ym, summary, sent, complete }  complete=false は取得不可が混ざった（完了として記録していない）
 async function runOnce({ ym, now = new Date(), force = false } = {}) {
   const targetYm = ym || previousYm(now);
+  const today = jstToday(now);
   if (!force && await alreadyDone(targetYm)) return { ym: targetYm, skipped: 'already_done' };
+  if (!force && await alreadyAttemptedToday(targetYm, today)) return { ym: targetYm, skipped: 'already_attempted_today' };
 
   const notifications = require('../notifications');
   const { buildAppUrl, sendChatworkRoom, resolveAdminMyChatRoomId, notifyAutoError } = notifications;
@@ -96,18 +124,24 @@ async function runOnce({ ym, now = new Date(), force = false } = {}) {
     }).catch(() => {});
     throw new Error(`send failed: ${r.reason}`);
   }
-  if (!force) await markDone(targetYm);
-  console.log(`[ledger-recon] ${targetYm}: ${result.summary.total}案件を突合（✅${result.summary.match} ❌${result.summary.mismatch} ⚠️${result.summary.no_posts} 🚫${result.summary.fetch_error}）→ マイチャットへ送信`);
-  return { ym: targetYm, summary: result.summary, sent: true };
+  // 取得不可（一時的な通信エラー含む）が 1 件でもあれば「完了」にしない。翌日（1〜3 日の間）に再突合する
+  const complete = (result.summary.incomplete || 0) === 0;
+  if (!force) {
+    if (complete) await markDone(targetYm);
+    else await markAttempt(targetYm, today);
+  }
+  console.log(`[ledger-recon] ${targetYm}: ${result.summary.total}案件を突合（✅${result.summary.match} ❌${result.summary.mismatch} ⚠️${result.summary.no_posts} 🚫${result.summary.fetch_error}${complete ? '' : `・未完了 ${result.summary.incomplete}件`}）→ マイチャットへ送信`);
+  return { ym: targetYm, summary: result.summary, sent: true, complete };
 }
 
 async function tick(now = new Date()) {
   if (isRunning) return;
   isRunning = true;
   try {
-    if (!shouldRunNow({ now, lastRunYm })) return;
-    await runOnce({ now });
-    lastRunYm = previousYm(now);
+    if (!shouldRunNow({ now, lastRunYm, lastAttemptDay })) return;
+    const r = await runOnce({ now });
+    if (r.skipped === 'already_done' || r.complete) lastRunYm = previousYm(now);
+    else lastAttemptDay = jstToday(now);
   } catch (e) {
     console.error('[ledger-recon] 実行失敗（次の tick で再試行）:', e.message);
   } finally {
