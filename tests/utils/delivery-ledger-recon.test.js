@@ -80,6 +80,40 @@ describe('overallVerdict', () => {
     expect(R.overallVerdict({ slack: null, chatwork: { verdict: 'no_posts' } })).toBe('no_posts');
     expect(R.overallVerdict({ slack: null, chatwork: null })).toBe('no_channel');
   });
+  test('片方が取得不可でもう片方が投稿なし → 取得不可（読めていないのに「投稿なし」と言わない）', () => {
+    expect(R.overallVerdict({ slack: { verdict: 'fetch_error' }, chatwork: { verdict: 'no_posts' } })).toBe('fetch_error');
+  });
+  test('hasFetchError / summarize.incomplete: 総合が match でも読めなかった側があれば未完了に数える', () => {
+    const results = [
+      { verdict: 'match', slack: { verdict: 'fetch_error' }, chatwork: { verdict: 'match' } },
+      { verdict: 'match', slack: { verdict: 'match' }, chatwork: null },
+      { verdict: 'fetch_error', slack: null, chatwork: null, error: 'boom' },
+    ];
+    expect(results.map(R.hasFetchError)).toEqual([true, false, true]);
+    expect(R.summarize(results)).toMatchObject({ total: 3, match: 2, fetch_error: 1, incomplete: 2 });
+  });
+});
+
+describe('judgePlatform（複数投稿先の一部が読めない）', () => {
+  test('failures があれば欠落ではなく fetch_error（理由に投稿先を含む）', () => {
+    const fetched = { ok: true, messages: [msg('1', tag({ mt: 1, seq: 1, c: 'c1' }), 1)], failures: [{ ref: '888', reason: 'HTTP 503' }] };
+    const r = R.judgePlatform({ fetched, db: dbOf(['c1', 'c2']), posts: [{ message_id: '1' }, { message_id: '2', channel_ref: '888' }], projectId: P, ym: YM });
+    expect(r.verdict).toBe('fetch_error');
+    expect(r.reason).toBe('888: HTTP 503');
+    expect(r.missing_posts).toEqual([]);
+  });
+});
+
+describe('collectRefs / ref の解釈', () => {
+  test('今の設定 ∪ 投稿記録の投稿先（重複除去・順序は今の設定が先・解釈不能は unresolved）', () => {
+    const r = R.collectRefs({ current: '777', posts: [{ channel_ref: '888' }, { channel_ref: '777' }, { channel_ref: '-' }, { channel_ref: 'abc' }], toId: R.chatworkRoomIdOf });
+    expect(r.refs).toEqual(['777', '888']);
+    expect(r.unresolved).toEqual(['abc']);
+    const notifications = { parseSlackChannelUrl: (u) => (/archives\/(C\w+)/.exec(u) ? { channel_id: /archives\/(C\w+)/.exec(u)[1] } : null) };
+    expect(R.slackChannelIdOf('C0AB12', notifications)).toBe('C0AB12');
+    expect(R.slackChannelIdOf('https://x.slack.com/archives/C0ZZ9', notifications)).toBe('C0ZZ9');
+    expect(R.slackChannelIdOf('-', notifications)).toBeNull();
+  });
 });
 
 describe('fetchWindowSec', () => {
@@ -170,6 +204,98 @@ describe('reconProjectMonth（Chatwork の古い投稿を message_id で読み�
     expect(r.verdict).toBe('match');
     expect(http.get).toHaveBeenCalledTimes(2);
   });
+  test('代替投稿（クライアント共通ルーム 888）に残った投稿も投稿記録の channel_ref から読む → match', async () => {
+    const creatives = [
+      { id: 'c1', file_name: 'A', creative_type: '動画', delivered_at: '2026-10-02T01:00:00Z' },
+      { id: 'c2', file_name: 'B', creative_type: '動画', delivered_at: '2026-10-20T01:00:00Z' },
+    ];
+    const posts = [
+      { id: 'x1', platform: 'chatwork', channel_ref: '888', message_id: '100', kind: 'single', creative_ids: ['c1'], seq: 1, month_total: 1, project_total: 29, posted_at: '2026-10-02T01:00:05Z' },
+      { id: 'x2', platform: 'chatwork', channel_ref: '777', message_id: '200', kind: 'single', creative_ids: ['c2'], seq: 2, month_total: 2, project_total: 30, posted_at: '2026-10-20T01:00:05Z' },
+    ];
+    const t1 = tag({ mt: 1, seq: 1, c: 'c1' });
+    const t2 = tag({ mt: 2, seq: 2, c: 'c2' });
+    const http = { get: jest.fn(async (url) => {
+      if (url.endsWith('/rooms/777/messages')) return { status: 200, data: [{ message_id: 200, body: `[info]${t2}[/info]`, send_time: 1792500000 }] };
+      if (url.endsWith('/rooms/888/messages')) return { status: 200, data: [{ message_id: 100, body: `[info]${t1}[/info]`, send_time: 1790900000 }] };
+      throw new Error(`unexpected ${url}`);
+    }) };
+    const r = await R.reconProjectMonth(
+      { supabase: supabaseMock({ creatives, posts }), notifications: {}, chatworkToken: 'tok', http },
+      { project: { id: P, name: 'LP', slack_channel_url: null, chatwork_room_id: '777', clients: { name: 'TG' } }, ym: YM, now: new Date('2026-11-01T01:00:00Z') },
+    );
+    expect(r.chatwork.rooms).toEqual(['777', '888']);
+    expect(r.chatwork.verdict).toBe('match');
+    expect(r.chatwork.missing_posts).toEqual([]);
+    expect(r.verdict).toBe('match');
+  });
+  test('ルーム変更後に今の設定が無くても、投稿記録の投稿先だけで突合できる', async () => {
+    const creatives = [{ id: 'c1', file_name: 'A', creative_type: '動画', delivered_at: '2026-10-02T01:00:00Z' }];
+    const posts = [{ id: 'x1', platform: 'chatwork', channel_ref: '555', message_id: '100', kind: 'single', creative_ids: ['c1'], seq: 1, month_total: 1, project_total: 1, posted_at: '2026-10-02T01:00:05Z' }];
+    const http = { get: jest.fn(async (url) => {
+      if (url.endsWith('/rooms/555/messages')) return { status: 200, data: [{ message_id: 100, body: tag({ mt: 1, seq: 1, c: 'c1' }), send_time: 1790900000 }] };
+      throw new Error(`unexpected ${url}`);
+    }) };
+    const r = await R.reconProjectMonth(
+      { supabase: supabaseMock({ creatives, posts }), notifications: {}, chatworkToken: 'tok', http },
+      { project: { id: P, name: 'LP', slack_channel_url: null, chatwork_room_id: null, clients: null }, ym: YM, now: new Date('2026-11-01T01:00:00Z') },
+    );
+    expect(r.chatwork.verdict).toBe('match');
+    expect(r.verdict).toBe('match');
+  });
+  test('古い投稿の 1 件取得が通信エラー（404 以外）→ 欠落ではなく fetch_error', async () => {
+    const creatives = [
+      { id: 'c1', file_name: 'A', creative_type: '動画', delivered_at: '2026-10-02T01:00:00Z' },
+      { id: 'c2', file_name: 'B', creative_type: '動画', delivered_at: '2026-10-20T01:00:00Z' },
+    ];
+    const posts = [
+      { id: 'x1', platform: 'chatwork', channel_ref: '777', message_id: '100', kind: 'single', creative_ids: ['c1'], seq: 1, month_total: 1, project_total: 29, posted_at: '2026-10-02T01:00:05Z' },
+      { id: 'x2', platform: 'chatwork', channel_ref: '777', message_id: '200', kind: 'single', creative_ids: ['c2'], seq: 2, month_total: 2, project_total: 30, posted_at: '2026-10-20T01:00:05Z' },
+    ];
+    const t2 = tag({ mt: 2, seq: 2, c: 'c2' });
+    const http = { get: jest.fn(async (url) => {
+      if (url.endsWith('/rooms/777/messages')) return { status: 200, data: [{ message_id: 200, body: t2, send_time: 1792500000 }] };
+      if (url.endsWith('/rooms/777/messages/100')) return { status: 503, data: '' };
+      throw new Error(`unexpected ${url}`);
+    }) };
+    const r = await R.reconProjectMonth(
+      { supabase: supabaseMock({ creatives, posts }), notifications: {}, chatworkToken: 'tok', http },
+      { project: { id: P, name: 'LP', slack_channel_url: null, chatwork_room_id: '777', clients: null }, ym: YM, now: new Date('2026-11-01T01:00:00Z') },
+    );
+    expect(r.chatwork.verdict).toBe('fetch_error');
+    expect(r.chatwork.reason).toBe('777/100: HTTP 503');
+    expect(r.verdict).toBe('fetch_error');
+    expect(R.hasFetchError(r)).toBe(true);
+  });
+  test('Slack: 今のチャンネル ∪ 投稿記録のチャンネル（変更前）を両方読む', async () => {
+    const creatives = [
+      { id: 'c1', file_name: 'A', creative_type: '動画', delivered_at: '2026-10-02T01:00:00Z' },
+      { id: 'c2', file_name: 'B', creative_type: '動画', delivered_at: '2026-10-20T01:00:00Z' },
+    ];
+    const posts = [
+      { id: 'x1', platform: 'slack', channel_ref: 'COLD1', message_id: '1790900000.000100', kind: 'single', creative_ids: ['c1'], seq: 1, month_total: 1, project_total: 29, posted_at: '2026-10-02T01:00:05Z' },
+      { id: 'x2', platform: 'slack', channel_ref: 'CNEW2', message_id: '1792500000.000200', kind: 'single', creative_ids: ['c2'], seq: 2, month_total: 2, project_total: 30, posted_at: '2026-10-20T01:00:05Z' },
+    ];
+    const t1 = tag({ mt: 1, seq: 1, c: 'c1' });
+    const t2 = tag({ mt: 2, seq: 2, c: 'c2' });
+    const http = { get: jest.fn(async (_url, { params }) => {
+      if (params.channel === 'CNEW2') return { data: { ok: true, messages: [{ ts: '1792500000.000200', text: `\`${t2}\`` }], has_more: false } };
+      if (params.channel === 'COLD1') return { data: { ok: true, messages: [{ ts: '1790900000.000100', text: `\`${t1}\`` }], has_more: false } };
+      return { data: { ok: false, error: 'channel_not_found' } };
+    }) };
+    const notifications = {
+      parseSlackChannelUrl: (u) => { const m = /archives\/(C\w+)/.exec(String(u)); return m ? { team_id: null, channel_id: m[1], domain: 'x' } : null; },
+      resolveSlackWorkspace: async () => ({ token: 'xoxb', reason: null }),
+    };
+    const r = await R.reconProjectMonth(
+      { supabase: supabaseMock({ creatives, posts }), notifications, chatworkToken: null, http },
+      { project: { id: P, name: 'LP', slack_channel_url: 'https://x.slack.com/archives/CNEW2', chatwork_room_id: null, clients: null }, ym: YM, now: new Date('2026-11-01T01:00:00Z') },
+    );
+    expect(r.slack.channels).toEqual(['CNEW2', 'COLD1']);
+    expect(r.slack.verdict).toBe('match');
+    expect(r.slack.tag_count).toBe(2);
+    expect(r.verdict).toBe('match');
+  });
 });
 
 describe('buildReconDigestText', () => {
@@ -190,6 +316,7 @@ describe('buildReconDigestText', () => {
     expect(text).toContain('🚫 取得不可 スコープ無し：DB 1件 ／ Slack 取得不可');
     expect(text).toContain('channels:history');
     expect(text).toContain('不一致は DB（HFS）が正です');
+    expect(text).toContain('読めなかった投稿先がある案件が 1件あります');
     expect(text).toContain('詳細（JSON）: https://x/api/haruka/admin/delivery-ledger/recon?month=2026-10');
     expect(text.trim().endsWith('[/info]')).toBe(true);
   });

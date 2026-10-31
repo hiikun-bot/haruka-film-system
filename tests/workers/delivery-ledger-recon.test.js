@@ -25,3 +25,14 @@ describe('shouldRunNow', () => {
     expect(shouldRunNow({ now: new Date('2026-11-02T01:00:00Z'), lastRunYm: '2026-09' })).toBe(true);
   });
 });
+
+describe('shouldRunNow（未完了の再試行）', () => {
+  test('取得不可で未完了のまま送った日は再送しない。翌日（3 日まで）は再突合する', () => {
+    // JST 11/1 10:00 に未完了で送った → 同日 14:00 は false、11/2 10:00 は true、11/4 は期間外
+    expect(shouldRunNow({ now: new Date('2026-11-01T05:00:00Z'), lastRunYm: null, lastAttemptDay: '2026-11-01' })).toBe(false);
+    expect(shouldRunNow({ now: new Date('2026-11-02T01:00:00Z'), lastRunYm: null, lastAttemptDay: '2026-11-01' })).toBe(true);
+    expect(shouldRunNow({ now: new Date('2026-11-04T01:00:00Z'), lastRunYm: null, lastAttemptDay: '2026-11-01' })).toBe(false);
+    // 完了していれば試行日に関係なく false
+    expect(shouldRunNow({ now: new Date('2026-11-02T01:00:00Z'), lastRunYm: '2026-10', lastAttemptDay: null })).toBe(false);
+  });
+});
