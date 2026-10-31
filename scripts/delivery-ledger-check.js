@@ -15,6 +15,9 @@
 //   node scripts/delivery-ledger-check.js --log ./chat.txt                 # ログ内の全案件×月を DB と突合
 //   node scripts/delivery-ledger-check.js --log ./chat.txt --month 2026-10 # 月で絞る
 //   node scripts/delivery-ledger-check.js --project <UUID> --month 2026-10 --json  # JSON 出力
+//   node scripts/delivery-ledger-check.js --fetch --month 2026-10 [--project <UUID>] [--json]
+//       ← 全自動版（ADR 055 追補）。HFS が案件の Slack / Chatwork を自分で読んで DB と突合する
+//          （本番と同じ utils/delivery-ledger-recon.js。.env の CHATWORK_API_TOKEN と slack_workspaces の bot_token を使う）
 //
 // 環境変数:
 //   .env から SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY を読む（既存の supabase.js と同じ仕組み）。読み取りのみ。
@@ -35,11 +38,42 @@ const MONTH = opt('month');
 const LOG = opt('log');
 const AS_JSON = args.includes('--json');
 
+const FETCH = args.includes('--fetch');
+
 const L = require('../utils/delivery-ledger');
 
+// 全自動版: チャンネルの読み取りも HFS 側で行う（ADR 055 追補）
+async function mainFetch() {
+  const supabase = require('../supabase');
+  const notifications = require('../notifications');
+  const R = require('../utils/delivery-ledger-recon');
+  const ym = MONTH || L.jstYearMonthOf(new Date().toISOString());
+  const result = await R.reconMonth({ supabase, notifications }, { ym, projectIds: PROJECT ? [PROJECT] : null });
+  if (AS_JSON) { console.log(JSON.stringify(result, null, 2)); return; }
+  for (const r of result.results) {
+    const label = `${r.client_name ? `【${r.client_name}】` : ''}${r.project_name}`;
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`${label}  ${L.monthLabelOf(r.month)}  （project=${r.project_id}）`);
+    console.log(`DB      : 当月 ${r.db ? r.db.month_total : '-'}件 ／ 案件累計 ${r.db ? r.db.project_total : '-'}件`);
+    for (const pf of ['slack', 'chatwork']) {
+      const x = r[pf];
+      if (!x) { console.log(`${pf.padEnd(8)}: （通知先なし）`); continue; }
+      console.log(`${pf.padEnd(8)}: ${R.VERDICT_LABEL[x.verdict]} タグ ${x.tag_count}件 ／ 最後の month_total=${x.last_month_total ?? '-'}${x.reason ? ` ／ ${x.reason}` : ''}`);
+      if (x.only_in_log.length) console.log(`           ⚠️ 投稿にあるが DB に無い: ${x.only_in_log.join(', ')}`);
+      if (x.unmentioned_in_db.length) console.log(`           ⚠️ DB にあるが投稿に出てこない: ${x.unmentioned_in_db.join(', ')}`);
+      if (x.missing_posts.length) console.log(`           ⚠️ 投稿記録があるのにチャンネルに無い: ${x.missing_posts.join(', ')}`);
+    }
+    console.log(`判定    : ${R.VERDICT_LABEL[r.verdict] || r.verdict}`);
+  }
+  const s = result.summary;
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`合計 ${s.total}案件 ／ ✅${s.match} ❌${s.mismatch} ⚠️投稿なし${s.no_posts} 🚫取得不可${s.fetch_error} ➖通知先なし${s.no_channel}`);
+}
+
 async function main() {
+  if (FETCH) return mainFetch();
   if (!PROJECT && !LOG) {
-    console.error('使い方: --project <UUID> --month YYYY-MM ／ --log <chat.txt> [--month YYYY-MM]');
+    console.error('使い方: --fetch --month YYYY-MM ／ --project <UUID> --month YYYY-MM ／ --log <chat.txt> [--month YYYY-MM]');
     process.exit(2);
   }
   const supabase = require('../supabase');

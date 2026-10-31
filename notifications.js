@@ -19,7 +19,7 @@ const { createBulkNotifications } = require('./utils/notification');
 // ADR 055: 納品完了メッセージの「当月の案件内 納品カウント（積み上げ台帳）」
 const {
   loadProjectDeliveryLedger, buildDeliveryLedgerBlock, renderLedgerSlack, renderLedgerChatwork,
-  jstYearMonthOf: ledgerJstYearMonthOf,
+  jstYearMonthOf: ledgerJstYearMonthOf, recordLedgerPost,
 } = require('./utils/delivery-ledger');
 
 // =============== Slack URL parser ===============
@@ -134,7 +134,8 @@ async function slackPost(token, channelOrUserId, text) {
       console.warn('[notif/slack]', res.data.error, channelOrUserId);
       return { ok: false, reason: res.data.error };
     }
-    return { ok: true };
+    // ts / channel は ADR 055 追補の投稿記録（delivery_ledger_posts）に使う
+    return { ok: true, ts: res.data.ts || null, channel: res.data.channel || channelOrUserId };
   } catch (e) {
     console.warn('[notif/slack] axios fail:', e.message);
     return { ok: false, reason: e.message };
@@ -310,7 +311,10 @@ async function sendChatworkRoom(roomId, text, opts={}) {
       new URLSearchParams({ body: text, self_unread: '0' }),
       { headers: { 'X-ChatWorkToken': token }, timeout: 10000, validateStatus: () => true }
     );
-    if (res.status >= 200 && res.status < 300) return { ok: true, status: res.status };
+    if (res.status >= 200 && res.status < 300) {
+      // message_id は ADR 055 追補の投稿記録（delivery_ledger_posts）に使う
+      return { ok: true, status: res.status, message_id: res.data?.message_id != null ? String(res.data.message_id) : null };
+    }
     const apiErrors = Array.isArray(res.data?.errors) ? res.data.errors.join(' / ') : '';
     const reason = `HTTP ${res.status}${apiErrors ? `: ${apiErrors}` : ''}`;
     console.warn(`[notif/chatwork] room=${roomId} ${reason}`);
@@ -779,7 +783,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
         creativeId: detail.id, fileName,
       }),
     }).catch(() => {});
-    return fallback?.ok ? fallback : primary;
+    return fallback?.ok ? { ...fallback, roomId: fallbackRoomId } : { ...primary, roomId };
   };
 
   // Slack 投稿の耐障害ラッパー（バグ報告 #5cf4ce3e）。Chatwork 版と同じ3段構え:
@@ -804,7 +808,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
         creativeId: detail.id, fileName,
       }),
     }).catch(() => {});
-    return fallback?.ok ? fallback : primary;
+    return fallback?.ok ? { ...fallback, channelUrl: fallbackChannelUrl } : { ...primary, channelUrl };
   };
 
   // 遷移ごとの処理
@@ -828,7 +832,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
   // DM ID 未設定者はそのプラットフォームでスキップ（届かない人にメンションしても無音のため）。
   // 戻り値: { reachableSlackCount, reachableCwCount, anyReachable }
   const sendNotifMulti = async (users, slackBody, cwBody) => {
-    const result = { reachableSlackCount: 0, reachableCwCount: 0, anyReachable: false };
+    const result = { reachableSlackCount: 0, reachableCwCount: 0, anyReachable: false, slackPost: null, cwPost: null };
     if (!Array.isArray(users) || users.length === 0) return result;
     const seen = new Set();
     const uniq = users.filter(u => {
@@ -842,7 +846,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       result.reachableSlackCount = slackUsers.length;
       if (slackUsers.length) {
         const mentions = slackUsers.map(u => `<@${u.slack_dm_id}>`).join(' ');
-        await postSlackResilient(`${mentions}\n\n${slackBody}`);
+        result.slackPost = await postSlackResilient(`${mentions}\n\n${slackBody}`);
       }
     }
     if (roomId) {
@@ -850,7 +854,7 @@ async function notifyCreativeStatusChange({ creative, oldStatus, newStatus, comm
       result.reachableCwCount = cwUsers.length;
       if (cwUsers.length) {
         const mentions = cwUsers.map(u => `[To:${u.chatwork_dm_id}]`).join('');
-        await postChatworkResilient(`${mentions}\n${cwBody}`);
+        result.cwPost = await postChatworkResilient(`${mentions}\n${cwBody}`);
       }
     }
     result.anyReachable = result.reachableSlackCount > 0 || result.reachableCwCount > 0;
@@ -1371,10 +1375,45 @@ ${msgLines.join('\n')}
     const sent = await sendNotifMulti(deliveryRecipients, slackFull, cwFull);
     // 誰にも DM ID が無いプラットフォームでも、台帳は案件チャンネル／ルームに必ず残す
     // （あとから AI が Slack / Chatwork のログだけで当月件数を追えるようにするのが目的のため）。
+    let slackPost = sent.slackPost;
+    let cwPost = sent.cwPost;
     if (ledger) {
-      if (channelUrl && sent.reachableSlackCount === 0) await postSlackResilient(slackFull);
-      if (roomId && sent.reachableCwCount === 0) await postChatworkResilient(cwFull);
+      if (channelUrl && sent.reachableSlackCount === 0) slackPost = await postSlackResilient(slackFull);
+      if (roomId && sent.reachableCwCount === 0) cwPost = await postChatworkResilient(cwFull);
+      // ADR 055 追補: どこに・どの message_id で・どの数字を投稿したかを記録（月初の自動突合の手がかり）
+      await _recordLedgerPosts({
+        projectId: detail.project_id, ledger, kind: 'single', creativeIds: [detail.id],
+        slackPost, cwPost, postedBy: actor?.id || null,
+      });
     }
+  }
+}
+
+// ADR 055 追補: 台帳投稿の記録（Slack / Chatwork それぞれ 1 行）。失敗しても通知は止めない。
+// slackPost: postSlackResilient / sendSlackChannel の戻り値（ok, ts, channel, channelUrl）
+// cwPost:    postChatworkResilient / sendChatworkRoom の戻り値（ok, message_id, roomId）
+async function _recordLedgerPosts({ projectId, ledger, kind, creativeIds, slackPost, cwPost, postedBy }) {
+  const base = {
+    projectId, ym: ledger.ledger.ym, kind, creativeIds,
+    seq: kind === 'single' ? (ledger.block.seq ?? null) : null,
+    added: kind === 'bulk' ? creativeIds.length : null,
+    monthTotal: ledger.ledger.monthTotal, projectTotal: ledger.ledger.projectTotal,
+    tag: ledger.block.tag, postedBy,
+  };
+  if (slackPost?.ok) {
+    const parsed = slackPost.channelUrl ? parseSlackChannelUrl(slackPost.channelUrl) : null;
+    await recordLedgerPost(supabase, {
+      ...base, platform: 'slack',
+      channelRef: slackPost.channel || parsed?.channel_id || slackPost.channelUrl || '-',
+      messageId: slackPost.ts || null,
+    });
+  }
+  if (cwPost?.ok) {
+    await recordLedgerPost(supabase, {
+      ...base, platform: 'chatwork',
+      channelRef: String(cwPost.roomId || '-'),
+      messageId: cwPost.message_id || null,
+    });
   }
 }
 
@@ -1436,20 +1475,26 @@ async function notifyProjectDeliveryLedger({ projectId, creativeIds, actorUserId
     const projectLabel = `${client?.name ? `【${client.name}】` : ''}${project.name || ''}` || '-';
     const actorName = actor?.full_name || '不明';
     const SEP = '━━━━━━━━━━━━━━━';
+    let slackPost = null;
+    let cwPost = null;
 
     if (channelUrl) {
       const mention = director?.slack_dm_id ? `<@${director.slack_dm_id}>\n\n` : '';
       const text = `${mention}${SEP}\n📦 *一括納品完了（月次消込）*\n${SEP}\n\n案件: ${projectLabel}\n実行者: ${actorName}\n\n${built.slack}`;
-      const r = await sendSlackChannel(channelUrl, text);
-      if (!r.ok) console.warn('[notif/ledger] slack push failed:', r.reason);
+      slackPost = await sendSlackChannel(channelUrl, text);
+      if (!slackPost.ok) console.warn('[notif/ledger] slack push failed:', slackPost.reason);
+      else slackPost.channelUrl = channelUrl;
     }
     if (roomId) {
       const mention = director?.chatwork_dm_id ? `[To:${director.chatwork_dm_id}]\n` : '';
-      const cwPost = await resolveChatworkPostToken(roomId, actor);
+      const cwTok = await resolveChatworkPostToken(roomId, actor);
       const text = `${mention}[info][title]📦 一括納品完了（月次消込）[/title]案件: ${projectLabel}\n実行者: ${actorName}\n\n${built.cw}\n[/info]`;
-      const r = await sendChatworkRoom(roomId, text, { token: cwPost.token });
-      if (!r.ok) console.warn('[notif/ledger] chatwork push failed:', r.reason);
+      cwPost = await sendChatworkRoom(roomId, text, { token: cwTok.token });
+      if (!cwPost.ok) console.warn('[notif/ledger] chatwork push failed:', cwPost.reason);
+      else cwPost.roomId = roomId;
     }
+    // ADR 055 追補: 投稿記録
+    await _recordLedgerPosts({ projectId, ledger: built, kind: 'bulk', creativeIds, slackPost, cwPost, postedBy: actorUserId || null });
     return { ledger: built.ledger };
   } catch (e) {
     console.warn('[notif/ledger] bulk failed:', e?.message || e);
@@ -1830,6 +1875,7 @@ module.exports = {
   // ADR 055: 納品カウント（積み上げ台帳）
   notifyProjectDeliveryLedger,
   _appendInsideChatworkInfo,     // テスト用
+  resolveSlackWorkspace,         // ADR 055 追補: 月初の自動突合が Slack 履歴を読むのに使う
   parseSlackChannelUrl,
   sendSlackChannel,
   sendSlackChannelWithFile,

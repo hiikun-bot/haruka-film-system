@@ -26,7 +26,7 @@ describe('sendChatworkRoom', () => {
   test('2xx は ok:true と status を返す', async () => {
     axios.post.mockResolvedValue({ status: 200, data: { message_id: '1' } });
     const r = await sendChatworkRoom('123', 'hello');
-    expect(r).toEqual({ ok: true, status: 200 });
+    expect(r).toEqual({ ok: true, status: 200, message_id: '1' });
   });
 
   test('非2xx は throw せず status と Chatwork エラー本文を reason に含める', async () => {
