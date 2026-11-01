@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Threads返信アシスタント",
+  "version": "0.1.0",
+  "description": "Threadsの投稿から、本人らしい自然な日本語の返信案を生成。投稿は必ず手動で確認。",
+  "minimum_chrome_version": "116",
+  "permissions": ["contextMenus", "sidePanel", "storage", "activeTab", "tabs", "clipboardWrite"],
+  "host_permissions": ["https://api.openai.com/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_title": "Threads返信アシスタント"},
+  "side_panel": {"default_path": "panel.html"},
+  "content_scripts": [
+    {
+      "matches": ["https://www.threads.net/*", "https://threads.net/*", "https://www.threads.com/*", "https://threads.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
