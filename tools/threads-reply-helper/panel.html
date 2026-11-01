@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Threads返信アシスタント</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">HARUKA FILM / PERSONAL TOOL</div>
+      <h1>Threads返信アシスタント</h1>
+      <p>スクショ不要。相手に寄り添う返信案を3つ生成します。</p>
+    </header>
+    <section class="panel">
+      <div class="topline"><h2>相手の投稿</h2><span id="sourceStatus">右クリックで読み込む</span></div>
+      <textarea id="postText" rows="7" placeholder="Threadsの投稿で右クリック →「この投稿の返信案を作る」。取得に失敗した場合は文章を貼り付けてください。"></textarea>
+      <p class="hint" id="sourceUrl"></p>
+      <label for="tone">返信の目的</label>
+      <select id="tone">
+        <option value="会話を続ける">会話を続ける（基本）</option>
+        <option value="相手を自然に褒める">相手を自然に褒める</option>
+        <option value="共感を伝える">共感を伝える</option>
+        <option value="行動を称える">行動を称える</option>
+        <option value="気持ちよく締める">気持ちよく締める</option>
+      </select>
+      <label for="extra">返信で伝えたいこと（任意）</label>
+      <input id="extra" type="text" maxlength="300" placeholder="例：勇気を出して会話することが大切">
+      <button id="generate" class="primary">✨ 返信案を3つ作る</button>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+    </section>
+    <section id="results" class="panel" hidden>
+      <div class="topline"><h2>返信候補</h2><span>必ず内容を確認して投稿</span></div>
+      <div id="replyCards"></div>
+    </section>
+    <details class="panel">
+      <summary>APIキー設定・料金について</summary>
+      <p class="hint">OpenAI APIキーが必要です。ChatGPTの月額プランとは別料金です。キーはGitHubへ送信しません。</p>
+      <label for="apiKey">OpenAI APIキー</label>
+      <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-...">
+      <label class="check"><input type="checkbox" id="rememberKey"> 次回以降もこの端末に保存（安全性に注意）</label>
+      <button id="saveKey" class="secondary">APIキーを設定</button>
+      <p class="hint">チェックしなければブラウザーのセッション中だけ保持します。永続保存は暗号化された保管庫ではありません。共有端末では使わないでください。</p>
+    </details>
+    <footer>自動投稿はしません。返信内容を確認してからコピーしてください。</footer>
+  </main>
+  <script src="panel.js"></script>
+</body>
+</html>
