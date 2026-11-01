@@ -25,7 +25,7 @@
 
 ## APIキーとデータの扱い
 
-- OpenAI APIはChatGPTのサブスクリプションとは**別課金**です。モデルは `gpt-6-luna`（変更する場合は `panel.js` を編集）。
+- OpenAI APIはChatGPTのサブスクリプションとは**別課金**です。モデルは `gpt-5-mini`（変更する場合は `panel.js` を編集）。
 - キーはGitHubにもThreadsにも送信されません。拡張機能からOpenAI APIへ直接アクセスします。
 - デフォルトは `chrome.storage.session` に一時保持し、Chromeのセッション終了時に消えます。
 - 「次回以降もこの端末に保存」を選ぶと、`chrome.storage.local` に保存されます。Chromeのlocal保存は暗号化された秘密情報保管庫ではありません。共有PCでの永続保存は避けてください。
