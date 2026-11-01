@@ -115,8 +115,8 @@ $("generate").addEventListener("click", async () => {
       method: "POST",
       headers: {"Content-Type": "application/json", "Authorization": "Bearer " + key},
       body: JSON.stringify({
-        model: "gpt-6-luna",
-        reasoning: { effort: "none" },
+        model: "gpt-5-mini",
+        
         instructions,
         input: prompt,
         max_output_tokens: 700,
