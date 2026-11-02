@@ -1,18 +1,36 @@
 {
   "manifest_version": 3,
-  "name": "Threads返信アシスタント",
-  "version": "0.1.0",
-  "description": "Threadsの投稿から、本人らしい自然な日本語の返信案を生成。投稿は必ず手動で確認。",
+  "name": "Threads → ChatGPT 返信支援（API不要）",
+  "version": "0.2.0",
+  "description": "Threads画面を1クリック撮影し、ChatGPTの入力欄へ返信依頼を準備。OpenAI APIキー不要。",
   "minimum_chrome_version": "116",
-  "permissions": ["contextMenus", "sidePanel", "storage", "activeTab", "tabs", "clipboardWrite"],
-  "host_permissions": ["https://api.openai.com/*"],
-  "background": {"service_worker": "background.js"},
-  "action": {"default_title": "Threads返信アシスタント"},
-  "side_panel": {"default_path": "panel.html"},
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "contextMenus",
+    "offscreen",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "ThreadsのスクショをChatGPTへ渡す"
+  },
   "content_scripts": [
     {
-      "matches": ["https://www.threads.net/*", "https://threads.net/*", "https://www.threads.com/*", "https://threads.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "chatgpt-handoff.js"
+      ],
       "run_at": "document_idle"
     }
   ]
