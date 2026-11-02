@@ -27585,6 +27585,8 @@ async function pfToggleReaction(idx, type, ctx = 'card') {
   document.querySelectorAll('.pf-rx-picker.open').forEach(p => p.classList.remove('open'));
   document.querySelectorAll('.pf-rx-add.open').forEach(b => b.classList.remove('open'));
   if (!had) pfAnimateReaction(cid, type);   // 付けたときだけ（外すときは静かに）
+  // 🎬 ショーケース（作品ページのカード／スライドショー）で 👏 ナイス！を送ったら次の作品へ自動で送る（2026-11-02）。外したときは動かない
+  if (!had && type === PF_PRIMARY_TYPE && (ctx === 'sc' || ctx === 'sccard')) scAdvanceAfterNice(ctx);
   try {
     const res = await apiFetch(`/api/haruka/portfolio/${cid}/reactions`, {
       method: 'POST',
@@ -28298,6 +28300,7 @@ async function pfSaveGenre() {
 //     （ライトボックスで開く／ホバーでプレビュー再生／カードが 1.5 秒以上画面に映る。pfMarkSeenInGallery・2026-10-06）。
 //   - 畳み状態も localStorage。畳んでいても未見が増えたらヘッダー行に「🎬 新着納品 N本」を太字で出す。
 //   - ページを開いた瞬間に自動再生しない。スライドショーは「▶ スライドショー」からだけ（作品ページ・ホームの両方から開ける）。
+//   - 👏 ナイス！（単品・まとめて）を送ったら次の作品へ自動で送る（scAdvanceAfterNice・2026-11-02）。外したときは動かない。
 //   - つぶやきへの自動投稿はしない（#1182 の「🔗 つぶやきで紹介」と重複するため）。
 //   - ホームの 1 行導線の置き場は実効ロールで移す（作り手＝マイ実績の直下 / ディレクター＝自チームの直下 / 管理層＝全体連絡の前）。
 //     ロール分岐はこの「置き場」だけで、中身は全員同じ（ADR 015: effectiveRole() で判定）。作品ページ側は全ロール同じ位置。
@@ -28688,6 +28691,32 @@ function scGo(i) {
 }
 function scStep(delta) { scGo(scPos + delta); }
 
+// 👏 ナイス！（主ボタン／まとめてナイス！）を送ったら次の作品へ自動で送る（2026-11-02）。
+//   - 送った直後の 👏 の弾み（pfAnimateReaction）が見えてから動く（SC_NICE_ADVANCE_MS）
+//   - その間に手で動かしていたら何もしない（位置を控えて比べる）
+//   - スライドショーで打ちかけのひとことがあるときは消さないよう動かない（自動送りと同じ判定）
+//   - 末尾ならそのまま（scStep / scSlideStep が範囲外を無視する）
+const SC_NICE_ADVANCE_MS = 650;
+function scAdvanceAfterNice(ctx) {
+  if (ctx === 'sc') {
+    if (!scSlide.open) return;
+    const token = `${scSlide.pos}:${scSlide.child}`;
+    setTimeout(() => {
+      if (!scSlide.open || `${scSlide.pos}:${scSlide.child}` !== token) return;
+      if (scHasCommentDraft()) return;
+      scSlideStep(1);
+    }, SC_NICE_ADVANCE_MS);
+    return;
+  }
+  if (ctx === 'sccard') {
+    const pos = scPos;
+    setTimeout(() => {
+      if (scSlide.open || scPos !== pos || !document.getElementById('sc-body')) return;
+      scStep(1);
+    }, SC_NICE_ADVANCE_MS);
+  }
+}
+
 // まとめスライドのサムネ格子（作品ページのカード／スライドショー共用）。タップで 1 本ずつ見る
 function scBundleGridHtml(item, itemPos) {
   const cs = item.creatives || [];
@@ -28718,6 +28747,7 @@ async function scBulkNice(bundleKey, ctx) {
   const ids = cs.map(c => c.creative_id).filter(Boolean);
   if (!ids.length) return;
   _scBulkBusy = true;
+  let sent = false;
   document.querySelectorAll(`.sc-bulk[data-bundle="${CSS.escape(bundleKey)}"]`).forEach(b => { b.disabled = true; b.classList.add('pf-pop'); });
   if (ctx === 'sc') scResetTimer();
   try {
@@ -28734,12 +28764,14 @@ async function scBulkNice(bundleKey, ctx) {
       pfRefreshReactDom(cid);
     }
     showToast(json.added > 0 ? `👏 ${cs.length}本にまとめてナイス！を送りました` : 'この一式にはもう送っています', 'success');
+    sent = json.added > 0;
   } catch (e) {
     showToast(e.message, 'error');
   } finally {
     _scBulkBusy = false;
     // ボタンの状態（押した／未）を描き直す
     if (ctx === 'sc') scRenderSlide(); else scRenderCardBody();
+    if (sent) scAdvanceAfterNice(ctx);   // 送れたら次のスライドへ（単品の 👏 ナイス！と同じ振る舞い）
   }
 }
 
