@@ -1,6 +1,7 @@
 // tests/utils/invoice-editor.test.js
 // 🧾 請求書エディタ（utils/invoice-editor.js・ADR 046）の純関数テスト。
 // - 計算（整数・消費税 floor(S*10/100)・源泉 floor(S*1021/10000)・差引）
+// - 立替経費（実費）は消費税・源泉の対象外で差引にだけ足す（追補 2026-11-05）
 // - 新方式の適用月（2026-10 から）/ 支払期限＝翌月末
 // - 候補 CR の分類（当月 / 前月・未請求（3 か月）/ 未納品）・初稿請求案件（ADR 034）
 // - 本人の役割（1 CR × 役割 = 1 行）
@@ -35,7 +36,7 @@ describe('計算（整数）', () => {
       { creative_id: null, cost_type: null, label: '撮影補助', unit_price: 15000, quantity: 1 },
     ];
     expect(IE.computeTotals(items, { withholding_enabled: true })).toEqual({
-      subtotal: 24000, tax: 2400, total: 26400, withholding: 2450, payout: 23950, withholding_over_limit: false,
+      subtotal: 24000, tax: 2400, total: 26400, expense: 0, grand_total: 26400, withholding: 2450, payout: 23950, withholding_over_limit: false,
     });
   });
   test('端数は切り捨て（消費税・源泉とも floor）', () => {
@@ -64,6 +65,67 @@ describe('計算（整数）', () => {
     expect(IE.lineAmount({ creative_id: null, cost_type: null, unit_price: 3000, quantity: 3 })).toBe(9000);
     expect(IE.lineAmount({ creative_id: null, cost_type: 'hourly_fee', unit_price: 5233, quantity: 2 })).toBe(5233);
     expect(IE.lineAmount({ creative_id: 'c', cost_type: 'base_fee', unit_price: null })).toBe(0);
+  });
+  test('立替経費（実費）は消費税も源泉もかけず、差引にそのまま足す（追補 2026-11-05）', () => {
+    // 2026年10月分の実例: D費 6,000 ＋ タクシー代 2,000 ＋ ガソリン代 1,641（領収書どおり）
+    const items = [
+      { creative_id: 'c1', cost_type: 'director_fee', unit_price: 6000 },
+      { creative_id: null, cost_type: 'expense', label: '撮影 タクシー代', unit_price: 2000, quantity: 1 },
+      { creative_id: null, cost_type: 'expense', label: '撮影 ガソリン代', unit_price: 1641, quantity: 1 },
+    ];
+    expect(IE.computeTotals(items)).toEqual({
+      subtotal: 6000, tax: 600, total: 6600, expense: 3641, grand_total: 10241, withholding: 612, payout: 9629, withholding_over_limit: false,
+    });
+    // 源泉なしなら ご請求金額＝差引（報酬の税込 6,600 ＋ 実費 3,641）
+    const noWh = IE.computeTotals(items, { withholding_enabled: false });
+    expect(noWh.payout).toBe(10241);
+    expect(noWh.payout).toBe(noWh.grand_total);
+  });
+  test('作業時間報告の立替経費（hourly_expense）も実費。時間報酬・一式は従来どおり税抜', () => {
+    const t = IE.computeTotals([
+      { creative_id: null, cost_type: 'hourly_fee', label: '時間報酬', unit_price: 10000, quantity: 1 },
+      { creative_id: null, cost_type: 'hourly_expense', label: '立替経費', unit_price: 1100, quantity: 1 },
+      { creative_id: null, cost_type: 'installment_fee', label: '月額定額', unit_price: 30000, quantity: 1 },
+    ]);
+    expect(t).toMatchObject({ subtotal: 40000, tax: 4000, total: 44000, expense: 1100, grand_total: 45100, withholding: 4084, payout: 41016 });
+  });
+  test('立替経費だけの請求書は 小計・消費税・源泉が 0 で、実費がそのまま振込額', () => {
+    const t = IE.computeTotals([{ creative_id: null, cost_type: 'expense', label: '電車代', unit_price: 1340, quantity: 1 }]);
+    expect(t).toMatchObject({ subtotal: 0, tax: 0, total: 0, expense: 1340, grand_total: 1340, withholding: 0, payout: 1340 });
+  });
+  test('立替経費は 100 万円超の源泉警告の対象にしない', () => {
+    const items = [
+      { creative_id: 'c', cost_type: 'base_fee', unit_price: 1000000 },
+      { creative_id: null, cost_type: 'expense', label: '機材', unit_price: 50000, quantity: 1 },
+    ];
+    expect(IE.computeTotals(items).withholding_over_limit).toBe(false);
+  });
+  test('行の種類と金額: 立替経費は数量を見ない（1 固定）。CR に付いた cost_type=expense は立替経費にしない', () => {
+    const exp = { creative_id: null, cost_type: 'expense', label: 'タクシー代', unit_price: 2000, quantity: 5 };
+    expect(IE.lineAmount(exp)).toBe(2000);
+    expect(IE.lineKind(exp)).toBe('expense');
+    expect(IE.isExpenseLine(exp)).toBe(true);
+    expect(IE.isManualExpenseLine(exp)).toBe(true);
+    const hourly = { creative_id: null, cost_type: 'hourly_expense', unit_price: 1100 };
+    expect(IE.lineKind(hourly)).toBe('fixed');
+    expect(IE.isExpenseLine(hourly)).toBe(true);
+    expect(IE.isManualExpenseLine(hourly)).toBe(false);
+    expect(IE.lineKind({ creative_id: null, cost_type: null, label: 'x' })).toBe('manual');
+    expect(IE.isExpenseLine({ creative_id: null, cost_type: null, label: '交通費' })).toBe(false); // HFS外の行は名前が経費でも課税
+    expect(IE.lineKind({ creative_id: 'c', cost_type: 'expense' })).toBe('cr');
+    expect(IE.isExpenseLine({ creative_id: 'c', cost_type: 'expense', unit_price: 100 })).toBe(false);
+  });
+  test('保存済みの請求書の立替経費は 差引 −（税込 − 源泉）で求める（expenseOfInvoice）', () => {
+    const inv = { tax_mode: 'exclusive', subtotal_amount: 6000, tax_amount: 600, total_amount: 6600, withholding_amount: 612, payout_amount: 9629 };
+    expect(IE.expenseOfInvoice(inv)).toBe(3641);
+    expect(IE.expenseOfInvoice({ ...inv, payout_amount: 5988 })).toBe(0);            // 立替経費なし
+    expect(IE.expenseOfInvoice({ ...inv, withholding_amount: 0, payout_amount: 10241 })).toBe(3641); // 源泉なし
+    expect(IE.expenseOfInvoice({ ...inv, withholding_amount: null, payout_amount: 10241 })).toBe(3641);
+    expect(IE.expenseOfInvoice({ ...inv, payout_amount: 5000 })).toBe(0);            // 負にはしない
+    expect(IE.expenseOfInvoice({ ...inv, tax_mode: 'inclusive' })).toBe(0);          // 旧方式
+    expect(IE.expenseOfInvoice({ ...inv, payout_amount: null })).toBe(0);
+    expect(IE.expenseOfInvoice({ total_amount: 27500 })).toBe(0);
+    expect(IE.expenseOfInvoice(null)).toBe(0);
   });
   test('源泉の既定: 法人は なし、それ以外（個人・個人事業主・未設定）は あり', () => {
     expect(IE.defaultWithholding('corporation')).toBe(false);
@@ -247,6 +309,13 @@ describe('行の注意 lineIssues', () => {
     expect(codes).toEqual(expect.arrayContaining(['MANUAL_NO_REASON', 'LABEL_MISSING', 'QUANTITY_INVALID']));
     expect(IE.lineIssues({ creative_id: null, cost_type: null, label: '撮影補助', unit_price: 100, quantity: 1, manual_reason: '現場対応' })).toEqual([]);
   });
+  test('立替経費の行は内容と金額が必要（理由・数量は見ない）', () => {
+    const ok = { creative_id: null, cost_type: 'expense', label: '10/25 撮影 タクシー代', unit_price: 2000, quantity: 1 };
+    expect(IE.lineIssues(ok)).toEqual([]);
+    expect(IE.lineIssues({ ...ok, label: '  ' }).map(i => i.code)).toEqual(['LABEL_MISSING']);
+    expect(IE.lineIssues({ ...ok, unit_price: null }).map(i => i.code)).toEqual(['PRICE_MISSING']);
+    expect(IE.lineIssues({ ...ok, quantity: 0, manual_reason: '' })).toEqual([]);
+  });
   test('固定行（作業時間・一式）は理由不要', () => {
     expect(IE.lineIssues({ creative_id: null, cost_type: 'hourly_fee', label: '時間報酬', unit_price: 5000, quantity: 1 })).toEqual([]);
   });
@@ -278,6 +347,22 @@ describe('提出時チェック checkInvoiceForSubmit', () => {
     const r = IE.checkInvoiceForSubmit(base());
     expect(r.problems).toEqual([]);
     expect(r.totals.payout).toBe(29937);
+  });
+  test('立替経費があるときは ご請求金額（立替経費込み）と差引で合計一致を見る', () => {
+    const p = base();
+    p.items.push({ id: 'i4', creative_id: null, cost_type: 'expense', label: 'タクシー代', unit_price: 2000, quantity: 1 });
+    // 立替経費を入れる前の合計のままでは通らない
+    expect(codes(IE.checkInvoiceForSubmit(p))).toEqual(['TOTAL_MISMATCH']);
+    // 報酬の税込（33,000）を送っても通らない（画面に出ているのは立替経費込みの 35,000）
+    expect(codes(IE.checkInvoiceForSubmit({ ...p, expectedTotal: 33000, expectedPayout: 31937 }))).toEqual(['TOTAL_MISMATCH']);
+    const r = IE.checkInvoiceForSubmit({ ...p, expectedTotal: 35000, expectedPayout: 31937 });
+    expect(r.problems).toEqual([]);
+    expect(r.totals).toMatchObject({ subtotal: 30000, tax: 3000, total: 33000, expense: 2000, grand_total: 35000, withholding: 3063, payout: 31937 });
+  });
+  test('内容が空の立替経費は提出できない', () => {
+    const p = base();
+    p.items.push({ id: 'i4', creative_id: null, cost_type: 'expense', label: '', unit_price: 2000, quantity: 1 });
+    expect(codes(IE.checkInvoiceForSubmit({ ...p, expectedTotal: 35000, expectedPayout: 31937 }))).toEqual(['LABEL_MISSING']);
   });
   test('他人の CR', () => {
     const p = base();

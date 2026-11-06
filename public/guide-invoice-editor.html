@@ -226,6 +226,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 .pill.prev{border-color:transparent;background:#FEF9C3;color:#854D0E}
 .pill.w{border-color:transparent;background:var(--danger-bg);color:#B91C1C}
 .pill.i{border-color:transparent;background:#DBEAFE;color:#1D4ED8}
+.pill.exp{border-color:transparent;background:#FFEDD5;color:#9A3412}
 .ie-btn{font:inherit;font-size:12.5px;font-weight:700;border-radius:8px;padding:6px 12px;border:1.5px solid var(--border);background:#fff;color:var(--text);cursor:pointer}
 .ie-btn.primary{background:linear-gradient(135deg,var(--em),var(--em-dark));border-color:var(--em-dark);color:#fff}
 .ie-btn:focus-visible,.ie-in:focus-visible,.ie-select:focus-visible{outline:2px solid var(--em-dark);outline-offset:2px}
@@ -443,6 +444,7 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
     <p>・作るときに選び漏れた作品は <b>「＋ HFSのCRを追加」</b> でファイル名を入れて探し、「＋ 追加」で足せます（単価は空欄で入るので、ほかの行と同じように入れてください）。</p>
     <p>・明細の順番は <b>「並び替え…」</b> で「納品日が新しい順」「納品日が古い順」「クライアント名順」に並べ替えられます。PDF もその順になります。</p>
     <p>・HFS に登録されていない仕事は <b>「＋ HFS外の行」</b> で足します。品目・単価・数量を入れ、<b>理由（どの案件・誰からの依頼か）が必要</b> です。青い行になります。</p>
+    <p>・交通費など <b>立て替えた実費</b> は <b>「＋ 立替経費」</b> で足します。内容（例: 10/25 撮影 タクシー代）と、<b>領収書どおりの金額</b> を入れてください。この行には消費税も源泉徴収もかからず、入れた金額がそのまま振り込まれます。領収書は管理者に渡してください。</p>
     <p>・請求しないものは、チェックを付けて <b>「削除」</b> します（提出前の下書きのあいだだけ）。</p>
   </div>
 </section>
@@ -471,11 +473,12 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
 <!-- 色の意味 -->
 <section class="step-section" id="colors">
   <div class="step-card">
-    <div class="step-card-title">🎨 色の意味は 3 つだけ</div>
+    <div class="step-card-title">🎨 色の意味は 4 つだけ</div>
     <div class="color-grid">
       <div class="color-card"><h3><span class="pill prev">黄</span> 入力する欄</h3><p>単価や、HFS外の行の内容を入れるところ。</p></div>
       <div class="color-card"><h3><span class="pill w">赤</span> 確認が必要</h3><p>参考単価より高い、理由が空いているなど。直すか理由を書きます。</p></div>
       <div class="color-card"><h3><span class="pill i">青</span> HFS未登録</h3><p>自分で足した行。HFS への登録漏れを見つける手がかりにもなります。</p></div>
+      <div class="color-card"><h3><span class="pill exp">オレンジ</span> 立替経費（実費）</h3><p>「＋ 立替経費」で足した行。消費税・源泉徴収がかからず、入れた金額がそのまま振り込まれます。</p></div>
     </div>
   </div>
 </section>
@@ -495,6 +498,7 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
       </tbody>
     </table></div>
     <p class="ie-note">消費税・源泉徴収とも 1 円未満は切り捨てです。消費税と源泉徴収は、どちらも <b>税抜の小計</b> から計算します。引かれた源泉徴収（例の 510 円）は、確定申告で「前払いした税金」として差し引けます。</p>
+    <p class="ie-note"><b>立替経費（実費）</b> の行は別扱いです。領収書どおりの金額をそのまま足すだけで、消費税の上乗せも源泉徴収もありません（例: タクシー代 2,000 円を立て替えた → 振込額に 2,000 円がそのまま足されます）。</p>
     <p class="ie-note">これまでに作った請求書（税込）の金額・PDF は変わりません。</p>
   </div>
 </section>

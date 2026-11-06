@@ -52,6 +52,7 @@ function publicRow(r) {
     withholding: r.withholding,
     gross: r.gross,
     net: r.net,
+    expense: r.expense || 0, // 立替経費（実費）。net にだけ含まれる
     paid_via: r.paid_via,
     paid_via_label: r.paid_via_label,
     apply_no: r.apply_no,

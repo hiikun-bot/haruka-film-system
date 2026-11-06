@@ -404,8 +404,10 @@ async function renderInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
 //   ┌ ご請求金額（税込）  ¥26,400 ┐
 //   └ 差引お振込額        ¥23,950 ┘
 //   No │ 納品日 │ 品目 │ 税抜単価 │ 数量 │ 税抜金額
-//                    小計（税抜） / 消費税（10%） / ご請求金額（税込）
+//                    小計（税抜） / 消費税（10%） / [立替経費（実費）] / ご請求金額（税込）
 //                    源泉徴収税額（10.21%） / 差引お振込額
+//   立替経費（実費）の行があるときだけ「立替経費（実費）」が増える。領収書どおりの額をそのまま足し、
+//   消費税・源泉の対象にしない（ADR 046 追補 2026-11-05）。ご請求金額＝報酬の税込＋立替経費
 //   振込先 / 備考
 //
 // 金額は DB の保存値（提出時にサーバーが計算した subtotal_amount 等）を正とし、
@@ -457,9 +459,10 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
   const items = sortItems(inv.invoice_items);
   const withholdingEnabled = inv.withholding_enabled !== false;
 
-  // 明細（1 CR × 役割 = 1 行。HFS外・作業時間・分割の行もそのまま 1 行）
+  // 明細（1 CR × 役割 = 1 行。HFS外・作業時間・分割・立替経費の行もそのまま 1 行）
   const rows = items.map((it, i) => {
-    const kind = IE.isCrLine(it) ? 'cr' : (IE.isFixedLine(it) ? 'fixed' : 'manual');
+    // 立替経費は手で足した行も作業時間報告の行も 'expense'（品目に「立替経費」と出し、色を変える）
+    const kind = IE.isExpenseLine(it) ? 'expense' : IE.lineKind(it);
     const cr = it.creatives || {};
     const cp = cr.projects || null;
     const clientName = (cp && cp.clients && cp.clients.name) || '';
@@ -469,6 +472,8 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
       label = IE.crItemLabel(clientName, crLabel, it.cost_type, it.label);
     } else if (kind === 'fixed') {
       label = it.creative_label || it.label || '';
+    } else if (kind === 'expense') {
+      label = IE.expenseItemLabel(it);
     } else {
       label = it.label || '明細';
     }
@@ -491,8 +496,10 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
   const tax = fromDb ? Math.round(Number(inv.tax_amount)) : recalc.tax;
   const total = fromDb ? Math.round(Number(inv.total_amount)) : recalc.total;
   const payout = fromDb ? Math.round(Number(inv.payout_amount)) : recalc.payout;
+  // 立替経費は専用の列を持たない（差引 −（税込 − 源泉）で求める）
+  const expense = fromDb ? IE.expenseOfInvoice({ ...inv, tax_mode: 'exclusive' }) : recalc.expense;
   const withholding = fromDb
-    ? (isIntLike(inv.withholding_amount) ? Math.round(Number(inv.withholding_amount)) : total - payout)
+    ? (isIntLike(inv.withholding_amount) ? Math.round(Number(inv.withholding_amount)) : Math.max(0, total + expense - payout))
     : recalc.withholding;
 
   return {
@@ -506,7 +513,7 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
     issuer_name: issuer.full_name || '-',
     issuer_lines: buildIssuerContactLines(issuer),
     rows,
-    subtotal, tax, total, withholding, payout,
+    subtotal, tax, total, expense, grand_total: total + expense, withholding, payout,
     withholding_enabled: withholdingEnabled,
     withholding_over_limit: withholdingEnabled && subtotal > IE.WITHHOLDING_WARN_THRESHOLD,
     amounts_from: fromDb ? 'db' : 'recalc',
@@ -593,7 +600,7 @@ async function renderExclusiveInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
   const boxH = 70;
   doc.roundedRect(L, y, W, boxH, 8).lineWidth(1.5).fillAndStroke(TEAL_PALE, TEAL);
   text('ご請求金額（税込）', L + 20, y + 14, { size: 11, color: '#555', width: 240 });
-  text(fmtYen(model.total), L + 200, y + 10, { bold: true, size: 18, color: '#222', width: W - 220, align: 'right' });
+  text(fmtYen(model.grand_total), L + 200, y + 10, { bold: true, size: 18, color: '#222', width: W - 220, align: 'right' });
   doc.moveTo(L + 16, y + 36).lineTo(R - 16, y + 36).lineWidth(0.5).strokeColor(GROUP_BORDER).stroke();
   text('差引お振込額', L + 20, y + 46, { bold: true, size: 11, color: '#555', width: 240 });
   text(fmtYen(model.payout), L + 200, y + 40, { bold: true, size: 20, color: TEAL, width: W - 220, align: 'right' });
@@ -632,6 +639,7 @@ async function renderExclusiveInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
     ensureSpace(rh, { tableHeader: true });
     doc.lineWidth(0.5).strokeColor(BORDER_SOFT);
     if (r.kind === 'manual') doc.rect(L, y, W, rh).fillAndStroke('#f3f8ff', BORDER_SOFT);
+    else if (r.kind === 'expense') doc.rect(L, y, W, rh).fillAndStroke('#fff7ed', BORDER_SOFT);
     else doc.rect(L, y, W, rh).stroke();
     for (const xx of vlines) doc.moveTo(xx, y).lineTo(xx, y + rh).stroke();
     text(String(r.no), X.no + 2, y + 5, { size: 9.5, color: '#555', width: COL.no - 4, align: 'center' });
@@ -662,7 +670,8 @@ async function renderExclusiveInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
   y += 8;
   sumRow('小計（税抜）', fmtYen(model.subtotal));
   sumRow('消費税（10%）', fmtYen(model.tax));
-  sumRow('ご請求金額（税込）', fmtYen(model.total), { strong: true });
+  if (model.expense) sumRow('立替経費（実費）', fmtYen(model.expense));
+  sumRow('ご請求金額（税込）', fmtYen(model.grand_total), { strong: true });
   sumRow('源泉徴収税額（10.21%）', model.withholding ? `-${fmtYen(model.withholding)}` : fmtYen(0));
   sumRow('差引お振込額', fmtYen(model.payout), { strong: true, color: TEAL });
 

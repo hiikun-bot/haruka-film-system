@@ -17,6 +17,7 @@
 
 const crypto = require('crypto');
 const { buildBeneficiary, maskAccountNumber } = require('./zengin-format');
+const { expenseOfInvoice } = require('./invoice-editor');
 
 const BANK_INFO_GUARD_DAYS = 7;
 const BILLED_INVOICE_STATUSES = ['submitted', 'approved'];
@@ -53,7 +54,7 @@ function daysSince(iso, now) {
   return (now - t) / (24 * 60 * 60 * 1000);
 }
 
-/** 請求書 1 枚の「振り込む額」と台帳用の内訳 */
+/** 請求書 1 枚の「振り込む額」と台帳用の内訳。新方式の振込額（差引）は立替経費込み、gross_amount（税込）は報酬だけ */
 function invoicePayout(inv) {
   const total = Number(inv.total_amount) || 0;
   if (String(inv.tax_mode || 'inclusive') === 'exclusive') {
@@ -307,6 +308,11 @@ function buildLedgerSnapshot({ amount, invoices = [], now = new Date() }) {
     withholding_amount: exclusive.length ? exclusive.reduce((s, i) => s + (Number(i.withholding_amount) || 0), 0) : (invs.length ? 0 : null),
     payout_amount: invs.length ? invs.reduce((s, i) => s + invoicePayout(i).amount, 0) : null,
     total_amount: sum('total_amount'),
+    // 立替経費（実費）: 差引には入るが税込・源泉には入らない（ADR 046 追補 2026-11-05）。台帳が内訳を出せるよう凍結する。
+    // 呼び出し側が明細の合計（expense_amount）を付けていればそれを使い、無いときだけ差引から求める
+    expense_amount: exclusive.length
+      ? exclusive.reduce((s, i) => s + (i.expense_amount != null ? (Number(i.expense_amount) || 0) : expenseOfInvoice(i)), 0)
+      : null,
     snapshot_at: now.toISOString(),
   };
 }

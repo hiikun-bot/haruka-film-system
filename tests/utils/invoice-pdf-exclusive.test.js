@@ -106,6 +106,40 @@ describe('新方式（exclusive）の PDF モデル', () => {
     expect(m).toMatchObject({ subtotal: 24000, tax: 2400, total: 26400, withholding: 2450, payout: 23950, amounts_from: 'recalc' });
   });
 
+  // 立替経費（実費）: 消費税・源泉の対象外で、ご請求金額と差引にだけ足す（ADR 046 追補 2026-11-05）
+  const expenseItems = () => [
+    ...exclusiveInvoice().invoice_items,
+    { id: 'd', creative_id: null, cost_type: 'expense', label: '10/25 撮影 タクシー代', quantity: 1, unit: '式', unit_price: 2000, total_amount: 2000, sort_order: 3 },
+    { id: 'e', creative_id: null, cost_type: 'hourly_expense', creative_label: '立替経費（作業時間報告 10月）', label: '立替経費', quantity: 1, unit: '式', unit_price: 1641, total_amount: 1641, sort_order: 4 },
+  ];
+
+  test('立替経費あり（DB 保存値）: 税込は報酬だけ・ご請求金額と差引に実費が足される', () => {
+    // total_amount は報酬の税込（26,400）のまま。payout_amount = 26,400 + 3,641 − 2,450
+    const m = buildInvoicePdfModel(exclusiveInvoice({ payout_amount: 27591, invoice_items: expenseItems() }));
+    expect(m).toMatchObject({ subtotal: 24000, tax: 2400, total: 26400, expense: 3641, grand_total: 30041, withholding: 2450, payout: 27591, amounts_from: 'db' });
+    expect(m.rows.slice(3)).toEqual([
+      { no: 4, kind: 'expense', date: '', label: '立替経費（実費）｜10/25 撮影 タクシー代', unit_price: 2000, quantity: 1, amount: 2000 },
+      { no: 5, kind: 'expense', date: '', label: '立替経費（作業時間報告 10月）（実費）', unit_price: 1641, quantity: 1, amount: 1641 },
+    ]);
+  });
+
+  test('立替経費あり（DB 値なし）: 明細から再計算しても同じ', () => {
+    const m = buildInvoicePdfModel(exclusiveInvoice({
+      subtotal_amount: null, tax_amount: null, payout_amount: null, withholding_amount: null, total_amount: null, invoice_items: expenseItems(),
+    }));
+    expect(m).toMatchObject({ subtotal: 24000, tax: 2400, total: 26400, expense: 3641, grand_total: 30041, withholding: 2450, payout: 27591, amounts_from: 'recalc' });
+  });
+
+  test('立替経費あり・源泉なし（源泉額が未保存でも源泉 0 と読む）', () => {
+    const m = buildInvoicePdfModel(exclusiveInvoice({ withholding_enabled: false, withholding_amount: null, payout_amount: 30041, invoice_items: expenseItems() }));
+    expect(m).toMatchObject({ total: 26400, expense: 3641, grand_total: 30041, withholding: 0, payout: 30041 });
+  });
+
+  test('立替経費なしの請求書は ご請求金額＝税込（従来どおり）', () => {
+    const m = buildInvoicePdfModel(exclusiveInvoice());
+    expect(m).toMatchObject({ expense: 0, grand_total: 26400 });
+  });
+
   test('源泉なし: 源泉 0・差引＝税込', () => {
     const m = buildInvoicePdfModel(exclusiveInvoice({ withholding_enabled: false, withholding_amount: 0, payout_amount: 26400 }));
     expect(m).toMatchObject({ withholding: 0, payout: 26400, withholding_enabled: false });
@@ -136,6 +170,16 @@ describe('新方式（exclusive）の PDF モデル', () => {
 describe('新方式（exclusive）の PDF 描画', () => {
   test('PDF バイナリを返す（1 ページ）', async () => {
     const buf = await renderInvoicePdf(buildInvoicePdfModel(exclusiveInvoice({ notes: '備考です' })));
+    expect(buf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(pageCount(buf)).toBe(1);
+  });
+
+  test('立替経費の行と合計欄があっても落ちない（1 ページ）', async () => {
+    const inv = exclusiveInvoice({ payout_amount: 27591 });
+    inv.invoice_items.push({ id: 'd', creative_id: null, cost_type: 'expense', label: '10/25 撮影 タクシー代', quantity: 1, unit: '式', unit_price: 3641, total_amount: 3641, sort_order: 3 });
+    const model = buildInvoicePdfModel(inv);
+    expect(model.expense).toBe(3641);
+    const buf = await renderInvoicePdf(model);
     expect(buf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
     expect(pageCount(buf)).toBe(1);
   });

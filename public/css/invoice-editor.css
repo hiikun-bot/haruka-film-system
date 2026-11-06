@@ -97,6 +97,11 @@
 .ie-row-manual:not(.ie-row-ng) td { background: #EFF6FF; }
 .ie-tag-blue { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: #DBEAFE; color: #1D4ED8; white-space: nowrap; }
 
+/* 立替経費（実費）＝オレンジ（入力欄の黄・前月バッジと見分けがつく色） */
+.ie-row-expense:not(.ie-row-ng) td { background: #FFF7ED; }
+.ie-tag-exp { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: #FFEDD5; color: #9A3412; white-space: nowrap; }
+.ie-exp-note { margin-top: 3px; color: #9A3412; font-size: 11px; }
+
 .ie-foot { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; padding: 12px 20px; border-top: 1px solid var(--border, #e5e7eb); }
 .ie-notes { flex: 1 1 280px; }
 .ie-totals { min-width: 280px; font-size: 12px; }

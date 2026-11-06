@@ -20,6 +20,7 @@ const { signState, verifyState, getStateSecret } = googleLogin;
 const { maskAccountNumber } = require('./zengin-format');
 const { notifyMember } = require('./member-notify');
 const { buildPayoutMessage } = require('./payout');
+const { EXPENSE_ITEMS_EMBED, withExpenseItems, applyExpenseAmounts } = require('./invoice-expense-source');
 
 const PREVIEW_TOKEN_TTL_MS = 10 * 60 * 1000;
 const REAUTH_TTL_MS = 10 * 60 * 1000;
@@ -521,12 +522,13 @@ async function notifyBatchOutcome(batch, items, { prevStatus, itemPatches }) {
 /** 同月の提出済/承認済メンバー請求書から ledger_snapshot を組み立てる（手動消し込みと API 完了で共用） */
 async function loadLedgerSnapshotForRecord(rec, amount) {
   if (!rec || !rec.user_id) return plan.buildLedgerSnapshot({ amount, invoices: [] });
-  const { data: invoices, error } = await supabase
-    .from('invoices').select(INVOICE_COLUMNS)
+  // 立替経費（実費）は明細の合計で凍結する（差引からの逆算にしない）。明細は同じ問い合わせに埋め込んで取る
+  const { data: invoices, error } = await withExpenseItems(supabase
+    .from('invoices').select(`${INVOICE_COLUMNS}, ${EXPENSE_ITEMS_EMBED}`)
     .eq('issuer_id', rec.user_id).eq('year', rec.year).eq('month', rec.month)
-    .is('invoice_type', null).in('status', plan.BILLED_INVOICE_STATUSES);
+    .is('invoice_type', null).in('status', plan.BILLED_INVOICE_STATUSES));
   if (error) throw new Error(`invoices 取得失敗: ${error.message}`);
-  return plan.buildLedgerSnapshot({ amount, invoices: invoices || [] });
+  return plan.buildLedgerSnapshot({ amount, invoices: applyExpenseAmounts(invoices || []) });
 }
 
 // ---------- 依頼の送信（§3-2: DB に書いてから銀行へ・同じ idempotency_key で再送） ----------

@@ -13679,12 +13679,23 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     if (delErr) return res.status(500).json({ error: delErr.message });
 
     for (const invId of affectedInvoiceIds) {
-      const { data: rem } = await supabase
-        .from('invoice_items').select('total_amount').eq('invoice_id', invId);
-      const total = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
-      await supabase.from('invoices')
-        .update({ total_amount: total, updated_at: new Date().toISOString() })
-        .eq('id', invId);
+      const [{ data: rem }, { data: invRow }] = await Promise.all([
+        supabase.from('invoice_items').select('creative_id, cost_type, unit_price, quantity, total_amount').eq('invoice_id', invId),
+        supabase.from('invoices').select('tax_mode, withholding_enabled').eq('id', invId).maybeSingle(),
+      ]);
+      const patch = { updated_at: new Date().toISOString() };
+      if (invRow && invRow.tax_mode === 'exclusive') {
+        // 新方式（ADR 046）は小計〜差引をまとめて計算し直す。total_amount だけ直すと差引お振込額とずれ、
+        // 差引から求める立替経費（expenseOfInvoice）まで狂う
+        const t = IE.computeTotals(rem || [], { withholding_enabled: invRow.withholding_enabled !== false });
+        Object.assign(patch, {
+          subtotal_amount: t.subtotal, tax_amount: t.tax, total_amount: t.total,
+          withholding_amount: t.withholding, payout_amount: t.payout,
+        });
+      } else {
+        patch.total_amount = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
+      }
+      await supabase.from('invoices').update(patch).eq('id', invId);
     }
   }
 
@@ -20096,7 +20107,7 @@ function ieCandidateOrFilter(year, month, notBeforeYm) {
 
 /** 明細行 → 画面用（kind / 参考単価 / 注意） */
 function ieItemView(it, { creative, refPrice }) {
-  const kind = IE.isCrLine(it) ? 'cr' : (IE.isFixedLine(it) ? 'fixed' : 'manual');
+  const kind = IE.lineKind(it); // cr / fixed / expense（手で足した立替経費）/ manual
   const ref = kind === 'cr' ? (refPrice != null ? refPrice : (it.original_unit_price ?? null)) : null;
   const project = creative ? creative.projects : null;
   return {
@@ -20104,6 +20115,7 @@ function ieItemView(it, { creative, refPrice }) {
     kind,
     creative_id: it.creative_id || null,
     cost_type: it.cost_type || null,
+    is_expense: IE.isExpenseLine(it), // 立替経費（実費）: 消費税・源泉の対象外（作業時間報告の立替経費も含む）
     label: it.label || '',
     creative_label: it.creative_label || (creative ? creative.file_name : '') || '',
     client_name: (project && project.clients && project.clients.name) || '',
@@ -20317,7 +20329,8 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
     let sort = rows.length;
     if (problems.length) return res.status(409).json({ error: '選んだクリエイティブに請求できないものがあります', code: 'INVOICE_CHECK_FAILED', problems });
 
-    // 作業時間報告（ADR 028）・一式分割（ADR 029）は従来どおりサーバー計算の固定額。新方式では税抜として扱う（§7-5）
+    // 作業時間報告（ADR 028）・一式分割（ADR 029）は従来どおりサーバー計算の固定額。新方式では税抜として扱う（§7-5）。
+    // 作業時間報告の立替経費（hourly_expense）だけは実費＝消費税・源泉の対象外（追補 2026-11-05・IE.computeTotals が分ける）
     if (hourlyKeys.length) {
       const hourly = await whBuildInvoiceItems(issuerId, year, month);
       for (const h of hourly) {
@@ -20409,11 +20422,12 @@ router.get('/invoice-editor/:id', requireAuth, async (req, res) => {
 });
 
 // PUT /invoice-editor/:id — 下書きの保存（1.5 秒の自動保存から呼ぶ）
-//   body: { updated_at, withholding_enabled, notes, items: [{ id?, client_key?, label, unit_price, quantity, price_change_reason, manual_reason }] }
+//   body: { updated_at, withholding_enabled, notes, items: [{ id?, client_key?, kind?, label, unit_price, quantity, price_change_reason, manual_reason }] }
 //   - updated_at で楽観ロック（別タブで更新済みなら 409 CONFLICT・上書きしない）
 //   - CR 行: 単価・理由・並び順だけ変えられる（数量は 1 に固定・CR / 役割は変えられない）
 //   - 固定行（作業時間・一式）: 並び順と削除だけ
 //   - id なしの行 = HFS外の行（creative_id NULL）。品目・単価・数量・理由
+//   - id なしで kind='expense' の行 = 立替経費（実費）。品目と金額だけ（数量は 1 固定・理由なし・消費税と源泉の対象外）
 //   - 送られてこなかった既存行は削除
 //   - 保存は止めず、注意（単価未入力・理由なし等）は issues として返す（提出時に 409）
 router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
@@ -20451,6 +20465,8 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
           row = { unit_price: price.value, quantity: 1, price_change_reason: str(li.price_change_reason, IE.REASON_MAX) || null, sort_order: i };
         } else if (IE.isFixedLine(prev)) {
           row = { sort_order: i }; // 金額はサーバー計算の固定額
+        } else if (IE.isManualExpenseLine(prev)) {
+          row = { label: str(li.label, IE.LABEL_MAX) || prev.label || '', unit_price: price.value, quantity: 1, sort_order: i };
         } else {
           const q = IE.parseMoney(li.quantity, { max: IE.MAX_QUANTITY });
           if (q.error) return res.status(400).json({ error: `${i + 1}行目: 数量は${q.error}`, index: i });
@@ -20468,18 +20484,19 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
         updates.push({ id: li.id, row });
         next.push(merged);
       } else {
-        const q = IE.parseMoney(li.quantity, { max: IE.MAX_QUANTITY });
+        const isExpense = li.kind === 'expense'; // 「＋ 立替経費」の行。種類は作成時に決まり、後から変えられない
+        const q = isExpense ? { value: 1 } : IE.parseMoney(li.quantity, { max: IE.MAX_QUANTITY });
         if (q.error) return res.status(400).json({ error: `${i + 1}行目: 数量は${q.error}`, index: i });
         const row = {
           invoice_id: inv.id,
           creative_id: null,
           creative_label: null,
-          cost_type: null,
+          cost_type: isExpense ? IE.MANUAL_EXPENSE_COST_TYPE : null,
           label: str(li.label, IE.LABEL_MAX),
           unit: '式',
           unit_price: price.value,
           quantity: q.value == null ? 1 : q.value,
-          manual_reason: str(li.manual_reason, IE.REASON_MAX) || null,
+          manual_reason: isExpense ? null : (str(li.manual_reason, IE.REASON_MAX) || null),
           original_unit_price: null,
           price_change_reason: null,
           is_special: false,

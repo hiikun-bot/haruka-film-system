@@ -2,8 +2,9 @@
 // 🧾 請求書エディタ（ADR 046・税抜＋源泉）の純関数群。
 //
 // 役割:
-//   - 計算（サーバーが正）: 小計 S → 消費税 T=floor(S*10/100) → 税込 G=S+T → 源泉 W=floor(S*1021/10000) → 差引 P=G-W
+//   - 計算（サーバーが正）: 小計 S → 消費税 T=floor(S*10/100) → 税込 G=S+T → 源泉 W=floor(S*1021/10000) → 差引 P=G+E-W
 //     すべて整数演算（浮動小数の 1 円ずれ対策・ADR 047 と同じ考え方）
+//     E＝立替経費（実費）。領収書どおりの金額をそのまま足すだけで、S にも T にも W にも入れない（追補 2026-11-05）
 //   - 新方式の適用月（system_settings.invoice_exclusive_from・既定 2026-10）
 //   - 候補 CR の判定（請求できるか＝納品済み / 初稿請求案件は初稿提出済み・ADR 034、計上月、前月以前の遡り 3 か月）
 //   - 本人のその CR での役割（1 CR × 役割 = 1 行）
@@ -45,11 +46,17 @@
     producer_fee: 'プロデュース費',
     hourly_fee: '時間報酬',
     hourly_expense: '立替経費',
+    expense: '立替経費',
     installment_fee: '一式（分割支払）',
     manual: 'HFS外',
   };
   // 金額をサーバーが決める行（作業時間報告・一式分割）。エディタでは単価を変えられない（§7-5: 税抜として扱う）
   const FIXED_COST_TYPES = ['hourly_fee', 'hourly_expense', 'installment_fee'];
+  // 立替経費（実費）の行。領収書どおりの金額をそのまま払う＝消費税を上乗せせず、源泉徴収の対象にも入れない（追補 2026-11-05）
+  //   expense        : エディタの「＋ 立替経費」で足す行（金額は本人が入れる）
+  //   hourly_expense : 作業時間報告の立替経費（金額はサーバー計算の固定額）
+  const MANUAL_EXPENSE_COST_TYPE = 'expense';
+  const EXPENSE_COST_TYPES = [MANUAL_EXPENSE_COST_TYPE, 'hourly_expense'];
   const CR_COST_TYPES = ['base_fee', 'script_fee', 'ai_fee', 'other_fee', 'director_fee', 'producer_fee'];
   // 二重請求の対象になる請求書の状態（差し戻し・下書き・削除は数えない）
   const BILLED_STATUSES = ['submitted', 'approved'];
@@ -274,9 +281,20 @@
 
   function isCrLine(item) { return !!(item && item.creative_id); }
   function isFixedLine(item) { return !!(item && !item.creative_id && FIXED_COST_TYPES.includes(item.cost_type)); }
-  function isManualLine(item) { return !!(item && !item.creative_id && !FIXED_COST_TYPES.includes(item.cost_type)); }
+  /** エディタの「＋ 立替経費」で足した行か（品目と金額を本人が入れる・数量は 1 固定・理由は不要） */
+  function isManualExpenseLine(item) { return !!(item && !item.creative_id && item.cost_type === MANUAL_EXPENSE_COST_TYPE); }
+  /** HFS外の行か（品目・単価・数量・理由を本人が入れる）。立替経費の行は含めない */
+  function isManualLine(item) { return !!(item && !item.creative_id && !FIXED_COST_TYPES.includes(item.cost_type) && !isManualExpenseLine(item)); }
+  /** 立替経費（実費）の行か（手で足した行・作業時間報告の行の両方） */
+  function isExpenseLine(item) { return !!(item && !item.creative_id && EXPENSE_COST_TYPES.includes(item.cost_type)); }
+  /** エディタでの行の種類。cr / fixed（金額固定）/ expense（手で足した立替経費）/ manual（HFS外） */
+  function lineKind(item) {
+    if (isCrLine(item)) return 'cr';
+    if (isFixedLine(item)) return 'fixed';
+    return isManualExpenseLine(item) ? 'expense' : 'manual';
+  }
 
-  /** 行の税抜金額。CR 行・固定行は 単価×1、HFS外の行は 単価×数量。単価未入力は 0 */
+  /** 行の金額（立替経費は実費、それ以外は税抜）。CR 行・固定行・立替経費は 単価×1、HFS外の行は 単価×数量。単価未入力は 0 */
   function lineAmount(item) {
     if (!item) return 0;
     const up = (item.unit_price === null || item.unit_price === undefined || item.unit_price === '') ? 0 : Math.trunc(Number(item.unit_price) || 0);
@@ -289,19 +307,42 @@
 
   /**
    * 合計（サーバーが正）。
-   * @returns {{ subtotal, tax, total, withholding, payout, withholding_over_limit }}
+   *   subtotal    … 税抜小計 S（立替経費を含まない）
+   *   total       … 報酬の税込 S+T（invoices.total_amount。分析・源泉台帳はこの値を使う）
+   *   expense     … 立替経費（実費）E。消費税も源泉もかけない
+   *   grand_total … ご請求金額 S+T+E（請求書に出す額）
+   *   payout      … 差引お振込額 S+T+E−W（invoices.payout_amount）
+   * @returns {{ subtotal, tax, total, expense, grand_total, withholding, payout, withholding_over_limit }}
    */
   function computeTotals(items, { withholding_enabled = true } = {}) {
-    let subtotal = 0;
-    for (const it of (items || [])) subtotal += lineAmount(it);
+    let subtotal = 0, expense = 0;
+    for (const it of (items || [])) {
+      if (isExpenseLine(it)) expense += lineAmount(it);
+      else subtotal += lineAmount(it);
+    }
     const tax = Math.floor((subtotal * TAX_NUM) / TAX_DEN);
     const total = subtotal + tax;
     const withholding = withholding_enabled ? Math.floor((subtotal * WH_NUM) / WH_DEN) : 0;
-    const payout = total - withholding;
+    const grandTotal = total + expense;
+    const payout = grandTotal - withholding;
     return {
-      subtotal, tax, total, withholding, payout,
+      subtotal, tax, total, expense, grand_total: grandTotal, withholding, payout,
       withholding_over_limit: !!withholding_enabled && subtotal > WITHHOLDING_WARN_THRESHOLD,
     };
+  }
+
+  /**
+   * 保存済みの請求書（invoices 行）に含まれる立替経費の額。専用の列は持たず、
+   *   差引お振込額 −（報酬の税込 − 源泉）＝ payout_amount −（total_amount − withholding_amount）
+   * で求める（新方式のみ。値が欠けている・旧方式・負になる場合は 0）。
+   */
+  function expenseOfInvoice(inv) {
+    if (!inv || inv.tax_mode !== 'exclusive') return 0;
+    const n = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Math.round(Number(v)));
+    const total = n(inv.total_amount), payout = n(inv.payout_amount);
+    if (total === null || payout === null) return 0;
+    const diff = payout - (total - (n(inv.withholding_amount) || 0));
+    return diff > 0 ? diff : 0;
   }
 
   /** 源泉の既定値: 法人（users.business_type='corporation'）は「なし」、それ以外は「あり」（§7-4） */
@@ -328,6 +369,8 @@
       if (ref > 0 && Number.isFinite(up) && up > ref && !String(item.price_change_reason || '').trim()) {
         out.push({ code: 'OVER_REFERENCE_NO_REASON', message: `参考単価（${ref.toLocaleString('ja-JP')}円）より高い単価には理由が必要です` });
       }
+    } else if (isManualExpenseLine(item)) {
+      if (!String(item.label || '').trim()) out.push({ code: 'LABEL_MISSING', message: '立替経費の内容を入力してください（例: 10/25 撮影 タクシー代）' });
     } else if (isManualLine(item)) {
       if (!String(item.manual_reason || '').trim()) out.push({ code: 'MANUAL_NO_REASON', message: 'HFS外の行は理由が必要です' });
       if (!String(item.label || '').trim()) out.push({ code: 'LABEL_MISSING', message: '品目を入力してください' });
@@ -376,8 +419,9 @@
 
     const totals = computeTotals(items, { withholding_enabled: !!p.withholdingEnabled });
     const et = Number(p.expectedTotal), ep = Number(p.expectedPayout);
-    if (!Number.isFinite(et) || !Number.isFinite(ep) || et !== totals.total || ep !== totals.payout) {
-      push(null, -1, 'TOTAL_MISMATCH', `画面の合計とサーバーの再計算が一致しません（ご請求金額 ${totals.total.toLocaleString('ja-JP')}円 / 差引お振込額 ${totals.payout.toLocaleString('ja-JP')}円）。再読み込みしてください`);
+    // 画面の「ご請求金額」は立替経費込み（grand_total）
+    if (!Number.isFinite(et) || !Number.isFinite(ep) || et !== totals.grand_total || ep !== totals.payout) {
+      push(null, -1, 'TOTAL_MISMATCH', `画面の合計とサーバーの再計算が一致しません（ご請求金額 ${totals.grand_total.toLocaleString('ja-JP')}円 / 差引お振込額 ${totals.payout.toLocaleString('ja-JP')}円）。再読み込みしてください`);
     }
     return { problems, totals };
   }
@@ -386,6 +430,17 @@
   function crItemLabel(clientName, creativeLabel, costType, roleLabel) {
     const role = costType === 'base_fee' ? '' : (roleLabel || '');
     return `${clientName || ''}${clientName ? '｜' : ''}${creativeLabel || ''}${role ? `（${role}）` : ''}`;
+  }
+
+  /**
+   * 立替経費の行の品目名（提出時の PDF と エディタの「PDFを見る」で同じ表記にする）。
+   *   手で足した行        … 「立替経費（実費）｜10/25 撮影 タクシー代」
+   *   作業時間報告の行    … 「立替経費（作業時間報告）（実費）」（名前に「立替経費」が入っていれば後ろに付けるだけ）
+   */
+  function expenseItemLabel(item) {
+    const raw = isManualExpenseLine(item) ? item.label : (item.creative_label || item.label);
+    const name = String(raw || '').trim();
+    return /立替経費/.test(name) ? `${name}（実費）` : `立替経費（実費）｜${name || '明細'}`;
   }
 
   // ---------- 検索・並び替え（作成モーダル・エディタ共通） ----------
@@ -435,13 +490,14 @@
   return {
     TAX_NUM, TAX_DEN, WH_NUM, WH_DEN, WITHHOLDING_WARN_THRESHOLD, LOOKBACK_MONTHS, DEFAULT_EXCLUSIVE_FROM,
     REASON_MAX, LABEL_MAX, MAX_PRICE, MAX_QUANTITY, MAX_ITEMS,
-    COST_TYPE_LABELS, FIXED_COST_TYPES, CR_COST_TYPES, BILLED_STATUSES, NON_BILLABLE_ASSIGNMENT_ROLES,
+    COST_TYPE_LABELS, FIXED_COST_TYPES, CR_COST_TYPES, EXPENSE_COST_TYPES, MANUAL_EXPENSE_COST_TYPE, BILLED_STATUSES, NON_BILLABLE_ASSIGNMENT_ROLES,
     ymOf, addMonthsYm, jstDateOfIso, dateOnly, jstMonthRangeIso, paymentDueDate, invoiceDate,
     parseExclusiveFrom, isExclusiveYm,
     billingTimingOf, isBillableCreative, billingDateOf, lookbackStartYm, previousStartYm, classifyCandidate,
     issuerCostRoles, billedKey,
-    parseMoney, isCrLine, isFixedLine, isManualLine, lineAmount, computeTotals, defaultWithholding,
-    lineIssues, checkInvoiceForSubmit, crItemLabel,
+    parseMoney, isCrLine, isFixedLine, isManualLine, isExpenseLine, isManualExpenseLine, lineKind,
+    lineAmount, computeTotals, expenseOfInvoice, defaultWithholding,
+    lineIssues, checkInvoiceForSubmit, crItemLabel, expenseItemLabel,
     searchNorm, matchesSearch, SORT_MODES, sortRows,
   };
 });
