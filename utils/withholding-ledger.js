@@ -155,7 +155,7 @@ function entityTypeLabel(user) {
  * @returns {{
  *   user_id, user_name, paid_at, paid_date, paid_month,
  *   invoice_id, invoice_number, tax_mode, source,
- *   subtotal, tax, withholding, gross, net,
+ *   subtotal, tax, withholding, gross, net, expense,
  *   paid_via, paid_via_label, apply_no,
  *   needs_review, review_reasons: string[], notes: string[]
  * }}
@@ -186,6 +186,7 @@ function invoiceFromSnapshot(snap) {
       ...base, tax_mode: 'exclusive',
       subtotal_amount: subtotal, tax_amount: tax ?? 0, total_amount: total,
       withholding_amount: withholding ?? 0, payout_amount: payout ?? (total - (withholding ?? 0)),
+      expense_amount: toInt(snap.expense_amount), // 立替経費（実費）。無い snapshot は差引から求める（buildLedgerRow）
       withholding_enabled: (withholding ?? 0) > 0 ? true : null,
     };
   }
@@ -254,7 +255,7 @@ function buildLedgerRow(payment) {
   const paidDate = isoToJstYmd(p.paid_at);
   if (!paidDate) reasons.push('支払日が未設定');
 
-  let subtotal = null, tax = null, withholding = 0, gross = 0, net = 0;
+  let subtotal = null, tax = null, withholding = 0, gross = 0, net = 0, expense = 0;
   let source = 'none';
   let taxMode = inv?.tax_mode || null;
 
@@ -265,8 +266,12 @@ function buildLedgerRow(payment) {
     withholding = toInt(inv.withholding_amount) ?? 0;
     gross = toInt(inv.total_amount) ?? (subtotal + tax);
     net = toInt(inv.payout_amount) ?? (gross - withholding);
+    // 立替経費（実費）は税込（gross）にも源泉にも入らず、差引（net）にだけ足される（ADR 046 追補 2026-11-05）。
+    // 専用の列は無いので、凍結値に無ければ 差引 −（税込 − 源泉）で求める。支払調書の支払金額（gross）には含めない
+    expense = toInt(inv.expense_amount) ?? Math.max(0, net - (gross - withholding));
     if (subtotal + tax !== gross) reasons.push('請求書の税抜＋消費税と税込額が一致しない');
-    if (gross - withholding !== net) reasons.push('請求書の税込−源泉と差引額が一致しない');
+    if (gross + expense - withholding !== net) reasons.push('請求書の税込−源泉と差引額が一致しない');
+    if (expense > 0) notes.push(`立替経費 ${expense.toLocaleString('ja-JP')}円を含む（消費税・源泉の対象外）`);
     if (inv.withholding_enabled === true && withholding === 0 && subtotal > 0) reasons.push('源泉ありの請求書なのに源泉額が0');
     if (inv.withholding_enabled === false) notes.push('源泉なし（法人・対象外）');
   } else if (inv) {
@@ -306,6 +311,7 @@ function buildLedgerRow(payment) {
     withholding,
     gross,
     net,
+    expense,
     paid_via: paidVia,
     paid_via_label: PAID_VIA_LABEL[paidVia],
     apply_no: p.apply_no || null,
@@ -341,6 +347,7 @@ function buildExtraRow(base) {
     withholding: 0,
     gross: diff,
     net: diff,
+    expense: 0,
     paid_amount: null,
     extra_of_payout_record_id: base.payout_record_id || null,
     needs_review: true,

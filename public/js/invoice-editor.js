@@ -389,6 +389,7 @@
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.bulkPrice()" title="選んだ行に同じ単価を入れます">単価をまとめて入力</button>
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.togglePick()" title="作成のときに選び漏れた自分のクリエイティブを名前で探して足します">＋ HFSのCRを追加</button>
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.addManual()">＋ HFS外の行</button>
+          <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.addExpense()" title="交通費など立て替えた実費を足します。領収書どおりの金額を入れてください（消費税・源泉徴収はかかりません）">＋ 立替経費</button>
           <button type="button" class="btn btn-sm ie-btn-del" onclick="HFSInvoiceEditor.removeSelected()">削除</button>
           <select class="ie-sort" onchange="HFSInvoiceEditor.sortBy(this.value); this.value = ''" title="明細を並べ替えます（この順で PDF にも並びます）">
             <option value="">並び替え…</option>
@@ -410,13 +411,13 @@
               <th>CR・品目</th>
               <th class="ie-col-view">見る</th>
               <th class="ie-col-num">参考単価</th>
-              <th class="ie-col-price">税抜単価</th>
+              <th class="ie-col-price" title="立替経費の行は領収書どおりの金額（実費）">税抜単価</th>
               <th class="ie-col-qty">数量</th>
               <th class="ie-col-num">金額</th>
             </tr></thead>
             <tbody id="ie-tbody">${ed.rows.map((r, i) => rowHtml(r, i, canEdit)).join('')}</tbody>
           </table>
-          ${ed.rows.length ? '' : '<div class="ie-empty">明細がありません。「＋ HFS外の行」で追加できます</div>'}
+          ${ed.rows.length ? '' : '<div class="ie-empty">明細がありません。「＋ HFS外の行」「＋ 立替経費」で追加できます</div>'}
         </div>
         <div class="ie-foot">
           <div class="ie-notes"><input type="text" id="ie-notes" class="ie-in-notes" maxlength="2000" placeholder="備考（任意）" value="${h(ed.notes)}" ${dis}></div>
@@ -437,7 +438,8 @@
     return `
       <div><span>小計（税抜）</span><b>${yen(t.subtotal)}</b></div>
       <div><span>消費税（10%）</span><b>${yen(t.tax)}</b></div>
-      <div class="ie-t-main"><span>ご請求金額（税込）</span><b>${yen(t.total)}</b></div>
+      ${t.expense ? `<div title="領収書どおりの金額をそのまま足します（消費税・源泉徴収の対象外）"><span>立替経費（実費）</span><b>${yen(t.expense)}</b></div>` : ''}
+      <div class="ie-t-main"><span>ご請求金額（税込）</span><b>${yen(t.grand_total)}</b></div>
       <div><span>源泉徴収税額（10.21%）</span><b>${t.withholding ? '-' + yen(t.withholding) : '0'}</b></div>
       <div class="ie-t-main"><span>差引お振込額</span><b>${yen(t.payout)}</b></div>
       ${t.withholding_over_limit ? '<div class="ie-t-warn">小計が100万円を超えています。源泉は10.21%一律で計算しています</div>' : ''}`;
@@ -526,7 +528,7 @@
     const issues = rowIssues(r);
     const isNg = issues.length > 0;
     const dis = canEdit ? '' : 'disabled';
-    const cls = ['ie-row', r.kind === 'manual' ? 'ie-row-manual' : '', isNg ? 'ie-row-ng' : ''].join(' ');
+    const cls = ['ie-row', r.kind === 'manual' ? 'ie-row-manual' : '', r.kind === 'expense' ? 'ie-row-expense' : '', isNg ? 'ie-row-ng' : ''].join(' ');
     const sel = canEdit ? `<input type="checkbox" class="ie-sel" data-i="${i}" ${r._sel ? 'checked' : ''}>` : '';
     const priceIn = (r.kind === 'fixed')
       ? `<span class="ie-fixed">${yen(r.unit_price)}</span>`
@@ -545,8 +547,11 @@
     } else if (r.kind === 'manual') {
       label = `<div class="ie-manual"><input class="ie-in ie-in-label" data-i="${i}" data-col="label" maxlength="200" value="${h(r.label)}" placeholder="品目（例: 撮影補助 10/12）" ${dis}> <span class="ie-tag-blue">HFS未登録</span></div>
         <div class="ie-reason">理由: <input class="ie-in ie-in-reason" data-i="${i}" data-col="reason" maxlength="500" value="${h(r.manual_reason)}" placeholder="HFSに無い理由（必須）" ${dis}></div>`;
+    } else if (r.kind === 'expense') {
+      label = `<div class="ie-manual"><input class="ie-in ie-in-label" data-i="${i}" data-col="label" maxlength="200" value="${h(r.label)}" placeholder="立替経費の内容（例: 10/25 撮影 タクシー代）" ${dis}> <span class="ie-tag-exp">立替経費（実費）</span></div>
+        <div class="ie-exp-note">領収書どおりの金額を入れてください。消費税・源泉徴収はかからず、そのままの額が振り込まれます（領収書は管理者へ）</div>`;
     } else {
-      label = `<div class="ie-cr">${h(r.creative_label || r.label)}<span class="ie-role">（${h(r.label)}）</span></div>`;
+      label = `<div class="ie-cr">${h(r.creative_label || r.label)}<span class="ie-role">（${h(r.label)}）</span>${r.is_expense ? ' <span class="ie-tag-exp" title="消費税・源泉徴収の対象外">実費</span>' : ''}</div>`;
     }
     const msg = isNg ? `<div class="ie-msg">${issues.map(x => h(x.message)).join(' / ')}</div>` : '';
     return `<tr class="${cls}" data-i="${i}">
@@ -599,7 +604,7 @@
       if (p.error) return false;
       r.quantity = p.value == null ? 0 : p.value;
     } else if (col === 'label') {
-      if (r.kind !== 'manual') return false;
+      if (r.kind !== 'manual' && r.kind !== 'expense') return false;
       r.label = String(raw ?? '');
     } else if (col === 'reason') {
       if (r.kind === 'cr') r.price_change_reason = String(raw ?? '');
@@ -777,6 +782,18 @@
     scheduleSave();
   }
 
+  /** 立替経費（実費）の行を足す。品目と金額だけ（数量 1・理由なし）。消費税・源泉の対象外（computeTotals が分ける） */
+  function addExpense() {
+    if (!editable()) return;
+    ed.rows.push({
+      id: null, _key: `k${++ed.keySeq}`, _sel: false, kind: 'expense', creative_id: null, cost_type: C().MANUAL_EXPENSE_COST_TYPE, is_expense: true,
+      label: '', creative_label: '', unit_price: null, quantity: 1, ref_price: null, price_change_reason: '', manual_reason: '', billing_date: null,
+    });
+    render();
+    focusCell(ed.rows.length - 1, 'label');
+    scheduleSave();
+  }
+
   function removeSelected() {
     if (!editable()) return;
     const idx = selectedIdx();
@@ -873,6 +890,7 @@
       items: sentRows.map(r => ({
         id: r.id || undefined,
         client_key: r.id ? undefined : r._key,
+        kind: r.id ? undefined : r.kind, // 新しい行だけ（'manual' / 'expense'）。種類は作成時に決まる
         label: r.label,
         unit_price: r.unit_price,
         quantity: r.quantity,
@@ -900,7 +918,7 @@
       }
       ed.updatedAt = data.updated_at;
       ed.lastSavedAt = data.saved_at || new Date().toISOString();
-      // 新しく足した HFS外の行に ID を振る
+      // 新しく足した HFS外・立替経費の行に ID を振る
       const idMap = data.id_map || {};
       for (const r of ed.rows) if (!r.id && idMap[r._key]) r.id = idMap[r._key];
       return true;
@@ -939,8 +957,8 @@
     }
     const t = totals();
     const ok = typeof window.showConfirmDialog === 'function'
-      ? await window.showConfirmDialog({ title: '請求書を提出', message: `ご請求金額（税込）${yen(t.total)}円 / 差引お振込額 ${yen(t.payout)}円 で提出します。提出後は管理者の承認が必要です。`, okLabel: '提出する' })
-      : window.confirm(`ご請求金額（税込）${yen(t.total)}円 / 差引お振込額 ${yen(t.payout)}円 で提出します。よろしいですか？`);
+      ? await window.showConfirmDialog({ title: '請求書を提出', message: `ご請求金額（税込）${yen(t.grand_total)}円${t.expense ? `（うち立替経費 ${yen(t.expense)}円）` : ''} / 差引お振込額 ${yen(t.payout)}円 で提出します。提出後は管理者の承認が必要です。`, okLabel: '提出する' })
+      : window.confirm(`ご請求金額（税込）${yen(t.grand_total)}円 / 差引お振込額 ${yen(t.payout)}円 で提出します。よろしいですか？`);
     if (!ok) return;
     const btn = overlay().querySelector('#ie-submit');
     if (btn) { btn.disabled = true; btn.textContent = '確認中…'; }
@@ -949,7 +967,7 @@
       if (saved === false || ed.conflict) return;
       const res = await apiFetch(`${API}/invoice-editor/${encodeURIComponent(ed.id)}/submit`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expected_total: t.total, expected_payout: t.payout, updated_at: ed.updatedAt }),
+        body: JSON.stringify({ expected_total: t.grand_total, expected_payout: t.payout, updated_at: ed.updatedAt }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -986,7 +1004,7 @@
     const rows = ed.rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td>
       <td class="c">${r.kind === 'cr' ? slashDate(r.billing_date) : ''}</td>
-      <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.kind === 'fixed' ? (r.creative_label || r.label) : r.label)}</td>
+      <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.kind === 'fixed' ? (r.creative_label || r.label) : r.label)}${r.is_expense ? '（立替経費・実費）' : ''}</td>
       <td class="r">${r.unit_price == null ? '' : yen(r.unit_price)}</td>
       <td class="c">${r.kind === 'manual' ? h(r.quantity) : 1}</td>
       <td class="r">${r.unit_price == null ? '' : yen(C().lineAmount(r))}</td>
@@ -1017,13 +1035,14 @@
         <div><div class="to">${h(s.recipient)}</div><p>件名：${inv.year}年${inv.month}月分 制作費として</p></div>
         <div style="text-align:right">請求日 ${longDate(s.invoice_date)}<br>No. ${h(inv.invoice_number)}<br><b>${h(s.issuer.full_name)}</b><br>${s.issuer.invoice_registration_number ? '登録番号 ' + h(s.issuer.invoice_registration_number) : ''}</div>
       </div>
-      <div class="box"><div><span>ご請求金額（税込）</span><b>¥${yen(t.total)}</b></div><div><span>差引お振込額</span><b>¥${yen(t.payout)}</b></div></div>
+      <div class="box"><div><span>ご請求金額（税込）</span><b>¥${yen(t.grand_total)}</b></div><div><span>差引お振込額</span><b>¥${yen(t.payout)}</b></div></div>
       <div>お支払期限 ${longDate(s.due_date)}</div>
       <table><thead><tr><th>No</th><th>納品日</th><th>品目</th><th>税抜単価</th><th>数量</th><th>税抜金額</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="sum">
         <div><span>小計（税抜）</span><span>${yen(t.subtotal)}</span></div>
         <div><span>消費税（10%）</span><span>${yen(t.tax)}</span></div>
-        <div class="b"><span>ご請求金額（税込）</span><span>${yen(t.total)}</span></div>
+        ${t.expense ? `<div><span>立替経費（実費）</span><span>${yen(t.expense)}</span></div>` : ''}
+        <div class="b"><span>ご請求金額（税込）</span><span>${yen(t.grand_total)}</span></div>
         <div><span>源泉徴収税額（10.21%）</span><span>${t.withholding ? '-' + yen(t.withholding) : '0'}</span></div>
         <div class="b"><span>差引お振込額</span><span>${yen(t.payout)}</span></div>
       </div>
@@ -1037,7 +1056,7 @@
     isCandidateMode: () => cand.active,
     createDraftFromModal,
     onThumbToggle,
-    open, close, reload, submit, preview, fillRef, bulkPrice, addManual, removeSelected, sortBy, togglePick,
+    open, close, reload, submit, preview, fillRef, bulkPrice, addManual, addExpense, removeSelected, sortBy, togglePick,
     openMedia, openCandidateMedia, closeMedia,
     onCandidateSort, searchOutside,
     _updateCandidateCount: updateCandidateCount,

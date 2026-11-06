@@ -231,8 +231,17 @@ describe('buildLedgerSnapshot（支払時点の凍結）', () => {
     expect(s).toEqual({
       amount: 99790, invoice_id: 'i1', invoice_number: 'INV-2610-01', invoice_count: 1,
       subtotal_amount: 100000, tax_amount: 10000, withholding_amount: 10210, payout_amount: 99790, total_amount: 110000,
+      expense_amount: 0,
       snapshot_at: new Date(NOW).toISOString(),
     });
+  });
+  test('立替経費（実費）入りの請求書: 差引は実費込み、税込は報酬だけ、expense_amount を凍結する（ADR 046 追補 2026-11-05）', () => {
+    // 差引 103,431 ＝ 税込 110,000 − 源泉 10,210 ＋ 立替経費 3,641
+    const withExpense = invoice({ payout_amount: 103431 });
+    const s = plan.buildLedgerSnapshot({ amount: 103431, invoices: [withExpense, invoice({ id: 'i2', invoice_number: 'INV-2610-02' })] });
+    expect(s).toMatchObject({ payout_amount: 203221, total_amount: 220000, withholding_amount: 20420, expense_amount: 3641 });
+    const r = plan.planTransferItems({ records: [record()], users: [user()], invoices: [withExpense], year: 2026, month: 10, now: NOW });
+    expect(r.items[0]).toMatchObject({ amount: 103431, gross_amount: 110000, tax_amount: 10000, withholding_amount: 10210 });
   });
   test('inclusive は源泉 0、複数は合算、請求書なしは null', () => {
     const inc = plan.buildLedgerSnapshot({ amount: 110000, invoices: [invoice({ tax_mode: 'inclusive', subtotal_amount: null, tax_amount: null, withholding_amount: null, payout_amount: null })] });

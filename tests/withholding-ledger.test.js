@@ -137,6 +137,29 @@ describe('buildLedgerRows', () => {
     expect(noAmt.gross).toBe(0);
   });
 
+  test('立替経費（実費）入りの請求書: 税込・源泉は報酬だけ、差引にだけ実費が入り、要確認にしない（ADR 046 追補 2026-11-05）', () => {
+    // 報酬 100,000 ＋ 消費税 10,000 − 源泉 10,210 ＋ 立替経費 3,641 ＝ 差引 103,431
+    const withExpense = { ...invExclusive, payout_amount: 103431 };
+    const [row] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: withExpense, paid_amount: 103431 }]);
+    expect(row).toMatchObject({ subtotal: 100000, tax: 10000, withholding: 10210, gross: 110000, net: 103431, expense: 3641, needs_review: false });
+    expect(row.notes).toContain('立替経費 3,641円を含む（消費税・源泉の対象外）');
+    // 支払金額（税込）の集計には立替経費を入れない。実際に払った額（差引）には入る
+    expect(summarizeMonth([row])).toMatchObject({ gross_total: 110000, withholding_total: 10210, net_total: 103431 });
+  });
+  test('立替経費なしは expense 0・備考なし。差引が税込−源泉より少ない不整合は従来どおり要確認', () => {
+    const [ok] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', invoice: invExclusive }]);
+    expect(ok.expense).toBe(0);
+    expect(ok.notes.some(n => n.includes('立替経費'))).toBe(false);
+    const [bad] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', invoice: { ...invExclusive, payout_amount: 90000 } }]);
+    expect(bad.review_reasons).toContain('請求書の税込−源泉と差引額が一致しない');
+  });
+  test('凍結した snapshot の expense_amount を使う。違う額が凍結されていれば要確認', () => {
+    const snap = { amount: 103431, invoice_id: 'inv1', invoice_number: 'INV-2610-03', subtotal_amount: 100000, tax_amount: 10000, total_amount: 110000, withholding_amount: 10210, payout_amount: 103431, expense_amount: 3641 };
+    const [row] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', snapshot: snap }]);
+    expect(row).toMatchObject({ gross: 110000, net: 103431, expense: 3641, needs_review: false, from_snapshot: true });
+    const [bad] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', snapshot: { ...snap, expense_amount: 1000 } }]);
+    expect(bad.review_reasons).toContain('請求書の税込−源泉と差引額が一致しない');
+  });
   test('exclusive で源泉なし（法人）は要確認にしない', () => {
     const [r] = buildLedgerRows([{
       user: suzuki, paid_at: '2026-10-20T01:00:00Z', paid_via: 'manual',
