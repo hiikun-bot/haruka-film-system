@@ -432,6 +432,17 @@
     return `${clientName || ''}${clientName ? '｜' : ''}${creativeLabel || ''}${role ? `（${role}）` : ''}`;
   }
 
+  /**
+   * 立替経費の行の品目名（提出時の PDF と エディタの「PDFを見る」で同じ表記にする）。
+   *   手で足した行        … 「立替経費（実費）｜10/25 撮影 タクシー代」
+   *   作業時間報告の行    … 「立替経費（作業時間報告）（実費）」（名前に「立替経費」が入っていれば後ろに付けるだけ）
+   */
+  function expenseItemLabel(item) {
+    const raw = isManualExpenseLine(item) ? item.label : (item.creative_label || item.label);
+    const name = String(raw || '').trim();
+    return /立替経費/.test(name) ? `${name}（実費）` : `立替経費（実費）｜${name || '明細'}`;
+  }
+
   // ---------- 検索・並び替え（作成モーダル・エディタ共通） ----------
 
   /**
@@ -486,7 +497,7 @@
     issuerCostRoles, billedKey,
     parseMoney, isCrLine, isFixedLine, isManualLine, isExpenseLine, isManualExpenseLine, lineKind,
     lineAmount, computeTotals, expenseOfInvoice, defaultWithholding,
-    lineIssues, checkInvoiceForSubmit, crItemLabel,
+    lineIssues, checkInvoiceForSubmit, crItemLabel, expenseItemLabel,
     searchNorm, matchesSearch, SORT_MODES, sortRows,
   };
 });

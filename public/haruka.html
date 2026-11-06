@@ -37953,10 +37953,14 @@ async function loadInvoices() {
   document.getElementById('inv-admin-section').style.display = hasPermission('invoice.all_view') ? '' : 'none';
 }
 
-// 新方式の請求書の「ご請求金額」＝報酬の税込（total_amount）＋立替経費（実費）。立替経費は専用の列を持たず、
-// 差引お振込額から求める（utils/invoice-editor.js expenseOfInvoice・ADR 046 追補 2026-11-05）
+// 新方式の請求書の「ご請求金額」＝報酬の税込（total_amount）＋立替経費（実費）。立替経費は専用の列を持たない
+// （ADR 046 追補 2026-11-05・計算は utils/invoice-editor.js）
 function invoiceExpenseAmount(inv) {
-  return (window.InvoiceEditorCalc && InvoiceEditorCalc.expenseOfInvoice) ? InvoiceEditorCalc.expenseOfInvoice(inv) : 0;
+  const C = window.InvoiceEditorCalc;
+  if (!C || !inv || inv.tax_mode !== 'exclusive') return 0;
+  // 一覧は明細を持っているので、立替経費の行の合計をそのまま使う（差引からの逆算は明細が無いときだけ）
+  if (Array.isArray(inv.invoice_items)) return C.computeTotals(inv.invoice_items).expense;
+  return C.expenseOfInvoice(inv);
 }
 function invoiceBilledAmount(inv) { return (inv.total_amount || 0) + invoiceExpenseAmount(inv); }
 
@@ -63396,7 +63400,8 @@ function votStatusBadge(status) {
 <script src="/js/withholding.js"></script>
 <!-- 🧾 請求書エディタ（ADR 046）: 計算・判定はサーバーと同じ utils/invoice-editor.js を server.js が配信 → 画面 -->
 <script src="/js/invoice-editor-calc.js"></script>
-<script src="/js/invoice-editor.js"></script>
+<!-- ?v= は「ご請求金額」に立替経費を含める変更（2026-11-05）を、1 時間のキャッシュを待たずに届けるため -->
+<script src="/js/invoice-editor.js?v=20261105"></script>
 
 <!-- 通知UI（Phase 1 段階2）— 順序重要: card → bell → panel → realtime -->
 <!-- card: 描画ヘルパー / bell: バッジ管理 / panel: 開閉 + read-all / realtime: Supabase購読 -->

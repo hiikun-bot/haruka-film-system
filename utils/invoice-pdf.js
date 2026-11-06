@@ -473,8 +473,7 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
     } else if (kind === 'fixed') {
       label = it.creative_label || it.label || '';
     } else if (kind === 'expense') {
-      const name = IE.isManualExpenseLine(it) ? (it.label || '') : (it.creative_label || it.label || '');
-      label = /立替経費/.test(name) ? `${name}（実費）` : `立替経費（実費）｜${name || '明細'}`;
+      label = IE.expenseItemLabel(it);
     } else {
       label = it.label || '明細';
     }

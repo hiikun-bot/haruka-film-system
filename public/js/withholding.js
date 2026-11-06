@@ -102,6 +102,7 @@
         <span>人数 <strong>${yen(s.payee_count)}</strong>名（${yen(s.payment_count)}件）</span>
         <span>支払金額(税込) <strong>${yen(s.gross_total)}</strong></span>
         <span>源泉徴収税額 <strong style="font-size:15px">${yen(s.withholding_total)}</strong></span>
+        ${s.expense_total ? `<span title="消費税・源泉の対象外。差引支払額にだけ含まれます">立替経費 <strong>${yen(s.expense_total)}</strong></span>` : ''}
         <span>差引支払額 <strong>${yen(s.net_total)}</strong></span>
         <span>${review}</span>
         <span style="color:var(--text-muted);font-size:12px">納付期限 ${esc(d.due_date || '')}</span>
@@ -112,7 +113,8 @@
     if (!rows || !rows.length) {
       return '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">この月に支払日（振込完了）のある記録はありません</div>';
     }
-    const th = ['支払日', '氏名', '請求書', '税抜', '消費税', '源泉', '差引', '経路', ''];
+    // 税抜 ＋ 消費税 − 源泉 ＋ 立替経費 ＝ 差引
+    const th = ['支払日', '氏名', '請求書', '税抜', '消費税', '源泉', '立替経費', '差引', '経路', ''];
     const head = th.map(h => `<th>${h}</th>`).join('');
     const body = rows.map(r => {
       const d = r.paid_date ? r.paid_date.slice(5).replace('-', '/') : '—';
@@ -124,7 +126,7 @@
       const num = (v) => `<td style="text-align:right;font-variant-numeric:tabular-nums">${yen(v)}</td>`;
       return `<tr${r.needs_review ? ' class="wh-review"' : ''}>
         <td>${esc(d)}</td><td>${esc(r.user_name || '')}</td><td>${inv}</td>
-        ${num(r.subtotal)}${num(r.tax)}${num(r.withholding)}${num(r.net)}
+        ${num(r.subtotal)}${num(r.tax)}${num(r.withholding)}${num(r.expense || 0)}${num(r.net)}
         <td>${via}</td><td>${flag}</td></tr>`;
     }).join('');
     // #page-payout .po-tbl の CSS はモーダル配下には効かないので、モーダル専用の .wh-tbl（haruka.html の modal-withholding 内 <style>）

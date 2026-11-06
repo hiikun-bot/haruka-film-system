@@ -21,7 +21,7 @@
 
 const supabase = require('../supabase');
 const ledger = require('./withholding-ledger');
-const { attachInvoiceExpenseAmounts } = require('./invoice-expense-source');
+const { EXPENSE_ITEMS_EMBED, withExpenseItems, applyExpenseAmounts } = require('./invoice-expense-source');
 
 const INVOICE_STATUSES = ['submitted', 'approved'];
 const INVOICE_COLUMNS = 'id, issuer_id, year, month, status, tax_mode, invoice_number, invoice_type, subtotal_amount, tax_amount, withholding_amount, payout_amount, total_amount, withholding_enabled, submitted_at';
@@ -130,24 +130,24 @@ async function loadInvoices({ userIds, years, invoiceIds }) {
     if (String(inv.submitted_at || '') > String(cur.submitted_at || '')) byKey.set(key, inv);
   };
   if (userIds.length && years.length) {
-    const { data, error } = await supabase.from('invoices')
-      .select(INVOICE_COLUMNS)
+    // 立替経費（実費）の明細を埋め込んで一緒に取る（差引からの逆算にしない＝台帳の整合チェックを保つ・追加の往復なし）
+    const { data, error } = await withExpenseItems(supabase.from('invoices')
+      .select(`${INVOICE_COLUMNS}, ${EXPENSE_ITEMS_EMBED}`)
       .in('issuer_id', userIds)
       .in('year', years)
       .is('invoice_type', null)              // メンバー請求書のみ（'client' はクライアント宛て）
       .in('status', INVOICE_STATUSES)
-      .limit(10000);
+      .limit(10000));
     if (error) throw new Error(`invoices 取得失敗: ${error.message}`);
-    for (const inv of data || []) put(inv);
+    for (const inv of applyExpenseAmounts(data || [])) put(inv);
   }
   const missingIds = invoiceIds.filter(id => id && !byId.has(id));
   if (missingIds.length) {
-    const { data, error } = await supabase.from('invoices').select(INVOICE_COLUMNS).in('id', missingIds);
+    const { data, error } = await withExpenseItems(supabase.from('invoices')
+      .select(`${INVOICE_COLUMNS}, ${EXPENSE_ITEMS_EMBED}`).in('id', missingIds));
     if (error) throw new Error(`invoices 取得失敗: ${error.message}`);
-    for (const inv of data || []) byId.set(inv.id, inv);
+    for (const inv of applyExpenseAmounts(data || [])) byId.set(inv.id, inv);
   }
-  // 立替経費（実費）は明細の合計で付ける（差引からの逆算にしない＝台帳の整合チェックを保つ）
-  await attachInvoiceExpenseAmounts([...byId.values()]);
   return { byKey, byId, dupKeys };
 }
 

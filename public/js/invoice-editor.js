@@ -729,7 +729,8 @@
       const present = new Set(colOrder(rowI));
       cells.forEach((v, k) => {
         const col = pasteCols[k];
-        if (!col || !present.has(col)) return;
+        if (!col) return;
+        if (!present.has(col)) { if (v.trim()) skipped++; return; } // この行に無い欄（例: CR 行の品目）
         let val = v.trim();
         if (col === 'price' || col === 'qty') {
           val = val.replace(/[^0-9０-９]/g, ''); // 単価列は数字だけ取り込む
@@ -742,7 +743,7 @@
     }
     refreshTotals();
     if (changed) scheduleSave();
-    showToast(`${changed} セルに貼り付けました${skipped ? `（数字でない ${skipped} セルは飛ばしました）` : ''}`, 'success', 2500);
+    showToast(`${changed} セルに貼り付けました${skipped ? `（入れられない ${skipped} セルは飛ばしました）` : ''}`, 'success', 2500);
   }
 
   // ---------- ツールバー ----------
@@ -1008,7 +1009,7 @@
     const rows = ed.rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td>
       <td class="c">${r.kind === 'cr' ? slashDate(r.billing_date) : ''}</td>
-      <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.kind === 'fixed' ? (r.creative_label || r.label) : r.label)}${r.is_expense ? '（立替経費・実費）' : ''}</td>
+      <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.is_expense ? C().expenseItemLabel(r) : (r.kind === 'fixed' ? (r.creative_label || r.label) : r.label))}</td>
       <td class="r">${r.unit_price == null ? '' : yen(r.unit_price)}</td>
       <td class="c">${r.kind === 'manual' ? h(r.quantity) : 1}</td>
       <td class="r">${r.unit_price == null ? '' : yen(C().lineAmount(r))}</td>
