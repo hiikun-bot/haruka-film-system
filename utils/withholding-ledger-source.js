@@ -21,6 +21,7 @@
 
 const supabase = require('../supabase');
 const ledger = require('./withholding-ledger');
+const { attachInvoiceExpenseAmounts } = require('./invoice-expense-source');
 
 const INVOICE_STATUSES = ['submitted', 'approved'];
 const INVOICE_COLUMNS = 'id, issuer_id, year, month, status, tax_mode, invoice_number, invoice_type, subtotal_amount, tax_amount, withholding_amount, payout_amount, total_amount, withholding_enabled, submitted_at';
@@ -145,6 +146,8 @@ async function loadInvoices({ userIds, years, invoiceIds }) {
     if (error) throw new Error(`invoices 取得失敗: ${error.message}`);
     for (const inv of data || []) byId.set(inv.id, inv);
   }
+  // 立替経費（実費）は明細の合計で付ける（差引からの逆算にしない＝台帳の整合チェックを保つ）
+  await attachInvoiceExpenseAmounts([...byId.values()]);
   return { byKey, byId, dupKeys };
 }
 

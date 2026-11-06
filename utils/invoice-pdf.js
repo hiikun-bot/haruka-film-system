@@ -462,7 +462,7 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
   // 明細（1 CR × 役割 = 1 行。HFS外・作業時間・分割・立替経費の行もそのまま 1 行）
   const rows = items.map((it, i) => {
     // 立替経費は手で足した行も作業時間報告の行も 'expense'（品目に「立替経費」と出し、色を変える）
-    const kind = IE.isExpenseLine(it) ? 'expense' : (IE.isCrLine(it) ? 'cr' : (IE.isFixedLine(it) ? 'fixed' : 'manual'));
+    const kind = IE.isExpenseLine(it) ? 'expense' : IE.lineKind(it);
     const cr = it.creatives || {};
     const cp = cr.projects || null;
     const clientName = (cp && cp.clients && cp.clients.name) || '';
@@ -640,7 +640,7 @@ async function renderExclusiveInvoicePdf(model, { logoPath = LOGO_PATH } = {}) {
     ensureSpace(rh, { tableHeader: true });
     doc.lineWidth(0.5).strokeColor(BORDER_SOFT);
     if (r.kind === 'manual') doc.rect(L, y, W, rh).fillAndStroke('#f3f8ff', BORDER_SOFT);
-    else if (r.kind === 'expense') doc.rect(L, y, W, rh).fillAndStroke('#fffbeb', BORDER_SOFT);
+    else if (r.kind === 'expense') doc.rect(L, y, W, rh).fillAndStroke('#fff7ed', BORDER_SOFT);
     else doc.rect(L, y, W, rh).stroke();
     for (const xx of vlines) doc.moveTo(xx, y).lineTo(xx, y + rh).stroke();
     text(String(r.no), X.no + 2, y + 5, { size: 9.5, color: '#555', width: COL.no - 4, align: 'center' });

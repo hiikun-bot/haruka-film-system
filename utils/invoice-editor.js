@@ -281,12 +281,13 @@
 
   function isCrLine(item) { return !!(item && item.creative_id); }
   function isFixedLine(item) { return !!(item && !item.creative_id && FIXED_COST_TYPES.includes(item.cost_type)); }
-  function isManualLine(item) { return !!(item && !item.creative_id && !FIXED_COST_TYPES.includes(item.cost_type)); }
-  /** 立替経費（実費）の行か（手で足した行・作業時間報告の行の両方） */
-  function isExpenseLine(item) { return !!(item && !item.creative_id && EXPENSE_COST_TYPES.includes(item.cost_type)); }
   /** エディタの「＋ 立替経費」で足した行か（品目と金額を本人が入れる・数量は 1 固定・理由は不要） */
   function isManualExpenseLine(item) { return !!(item && !item.creative_id && item.cost_type === MANUAL_EXPENSE_COST_TYPE); }
-  /** 画面・PDF での行の種類。cr / fixed（金額固定）/ expense（手で足した立替経費）/ manual（HFS外） */
+  /** HFS外の行か（品目・単価・数量・理由を本人が入れる）。立替経費の行は含めない */
+  function isManualLine(item) { return !!(item && !item.creative_id && !FIXED_COST_TYPES.includes(item.cost_type) && !isManualExpenseLine(item)); }
+  /** 立替経費（実費）の行か（手で足した行・作業時間報告の行の両方） */
+  function isExpenseLine(item) { return !!(item && !item.creative_id && EXPENSE_COST_TYPES.includes(item.cost_type)); }
+  /** エディタでの行の種類。cr / fixed（金額固定）/ expense（手で足した立替経費）/ manual（HFS外） */
   function lineKind(item) {
     if (isCrLine(item)) return 'cr';
     if (isFixedLine(item)) return 'fixed';
@@ -297,7 +298,7 @@
   function lineAmount(item) {
     if (!item) return 0;
     const up = (item.unit_price === null || item.unit_price === undefined || item.unit_price === '') ? 0 : Math.trunc(Number(item.unit_price) || 0);
-    if (isManualLine(item) && !isManualExpenseLine(item)) {
+    if (isManualLine(item)) {
       const q = Math.trunc(Number(item.quantity));
       return up * (Number.isFinite(q) ? q : 0);
     }

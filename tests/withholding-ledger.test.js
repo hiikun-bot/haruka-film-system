@@ -16,6 +16,7 @@ describe('snapshotFromTransferItem（API 明細の凍結値 → スナップシ�
     expect(snap).toEqual({
       amount: 99790, snapshot_at: '2026-10-29T01:00:00Z', invoice_id: 'inv1', invoice_number: 'INV-2610-03',
       subtotal_amount: 100000, tax_amount: 10000, withholding_amount: 10210, payout_amount: 99790, total_amount: 110000,
+      expense_amount: 0,
     });
     // 後から請求書を 2 倍に編集しても、台帳は凍結値のまま
     const edited = { ...invExclusive, subtotal_amount: 200000, tax_amount: 20000, total_amount: 220000, withholding_amount: 20420, payout_amount: 199580 };
@@ -139,19 +140,49 @@ describe('buildLedgerRows', () => {
 
   test('立替経費（実費）入りの請求書: 税込・源泉は報酬だけ、差引にだけ実費が入り、要確認にしない（ADR 046 追補 2026-11-05）', () => {
     // 報酬 100,000 ＋ 消費税 10,000 − 源泉 10,210 ＋ 立替経費 3,641 ＝ 差引 103,431
-    const withExpense = { ...invExclusive, payout_amount: 103431 };
+    // expense_amount はローダ（utils/invoice-expense-source.js）が明細の合計で付ける
+    const withExpense = { ...invExclusive, payout_amount: 103431, expense_amount: 3641 };
     const [row] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'manual', invoice: withExpense, paid_amount: 103431 }]);
     expect(row).toMatchObject({ subtotal: 100000, tax: 10000, withholding: 10210, gross: 110000, net: 103431, expense: 3641, needs_review: false });
     expect(row.notes).toContain('立替経費 3,641円を含む（消費税・源泉の対象外）');
     // 支払金額（税込）の集計には立替経費を入れない。実際に払った額（差引）には入る
-    expect(summarizeMonth([row])).toMatchObject({ gross_total: 110000, withholding_total: 10210, net_total: 103431 });
+    expect(summarizeMonth([row])).toMatchObject({ gross_total: 110000, withholding_total: 10210, net_total: 103431, expense_total: 3641 });
+    // シート: 税込 − 源泉 ＋ 立替経費 ＝ 差引 が列で追える。月次・年次には注記が出る
+    const sheet = buildLedgerSheetRows({ rows: [row] });
+    expect(sheet[1].slice(6, 10)).toEqual([10210, 110000, 3641, 103431]);
+    expect(sheet[2].slice(6, 10)).toEqual([10210, 110000, 3641, 103431]);
+    const monthly = buildMonthlySheetRows({ year: 2026, month: 10, summary: summarizeMonth([row]) });
+    expect(monthly.some(r => String(r[0]).includes('立替経費（実費）3,641円を含みます'))).toBe(true);
+    const yearly = buildYearlySheetRows({ year: 2026, payees: summarizeYearByPayee([row], { u1: yamada }) });
+    expect(yearly[1].slice(5, 8)).toEqual([110000, 10210, 103431]);
+    expect(yearly.some(r => String(r[0]).includes('立替経費（実費）3,641円を含みます'))).toBe(true);
   });
-  test('立替経費なしは expense 0・備考なし。差引が税込−源泉より少ない不整合は従来どおり要確認', () => {
+  test('立替経費なしは expense 0・備考なし・シートの注記なし。差引のズレはどちら向きでも要確認（立替経費に読み替えない）', () => {
     const [ok] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', invoice: invExclusive }]);
     expect(ok.expense).toBe(0);
     expect(ok.notes.some(n => n.includes('立替経費'))).toBe(false);
-    const [bad] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', invoice: { ...invExclusive, payout_amount: 90000 } }]);
-    expect(bad.review_reasons).toContain('請求書の税込−源泉と差引額が一致しない');
+    expect(buildMonthlySheetRows({ year: 2026, month: 10, summary: summarizeMonth([ok]) }).some(r => String(r[0]).includes('立替経費'))).toBe(false);
+    for (const payout of [90000, 103431]) {
+      const [bad] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', invoice: { ...invExclusive, payout_amount: payout } }]);
+      expect(bad.review_reasons).toContain('請求書の税込−源泉と差引額が一致しない');
+      expect(bad.expense).toBe(0);
+    }
+    // 明細の立替経費と差引の増分が合わなければ要確認
+    const [mismatch] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', invoice: { ...invExclusive, payout_amount: 103431, expense_amount: 1000 } }]);
+    expect(mismatch.review_reasons).toContain('請求書の税込−源泉と差引額が一致しない');
+  });
+  test('立替経費だけの請求書（報酬 0）は支払金額 0 でも要確認にしない', () => {
+    const only = { id: 'inv9', invoice_number: 'INV-2610-09', tax_mode: 'exclusive', withholding_enabled: true, subtotal_amount: 0, tax_amount: 0, total_amount: 0, withholding_amount: 0, payout_amount: 3641, expense_amount: 3641 };
+    const [row] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', invoice: only, paid_amount: 3641 }]);
+    expect(row).toMatchObject({ gross: 0, withholding: 0, net: 3641, expense: 3641, needs_review: false });
+  });
+  test('API 振込の明細（立替経費の列なし）: 振込額が税込−源泉を上回る分を立替経費とし、下回れば要確認', () => {
+    const item = { invoice_id: 'inv1', amount: 103431, gross_amount: 110000, tax_amount: 10000, withholding_amount: 10210 };
+    expect(snapshotFromTransferItem(item, 'INV-2610-03')).toMatchObject({ subtotal_amount: 100000, total_amount: 110000, payout_amount: 103431, expense_amount: 3641 });
+    const [row] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', snapshot: snapshotFromTransferItem(item, 'INV-2610-03'), paid_amount: 103431 }]);
+    expect(row).toMatchObject({ gross: 110000, net: 103431, expense: 3641, needs_review: false });
+    const [low] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', paid_via: 'aozora_api', snapshot: snapshotFromTransferItem({ ...item, amount: 90000 }, 'INV-2610-03') }]);
+    expect(low.review_reasons).toContain('請求書の税込−源泉と差引額が一致しない');
   });
   test('凍結した snapshot の expense_amount を使う。違う額が凍結されていれば要確認', () => {
     const snap = { amount: 103431, invoice_id: 'inv1', invoice_number: 'INV-2610-03', subtotal_amount: 100000, tax_amount: 10000, total_amount: 110000, withholding_amount: 10210, payout_amount: 103431, expense_amount: 3641 };
@@ -159,6 +190,11 @@ describe('buildLedgerRows', () => {
     expect(row).toMatchObject({ gross: 110000, net: 103431, expense: 3641, needs_review: false, from_snapshot: true });
     const [bad] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', snapshot: { ...snap, expense_amount: 1000 } }]);
     expect(bad.review_reasons).toContain('請求書の税込−源泉と差引額が一致しない');
+    // 追補より前の snapshot（expense_amount なし）は立替経費 0 として扱う＝差引が多ければ要確認
+    const { expense_amount: _omit, ...old } = snap;
+    const [oldRow] = buildLedgerRows([{ user: yamada, paid_at: '2026-10-31T06:00:00Z', snapshot: old }]);
+    expect(oldRow.expense).toBe(0);
+    expect(oldRow.review_reasons).toContain('請求書の税込−源泉と差引額が一致しない');
   });
   test('exclusive で源泉なし（法人）は要確認にしない', () => {
     const [r] = buildLedgerRows([{
@@ -183,10 +219,11 @@ describe('summarizeMonth / summarizeYearByPayee', () => {
       gross_total: 110000 + 55000 + 45000,
       withholding_total: 10210,
       net_total: 99790 + 55000 + 45000,
+      expense_total: 0,
       paid_total: 99790 + 55000 + 45000,
       needs_review_count: 1,
     });
-    expect(summarizeMonth([])).toEqual({ payee_count: 0, payment_count: 0, gross_total: 0, withholding_total: 0, net_total: 0, paid_total: 0, needs_review_count: 0 });
+    expect(summarizeMonth([])).toEqual({ payee_count: 0, payment_count: 0, gross_total: 0, withholding_total: 0, net_total: 0, expense_total: 0, paid_total: 0, needs_review_count: 0 });
   });
   test('支払調書用は支払先ごとに住所・区分・細目・個人/法人・インボイス番号を付けて合算', () => {
     const payees = summarizeYearByPayee(rows, new Map([[yamada.id, yamada], [suzuki.id, suzuki]]));
@@ -230,9 +267,9 @@ describe('スプレッドシート行', () => {
   });
   test('支払台帳', () => {
     const sheet = buildLedgerSheetRows({ rows });
-    expect(sheet[0]).toEqual(['支払日', '氏名', '請求書番号', '方式', '税抜', '消費税', '源泉徴収税額', '税込', '差引支払額', '経路', '受付番号', '要確認', '備考']);
-    expect(sheet[1]).toEqual(['2026-10-31', '山田 花子', 'INV-2610-03', '税抜', 100000, 10000, 10210, 110000, 99790, 'API', 'A1', '', '']);
-    expect(sheet[2]).toEqual(['2026-10-31', '鈴木 一郎', 'なし', '請求書なし', '', '', 0, 45000, 45000, '手動', '', '⚠', '請求書なし（PDF抽出額を税込として計上）']);
+    expect(sheet[0]).toEqual(['支払日', '氏名', '請求書番号', '方式', '税抜', '消費税', '源泉徴収税額', '税込', '立替経費', '差引支払額', '経路', '受付番号', '要確認', '備考']);
+    expect(sheet[1]).toEqual(['2026-10-31', '山田 花子', 'INV-2610-03', '税抜', 100000, 10000, 10210, 110000, 0, 99790, 'API', 'A1', '', '']);
+    expect(sheet[2]).toEqual(['2026-10-31', '鈴木 一郎', 'なし', '請求書なし', '', '', 0, 45000, 0, 45000, '手動', '', '⚠', '請求書なし（PDF抽出額を税込として計上）']);
     expect(sheet[3][0]).toBe('合計');
   });
 });
@@ -298,7 +335,7 @@ describe('合算支払の差額行（ADR 054 追補 2026-10-30）', () => {
     // 支払台帳シートの方式列
     const sheet = buildLedgerSheetRows({ rows });
     expect(sheet[2][3]).toBe('請求書外');
-    expect(sheet[2][11]).toBe('⚠');
+    expect(sheet[2][12]).toBe('⚠'); // 「立替経費」列の分だけ右へ
   });
   test('請求書より少なく払った場合は負の差額行で要確認', () => {
     const rows = buildLedgerRows([

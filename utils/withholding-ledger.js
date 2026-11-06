@@ -186,7 +186,7 @@ function invoiceFromSnapshot(snap) {
       ...base, tax_mode: 'exclusive',
       subtotal_amount: subtotal, tax_amount: tax ?? 0, total_amount: total,
       withholding_amount: withholding ?? 0, payout_amount: payout ?? (total - (withholding ?? 0)),
-      expense_amount: toInt(snap.expense_amount), // 立替経費（実費）。無い snapshot は差引から求める（buildLedgerRow）
+      expense_amount: toInt(snap.expense_amount) ?? 0, // 立替経費（実費）。追補 2026-11-05 より前の snapshot には無い＝0
       withholding_enabled: (withholding ?? 0) > 0 ? true : null,
     };
   }
@@ -219,6 +219,9 @@ function snapshotFromTransferItem(item, invoiceNumber = null) {
     ...common, invoice_id: item.invoice_id, invoice_number: invoiceNumber,
     subtotal_amount: gross - tax, tax_amount: tax, withholding_amount: withholding,
     payout_amount: amount ?? (gross - withholding), total_amount: gross,
+    // 明細に立替経費の列は無い。振込額（amount）は依頼時に請求書の差引から転記した凍結値なので、
+    // 税込 − 源泉 を上回る分を立替経費（実費）とする（下回る分は buildLedgerRow が要確認にする）
+    expense_amount: Math.max(0, (amount ?? (gross - withholding)) - (gross - withholding)),
   };
 }
 
@@ -267,8 +270,8 @@ function buildLedgerRow(payment) {
     gross = toInt(inv.total_amount) ?? (subtotal + tax);
     net = toInt(inv.payout_amount) ?? (gross - withholding);
     // 立替経費（実費）は税込（gross）にも源泉にも入らず、差引（net）にだけ足される（ADR 046 追補 2026-11-05）。
-    // 専用の列は無いので、凍結値に無ければ 差引 −（税込 − 源泉）で求める。支払調書の支払金額（gross）には含めない
-    expense = toInt(inv.expense_amount) ?? Math.max(0, net - (gross - withholding));
+    // 額は呼び出し側が明細の合計・凍結値で渡す（差引から逆算しない＝下の整合チェックを保つ）。支払調書の支払金額（gross）には含めない
+    expense = toInt(inv.expense_amount) ?? 0;
     if (subtotal + tax !== gross) reasons.push('請求書の税抜＋消費税と税込額が一致しない');
     if (gross + expense - withholding !== net) reasons.push('請求書の税込−源泉と差引額が一致しない');
     if (expense > 0) notes.push(`立替経費 ${expense.toLocaleString('ja-JP')}円を含む（消費税・源泉の対象外）`);
@@ -293,7 +296,8 @@ function buildLedgerRow(payment) {
     }
   }
 
-  if (gross <= 0 && !reasons.some(r => r.includes('金額不明'))) reasons.push('支払金額が0以下');
+  // 立替経費だけの請求書（報酬 0・実費のみ）は支払金額 0 で正しい
+  if (gross <= 0 && expense <= 0 && !reasons.some(r => r.includes('金額不明'))) reasons.push('支払金額が0以下');
 
   const paidVia = p.paid_via === 'aozora_api' ? 'aozora_api' : 'manual';
   return {
@@ -376,12 +380,13 @@ function buildLedgerRows(payments) {
 function summarizeMonth(rows) {
   const list = rows || [];
   const payees = new Set();
-  let gross = 0, withholding = 0, net = 0, review = 0;
+  let gross = 0, withholding = 0, net = 0, expense = 0, review = 0;
   for (const r of list) {
     if (r.user_id) payees.add(r.user_id);
     gross += r.gross || 0;
     withholding += r.withholding || 0;
     net += r.net || 0;
+    expense += r.expense || 0;
     if (r.needs_review) review++;
   }
   return {
@@ -390,6 +395,8 @@ function summarizeMonth(rows) {
     gross_total: gross,
     withholding_total: withholding,
     net_total: net,
+    // 立替経費（実費）の合計。支払金額・源泉の対象外で、差引支払額（net_total）にだけ含まれる
+    expense_total: expense,
     // 実際に支払った額の合計（差額行込み）。net_total と同値だが「実支払＝台帳」を明示するために別名で返す
     paid_total: net,
     needs_review_count: review,
@@ -421,6 +428,7 @@ function summarizeYearByPayee(rows, usersById) {
         gross_total: 0,
         withholding_total: 0,
         net_total: 0,
+        expense_total: 0,
         payment_count: 0,
         needs_review_count: 0,
         entity_type: entityTypeLabel(u),
@@ -432,6 +440,7 @@ function summarizeYearByPayee(rows, usersById) {
     agg.gross_total += r.gross || 0;
     agg.withholding_total += r.withholding || 0;
     agg.net_total += r.net || 0;
+    agg.expense_total += r.expense || 0;
     agg.payment_count += 1;
     if (r.needs_review) agg.needs_review_count += 1;
   }
@@ -458,6 +467,7 @@ function buildMonthlySheetRows({ year, month, summary }) {
     [ymLabel(year, month), CATEGORY_LABEL, s.payee_count, s.payment_count, s.gross_total, s.withholding_total, s.net_total, s.needs_review_count, due.date, dueNote],
     [],
     ['※ 支払日（JST）ベースで集計。源泉徴収税額は提出済み・承認済みの請求書（税抜方式）の源泉欄の合計です。'],
+    ...(s.expense_total > 0 ? [[`※ 差引支払額には立替経費（実費）${s.expense_total.toLocaleString('ja-JP')}円を含みます。立替経費は支払金額（税込）・源泉徴収の対象外です。`]] : []),
     ['※ 「要確認」は請求書なし・金額不整合の支払です。支払台帳タブで内容を確認してください。'],
     ['※ 納期の特例（半年ごと納付）の適用可否は税理士に確認してください。マイナンバーは HFS では扱いません。'],
   ];
@@ -472,8 +482,9 @@ function buildYearlySheetRows({ year, payees }) {
     p.entity_type, p.invoice_registration_number, p.needs_review_count,
   ]);
   const totals = (payees || []).reduce((a, p) => {
-    a.gross += p.gross_total; a.wh += p.withholding_total; a.net += p.net_total; a.cnt += p.payment_count; a.rev += p.needs_review_count; return a;
-  }, { gross: 0, wh: 0, net: 0, cnt: 0, rev: 0 });
+    a.gross += p.gross_total; a.wh += p.withholding_total; a.net += p.net_total; a.cnt += p.payment_count; a.rev += p.needs_review_count;
+    a.exp += p.expense_total || 0; return a;
+  }, { gross: 0, wh: 0, net: 0, cnt: 0, rev: 0, exp: 0 });
   return [
     header,
     ...body,
@@ -481,16 +492,18 @@ function buildYearlySheetRows({ year, payees }) {
     [],
     [`※ ${year}年1月〜12月の支払日（JST）ベース。支払調書の提出要否（年間5万円超など）・マイナンバーは税理士側で確認・管理します。`],
     ['※ 住所・氏名は HFS のメンバー情報（基本情報）から転記しています。空欄は本人に登録を依頼してください。'],
+    ...(totals.exp > 0 ? [[`※ 差引支払額には立替経費（実費）${totals.exp.toLocaleString('ja-JP')}円を含みます。立替経費は年間支払金額（税込）・源泉徴収の対象外です（内訳は支払台帳タブ）。`]] : []),
   ];
 }
 
 /** (c) 支払台帳 */
 function buildLedgerSheetRows({ rows }) {
-  const header = ['支払日', '氏名', '請求書番号', '方式', '税抜', '消費税', '源泉徴収税額', '税込', '差引支払額', '経路', '受付番号', '要確認', '備考'];
+  // 税込 − 源泉徴収税額 ＋ 立替経費 ＝ 差引支払額
+  const header = ['支払日', '氏名', '請求書番号', '方式', '税抜', '消費税', '源泉徴収税額', '税込', '立替経費', '差引支払額', '経路', '受付番号', '要確認', '備考'];
   const body = (rows || []).map(r => [
     r.paid_date || '', r.user_name, r.invoice_number || 'なし',
     r.source === 'invoice_exclusive' ? '税抜' : r.source === 'invoice_inclusive' ? '内税' : r.source === 'extra' ? '請求書外' : '請求書なし',
-    r.subtotal ?? '', r.tax ?? '', r.withholding, r.gross, r.net,
+    r.subtotal ?? '', r.tax ?? '', r.withholding, r.gross, r.expense || 0, r.net,
     r.paid_via_label, r.apply_no || '',
     r.needs_review ? '⚠' : '',
     [...r.review_reasons, ...r.notes].join(' / '),
@@ -499,7 +512,7 @@ function buildLedgerSheetRows({ rows }) {
   return [
     header,
     ...body,
-    ['合計', `${s.payee_count}名 / ${s.payment_count}件`, '', '', '', '', s.withholding_total, s.gross_total, s.net_total, '', '', s.needs_review_count ? `${s.needs_review_count}件` : '', ''],
+    ['合計', `${s.payee_count}名 / ${s.payment_count}件`, '', '', '', '', s.withholding_total, s.gross_total, s.expense_total, s.net_total, '', '', s.needs_review_count ? `${s.needs_review_count}件` : '', ''],
   ];
 }
 

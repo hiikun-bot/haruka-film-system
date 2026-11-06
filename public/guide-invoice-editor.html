@@ -226,6 +226,7 @@ body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);l
 .pill.prev{border-color:transparent;background:#FEF9C3;color:#854D0E}
 .pill.w{border-color:transparent;background:var(--danger-bg);color:#B91C1C}
 .pill.i{border-color:transparent;background:#DBEAFE;color:#1D4ED8}
+.pill.exp{border-color:transparent;background:#FFEDD5;color:#9A3412}
 .ie-btn{font:inherit;font-size:12.5px;font-weight:700;border-radius:8px;padding:6px 12px;border:1.5px solid var(--border);background:#fff;color:var(--text);cursor:pointer}
 .ie-btn.primary{background:linear-gradient(135deg,var(--em),var(--em-dark));border-color:var(--em-dark);color:#fff}
 .ie-btn:focus-visible,.ie-in:focus-visible,.ie-select:focus-visible{outline:2px solid var(--em-dark);outline-offset:2px}
@@ -472,11 +473,12 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
 <!-- 色の意味 -->
 <section class="step-section" id="colors">
   <div class="step-card">
-    <div class="step-card-title">🎨 色の意味は 3 つだけ</div>
+    <div class="step-card-title">🎨 色の意味は 4 つだけ</div>
     <div class="color-grid">
       <div class="color-card"><h3><span class="pill prev">黄</span> 入力する欄</h3><p>単価や、HFS外の行の内容を入れるところ。</p></div>
       <div class="color-card"><h3><span class="pill w">赤</span> 確認が必要</h3><p>参考単価より高い、理由が空いているなど。直すか理由を書きます。</p></div>
       <div class="color-card"><h3><span class="pill i">青</span> HFS未登録</h3><p>自分で足した行。HFS への登録漏れを見つける手がかりにもなります。</p></div>
+      <div class="color-card"><h3><span class="pill exp">オレンジ</span> 立替経費（実費）</h3><p>「＋ 立替経費」で足した行。消費税・源泉徴収がかからず、入れた金額がそのまま振り込まれます。</p></div>
     </div>
   </div>
 </section>

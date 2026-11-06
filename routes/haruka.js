@@ -13679,12 +13679,23 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     if (delErr) return res.status(500).json({ error: delErr.message });
 
     for (const invId of affectedInvoiceIds) {
-      const { data: rem } = await supabase
-        .from('invoice_items').select('total_amount').eq('invoice_id', invId);
-      const total = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
-      await supabase.from('invoices')
-        .update({ total_amount: total, updated_at: new Date().toISOString() })
-        .eq('id', invId);
+      const [{ data: rem }, { data: invRow }] = await Promise.all([
+        supabase.from('invoice_items').select('creative_id, cost_type, unit_price, quantity, total_amount').eq('invoice_id', invId),
+        supabase.from('invoices').select('tax_mode, withholding_enabled').eq('id', invId).maybeSingle(),
+      ]);
+      const patch = { updated_at: new Date().toISOString() };
+      if (invRow && invRow.tax_mode === 'exclusive') {
+        // 新方式（ADR 046）は小計〜差引をまとめて計算し直す。total_amount だけ直すと差引お振込額とずれ、
+        // 差引から求める立替経費（expenseOfInvoice）まで狂う
+        const t = IE.computeTotals(rem || [], { withholding_enabled: invRow.withholding_enabled !== false });
+        Object.assign(patch, {
+          subtotal_amount: t.subtotal, tax_amount: t.tax, total_amount: t.total,
+          withholding_amount: t.withholding, payout_amount: t.payout,
+        });
+      } else {
+        patch.total_amount = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
+      }
+      await supabase.from('invoices').update(patch).eq('id', invId);
     }
   }
 

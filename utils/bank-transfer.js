@@ -20,6 +20,7 @@ const { signState, verifyState, getStateSecret } = googleLogin;
 const { maskAccountNumber } = require('./zengin-format');
 const { notifyMember } = require('./member-notify');
 const { buildPayoutMessage } = require('./payout');
+const { attachInvoiceExpenseAmounts } = require('./invoice-expense-source');
 
 const PREVIEW_TOKEN_TTL_MS = 10 * 60 * 1000;
 const REAUTH_TTL_MS = 10 * 60 * 1000;
@@ -526,6 +527,8 @@ async function loadLedgerSnapshotForRecord(rec, amount) {
     .eq('issuer_id', rec.user_id).eq('year', rec.year).eq('month', rec.month)
     .is('invoice_type', null).in('status', plan.BILLED_INVOICE_STATUSES);
   if (error) throw new Error(`invoices 取得失敗: ${error.message}`);
+  // 立替経費（実費）は明細の合計で凍結する（差引からの逆算にしない）
+  await attachInvoiceExpenseAmounts(invoices || []);
   return plan.buildLedgerSnapshot({ amount, invoices: invoices || [] });
 }
 

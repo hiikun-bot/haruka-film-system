@@ -308,8 +308,11 @@ function buildLedgerSnapshot({ amount, invoices = [], now = new Date() }) {
     withholding_amount: exclusive.length ? exclusive.reduce((s, i) => s + (Number(i.withholding_amount) || 0), 0) : (invs.length ? 0 : null),
     payout_amount: invs.length ? invs.reduce((s, i) => s + invoicePayout(i).amount, 0) : null,
     total_amount: sum('total_amount'),
-    // 立替経費（実費）: 差引には入るが税込・源泉には入らない（ADR 046 追補 2026-11-05）。台帳が内訳を出せるよう凍結する
-    expense_amount: exclusive.length ? exclusive.reduce((s, i) => s + expenseOfInvoice(i), 0) : null,
+    // 立替経費（実費）: 差引には入るが税込・源泉には入らない（ADR 046 追補 2026-11-05）。台帳が内訳を出せるよう凍結する。
+    // 呼び出し側が明細の合計（expense_amount）を付けていればそれを使い、無いときだけ差引から求める
+    expense_amount: exclusive.length
+      ? exclusive.reduce((s, i) => s + (i.expense_amount != null ? (Number(i.expense_amount) || 0) : expenseOfInvoice(i)), 0)
+      : null,
     snapshot_at: now.toISOString(),
   };
 }

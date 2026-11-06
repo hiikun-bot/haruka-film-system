@@ -719,14 +719,17 @@
     };
     const startCols = colOrder(startI);
     const startIdx = Math.max(0, startCols.indexOf(t.dataset.col));
+    // 貼り付ける列は開始行で決め、下の行には同じ名前の欄へ入れる（無い欄は飛ばす）。
+    // 行ごとに左から詰めると、単価の列が HFS外・立替経費の行では「品目」に入ってしまうため
+    const pasteCols = startCols.slice(startIdx);
     let rowI = startI, changed = 0, skipped = 0;
     for (const cells of lines) {
       while (rowI < ed.rows.length && ed.rows[rowI].kind === 'fixed') rowI++;
       if (rowI >= ed.rows.length) break;
-      const cols = colOrder(rowI);
+      const present = new Set(colOrder(rowI));
       cells.forEach((v, k) => {
-        const col = cols[startIdx + k];
-        if (!col) return;
+        const col = pasteCols[k];
+        if (!col || !present.has(col)) return;
         let val = v.trim();
         if (col === 'price' || col === 'qty') {
           val = val.replace(/[^0-9０-９]/g, ''); // 単価列は数字だけ取り込む
@@ -761,8 +764,9 @@
 
   function bulkPrice() {
     if (!editable()) return;
-    const idx = selectedIdx().filter(i => ed.rows[i].kind !== 'fixed');
-    if (!idx.length) { showToast('先に左のチェックで行を選んでください', 'warn'); return; }
+    // 立替経費は領収書ごとに金額が違うので、まとめ入力の対象にしない
+    const idx = selectedIdx().filter(i => ed.rows[i].kind !== 'fixed' && ed.rows[i].kind !== 'expense');
+    if (!idx.length) { showToast('先に左のチェックで行を選んでください（立替経費・金額固定の行はまとめて入力できません）', 'warn'); return; }
     const raw = window.prompt(`選んだ ${idx.length} 行に入れる税抜単価（円）`, '');
     if (raw === null) return;
     const p = C().parseMoney(raw);
