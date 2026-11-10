@@ -24919,6 +24919,7 @@ const VALID_PERMISSION_KEYS = new Set([
   'project.pricing_edit','project.pricing_approve',
   'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others','creative.wcheck_toggle',
   'member.list','member.edit_password','member.deactivate','member.reactivate','member.delete',
+  'member.view_email', // メンバー一覧のメール列の閲覧のみ（migration 2026-11-10_member_view_email_permission.sql）
   'team.manage','team.assign','team.delete',
   'invoice.own','invoice.all_view',
   'master.page','master.sys_config','master.filename_templates',
