@@ -1130,6 +1130,8 @@ INSERT INTO role_permissions (role, permission_key, allowed) VALUES
   -- メンバー
   ('admin','member.list',true),('secretary','member.list',true),('producer','member.list',true),('producer_director','member.list',true),('director','member.list',true),('editor','member.list',true),('designer','member.list',true),
   ('admin','member.edit_password',true),('secretary','member.edit_password',true),
+  -- メンバー一覧のメール列の閲覧のみ（編集・PW変更は含まない。migration 2026-11-10_member_view_email_permission.sql）
+  ('admin','member.view_email',true),('secretary','member.view_email',true),('producer_director','member.view_email',true),('director','member.view_email',true),
   ('admin','member.deactivate',true),('secretary','member.deactivate',true),
   ('admin','member.delete',true),
   -- チーム

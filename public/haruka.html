@@ -14456,8 +14456,9 @@ function renderMemberList() {
 // 並び替えロジックは renderMemberList 内で適用済み。ここはレンダリングのみ。
 function renderMemberTable(list, visibleMembers) {
   const showRankCol = hasPermission('creative.rank_price_column');
-  // メール列は個人情報のため、メンバー管理権限（スプレッドシート出力と同じ member.edit_password）保持者のみに表示
-  const showEmailCol = hasPermission('member.edit_password');
+  // メール列は個人情報のため、メンバー管理権限（member.edit_password）か、メール閲覧だけを切り出した
+  // member.view_email（director に開放。migration 2026-11-10_member_view_email_permission.sql）の保持者のみに表示
+  const showEmailCol = hasPermission('member.edit_password') || hasPermission('member.view_email');
   list.innerHTML = `
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <colgroup>
@@ -20444,6 +20445,8 @@ const _ROLE_PERMS_FALLBACK = {
   'secretary|creative.wcheck_toggle': true, 'producer|creative.wcheck_toggle': true, 'director|creative.wcheck_toggle': true, 'designer|creative.wcheck_toggle': true,
   'secretary|member.list': true, 'producer|member.list': true, 'producer_director|member.list': true, 'director|member.list': true,
   'secretary|member.edit_password': true,
+  // メンバー一覧のメール列の閲覧のみ（編集・PW変更は含まない）。director に開放（migration 2026-11-10_member_view_email_permission.sql）
+  'secretary|member.view_email': true, 'producer_director|member.view_email': true, 'director|member.view_email': true,
   'secretary|member.deactivate': true,
   'secretary|team.manage': true, 'secretary|team.assign': true,
   'secretary|invoice.own': true, 'producer|invoice.own': true, 'producer_director|invoice.own': true, 'director|invoice.own': true, 'editor|invoice.own': true, 'designer|invoice.own': true,
@@ -41056,6 +41059,7 @@ const ROLE_PERM_LIST = [
   { section:'クリエイティブ', key:'creative.wcheck_toggle',      label:'Wチェック要否の個別設定（静止画）' },
   { section:'メンバー管理',   key:'member.list',                 label:'メンバー一覧閲覧' },
   { section:'メンバー管理',   key:'member.edit_password',        label:'メンバー編集・PW変更' },
+  { section:'メンバー管理',   key:'member.view_email',           label:'メンバー一覧のメール列を表示（編集は含まない）' },
   { section:'メンバー管理',   key:'member.deactivate',           label:'メンバー無効化（退職処理）' },
   { section:'メンバー管理',   key:'member.reactivate',           label:'退職メンバーの復帰' },
   { section:'メンバー管理',   key:'member.delete',               label:'メンバー削除（完全）' },
