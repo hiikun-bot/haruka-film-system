@@ -1,0 +1,193 @@
+/* 🤝 営業・名刺（ADR 056）— 描画は public/js/sales.js */
+.sl-wrap { max-width: 1280px; margin: 0 auto; padding: 0 4px; }
+.sl-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.sl-head h2 { margin: 0; font-size: 18px; color: var(--text); }
+.sl-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.sl-toolbar .sl-spacer { flex: 1; min-width: 0; }
+.sl-search { flex: 1 1 180px; min-width: 0; max-width: 260px; }
+.sl-select, .sl-search {
+  padding: 7px 10px; border: 0.5px solid var(--border); border-radius: 8px;
+  background: var(--white); color: var(--text); font-size: 14px;
+}
+.sl-select { max-width: 100%; }
+.sl-owner-label { font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.sl-seg { display: inline-flex; border: 0.5px solid var(--border); border-radius: 8px; overflow: hidden; }
+.sl-seg button { border: none; background: var(--white); color: var(--em-dark); font-size: 13px; padding: 6px 12px; cursor: pointer; }
+.sl-seg button.is-active { background: var(--em); color: #fff; font-weight: 600; }
+.sl-note { font-size: 12px; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; background: #FFF6E0; color: #8a5a00; border: 0.5px solid #F2D58A; }
+.sl-note.is-info { background: var(--em-pale); color: var(--text); border-color: var(--border); }
+.sl-note.is-danger { background: #FDECEC; color: #A32D2D; border-color: #F09595; }
+.sl-empty { text-align: center; color: var(--text-muted); padding: 36px 12px; font-size: 13px; }
+.sl-muted { color: var(--text-muted); }
+.sl-due { color: #C62828; font-weight: 700; }
+
+/* ── かんばん ── */
+.sl-tabs { display: none; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.sl-tab {
+  border: 0.5px solid var(--border); background: var(--white); color: var(--text);
+  border-radius: 999px; padding: 6px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.sl-tab.is-active { background: var(--em); border-color: var(--em); color: #fff; font-weight: 600; }
+.sl-tab .sl-n { opacity: .8; margin-left: 3px; }
+.sl-kanban { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
+.sl-col { background: var(--em-bg); border: 0.5px solid var(--border-light); border-radius: 12px; padding: 8px; min-height: 120px; min-width: 0; transition: background .12s, border-color .12s; }
+.sl-col.is-over, .sl-dropchip.is-over { background: var(--em-pale); border-color: var(--em); }
+.sl-col-head { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px; min-width: 0; }
+.sl-col-head span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sl-col-head .sl-n { margin-left: auto; font-weight: 500; font-size: 12px; color: var(--text-muted); background: var(--white); border-radius: 999px; padding: 0 8px; flex-shrink: 0; }
+.sl-col-empty { font-size: 11px; color: var(--text-faint); text-align: center; padding: 14px 0; }
+.sl-card {
+  background: var(--white); border: 0.5px solid var(--border); border-radius: 10px; padding: 8px 10px;
+  margin-bottom: 6px; cursor: pointer; font-size: 12px; color: var(--text); line-height: 1.5; min-width: 0;
+}
+.sl-card:hover, .sl-card:focus-visible { border-color: var(--em); box-shadow: 0 2px 8px rgba(62, 207, 202, .18); outline: none; }
+.sl-card.is-draggable { cursor: grab; }
+.sl-card.is-dragging { opacity: .45; }
+.sl-card > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-card-name { font-size: 14px; font-weight: 700; }
+.sl-card-owner { color: var(--text-muted); font-size: 11px; }
+.sl-closed { margin-top: 12px; }
+.sl-closed-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--text); }
+.sl-closed-toggle { background: none; border: none; color: var(--text); font-size: 13px; cursor: pointer; padding: 4px 0; font-weight: 600; }
+.sl-dropchip { border: 0.5px dashed var(--border); border-radius: 999px; padding: 3px 12px; font-size: 12px; color: var(--text-muted); background: var(--white); }
+.sl-closed-cols { display: none; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 8px; align-items: start; }
+.sl-closed.is-open .sl-closed-cols { display: grid; }
+.sl-foot-links { margin-top: 14px; font-size: 12px; }
+.sl-linkbtn { background: none; border: none; padding: 0; color: var(--em-dark); cursor: pointer; font-size: inherit; text-decoration: underline; }
+
+/* ── 一覧（表）: 列幅の合計 = 100%（横スクロールなし） ── */
+.sl-table { width: 100%; table-layout: fixed; border-collapse: collapse; background: var(--white); border: 0.5px solid var(--border-light); border-radius: 12px; overflow: hidden; font-size: 13px; color: var(--text); }
+.sl-table th, .sl-table td { padding: 8px 10px; text-align: left; border-bottom: 0.5px solid var(--border-light); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-table th { font-size: 12px; color: var(--text-muted); font-weight: 500; background: var(--em-bg); }
+.sl-table tbody tr { cursor: pointer; }
+.sl-table tbody tr:hover { background: var(--em-bg); }
+.sl-table .c-name { width: 17%; font-weight: 700; }
+.sl-table .c-co { width: 20%; }
+.sl-table .c-met { width: 17%; }
+.sl-table .c-stage { width: 13%; }
+.sl-table .c-owner { width: 11%; }
+.sl-table .c-next { width: 14%; }
+.sl-table .c-mail { width: 8%; }
+
+/* ── モーダル（sales.js が body 直下に作る） ── */
+.sl-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .42); display: flex; align-items: flex-start; justify-content: center; padding: 24px 12px; overflow-y: auto; }
+.sl-modal {
+  background: var(--white); color: var(--text); border: 0.5px solid var(--border); border-radius: 14px;
+  width: var(--sl-w, 640px); max-width: 100%; margin: auto; display: flex; flex-direction: column; min-width: 0;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+}
+.sl-modal-head { display: flex; align-items: center; gap: 8px; padding: 16px 20px 12px; border-bottom: 0.5px solid var(--border-light); }
+.sl-modal-title { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+.sl-modal-title small { font-weight: 400; font-size: 12px; color: var(--text-muted); }
+.sl-modal-head-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.sl-modal-x { background: none; border: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--text-muted); padding: 4px 6px; flex-shrink: 0; }
+.sl-modal-body { padding: 14px 20px; min-width: 0; }
+.sl-modal-foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 12px 20px 16px; border-top: 0.5px solid var(--border-light); }
+.sl-modal-foot:empty { display: none; }
+.sl-modal-foot .sl-left { margin-right: auto; }
+.sl-modal button:disabled { opacity: .5; cursor: not-allowed; }
+
+.sl-grid { display: grid; gap: 10px; margin-bottom: 10px; min-width: 0; }
+.sl-grid.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sl-grid.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sl-grid.c13 { grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); }
+.sl-field { display: block; min-width: 0; }
+.sl-field > span { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
+.sl-field .form-input { width: 100%; min-width: 0; }
+.sl-field textarea.form-input { resize: vertical; min-height: 60px; line-height: 1.6; font-family: inherit; }
+.sl-sec { font-size: 12px; font-weight: 700; color: var(--text-muted); margin: 14px 0 8px; display: flex; align-items: center; gap: 8px; }
+.sl-sec::before, .sl-sec::after { content: ''; flex: 1; height: 0.5px; background: var(--border); }
+.sl-sec::before { flex: 0 0 12px; }
+.sl-hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+/* 名刺を登録 */
+.sl-cardbox { display: flex; gap: 12px; margin-bottom: 12px; align-items: stretch; min-width: 0; }
+.sl-cardprev {
+  flex: 0 0 46%; min-width: 0; aspect-ratio: 91 / 55; border: 2px dashed var(--border); border-radius: 10px; background: var(--em-bg);
+  display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-muted); text-align: center; overflow: hidden; padding: 4px;
+}
+.sl-cardprev.is-over { border-color: var(--em); background: var(--em-pale); }
+.sl-cardprev img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.sl-cardactions { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.sl-cardactions input[type=file] { display: none; }
+.sl-filebtn { display: inline-block; }
+.sl-dups { margin: 10px 0 0; }
+.sl-dups .sl-note { margin-bottom: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* 詳細 */
+.sl-d-row { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; min-width: 0; }
+.sl-d-row > label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.sl-d-row a { color: var(--em-dark); overflow-wrap: anywhere; }
+.sl-d-text { font-size: 13px; margin-bottom: 10px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sl-d-text b { font-weight: 600; color: var(--text-muted); font-size: 12px; margin-right: 6px; }
+.sl-d-next { display: grid; grid-template-columns: auto minmax(0, 1fr) 150px; gap: 8px; margin-bottom: 10px; }
+.sl-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.sl-mails { margin-top: 6px; }
+.sl-mail-item { border: 0.5px solid var(--border-light); border-radius: 10px; padding: 8px 10px; margin-top: 6px; font-size: 13px; min-width: 0; }
+.sl-mail-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.sl-mail-subj { flex: 1 1 160px; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.sl-mail-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; overflow-wrap: anywhere; }
+.sl-badge { display: inline-block; font-size: 11px; border-radius: 999px; padding: 1px 8px; background: var(--em-pale); color: var(--em-dark); white-space: nowrap; }
+.sl-badge.is-sent { background: #E6F6EC; color: #23794a; }
+.sl-badge.is-failed { background: #FDECEC; color: #A32D2D; }
+.sl-cardview { max-width: 100%; display: block; margin: 0 auto; border-radius: 8px; }
+
+/* メール作成 */
+.sl-ai-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: -2px 0 10px; }
+.sl-ai-row .form-input { flex: 1 1 180px; min-width: 0; width: auto; }
+.sl-videos { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; }
+.sl-preview { border-left: 3px solid var(--em-light); background: var(--em-bg); padding: 10px 12px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 0 8px 8px 0; max-height: 260px; overflow-y: auto; }
+.sl-confirm-to { font-size: 20px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; background: #FFF6E0; border: 0.5px solid #F2D58A; border-radius: 10px; padding: 10px 12px; margin: 4px 0 12px; }
+.sl-confirm-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; font-size: 13px; margin-bottom: 10px; }
+.sl-confirm-dl dt { color: var(--text-muted); white-space: nowrap; }
+.sl-confirm-dl dd { margin: 0; overflow-wrap: anywhere; }
+.sl-btn-send { background: #E8590C; color: #fff; border: none; font-size: 14px; padding: 9px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+
+/* プロモ動画・メール設定 */
+.sl-vrow { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 0.5px solid var(--border-light); min-width: 0; }
+.sl-vrow.is-off { opacity: .55; }
+.sl-vthumb { flex: 0 0 96px; width: 96px; aspect-ratio: 16 / 9; border-radius: 6px; background: var(--em-pale); object-fit: cover; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+.sl-vmain { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.sl-vmain a { color: var(--em-dark); font-size: 12px; }
+.sl-vacts { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.sl-set-block { padding: 10px 0; border-top: 0.5px solid var(--border-light); font-size: 13px; min-width: 0; }
+.sl-set-block:first-child { border-top: none; padding-top: 0; }
+.sl-set-block h4 { margin: 0 0 6px; font-size: 13px; color: var(--text); }
+.sl-set-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; min-width: 0; }
+.sl-set-line .sl-select { flex: 1 1 160px; min-width: 0; }
+.sl-footer-text { white-space: pre-wrap; background: var(--em-bg); border-radius: 8px; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }
+
+@media (max-width: 768px) {
+  .sl-search { max-width: none; flex-basis: 100%; }
+  .sl-toolbar .sl-spacer { display: none; }
+  /* かんばんは stage タブ切替の 1 列表示 */
+  .sl-tabs { display: flex; }
+  .sl-kanban, .sl-closed-cols, .sl-closed.is-open .sl-closed-cols { display: block; margin-top: 0; }
+  .sl-col { display: none; }
+  .sl-col.is-active { display: block; }
+  .sl-col-head { display: none; }
+  .sl-closed { margin-top: 0; }
+  .sl-closed-head { display: none; }
+  .sl-card { padding: 10px 12px; font-size: 13px; }
+  /* 一覧（表）は 1 件 1 カードに畳む */
+  .sl-table, .sl-table tbody, .sl-table tr, .sl-table td { display: block; width: auto !important; }
+  .sl-table thead { display: none; }
+  .sl-table tr { padding: 8px 10px; border-bottom: 0.5px solid var(--border-light); }
+  .sl-table td { padding: 1px 0; border: none; white-space: normal; overflow-wrap: anywhere; }
+  .sl-table td:empty { display: none; }
+  .sl-table td[data-label]::before { content: attr(data-label) ': '; color: var(--text-muted); font-size: 11px; }
+  /* モーダルは全画面 */
+  .sl-overlay { padding: 0; }
+  .sl-modal { width: 100%; min-height: 100vh; border-radius: 0; border: none; }
+  .sl-modal-head { padding: 12px 14px 10px; position: sticky; top: 0; background: var(--white); z-index: 1; }
+  .sl-modal-body { padding: 12px 14px; flex: 1; }
+  .sl-modal-foot { padding: 10px 14px 14px; position: sticky; bottom: 0; background: var(--white); }
+  .sl-modal-foot > button { flex: 1 1 120px; }
+  .sl-d-next { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .sl-grid.c2, .sl-grid.c3, .sl-grid.c13 { grid-template-columns: minmax(0, 1fr); }
+  .sl-cardbox { flex-direction: column; }
+  .sl-cardprev { flex: none; width: 100%; }
+  .sl-vthumb { flex-basis: 72px; width: 72px; }
+}

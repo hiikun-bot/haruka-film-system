@@ -544,6 +544,11 @@ async function composeMail(req, mail, { requireGmail }) {
 
 router.get('/mails/:id/preview', wrap('mails.preview', async (req, res) => {
   const mail = await getMailOr404(req.params.id);
+  // 送信済みは、記録してある「実際に送った本文」をそのまま返す（署名を二重に付けない）
+  if (mail.status === 'sent') {
+    const users = await usersByIds([mail.sender_user_id]);
+    return res.json({ from_name: S.senderRealName(users.get(String(mail.sender_user_id))), from_email: null, gmail_connected: true, to_email: mail.to_email, subject: mail.subject, final_body: mail.body, promo_url: null });
+  }
   res.json(await composeMail(req, mail, { requireGmail: false }));
 }));
 
