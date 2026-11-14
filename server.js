@@ -130,6 +130,9 @@ app.use('/maintenance.html', express.static(path.join(__dirname, 'public/mainten
 // 認証ミドルウェアもサーキットブレーカーも経由させない
 app.use('/privacy.html', express.static(path.join(__dirname, 'public/privacy.html')));
 app.use('/terms.html',   express.static(path.join(__dirname, 'public/terms.html')));
+// 🎬 プロモ動画の紹介ページ（ADR 056）。営業メールの相手（メンバーではない人）が開くので
+// セッション・認証より前に置く。URL は推測できない token（/pv/<token>）・noindex
+app.use('/pv', require('./routes/promo-public'));
 
 // サーキットブレーカーが open のとき:
 //  - /healthz, /maintenance.html, 静的アセット (画像/CSS/フォント) は素通し
@@ -320,6 +323,8 @@ app.use('/api/haruka/contracts', require('./routes/contracts'));
 app.use('/api/haruka/admin/withholding', require('./routes/withholding'));
 // 🎞 思い出アルバム API（ADR 052）。保存先は Drive のみ・DB テーブルなし
 app.use('/api/haruka/memories', require('./routes/memories'));
+// 🤝 営業・名刺管理 API（ADR 056）。メール送信は本人か代理のみ・AI は ENABLE_SALES_AI=true のときだけ
+app.use('/api/haruka/sales', require('./routes/sales'));
 // 🏦 あおぞら銀行 API 総合振込（ADR 054）。/admin/bank/* と /admin/payouts/transfer/* だけを受け、
 // それ以外の /api/haruka/admin/* は next() で harukaRouter へ流れる。ENABLE_AOZORA_TRANSFER=true でなければ 404
 app.use('/api/haruka/admin', require('./routes/bank-transfer'));
