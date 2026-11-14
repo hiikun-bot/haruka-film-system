@@ -25,6 +25,7 @@
 <!-- 🧾 請求書エディタ（ADR 046 Stage 3） -->
 <link rel="stylesheet" href="/css/invoice-editor.css">
 <link rel="stylesheet" href="/css/memories.css">
+<link rel="stylesheet" href="/css/sales.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP',sans-serif}
 :root{
@@ -4330,6 +4331,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-btn" data-page="tweets" onclick="showPage('tweets',this)">つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
     <!-- 🎞 思い出アルバム: 全ロール（requireAuth のみ）。ADR 052 -->
     <button class="nav-btn" data-page="memories" onclick="showPage('memories',this)">🎞 思い出</button>
+    <!-- 🤝 営業・名刺: 全ロール（requireAuth のみ）。ADR 056 -->
+    <button class="nav-btn" data-page="sales" onclick="showPage('sales',this)">🤝 営業</button>
     <!-- 📝 契約・登録手続き: 本人の依頼・契約のみ（requireAuth・全ロール）。ADR 035 -->
     <button class="nav-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-btn" id="nav-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">一括納品</button>
@@ -4469,6 +4472,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <button class="nav-drawer-btn" data-page="knowledge" onclick="showPage('knowledge',this)">📚 学び広場</button>
     <button class="nav-drawer-btn" data-page="tweets" onclick="showPage('tweets',this)">💭 つぶやき<span class="nav-unread-badge" data-for="tweets" hidden aria-label="未読のつぶやき"></span></button>
     <button class="nav-drawer-btn" data-page="memories" onclick="showPage('memories',this)">🎞 思い出アルバム</button>
+    <button class="nav-drawer-btn" data-page="sales" onclick="showPage('sales',this)">🤝 営業・名刺</button>
     <button class="nav-drawer-btn" data-page="contract" onclick="showPage('contract',this)">📝 契約・登録手続き</button>
     <button class="nav-drawer-btn" id="nav-drawer-bulk-deliver" data-page="bulk-deliver" onclick="showPage('bulk-deliver',this)" style="display:none">📦 一括納品</button>
     <button class="nav-drawer-btn" id="nav-drawer-onboarding" data-page="onboarding" onclick="showPage('onboarding',this)" style="display:none">🚀 オンボーディング</button>
@@ -9772,6 +9776,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
 <!-- 🎞 思い出アルバム（ADR 052）: 描画は public/js/memories.js の loadMemoriesPage() -->
 <div id="page-memories" class="page"></div>
 
+<!-- 🤝 営業・名刺（ADR 056）: 描画は public/js/sales.js の loadSalesPage() -->
+<div id="page-sales" class="page"></div>
+
 <!-- 📝 契約・登録手続き（本人用・ADR 035）: 描画は public/js/contract-wizard.js の loadContractPage() -->
 <div id="page-contract" class="page">
   <div id="contract-root"><div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">読み込み中…</div></div>
@@ -11726,6 +11733,12 @@ async function applyDeepLinkOnLoad() {
     if (pageParam === 'memories') {
       stripQueryParam('page');
       try { showPage('memories', document.querySelector('.nav-btn[data-page="memories"]')); } catch (e) { console.warn('[deepLink memories]', e); }
+      return;
+    }
+    // ?page=sales : 営業・名刺ページ（全ロール。Gmail 連携の戻り先 ?page=sales&gmail_oauth=... もここ。ADR 056）
+    if (pageParam === 'sales') {
+      stripQueryParam('page');
+      try { showPage('sales', document.querySelector('.nav-btn[data-page="sales"]')); } catch (e) { console.warn('[deepLink sales]', e); }
       return;
     }
     // ?page=pricing-approvals : 単価の承認待ちリマインド（Chatwork マイチャット）のリンク先（ADR 037 追補）
@@ -20690,6 +20703,8 @@ function setPreviewRole(role) {
   // 📝 契約・登録手続き: 本人データのみだが描画一貫性のため再ロード／📝 契約管理: contract.page（全操作）と contract.view（参照のみ）で
   // 操作ボタン・個人情報欄の出し分けが変わるため VIEW AS 切替で必ず再描画（ADR 015 / ADR 035）
   if (document.getElementById('page-contract')?.classList.contains('active') && typeof loadContractPage === 'function') loadContractPage();
+  // 🤝 営業・名刺（ADR 056）: 編集可否・送信可否（VIEW AS 中は送信不可）が変わるので取り直す
+  if (document.getElementById('page-sales')?.classList.contains('active') && typeof loadSalesPage === 'function') loadSalesPage();
   if (document.getElementById('page-contract-admin')?.classList.contains('active') && typeof loadContractAdminPage === 'function') loadContractAdminPage();
   // VIEW AS 切替時は master ページも再描画（最高管理者専用タブが previewRole 切替で見えなくなるべきため）
   if (document.getElementById('page-master')?.classList.contains('active')) {
@@ -26603,6 +26618,7 @@ function showPage(name, btn) {
   if(name==='contract' && typeof loadContractPage === 'function') loadContractPage();
   if(name==='contract-admin' && typeof loadContractAdminPage === 'function') loadContractAdminPage();
   if(name==='memories' && typeof loadMemoriesPage === 'function') loadMemoriesPage();
+  if(name==='sales' && typeof loadSalesPage === 'function') loadSalesPage();
   if(name==='material-square') loadMaterialSquarePage();
   else { try { if (typeof msStopListPolling === 'function') msStopListPolling(); } catch (_) {} }
 
@@ -63400,6 +63416,8 @@ function votStatusBadge(status) {
 <script src="/js/contract-wizard.js"></script>
 <script src="/js/contract-admin.js"></script>
 <script src="/js/memories.js"></script>
+<!-- 🤝 営業・名刺（ADR 056） -->
+<script src="/js/sales.js"></script>
 <!-- 🧾 源泉徴収（ADR 054 §5）: 振込管理の「🧾 源泉徴収」モーダル（集計・スプレッドシート出力） -->
 <script src="/js/withholding.js"></script>
 <!-- 🧾 請求書エディタ（ADR 046）: 計算・判定はサーバーと同じ utils/invoice-editor.js を server.js が配信 → 画面 -->
