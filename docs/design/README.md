@@ -74,6 +74,7 @@ NNN は連番（`001`, `002`, ...）。
 | [043](decisions/043-notification-defaults-and-settings.md) | 件数の多い通知（creative_registered / ball_returned）は既定オフ・通知ベルの受信設定は本人がメンバー編集モーダルで変える | notifications, settings, defaults, member-modal, ball_returned |
 | [037](decisions/037-director-pricing-with-admin-approval.md) | ディレクターも単価を設定可・承認権限なしの単価変更は有効なまま admin 承認待ち | pricing, estimate, permissions, approval, director |
 | [044](decisions/044-tweet-reactions-extended-palette.md) | つぶやきのリアクションは「基本 5 種 ＋『＋』で開く拡張パレット（🤣 🔥 🎉 …約 40 種）」。DB は形式 CHECK のみ・許可値はコード側 | tweets, reactions, emoji, picker, palette, notifications |
+| [056](decisions/056-sales-crm-business-cards.md) | 🤝 営業・名刺管理：名刺を全員で共有し進み具合をかんばんで見る。メールは本人の Gmail から確認して送る（本人か代理のみ）。プロモ動画の紹介ページ URL・AI は月次上限 | sales, crm, business-card, pipeline, gmail, promo-page, ai, delegation |
 
 ### 共通参照
 - [philosophy.md](philosophy.md) — 共通設計原則
