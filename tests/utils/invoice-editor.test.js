@@ -279,6 +279,18 @@ describe('本人の役割（1 CR × 役割 = 1 行）', () => {
   test('関係ない人は空', () => {
     expect(IE.issuerCostRoles(cr(), OTHER)).toEqual([]);
   });
+  test('受取人指定の D費: 案件の D でも CR の D 担当でもなくても director_fee を請求できる', () => {
+    // Wチェック担当だけ → D費の行だけ
+    const w = cr({ creative_assignments: [{ user_id: OTHER, role: 'editor', rank_applied: 'B' }, { user_id: ME, role: 'wcheck', rank_applied: 'B' }] });
+    expect(IE.issuerCostRoles(w, ME, { designatedRoles: ['director'] }).map(r => r.cost_type)).toEqual(['director_fee']);
+    // 自分で制作もしている → 制作と D費の 2 行（重複しない）
+    expect(IE.issuerCostRoles(cr(), ME, { designatedRoles: ['director'] }).map(r => r.cost_type)).toEqual(['base_fee', 'director_fee']);
+    const both = cr({ delivered_director_ids: [ME] });
+    expect(IE.issuerCostRoles(both, ME, { designatedRoles: ['director'] }).map(r => r.cost_type)).toEqual(['base_fee', 'director_fee']);
+    // 指定が無ければ従来どおり
+    expect(IE.issuerCostRoles(w, ME, { designatedRoles: [] })).toEqual([]);
+    expect(IE.issuerCostRoles(w, ME, { designatedRoles: null })).toEqual([]);
+  });
   test('Wチェック担当だけの CR は請求の役割にならない（制作担当の一覧に混ぜない）', () => {
     const c = cr({ creative_assignments: [{ user_id: OTHER, role: 'editor', rank_applied: 'A' }, { user_id: ME, role: 'wcheck', rank_applied: 'A' }] });
     expect(IE.issuerCostRoles(c, ME)).toEqual([]);
@@ -347,6 +359,14 @@ describe('提出時チェック checkInvoiceForSubmit', () => {
     const r = IE.checkInvoiceForSubmit(base());
     expect(r.problems).toEqual([]);
     expect(r.totals.payout).toBe(29937);
+  });
+
+  test('受取人指定の D費の行: 指定された本人は提出できる／指定が無ければ NOT_OWN_ROLE', () => {
+    const p = base();
+    p.items[0] = { id: 'i1', creative_id: 'c1', cost_type: 'director_fee', unit_price: 6000, quantity: 1 };
+    p.refPriceByKey = new Map([['c1::director_fee', 6000], ['c2::base_fee', 8000]]);
+    expect(codes(IE.checkInvoiceForSubmit(p))).toEqual(['NOT_OWN_ROLE']);
+    expect(codes(IE.checkInvoiceForSubmit({ ...p, designatedRolesByCreative: new Map([['c1', ['director']]]) }))).toEqual([]);
   });
   test('立替経費があるときは ご請求金額（立替経費込み）と差引で合計一致を見る', () => {
     const p = base();

@@ -16935,7 +16935,7 @@ router.get('/invoices/preview-items', async (req, res) => {
 
   // Stage 5: 旧 project_rates / director_rates / producer_rates の参照を撤去し、
   // project_estimate_lines + project_estimate_line_costs (ADR 002+003+004+005) を read する。
-  const { resolveCreativeRoleCost } = require('../utils/pricing');
+  const { resolveCreativeRoleCost, designatedPayeeRoles } = require('../utils/pricing');
 
   // 自分がアサインされたクリエイティブを取得（月フィルタなし、全部取得してJS側でフィルタ）
   // Issue #192: ディレクター本人（projects.director_id = uid）のクリエイティブも対象に含める。
@@ -17067,6 +17067,8 @@ router.get('/invoices/preview-items', async (req, res) => {
     // assignment.role を優先解決ロールにする。assignment が無いなら director/producer。
     const primaryRole = assignment?.role
       || (isDirector ? 'director' : (isProducer ? 'producer' : null));
+    // 受取人指定（line_cost.user_id）で自分が受取人の D費 / P費（請求書エディタ ieResolvePricing と同じ扱い）
+    const designatedRoles = designatedPayeeRoles({ creative: c, userId: uid, rankApplied, linesByProject, lineCostsByLine });
 
     const breakdown = [];
     let baseFeeAmount = 0;
@@ -17084,6 +17086,7 @@ router.get('/invoices/preview-items', async (req, res) => {
         rankApplied,
         linesByProject,
         lineCostsByLine,
+        userId: uid,
       });
       baseFeeAmount = r.unit_price || 0;
       if (baseFeeAmount > 0) {
@@ -17093,13 +17096,14 @@ router.get('/invoices/preview-items', async (req, res) => {
     }
 
     // director_fee（projects.director_id 一致、または assignment.role='director'）
-    if (isDirector || assignment?.role === 'director') {
+    if (isDirector || assignment?.role === 'director' || designatedRoles.includes('director')) {
       const r = resolveCreativeRoleCost({
         creative: c,
         roleCode: 'director',
         rankApplied,
         linesByProject,
         lineCostsByLine,
+        userId: uid,
       });
       directorFee = r.unit_price || 0;
       if (directorFee > 0) {
@@ -17109,13 +17113,14 @@ router.get('/invoices/preview-items', async (req, res) => {
     }
 
     // producer_fee
-    if (isProducer || assignment?.role === 'producer') {
+    if (isProducer || assignment?.role === 'producer' || designatedRoles.includes('producer')) {
       const r = resolveCreativeRoleCost({
         creative: c,
         roleCode: 'producer',
         rankApplied,
         linesByProject,
         lineCostsByLine,
+        userId: uid,
       });
       producerFee = r.unit_price || 0;
       if (producerFee > 0) {
@@ -19444,7 +19449,7 @@ router.patch('/invoices/:id', requireAuth, async (req, res) => {
 router.post('/invoices/generate', requireAuth, async (req, res) => {
   // Stage 5: 旧 project_rates / director_rates / producer_rates の参照を撤去し、
   // project_estimate_lines + project_estimate_line_costs (ADR 002+003+004+005) を read する。
-  const { resolveCreativeRoleCost } = require('../utils/pricing');
+  const { resolveCreativeRoleCost, designatedPayeeRoles } = require('../utils/pricing');
   const { cycle_id, selected_creative_ids, selected_items } = req.body;
   let { project_id } = req.body;
   // ADR 028 Stage 2: 時間制（作業時間報告）グループの選択キー。
@@ -19645,26 +19650,28 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
 
     // ADR 037: cost_type ごとの単価根拠（resolve 結果）。breakdown に載った行の根拠 line が承認待ちなら止める
     const resolvedByCostType = {};
+    // 受取人指定（line_cost.user_id）で発行者が受取人の D費 / P費（請求書エディタ ieResolvePricing と同じ扱い）
+    const designatedRoles = designatedPayeeRoles({ creative, userId: issuer_id, rankApplied, linesByProject, lineCostsByLine });
     let defaultBaseFee = 0;
     if (assignment && primaryRole && primaryRole !== 'director' && primaryRole !== 'producer') {
       const r = resolveCreativeRoleCost({
-        creative, roleCode: primaryRole, rankApplied, linesByProject, lineCostsByLine,
+        creative, roleCode: primaryRole, rankApplied, linesByProject, lineCostsByLine, userId: issuer_id,
       });
       defaultBaseFee = r.unit_price || 0;
       resolvedByCostType.base_fee = r;
     }
     let defaultDirectorFee = 0;
-    if (isDirector || primaryRole === 'director') {
+    if (isDirector || primaryRole === 'director' || designatedRoles.includes('director')) {
       const r = resolveCreativeRoleCost({
-        creative, roleCode: 'director', rankApplied, linesByProject, lineCostsByLine,
+        creative, roleCode: 'director', rankApplied, linesByProject, lineCostsByLine, userId: issuer_id,
       });
       defaultDirectorFee = r.unit_price || 0;
       resolvedByCostType.director_fee = r;
     }
     let defaultProducerFee = 0;
-    if (isProducer || primaryRole === 'producer') {
+    if (isProducer || primaryRole === 'producer' || designatedRoles.includes('producer')) {
       const r = resolveCreativeRoleCost({
-        creative, roleCode: 'producer', rankApplied, linesByProject, lineCostsByLine,
+        creative, roleCode: 'producer', rankApplied, linesByProject, lineCostsByLine, userId: issuer_id,
       });
       defaultProducerFee = r.unit_price || 0;
       resolvedByCostType.producer_fee = r;
@@ -20020,10 +20027,23 @@ async function ieLoadBilledKeys(issuerId, creativeIds, excludeInvoiceId) {
  * @returns {Promise<Map<string, number>>} billedKey → 単価
  */
 async function ieResolveRefPrices(creatives, issuerId) {
-  const { resolveCreativeRoleCost } = require('../utils/pricing');
+  return (await ieResolvePricing(creatives, issuerId)).refPrices;
+}
+
+/**
+ * 参考単価に加えて「受取人指定で本人が受け取る D費 / P費 の役割」も返す。
+ * 成果物グループの単価行に受取人（line_cost.user_id）が指定されているとき:
+ *   - 指定された本人 … 案件のディレクターや CR のディレクター担当でなくても、その役割で請求できる（designatedByCreative）
+ *   - それ以外の人   … その行の単価は参考単価に出さない（resolveCreativeRoleCost に userId を渡す）
+ * 作成本数集計（resolvePayee: 指定があればその人だけに付ける）と請求書で受取人を揃えるため。
+ * @returns {Promise<{ refPrices: Map<string, number>, designatedByCreative: Map<string, string[]> }>}
+ */
+async function ieResolvePricing(creatives, issuerId) {
+  const { resolveCreativeRoleCost, designatedPayeeRoles } = require('../utils/pricing');
   const out = new Map();
+  const designatedByCreative = new Map();
   const list = (creatives || []).filter(Boolean);
-  if (!list.length) return out;
+  if (!list.length) return { refPrices: out, designatedByCreative };
   const projectIds = [...new Set(list.map(c => c.project_id).filter(Boolean))];
   const [{ linesByProject, lineCostsByLine }, userR] = await Promise.all([
     loadInvoiceEstimateLines(projectIds, 'invoice-editor'),
@@ -20031,14 +20051,20 @@ async function ieResolveRefPrices(creatives, issuerId) {
   ]);
   const currentRank = (userR && userR.data && userR.data.rank) || null;
   for (const c of list) {
-    for (const r of IE.issuerCostRoles(c, issuerId)) {
+    const ownAssignment = (c.creative_assignments || []).find(a => a && a.user_id === issuerId);
+    const designated = designatedPayeeRoles({
+      creative: c, userId: issuerId, rankApplied: (ownAssignment && ownAssignment.rank_applied) ?? currentRank, linesByProject, lineCostsByLine,
+    });
+    if (designated.length) designatedByCreative.set(c.id, designated);
+    for (const r of IE.issuerCostRoles(c, issuerId, { designatedRoles: designated })) {
       const res = resolveCreativeRoleCost({
         creative: c, roleCode: r.role_code, rankApplied: r.rank_applied ?? currentRank, linesByProject, lineCostsByLine,
+        userId: issuerId,
       });
       out.set(IE.billedKey(c.id, r.cost_type), Number(res.unit_price) || 0);
     }
   }
-  return out;
+  return { refPrices: out, designatedByCreative };
 }
 
 /**
@@ -20048,9 +20074,9 @@ async function ieResolveRefPrices(creatives, issuerId) {
  */
 async function ieBuildCrRows(issuerId, creativeIds, { sortStart = 0, excludeKeys = null } = {}) {
   const creativesById = await ieFetchCreativesByIds(creativeIds);
-  const [billedKeys, refPrices] = await Promise.all([
+  const [billedKeys, { refPrices, designatedByCreative }] = await Promise.all([
     ieLoadBilledKeys(issuerId, creativeIds, null),
-    ieResolveRefPrices([...creativesById.values()], issuerId),
+    ieResolvePricing([...creativesById.values()], issuerId),
   ]);
   const problems = [];
   const rows = [];
@@ -20058,7 +20084,8 @@ async function ieBuildCrRows(issuerId, creativeIds, { sortStart = 0, excludeKeys
   for (const cid of creativeIds) {
     const c = creativesById.get(cid);
     if (!c) { problems.push({ creative_id: cid, code: 'CREATIVE_NOT_FOUND', message: 'クリエイティブが見つかりません' }); continue; }
-    const ownRoles = isCreativeOfUser(c, issuerId) ? IE.issuerCostRoles(c, issuerId) : [];
+    const ownRoles = isCreativeOfUser(c, issuerId)
+      ? IE.issuerCostRoles(c, issuerId, { designatedRoles: designatedByCreative.get(c.id) }) : [];
     if (!ownRoles.length) { problems.push({ creative_id: cid, code: 'NOT_OWN', message: `${c.file_name || ''}: 自分が制作・ディレクション・プロデュースを担当していないクリエイティブです` }); continue; }
     if (!IE.isBillableCreative(c, c.projects)) { problems.push({ creative_id: cid, code: 'NOT_DELIVERED', message: `${c.file_name || ''}: 納品済みではありません` }); continue; }
     const roles = ownRoles.filter(r => !billedKeys.has(IE.billedKey(c.id, r.cost_type)));
@@ -20203,11 +20230,14 @@ router.get('/invoice-editor/candidates', requireAuth, async (req, res) => {
       if (kind) classified.push({ c, kind });
     }
     const billable = classified.filter(x => x.kind !== 'undelivered');
-    const billedKeys = await ieLoadBilledKeys(uid, billable.map(x => x.c.id), null);
+    const [billedKeys, { designatedByCreative }] = await Promise.all([
+      ieLoadBilledKeys(uid, billable.map(x => x.c.id), null),
+      ieResolvePricing(classified.map(x => x.c), uid),
+    ]);
 
     const items = [];
     for (const { c, kind } of classified) {
-      const roles = IE.issuerCostRoles(c, uid)
+      const roles = IE.issuerCostRoles(c, uid, { designatedRoles: designatedByCreative.get(c.id) })
         .filter(r => kind === 'undelivered' || !billedKeys.has(IE.billedKey(c.id, r.cost_type)))
         .map(r => ({ cost_type: r.cost_type, label: IE.COST_TYPE_LABELS[r.cost_type] || r.cost_type }));
       if (!roles.length) continue; // すべての役割が請求済み
@@ -20267,10 +20297,13 @@ router.get('/invoice-editor/search', requireAuth, async (req, res) => {
     const found = (await ieFetchIssuerCreatives(uid, null, { withThumbs, nameOr, limit: 200 }))
       .filter(c => IE.matchesSearch(c.file_name || '', q));
     const billable = found.filter(c => IE.isBillableCreative(c, c.projects));
-    const billedKeys = await ieLoadBilledKeys(uid, billable.map(c => c.id), null);
+    const [billedKeys, { designatedByCreative }] = await Promise.all([
+      ieLoadBilledKeys(uid, billable.map(c => c.id), null),
+      ieResolvePricing(found, uid),
+    ]);
 
     const items = found.map(c => {
-      const roles = IE.issuerCostRoles(c, uid);
+      const roles = IE.issuerCostRoles(c, uid, { designatedRoles: designatedByCreative.get(c.id) });
       const delivered = IE.isBillableCreative(c, c.projects);
       const billingDate = delivered ? IE.billingDateOf(c, c.projects) : null;
       const open = roles.filter(r => !billedKeys.has(IE.billedKey(c.id, r.cost_type)));
@@ -20631,13 +20664,14 @@ router.post('/invoice-editor/:id/submit', requireAuth, async (req, res) => {
     const items = await ieLoadItems(inv.id);
     const creativeIds = items.map(i => i.creative_id).filter(Boolean);
     const creativesById = await ieFetchCreativesByIds(creativeIds);
-    const [billedKeys, refPrices] = await Promise.all([
+    const [billedKeys, { refPrices, designatedByCreative }] = await Promise.all([
       ieLoadBilledKeys(inv.issuer_id, creativeIds, inv.id),
-      ieResolveRefPrices([...creativesById.values()], inv.issuer_id),
+      ieResolvePricing([...creativesById.values()], inv.issuer_id),
     ]);
     const withholdingEnabled = inv.withholding_enabled !== false;
     const { problems, totals } = IE.checkInvoiceForSubmit({
       items, issuerId: inv.issuer_id, creativesById, billedKeys, refPriceByKey: refPrices,
+      designatedRolesByCreative: designatedByCreative,
       withholdingEnabled,
       expectedTotal: req.body ? req.body.expected_total : undefined,
       expectedPayout: req.body ? req.body.expected_payout : undefined,
@@ -29973,6 +30007,7 @@ router.post('/admin/payouts/:id/diff-check', requireAuth, requirePermission('pay
       const c = a.creative;
       const resolved = resolveCreativeRoleCost({
         creative: c, roleCode: role, rankApplied: a.rank_applied, linesByProject, lineCostsByLine,
+        userId: rec.user_id, // 受取人指定つきの単価行は指定された本人の分だけ数える
       }) || {};
       const price = Number(resolved.unit_price) || 0;
       if (!mine.has(c.id)) {

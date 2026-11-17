@@ -351,8 +351,13 @@ function pickCreativeLineId({ creative, linesByProject, costsByLine, categoryIdB
  * @param {object} args.linesByProject    - Map<project_id, line[]>（line には category 情報含む）
  * @param {object} args.lineCostsByLine   - { [line_id]: line_cost[] }（role embed: { roles: { code } }）
  * @param {string[]} [args.activeStatuses] - 集計対象 status（既定 ACTIVE_LINE_STATUSES）
- * @returns {{ unit_price: number, line_id: string|null, line_cost_id: string|null, pricing_approval: 'approved'|'pending'|null }}
+ * @param {string|null} [args.userId]     - この単価を受け取る人（請求者）。渡すと受取人指定（line_cost.user_id）を見る:
+ *                                          「本人指定の行 → 指定なしの行」の順に採用し、ほかの人を指定した行は使わない。
+ *                                          作成本数集計の resolvePayee（指定があればその人だけに付ける）と同じ扱い。
+ *                                          渡さない呼び出しは従来どおり指定を見ない。
+ * @returns {{ unit_price: number, line_id: string|null, line_cost_id: string|null, pricing_approval: 'approved'|'pending'|null, designated: boolean }}
  *   見つからなければ unit_price=0 / pricing_approval=null。
+ *   designated は採用した単価行が本人指定（line_cost.user_id === userId）のとき true。
  *   pricing_approval は採用した line の承認状態（ADR 037）。line に列が無い（migration 未適用・
  *   select に含めていない）場合は 'approved' 扱い。候補の絞り込みには使わない（承認待ちでも採用する）。
  */
@@ -363,8 +368,10 @@ function resolveCreativeRoleCost({
   linesByProject,
   lineCostsByLine,
   activeStatuses,
+  userId,
 } = {}) {
-  const EMPTY = { unit_price: 0, line_id: null, line_cost_id: null, pricing_approval: null };
+  const EMPTY = { unit_price: 0, line_id: null, line_cost_id: null, pricing_approval: null, designated: false };
+  const payeeId = userId || null;
   if (!creative || !roleCode) return EMPTY;
 
   // 1) 候補 line の解決（スコープ → status → rank 優先）
@@ -393,9 +400,13 @@ function resolveCreativeRoleCost({
   for (const line of candidates) {
     const costs = (lineCostsByLine && lineCostsByLine[line.id]) || [];
     const codeOf = (c) => c?.role?.code || c?.roles?.code || c?.role_code;
-    let lc = costs.find(c => codeOf(c) === roleCode);
+    // 受取人指定つきの行（user_id あり）はその人だけの単価。本人指定 → 指定なし の順で探す
+    const pickCost = (match) => (payeeId
+      ? (costs.find(c => match(c) && c.user_id === payeeId) || costs.find(c => match(c) && !c.user_id))
+      : costs.find(match));
+    let lc = pickCost(c => codeOf(c) === roleCode);
     if (!lc && wantCreatorGroup) {
-      lc = costs.find(c => CREATOR_ROLE_GROUP.includes(codeOf(c)));
+      lc = pickCost(c => CREATOR_ROLE_GROUP.includes(codeOf(c)));
     }
     if (!lc) continue;
     const pricingType = lc.pricing_type || 'fixed_per_unit';
@@ -428,10 +439,27 @@ function resolveCreativeRoleCost({
       line_id: line.id,
       line_cost_id: lc.id || null,
       pricing_approval: linePricingApproval(line),
+      designated: !!(payeeId && lc.user_id === payeeId),
     };
   }
 
   return EMPTY;
+}
+
+/**
+ * この creative で userId が「受取人指定つき」の D費 / P費 の受取人になっている役割コードを返す。
+ * 成果物グループの単価行に受取人（line_cost.user_id）を指定すると、案件のディレクター（スナップショット）や
+ * CR のディレクター担当でなくても、その人がその CR に関わっていれば D費 / P費 を請求できる
+ * （請求書の役割判定 issuerCostRoles の designatedRoles に渡す）。金額が 0 の指定行は数えない。
+ * @returns {string[]} 'director' | 'producer' の配列
+ */
+const DESIGNATED_PAYEE_ROLE_CODES = ['director', 'producer'];
+function designatedPayeeRoles({ creative, userId, rankApplied, linesByProject, lineCostsByLine, activeStatuses } = {}) {
+  if (!creative || !userId) return [];
+  return DESIGNATED_PAYEE_ROLE_CODES.filter(roleCode => {
+    const r = resolveCreativeRoleCost({ creative, roleCode, rankApplied, linesByProject, lineCostsByLine, activeStatuses, userId });
+    return r.designated && r.unit_price > 0;
+  });
 }
 
 /**
@@ -465,6 +493,7 @@ module.exports = {
   indexLineCostsByLine,
   roleCodeToInvoiceCostType,
   resolveCreativeRoleCost,
+  designatedPayeeRoles,
   buildCreativeLineCandidates,
   creativeRankApplied,
   pickCreativeLineId,

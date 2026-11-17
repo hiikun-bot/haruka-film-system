@@ -229,10 +229,15 @@
    *   - 納品時スナップショット D（無ければ projects.director_id）or 担当 role='director' → director_fee
    *   - 同 P → producer_fee
    *   - Wチェック担当（role='wcheck'）は請求の役割にしない（NON_BILLABLE_ASSIGNMENT_ROLES）
+   *   - 受取人指定（opts.designatedRoles）: 成果物グループの D費 / P費 の単価行で uid が受取人に指定されている
+   *     役割（utils/pricing.js designatedPayeeRoles の結果）。案件のディレクターや CR のディレクター担当で
+   *     なくても、その役割で請求できる（呼び出し側で「自分の CR か」は別に確かめる）
+   * @param {{ designatedRoles?: string[] }} [opts]
    * @returns {Array<{cost_type, role_code, rank_applied}>}
    */
-  function issuerCostRoles(creative, uid) {
+  function issuerCostRoles(creative, uid, opts) {
     if (!creative || !uid) return [];
+    const designated = (opts && Array.isArray(opts.designatedRoles)) ? opts.designatedRoles : [];
     const assignment = (creative.creative_assignments || []).find(a => a && (a.user_id === uid || (a.users && a.users.id === uid))
       && !NON_BILLABLE_ASSIGNMENT_ROLES.includes(a.role));
     const isDirector = snapshotDirectorId(creative) === uid;
@@ -243,10 +248,10 @@
     if (assignment && primaryRole && primaryRole !== 'director' && primaryRole !== 'producer') {
       out.push({ cost_type: 'base_fee', role_code: primaryRole, rank_applied: rank });
     }
-    if (isDirector || (assignment && assignment.role === 'director')) {
+    if (isDirector || (assignment && assignment.role === 'director') || designated.includes('director')) {
       out.push({ cost_type: 'director_fee', role_code: 'director', rank_applied: rank });
     }
-    if (isProducer || (assignment && assignment.role === 'producer')) {
+    if (isProducer || (assignment && assignment.role === 'producer') || designated.includes('producer')) {
       out.push({ cost_type: 'producer_fee', role_code: 'producer', rank_applied: rank });
     }
     return out;
@@ -406,7 +411,9 @@
         const key = billedKey(it.creative_id, it.cost_type);
         if (!c) { push(it, idx, 'CREATIVE_NOT_FOUND', 'クリエイティブが見つかりません（削除された可能性があります）'); return; }
         if (!isCreativeOfUser(c, p.issuerId)) { push(it, idx, 'NOT_OWN', '自分が担当していないクリエイティブです'); return; }
-        const roles = issuerCostRoles(c, p.issuerId).map(r => r.cost_type);
+        const roles = issuerCostRoles(c, p.issuerId, {
+          designatedRoles: p.designatedRolesByCreative ? p.designatedRolesByCreative.get(c.id) : null,
+        }).map(r => r.cost_type);
         if (!roles.includes(it.cost_type)) push(it, idx, 'NOT_OWN_ROLE', 'この役割では請求できません');
         if (!isBillableCreative(c, c.projects)) push(it, idx, 'NOT_DELIVERED', '納品済みではありません（未納品は請求できません）');
         if (p.billedKeys && p.billedKeys.has(key)) push(it, idx, 'DUPLICATE', '同じクリエイティブ・役割がすでに別の請求書で提出されています');

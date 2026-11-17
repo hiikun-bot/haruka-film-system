@@ -10,6 +10,7 @@ const {
   indexLineCostsByLine,
   roleCodeToInvoiceCostType,
   resolveCreativeRoleCost,
+  designatedPayeeRoles,
   buildCreativeLineCandidates,
   creativeRankApplied,
   pickCreativeLineId,
@@ -200,7 +201,7 @@ describe('roleCodeToInvoiceCostType', () => {
 });
 
 describe('resolveCreativeRoleCost', () => {
-  const EMPTY = { unit_price: 0, line_id: null, line_cost_id: null, pricing_approval: null };
+  const EMPTY = { unit_price: 0, line_id: null, line_cost_id: null, pricing_approval: null, designated: false };
 
   function makeLine(over = {}) {
     return {
@@ -235,7 +236,7 @@ describe('resolveCreativeRoleCost', () => {
         l2: [{ id: 'lc2', role: { code: 'editor' }, pricing_type: 'fixed_per_unit', unit_price: 2000 }],
       },
     });
-    expect(result).toEqual({ unit_price: 2000, line_id: 'l2', line_cost_id: 'lc2', pricing_approval: 'approved' });
+    expect(result).toEqual({ unit_price: 2000, line_id: 'l2', line_cost_id: 'lc2', pricing_approval: 'approved', designated: false });
   });
 
   test('line_id が無ければ category_id 一致で line を選ぶ', () => {
@@ -365,7 +366,7 @@ describe('resolveCreativeRoleCost', () => {
         l2: [{ id: 'lc2', role: { code: 'director' }, unit_price: 5000 }],
       },
     });
-    expect(result).toEqual({ unit_price: 5000, line_id: 'l2', line_cost_id: 'lc2', pricing_approval: 'approved' });
+    expect(result).toEqual({ unit_price: 5000, line_id: 'l2', line_cost_id: 'lc2', pricing_approval: 'approved', designated: false });
   });
 
   test('role code は role.code / roles.code / role_code のどれでも引ける', () => {
@@ -445,7 +446,7 @@ describe('resolveCreativeRoleCost', () => {
       linesByProject: { p1: lines },
       lineCostsByLine: { l1: [{ id: 'lc1', role: { code: 'editor' }, pricing_type: 'per_view', unit_price: 5000 }] },
     });
-    expect(result).toEqual({ unit_price: 0, line_id: 'l1', line_cost_id: 'lc1', pricing_approval: 'approved' });
+    expect(result).toEqual({ unit_price: 0, line_id: 'l1', line_cost_id: 'lc1', pricing_approval: 'approved', designated: false });
   });
 
   test('linesByProject は Map でも plain object でも動く', () => {
@@ -477,7 +478,7 @@ describe('resolveCreativeRoleCost', () => {
       linesByProject: { p1: lines },
       lineCostsByLine: { l1: [{ id: 'lc1', role: { code: 'editor' }, unit_price: 4000 }] },
     });
-    expect(result).toEqual({ unit_price: 4000, line_id: 'l1', line_cost_id: 'lc1', pricing_approval: 'pending' });
+    expect(result).toEqual({ unit_price: 4000, line_id: 'l1', line_cost_id: 'lc1', pricing_approval: 'pending', designated: false });
   });
 
   test('承認待ち line は候補順を変えない（rank 一致の pending line が approved line より優先される）', () => {
@@ -515,6 +516,83 @@ describe('resolveCreativeRoleCost', () => {
 // buildCreativeLineCandidates — 単価解決に使う候補 line の選定（ADR 031）
 // creatives.line_id が NULL のクリエイティブを「単価不明」にしないための経路。
 // ─────────────────────────────────────────────────────────────────────────
+describe('受取人指定つきの単価行（line_cost.user_id）', () => {
+  // 例: 制作単価（指定なし）＋ D費（受取人を 1 人指定）のグループ。
+  // 案件のディレクターや CR のディレクター担当でも、指定された人以外には D費を付けない。
+  const PAYEE = 'u-payee';
+  const PROJECT_D = 'u-project-director';
+  const line = { id: 'l1', status: 'in_progress', client_unit_price: 7000, planned_count: 0, category_id: 'cat-image', rank: 'B', name: '静止画 Bランク', category: { code: 'image' } };
+  const args = (over = {}) => ({
+    creative: { id: 'c1', project_id: 'p1', line_id: 'l1' },
+    linesByProject: { p1: [line] },
+    lineCostsByLine: {
+      l1: [
+        { id: 'lc-des', role: { code: 'designer' }, user_id: null, pricing_type: 'fixed_per_unit', unit_price: 6000 },
+        { id: 'lc-dir', role: { code: 'director' }, user_id: PAYEE, pricing_type: 'fixed_per_unit', unit_price: 1000 },
+      ],
+    },
+    ...over,
+  });
+
+  test('指定された本人は D費を受け取る（designated: true）', () => {
+    const r = resolveCreativeRoleCost({ ...args(), roleCode: 'director', userId: PAYEE });
+    expect(r).toEqual({ unit_price: 1000, line_id: 'l1', line_cost_id: 'lc-dir', pricing_approval: 'approved', designated: true });
+  });
+
+  test('ほかの人（案件のディレクター等）には D費を付けない', () => {
+    expect(resolveCreativeRoleCost({ ...args(), roleCode: 'director', userId: PROJECT_D }).unit_price).toBe(0);
+  });
+
+  test('userId を渡さない呼び出しは従来どおり（指定を見ない）', () => {
+    const r = resolveCreativeRoleCost({ ...args(), roleCode: 'director' });
+    expect(r.unit_price).toBe(1000);
+    expect(r.designated).toBe(false);
+  });
+
+  test('指定なしの制作単価は誰でも受け取れる（editor 担当 → designer 行）', () => {
+    expect(resolveCreativeRoleCost({ ...args(), roleCode: 'editor', userId: PROJECT_D }).unit_price).toBe(6000);
+    expect(resolveCreativeRoleCost({ ...args(), roleCode: 'editor', userId: PAYEE }).unit_price).toBe(6000);
+  });
+
+  test('同じ役割に「指定なし」と「本人指定」があれば本人指定を優先、ほかの人は指定なしの行', () => {
+    const a = args({
+      lineCostsByLine: {
+        l1: [
+          { id: 'lc-any', role: { code: 'editor' }, user_id: null, pricing_type: 'fixed_per_unit', unit_price: 3000 },
+          { id: 'lc-me', role: { code: 'editor' }, user_id: PAYEE, pricing_type: 'fixed_per_unit', unit_price: 3500 },
+        ],
+      },
+    });
+    expect(resolveCreativeRoleCost({ ...a, roleCode: 'editor', userId: PAYEE }).unit_price).toBe(3500);
+    expect(resolveCreativeRoleCost({ ...a, roleCode: 'editor', userId: PROJECT_D }).unit_price).toBe(3000);
+  });
+
+  test('ほかの人を指定した行しか無いグループは飛ばして次の候補へ（別グループの指定なし行は使える）', () => {
+    const l2 = { ...line, id: 'l2', rank: 'A' };
+    const a = {
+      creative: { id: 'c1', project_id: 'p1', category_id: 'cat-image' },
+      linesByProject: { p1: [line, l2] },
+      lineCostsByLine: {
+        l1: [{ id: 'lc-dir', role: { code: 'director' }, user_id: PAYEE, pricing_type: 'fixed_per_unit', unit_price: 1000 }],
+        l2: [{ id: 'lc-dir2', role: { code: 'director' }, user_id: null, pricing_type: 'fixed_per_unit', unit_price: 500 }],
+      },
+    };
+    expect(resolveCreativeRoleCost({ ...a, roleCode: 'director', userId: PROJECT_D })).toMatchObject({ unit_price: 500, line_id: 'l2', designated: false });
+  });
+
+  test('designatedPayeeRoles: 指定された本人だけ director を返す', () => {
+    expect(designatedPayeeRoles({ ...args(), userId: PAYEE })).toEqual(['director']);
+    expect(designatedPayeeRoles({ ...args(), userId: PROJECT_D })).toEqual([]);
+    expect(designatedPayeeRoles({ ...args() })).toEqual([]);
+    expect(designatedPayeeRoles()).toEqual([]);
+  });
+
+  test('designatedPayeeRoles: 金額 0 の指定行は数えない', () => {
+    const a = args({ lineCostsByLine: { l1: [{ id: 'lc-dir', role: { code: 'director' }, user_id: PAYEE, pricing_type: 'fixed_per_unit', unit_price: 0 }] } });
+    expect(designatedPayeeRoles({ ...a, userId: PAYEE })).toEqual([]);
+  });
+});
+
 describe('buildCreativeLineCandidates（単価解決の候補 line）', () => {
   function line(over = {}) {
     return {
