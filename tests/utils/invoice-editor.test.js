@@ -290,6 +290,23 @@ describe('本人の役割（1 CR × 役割 = 1 行）', () => {
     // 指定が無ければ従来どおり
     expect(IE.issuerCostRoles(w, ME, { designatedRoles: [] })).toEqual([]);
     expect(IE.issuerCostRoles(w, ME, { designatedRoles: null })).toEqual([]);
+    expect(IE.issuerCostRoles(w, ME, undefined)).toEqual([]);
+  });
+  test('D費がほかの人だけに指定されている CR: 案件の D・CR の D 担当でも director_fee は出ない', () => {
+    const snap = cr({ creative_assignments: [], delivered_director_ids: [ME] });
+    expect(IE.issuerCostRoles(snap, ME).map(r => r.cost_type)).toEqual(['director_fee']);
+    expect(IE.issuerCostRoles(snap, ME, { blockedRoles: ['director'] })).toEqual([]);
+    const asg = cr({ creative_assignments: [{ user_id: ME, role: 'director', rank_applied: 'A' }] });
+    expect(IE.issuerCostRoles(asg, ME, { blockedRoles: ['director'] })).toEqual([]);
+    // 制作もしていれば制作の行だけ残る
+    const both = cr({ delivered_director_ids: [ME] });
+    expect(IE.issuerCostRoles(both, ME, { blockedRoles: ['director'] }).map(r => r.cost_type)).toEqual(['base_fee']);
+  });
+  test('issuerRankApplied: Wチェック以外の最初の担当のランク（無ければ null）', () => {
+    expect(IE.issuerRankApplied(cr(), ME)).toBe('A');
+    const w = cr({ creative_assignments: [{ user_id: ME, role: 'wcheck', rank_applied: 'B' }] });
+    expect(IE.issuerRankApplied(w, ME)).toBeNull();
+    expect(IE.issuerRankApplied(cr(), OTHER)).toBeNull();
   });
   test('Wチェック担当だけの CR は請求の役割にならない（制作担当の一覧に混ぜない）', () => {
     const c = cr({ creative_assignments: [{ user_id: OTHER, role: 'editor', rank_applied: 'A' }, { user_id: ME, role: 'wcheck', rank_applied: 'A' }] });
@@ -366,7 +383,16 @@ describe('提出時チェック checkInvoiceForSubmit', () => {
     p.items[0] = { id: 'i1', creative_id: 'c1', cost_type: 'director_fee', unit_price: 6000, quantity: 1 };
     p.refPriceByKey = new Map([['c1::director_fee', 6000], ['c2::base_fee', 8000]]);
     expect(codes(IE.checkInvoiceForSubmit(p))).toEqual(['NOT_OWN_ROLE']);
-    expect(codes(IE.checkInvoiceForSubmit({ ...p, designatedRolesByCreative: new Map([['c1', ['director']]]) }))).toEqual([]);
+    expect(codes(IE.checkInvoiceForSubmit({ ...p, designationsByCreative: new Map([['c1', { designatedRoles: ['director'], blockedRoles: [] }]]) }))).toEqual([]);
+  });
+
+  test('D費がほかの人だけに指定されている CR の D費の行は、案件の D でも NOT_OWN_ROLE', () => {
+    const p = base();
+    p.creativesById.set('c1', cr({ delivered_director_ids: [ME] }));
+    p.items[0] = { id: 'i1', creative_id: 'c1', cost_type: 'director_fee', unit_price: 6000, quantity: 1 };
+    p.refPriceByKey = new Map([['c1::director_fee', 6000], ['c2::base_fee', 8000]]);
+    expect(codes(IE.checkInvoiceForSubmit(p))).toEqual([]);
+    expect(codes(IE.checkInvoiceForSubmit({ ...p, designationsByCreative: new Map([['c1', { designatedRoles: [], blockedRoles: ['director'] }]]) }))).toEqual(['NOT_OWN_ROLE']);
   });
   test('立替経費があるときは ご請求金額（立替経費込み）と差引で合計一致を見る', () => {
     const p = base();

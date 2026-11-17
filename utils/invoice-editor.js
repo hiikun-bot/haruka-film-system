@@ -229,15 +229,18 @@
    *   - 納品時スナップショット D（無ければ projects.director_id）or 担当 role='director' → director_fee
    *   - 同 P → producer_fee
    *   - Wチェック担当（role='wcheck'）は請求の役割にしない（NON_BILLABLE_ASSIGNMENT_ROLES）
-   *   - 受取人指定（opts.designatedRoles）: 成果物グループの D費 / P費 の単価行で uid が受取人に指定されている
-   *     役割（utils/pricing.js designatedPayeeRoles の結果）。案件のディレクターや CR のディレクター担当で
-   *     なくても、その役割で請求できる（呼び出し側で「自分の CR か」は別に確かめる）
-   * @param {{ designatedRoles?: string[] }} [opts]
+   *   - 受取人指定（opts = utils/pricing.js payeeDesignations の結果）: 成果物グループの D費 / P費 の単価行に
+   *     受取人が指定されているとき
+   *       designatedRoles … uid が受取人。案件のディレクターや CR のディレクター担当でなくても、その役割で
+   *                         請求できる（呼び出し側で「自分の CR か」は別に確かめる）
+   *       blockedRoles    … ほかの人だけが受取人。案件のディレクター等でも、その役割では請求できない
+   * @param {{ designatedRoles?: string[], blockedRoles?: string[] }} [opts]
    * @returns {Array<{cost_type, role_code, rank_applied}>}
    */
   function issuerCostRoles(creative, uid, opts) {
     if (!creative || !uid) return [];
     const designated = (opts && Array.isArray(opts.designatedRoles)) ? opts.designatedRoles : [];
+    const blocked = (opts && Array.isArray(opts.blockedRoles)) ? opts.blockedRoles : [];
     const assignment = (creative.creative_assignments || []).find(a => a && (a.user_id === uid || (a.users && a.users.id === uid))
       && !NON_BILLABLE_ASSIGNMENT_ROLES.includes(a.role));
     const isDirector = snapshotDirectorId(creative) === uid;
@@ -248,13 +251,25 @@
     if (assignment && primaryRole && primaryRole !== 'director' && primaryRole !== 'producer') {
       out.push({ cost_type: 'base_fee', role_code: primaryRole, rank_applied: rank });
     }
-    if (isDirector || (assignment && assignment.role === 'director') || designated.includes('director')) {
+    if (!blocked.includes('director')
+      && (isDirector || (assignment && assignment.role === 'director') || designated.includes('director'))) {
       out.push({ cost_type: 'director_fee', role_code: 'director', rank_applied: rank });
     }
-    if (isProducer || (assignment && assignment.role === 'producer') || designated.includes('producer')) {
+    if (!blocked.includes('producer')
+      && (isProducer || (assignment && assignment.role === 'producer') || designated.includes('producer'))) {
       out.push({ cost_type: 'producer_fee', role_code: 'producer', rank_applied: rank });
     }
     return out;
+  }
+
+  /**
+   * uid の請求の役割になる担当（Wチェック以外の最初の担当）のランク。無ければ null。
+   * 参考単価の解決と受取人指定の判定で、同じランク（＝同じ成果物グループ）を見るために使う。
+   */
+  function issuerRankApplied(creative, uid) {
+    const a = ((creative && creative.creative_assignments) || []).find(x => x && (x.user_id === uid || (x.users && x.users.id === uid))
+      && !NON_BILLABLE_ASSIGNMENT_ROLES.includes(x.role));
+    return a ? (a.rank_applied ?? null) : null;
   }
 
   /** 二重請求判定のキー */
@@ -393,6 +408,7 @@
    * @param {Map<string, object>} p.creativesById  CR（projects / creative_assignments 込み）
    * @param {Set<string>} p.billedKeys      本人の他の提出済み・承認済み請求書にある billedKey 集合
    * @param {Map<string, number>} p.refPriceByKey  billedKey → 参考単価（提出時点で再計算したもの）
+   * @param {Map<string, object>} [p.designationsByCreative]  CR id → 受取人指定（payeeDesignations の結果。issuerCostRoles の opts）
    * @param {boolean}  p.withholdingEnabled
    * @param {number}   p.expectedTotal      画面に出ていたご請求金額（税込）
    * @param {number}   p.expectedPayout     画面に出ていた差引お振込額
@@ -411,9 +427,8 @@
         const key = billedKey(it.creative_id, it.cost_type);
         if (!c) { push(it, idx, 'CREATIVE_NOT_FOUND', 'クリエイティブが見つかりません（削除された可能性があります）'); return; }
         if (!isCreativeOfUser(c, p.issuerId)) { push(it, idx, 'NOT_OWN', '自分が担当していないクリエイティブです'); return; }
-        const roles = issuerCostRoles(c, p.issuerId, {
-          designatedRoles: p.designatedRolesByCreative ? p.designatedRolesByCreative.get(c.id) : null,
-        }).map(r => r.cost_type);
+        const roles = issuerCostRoles(c, p.issuerId,
+          p.designationsByCreative ? p.designationsByCreative.get(c.id) : null).map(r => r.cost_type);
         if (!roles.includes(it.cost_type)) push(it, idx, 'NOT_OWN_ROLE', 'この役割では請求できません');
         if (!isBillableCreative(c, c.projects)) push(it, idx, 'NOT_DELIVERED', '納品済みではありません（未納品は請求できません）');
         if (p.billedKeys && p.billedKeys.has(key)) push(it, idx, 'DUPLICATE', '同じクリエイティブ・役割がすでに別の請求書で提出されています');
@@ -501,7 +516,7 @@
     ymOf, addMonthsYm, jstDateOfIso, dateOnly, jstMonthRangeIso, paymentDueDate, invoiceDate,
     parseExclusiveFrom, isExclusiveYm,
     billingTimingOf, isBillableCreative, billingDateOf, lookbackStartYm, previousStartYm, classifyCandidate,
-    issuerCostRoles, billedKey,
+    issuerCostRoles, issuerRankApplied, billedKey,
     parseMoney, isCrLine, isFixedLine, isManualLine, isExpenseLine, isManualExpenseLine, lineKind,
     lineAmount, computeTotals, expenseOfInvoice, defaultWithholding,
     lineIssues, checkInvoiceForSubmit, crItemLabel, expenseItemLabel,
