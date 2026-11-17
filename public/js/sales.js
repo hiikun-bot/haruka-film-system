@@ -75,7 +75,7 @@
   function send(method, path, body) {
     return api(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   }
-  function isAiOff(e) { return e && e.status === 503 && (e.code === 'ai_disabled' || e.code === 'ai_budget'); }
+  function isAiOff(e) { return !!e && (e.code === 'ai_disabled' || e.code === 'ai_budget'); }
 
   // サーバーは整形済みの名前（ニックネーム（名前））を返す。オブジェクトで来たときだけ NameDisplay に通す
   function nameOf(v) {
@@ -97,7 +97,10 @@
     if (Number.isNaN(d.getTime())) return '';
     return d.toLocaleString('ja-JP', { timeZone: JST, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
-  function isDue(v) { const d = ymd(v); return !!d && d <= todayJst(); }
+  function isDue(v) { const d = ymd(v); return !!d && d <= todayJst(); }       // 今日を含む（一覧の色づけ用）
+  function isOverdue(v) { const d = ymd(v); return !!d && d < todayJst(); }   // 今日は含まない
+  // メンバーが自分で確かめるための URL。?preview=1 を付けると開封に数えない
+  function previewUrl(url) { const u = safeUrl(url); return u ? u + (u.includes('?') ? '&' : '?') + 'preview=1' : ''; }
   function safeUrl(u) { const s = String(u || '').trim(); return /^https?:\/\//i.test(s) ? s : ''; }
   function isSingleEmail(s) { return /^[^\s,;<>@]+@[^\s,;<>@]+\.[^\s,;<>@]+$/.test(String(s || '')); }
   function sameIds(a, b) { return a.length === b.length && a.every((x, i) => x === b[i]); }
@@ -654,7 +657,7 @@
     const mails = Array.isArray(d.data.mails) ? d.data.mails : [];
     const noMail = c.do_not_email || !!c.archived_at;
     m.body.innerHTML = `
-      ${c.archived_at ? '<div class="sl-note is-info">🗄 アーカイブ済みです（内容は変更できません）。</div>' : ''}
+      ${c.archived_at ? `<div class="sl-note is-info">🗄 アーカイブ済みです（内容は変更できません）。${c.can_edit ? '下の「↩ 一覧に戻す」で元に戻せます。' : ''}</div>` : ''}
       <div class="sl-d-row">
         <label>進み具合 <select class="sl-select" data-d="stage"${dis}>${stageOpts}</select></label>
         <span>担当: ${esc(nameOf(c.owner_name))}</span>
@@ -666,7 +669,7 @@
       ${met ? `<div class="sl-d-text"><b>出会い</b>${esc(met)}</div>` : ''}
       ${c.client_name ? `<div class="sl-d-text"><b>クライアント</b>${esc(c.client_name)}</div>` : ''}
       <div class="sl-d-next">
-        <label class="sl-field"><span>次の予定${isDue(c.next_action_on) ? ' <b class="sl-due">（期日を過ぎています）</b>' : ''}</span><input type="date" class="form-input" data-f="next_action_on" value="${esc(ymd(c.next_action_on))}"${dis}></label>
+        <label class="sl-field"><span>次の予定${isOverdue(c.next_action_on) ? ' <b class="sl-due">（期日を過ぎています）</b>' : ''}</span><input type="date" class="form-input" data-f="next_action_on" value="${esc(ymd(c.next_action_on))}"${dis}></label>
         <label class="sl-field"><span>やること</span><input type="text" class="form-input" data-f="next_action" value="${esc(c.next_action || '')}" placeholder="例: 電話でフォロー"${dis}></label>
         <label class="sl-field"><span>見込み（円・税抜）</span><input type="number" class="form-input" data-f="expected_amount" min="0" step="1" inputmode="numeric" value="${c.expected_amount == null ? '' : esc(c.expected_amount)}"${dis}></label>
       </div>
@@ -680,7 +683,8 @@
       </div>
       <div class="sl-mails">${mails.length ? mails.map((x) => mailItemHtml(x, d.data)).join('') : '<div class="sl-muted" style="font-size:12px">まだメールはありません</div>'}</div>`;
     m.foot.innerHTML = can ? '<button type="button" class="btn-danger sl-left" data-d="archive">🗄 アーカイブ</button><button type="button" class="btn" data-act="modal-close">閉じる</button>'
-      : '<button type="button" class="btn" data-act="modal-close">閉じる</button>';
+      : (c.archived_at && c.can_edit ? '<button type="button" class="btn-sm sl-left" data-d="restore">↩ 一覧に戻す</button><button type="button" class="btn" data-act="modal-close">閉じる</button>'
+        : '<button type="button" class="btn" data-act="modal-close">閉じる</button>');
 
     // 自分用メモの自動保存（本人だけ。担当でなくても書ける）
     const ta = m.body.querySelector('[data-d="private-note"]');
@@ -714,12 +718,12 @@
     const proxy = x.status === 'sent' && x.sent_by_name && x.sent_by_name !== x.sender_name ? `（代理送信: ${esc(nameOf(x.sent_by_name))}）` : '';
     let pgLine = '';
     if (pg) {
-      const url = safeUrl(pg.url);
+      const url = previewUrl(pg.url);
       const viewed = Number(pg.view_count) > 0
         ? `👀 紹介ページ 開封 ${Number(pg.view_count)}回（初回 ${esc(fmtDateTime(pg.first_viewed_at))}）`
         : '🎬 紹介ページ 未開封';
       pgLine = `<div class="sl-mail-meta">${viewed}${pg.revoked_at ? '　⛔ 公開停止中' : ''}
-        ${url ? ` <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">ページを見る</a>` : ''}
+        ${url ? ` <a href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="自分で確かめる用（開封には数えません）">ページを見る</a>` : ''}
         ${pg.can_revoke && !pg.revoked_at ? ` <button type="button" class="sl-linkbtn" data-d="revoke" data-id="${esc(pg.id)}">公開を止める</button>` : ''}</div>`;
     }
     return `<div class="sl-mail-item">
@@ -748,9 +752,11 @@
         if (!ok) return;
         try { await send('POST', `/promo-pages/${encodeURIComponent(b.dataset.id)}/revoke`, {}); toast('公開を止めました', 'success'); await refreshDetail(); } catch (err) { toast(err.message, 'error'); }
       } else if (act === 'archive') {
-        const ok = await confirmDlg({ title: 'アーカイブ', message: `${c.name} さんの名刺をアーカイブしますか？\n一覧から外れます（「🗄 アーカイブ済みを見る」で確認できます）。`, okLabel: 'アーカイブする', okVariant: 'danger' });
+        const ok = await confirmDlg({ title: 'アーカイブ', message: `${c.name} さんの名刺をアーカイブしますか？\n一覧から外れます（「🗄 アーカイブ済みを見る」から開いて、元に戻せます）。`, okLabel: 'アーカイブする', okVariant: 'danger' });
         if (!ok) return;
         try { await api(idPath, { method: 'DELETE' }); d.modal.close(); toast('アーカイブしました', 'success'); await loadContacts(); } catch (err) { toast(err.message, 'error'); }
+      } else if (act === 'restore') {
+        try { await withBusy(b, () => send('POST', `${idPath}/restore`, {})); d.modal.close(); toast('一覧に戻しました', 'success'); await loadContacts(); } catch (err) { toast(err.message, 'error'); }
       }
     });
     el.addEventListener('change', async (e) => {
@@ -994,12 +1000,16 @@
     function localPreview() {
       const v = cur();
       const sel = selectedVideoIds();
+      // サーバーの buildFinalBody（utils/sales.js）と同じ組み立て。最終の文面は送信前の確認画面でサーバーから取り直す
       let text = v.body.replace(/\s+$/, '');
       if (sel.length) {
-        const url = (ctx.promoUrl && sameIds(sel, ctx.promoVideoIds)) ? ctx.promoUrl : '（保存すると紹介ページのURLが入ります）';
-        text += `\n\n▼ 作品のご紹介\n${url}`;
+        const issued = (ctx.promoUrl && sameIds(sel, ctx.promoVideoIds)) ? ctx.promoUrl : '';
+        if (!issued || !text.includes(issued)) text += `\n\n▼ 作品のご紹介（動画をご覧いただけます）\n${issued || '（保存すると紹介ページのURLが入ります）'}`;
       }
-      const footer = (state.boot && state.boot.mail_footer) || '';
+      // 署名は差出人のもの（代理で作るときは、その人の署名）
+      const boot = state.boot || {};
+      const proxyOf = v.sender === me.id ? null : ((boot.delegates || {}).allowed_by || []).find((x) => x.user_id === v.sender);
+      const footer = (proxyOf ? proxyOf.mail_footer : boot.mail_footer) || '';
       if (footer) text += `\n\n${footer}`;
       q('preview').textContent = text;
     }
@@ -1144,8 +1154,9 @@
           });
           if (!ok) return;
           try {
-            await send('POST', `/mails/${encodeURIComponent(ctx.mailId)}/send`, { confirm_to_email: pv.to_email });
-            toast(`${pv.to_email} に送信しました`, 'success');
+            const sentRes = await send('POST', `/mails/${encodeURIComponent(ctx.mailId)}/send`, { confirm_to_email: pv.to_email });
+            if (sentRes && sentRes.warning) toast(sentRes.warning, 'error');
+            else toast(`${pv.to_email} に送信しました`, 'success');
             await afterChange(true);
           } catch (err) {
             if (err.code === 'gmail_not_connected') {

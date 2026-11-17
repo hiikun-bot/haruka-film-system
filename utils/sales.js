@@ -252,7 +252,22 @@ function jstMonthStartIso(now = new Date()) {
 const isBotUserAgent = (ua) =>
   !ua || /bot|crawl|spider|preview|facebookexternalhit|slack|line-poker|whatsapp|discord|telegram|skype|curl|wget|python|headless|monitor/i.test(String(ua));
 
+// PostgREST は 1 回に返す行数に上限（既定 1000 行）があり、超えた分は黙って切り捨てられる。
+// 集計がずれないよう、ページ単位で最後まで読む。makeQuery(from, to) は .range(from, to) まで付けた問い合わせを返す
+// （ページの境目がずれないよう、呼ぶ側で .order('id') など一意な並びを付けること）。
+async function fetchAllRows(makeQuery, { pageSize = 1000, maxRows = 50000 } = {}) {
+  const all = [];
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const { data, error } = await makeQuery(from, from + pageSize - 1);
+    if (error) throw error;
+    all.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+  return all;
+}
+
 module.exports = {
+  fetchAllRows,
   STAGES, STAGE_CODES, isValidStage, DAILY_SEND_LIMIT,
   trimOrNull, normalizeEmail, sameEmail, isDateString,
   sanitizeContactInput, parseImageDataUrl, CARD_IMAGE_MAX_BYTES,

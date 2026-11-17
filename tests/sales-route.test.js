@@ -24,6 +24,8 @@ function mockQuery(table) {
     gt(c, v) { st.filters.push((r) => Number(r[c]) > Number(v)); return q; },
     ilike(c, v) { st.filters.push((r) => String(r[c] ?? '').toLowerCase() === String(v).replace(/\\/g, '').toLowerCase()); return q; },
     order() { return q; },
+    range(a, b) { st.range = [a, b]; return q; },
+    lt(c, v) { st.filters.push((r) => String(r[c] ?? '') < String(v)); return q; },
     limit(n) { st.limit = n; return q; },
     maybeSingle() { st.single = 'maybe'; return q; },
     single() { st.single = 'one'; return q; },
@@ -53,6 +55,7 @@ function mockQuery(table) {
       mockDb[table] = rows().filter((r) => !out.includes(r));
     }
     if (st.limit) out = out.slice(0, st.limit);
+    if (st.range) out = out.slice(st.range[0], st.range[1] + 1);
     out = out.map((r) => ({ ...r }));
     if (st.single) return { data: out[0] || null, error: st.single === 'one' && !out[0] ? { message: 'no rows' } : null };
     return { data: out, error: null };
@@ -267,13 +270,38 @@ describe('営業・名刺管理 API', () => {
   });
 
   test('Gmail が断ったら「失敗」にして送り直せる', async () => {
-    mockSendRaw.mockRejectedValueOnce(Object.assign(new Error('Gmail が送信を受け付けませんでした: quota'), { status: 502, code: 'gmail_error' }));
+    mockSendRaw.mockRejectedValueOnce(Object.assign(new Error('Gmail が送信を受け付けませんでした: quota'), { status: 422, code: 'gmail_error' }));
     const m = await call('/s/mails', { method: 'POST', body: { contact_id: contactId, to_email: 'yamada@example.co.jp', subject: 's', body: 'b' } });
     const ng = await call(`/s/mails/${m.body.mail.id}/send`, { method: 'POST', body: { confirm_to_email: 'yamada@example.co.jp' } });
-    expect(ng.status).toBe(502);
+    // 502 だと画面が自動で送り直してしまうので、送り直されない番号で返す
+    expect(ng.status).toBe(422);
     expect(mockDb.sales_mails.find((x) => x.id === m.body.mail.id).status).toBe('failed');
     const retry = await call(`/s/mails/${m.body.mail.id}/send`, { method: 'POST', body: { confirm_to_email: 'yamada@example.co.jp' } });
     expect(retry.status).toBe(200);
+  });
+
+  test('送れたか分からないときは 409 で返す（自動で送り直されない番号）', async () => {
+    mockSendRaw.mockRejectedValueOnce(new Error('socket hang up'));
+    const m = await call('/s/mails', { method: 'POST', body: { contact_id: contactId, to_email: 'yamada@example.co.jp', subject: 's', body: 'b' } });
+    const ng = await call(`/s/mails/${m.body.mail.id}/send`, { method: 'POST', body: { confirm_to_email: 'yamada@example.co.jp' } });
+    expect(ng.status).toBe(409);
+    expect(ng.body.code).toBe('send_unknown');
+    const row = mockDb.sales_mails.find((x) => x.id === m.body.mail.id);
+    expect(row.status).toBe('failed');
+    expect(row.error_message).toMatch(/送信済み/);
+  });
+
+  test('「送信中」のまま 10 分以上止まったメールは「失敗」に戻り、直せるようになる', async () => {
+    const m = await call('/s/mails', { method: 'POST', body: { contact_id: contactId, to_email: 'yamada@example.co.jp', subject: 's', body: 'b' } });
+    const row = mockDb.sales_mails.find((x) => x.id === m.body.mail.id);
+    // 送信中になった直後は触らない
+    Object.assign(row, { status: 'sending', updated_at: new Date().toISOString() });
+    let detail = (await call(`/s/contacts/${contactId}`)).body;
+    expect(detail.mails.find((x) => x.id === row.id).status).toBe('sending');
+    Object.assign(row, { updated_at: new Date(Date.now() - 11 * 60 * 1000).toISOString() });
+    detail = (await call(`/s/contacts/${contactId}`)).body;
+    expect(detail.mails.find((x) => x.id === row.id)).toMatchObject({ status: 'failed', can_edit: true });
+    expect((await call(`/s/mails/${row.id}`, { method: 'DELETE' })).status).toBe(200);
   });
 
   test('紹介ページ: ログインなしで開け、開封を数える（ロボット・preview は数えない）', async () => {

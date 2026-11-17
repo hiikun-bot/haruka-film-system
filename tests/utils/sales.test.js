@@ -162,6 +162,26 @@ describe('メール本文', () => {
   });
 });
 
+describe('行数の上限をまたいで読む', () => {
+  test('1 ページに収まらなくても最後まで読む', async () => {
+    const all = Array.from({ length: 2500 }, (_, i) => ({ i }));
+    const calls = [];
+    const rows = await S.fetchAllRows(async (from, to) => { calls.push([from, to]); return { data: all.slice(from, to + 1), error: null }; });
+    expect(rows).toHaveLength(2500);
+    expect(calls).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
+  });
+  test('ちょうど 1 ページ分なら、次のページが空であることまで確かめる', async () => {
+    const all = Array.from({ length: 1000 }, (_, i) => ({ i }));
+    let n = 0;
+    const rows = await S.fetchAllRows(async (from, to) => { n += 1; return { data: all.slice(from, to + 1), error: null }; });
+    expect(rows).toHaveLength(1000);
+    expect(n).toBe(2);
+  });
+  test('途中のエラーは握りつぶさない', async () => {
+    await expect(S.fetchAllRows(async () => ({ data: null, error: new Error('boom') }))).rejects.toThrow('boom');
+  });
+});
+
 describe('表示・日付', () => {
   test('ニックネーム（名前）', () => {
     expect(S.displayName({ nickname: 'さとる', full_name: '髙橋 聖' })).toBe('さとる（髙橋 聖）');

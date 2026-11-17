@@ -89,7 +89,11 @@ async function delegatesPayload(actorId) {
   const gmail = await Promise.all(byIds.map((id) => gmailSend.isConnected(id).catch(() => false)));
   return {
     i_allow: allowIds.map((id) => ({ user_id: id, name: nameOf(users, id) })),
-    allowed_by: byIds.map((id, i) => ({ user_id: id, name: nameOf(users, id), gmail_connected: gmail[i] })),
+    // mail_footer: 代理で作るときの文面イメージに、その人の署名を出すため
+    allowed_by: byIds.map((id, i) => ({
+      user_id: id, name: nameOf(users, id), gmail_connected: gmail[i],
+      mail_footer: S.buildMailFooter({ senderName: S.senderRealName(users.get(String(id))), senderEmail: null }),
+    })),
   };
 }
 
@@ -137,10 +141,13 @@ router.get('/bootstrap', wrap('bootstrap', async (req, res) => {
 // ==================== 連絡先 ====================
 router.get('/contacts', wrap('contacts.list', async (req, res) => {
   const archived = String(req.query.archived || '0') === '1';
-  let q = supabase.from('sales_contacts').select(CONTACT_COLUMNS).order('updated_at', { ascending: false }).limit(3000);
-  q = archived ? q.not('archived_at', 'is', null) : q.is('archived_at', null);
-  if (req.query.owner) q = q.eq('owner_user_id', String(req.query.owner));
-  let rows = ok(await q, 'contacts') || [];
+  // 1000 行の上限で黙って切れないよう、ページ単位で最後まで読む
+  let rows = await S.fetchAllRows((from, to) => {
+    let q = supabase.from('sales_contacts').select(CONTACT_COLUMNS).order('updated_at', { ascending: false }).order('id');
+    q = archived ? q.not('archived_at', 'is', null) : q.is('archived_at', null);
+    if (req.query.owner) q = q.eq('owner_user_id', String(req.query.owner));
+    return q.range(from, to);
+  });
 
   const needle = String(req.query.q || '').trim().toLowerCase();
   if (needle) {
@@ -148,20 +155,20 @@ router.get('/contacts', wrap('contacts.list', async (req, res) => {
       .some((v) => String(v || '').toLowerCase().includes(needle)));
   }
   const ids = rows.map((c) => c.id);
-  const [admin, users, mailsRes, pagesRes] = await Promise.all([
+  const [admin, users, sentMails, viewedPages] = await Promise.all([
     isAdmin(req),
     usersByIds(rows.map((c) => c.owner_user_id)),
-    ids.length ? supabase.from('sales_mails').select('contact_id, sent_at').eq('status', 'sent').limit(10000) : { data: [] },
-    ids.length ? supabase.from('sales_promo_pages').select('contact_id').gt('view_count', 0).limit(10000) : { data: [] },
+    ids.length ? S.fetchAllRows((from, to) => supabase.from('sales_mails').select('contact_id, sent_at').eq('status', 'sent').order('id').range(from, to)) : [],
+    ids.length ? S.fetchAllRows((from, to) => supabase.from('sales_promo_pages').select('contact_id').gt('view_count', 0).order('id').range(from, to)) : [],
   ]);
   const sent = new Map();
-  for (const m of ok(mailsRes, 'mails') || []) {
+  for (const m of sentMails) {
     const cur = sent.get(m.contact_id) || { count: 0, last: null };
     cur.count += 1;
     if (!cur.last || String(m.sent_at) > String(cur.last)) cur.last = m.sent_at;
     sent.set(m.contact_id, cur);
   }
-  const viewed = new Set((ok(pagesRes, 'pages') || []).map((p) => p.contact_id));
+  const viewed = new Set(viewedPages.map((p) => p.contact_id));
   res.json({
     contacts: rows.map((c) => ({
       ...c,
@@ -212,6 +219,7 @@ router.post('/contacts', wrap('contacts.create', async (req, res) => {
 router.get('/contacts/:id', wrap('contacts.get', async (req, res) => {
   const actorId = req.user.id;
   const contact = await getContactOr404(req.params.id);
+  await releaseStaleSending('contact_id', contact.id);
   const [admin, noteRes, mailsRes, pagesRes, ownerIds] = await Promise.all([
     isAdmin(req),
     supabase.from('sales_contact_private_notes').select('body').eq('contact_id', contact.id).eq('user_id', actorId).maybeSingle(),
@@ -410,6 +418,17 @@ router.post('/promo-pages/:id/revoke', wrap('promo-pages.revoke', async (req, re
 }));
 
 // ==================== メール ====================
+// 「送信中」のまま止まったメールを戻す。送信の途中でサーバーが再起動した・結果の記録に失敗した、など。
+// 実際には送れている可能性があるので「失敗」にしたうえで、送り直す前に Gmail を確かめてもらう。
+const STALE_SENDING_MS = 10 * 60 * 1000;
+const UNKNOWN_RESULT_MESSAGE = '送信できたか確認できませんでした。差出人の Gmail の「送信済み」を確認してから、必要なら送り直してください';
+async function releaseStaleSending(column, value) {
+  const { error } = await supabase.from('sales_mails')
+    .update({ status: 'failed', error_message: UNKNOWN_RESULT_MESSAGE, updated_at: new Date().toISOString() })
+    .eq(column, value).eq('status', 'sending').lt('updated_at', new Date(Date.now() - STALE_SENDING_MS).toISOString());
+  if (error) console.warn('[sales] 送信中のまま止まったメールを戻せませんでした:', error.message);
+}
+
 // 差出人として actor が動けるか（本人 or 代理）。動けなければ 403
 async function assertCanActAs(actorId, senderId) {
   const ownerIds = String(actorId) === String(senderId) ? [] : await delegateOwnerIdsOf(actorId);
@@ -555,6 +574,7 @@ router.get('/mails/:id/preview', wrap('mails.preview', async (req, res) => {
 // 送信。誤送信を防ぐ関門はここに集める（ADR 056 §3）
 router.post('/mails/:id/send', wrap('mails.send', async (req, res) => {
   const actorId = req.user.id;
+  await releaseStaleSending('id', req.params.id);
   const mail = await getMailOr404(req.params.id);
   const [contact, ownerIds, sentTodayRes] = await Promise.all([
     getContactOr404(mail.contact_id),
@@ -590,19 +610,37 @@ router.post('/mails/:id/send', wrap('mails.send', async (req, res) => {
     sent = await gmailSend.sendRaw({ userId: mail.sender_user_id, raw });
   } catch (e) {
     const definite = e.code === 'gmail_error' || e.code === 'gmail_not_connected';
-    const message = definite ? e.message : '送信できたか確認できませんでした。差出人の Gmail の「送信済み」を確認してから、必要なら送り直してください';
-    await supabase.from('sales_mails')
+    const message = definite ? e.message : UNKNOWN_RESULT_MESSAGE;
+    const { error: markErr } = await supabase.from('sales_mails')
       .update({ status: 'failed', error_message: message.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', mail.id);
+    // ここで記録できなくても、10 分後に releaseStaleSending が「失敗」へ戻す
+    if (markErr) console.error('[sales] mails.send: 失敗の記録に失敗', markErr.message);
     if (!definite) console.error('[sales] mails.send: 送信結果が不明', e);
-    throw httpError(e.status && definite ? e.status : 502, message, e.code || 'send_unknown');
+    // 502 / 503 / 504 では返さない: 画面の apiFetch が POST を自動で送り直し、確認なしの再送信になるため
+    const status = e.code === 'gmail_not_connected' ? 400 : (definite ? 422 : 409);
+    throw httpError(status, message, e.code || 'send_unknown');
   }
 
+  // ここから先は「もう相手に届いている」。記録に失敗してもエラーにはしない（エラーにすると送り直しを誘う）
   const now = new Date().toISOString();
-  const rows = ok(await supabase.from('sales_mails').update({
-    status: 'sent', sent_at: now, gmail_message_id: sent.id, to_email: verdict.to,
-    // 記録には実際に送った本文（紹介ページ URL・署名つき）を残す
-    body: composed.final_body, updated_at: now,
-  }).eq('id', mail.id).select(MAIL_COLUMNS), 'mail.sent') || [];
+  let rows = [];
+  let recorded = false;
+  for (let attempt = 0; attempt < 3 && !recorded; attempt += 1) {
+    const r = await supabase.from('sales_mails').update({
+      status: 'sent', sent_at: now, gmail_message_id: sent.id, to_email: verdict.to,
+      // 記録には実際に送った本文（紹介ページ URL・署名つき）を残す
+      body: composed.final_body, updated_at: now,
+    }).eq('id', mail.id).select(MAIL_COLUMNS);
+    if (!r.error) { rows = r.data || []; recorded = true; break; }
+    console.error(`[sales] mails.send: 送信済みの記録に失敗（${attempt + 1} 回目）`, r.error.message);
+    await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+  }
+  if (!recorded) {
+    return res.json({
+      mail: mailOut({ ...mail, status: 'sent', sent_at: now, sent_by: actorId, gmail_message_id: sent.id, body: composed.final_body }, await usersByIds([mail.sender_user_id]).catch(() => null), true, false),
+      warning: 'メールは送信できましたが、HFS への記録に失敗しました。このメールは送り直さないでください（Gmail の「送信済み」に残っています）',
+    });
+  }
 
   // 最初のメールを送ったら「出会い」→「アプローチ中」へ進める
   if (contact.stage === 'met') {

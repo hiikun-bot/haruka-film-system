@@ -44,6 +44,8 @@ router.get('/google/start', (req, res) => {
   const url = oauthLib.buildConsentUrl({
     state: stateNonce,
     scopes: purpose === 'gmail' ? gmailSend.SCOPES : oauthLib.getConfiguredScopes(),
+    // Gmail 用のトークンに、以前許可した Drive などの権限を混ぜない（送信だけに絞る）
+    includeGrantedScopes: purpose !== 'gmail',
   });
   res.redirect(url);
 });
@@ -53,6 +55,16 @@ router.get('/google/callback', async (req, res) => {
   try {
     const { code, state, error: oauthError } = req.query || {};
     if (oauthError) {
+      // Gmail 連携を同意画面でキャンセルしたときは、行き止まりにせず営業ページへ戻す
+      if (req.session?.googleOAuthPurpose === 'gmail') {
+        const back = req.session.googleOAuthNext || '/haruka.html';
+        try {
+          delete req.session.googleOAuthState;
+          delete req.session.googleOAuthNext;
+          delete req.session.googleOAuthPurpose;
+        } catch (_) {}
+        return res.redirect(back + (back.includes('?') ? '&' : '?') + 'gmail_oauth=denied');
+      }
       return res.status(400).send(`OAuth エラー: ${String(oauthError)}`);
     }
     if (!code) return res.status(400).send('code がありません');

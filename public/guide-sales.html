@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜営業・名刺の使い方</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px}
+
+/* Hero（共通カテゴリ色: #0284C7 → #0EA5E9） */
+.hero{background:linear-gradient(135deg,#0284C7 0%,#0EA5E9 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:80px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+.step-section-eta{font-size:11px;color:var(--text-muted);font-weight:600}
+
+/* Flow diagram */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+
+/* Wanpoint */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px;text-transform:uppercase}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p strong{font-weight:800;background:rgba(245,158,11,0.25);padding:1px 6px;border-radius:3px}
+
+/* Step card */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04)}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card code{background:var(--em-pale);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--em-dark)}
+
+/* Tab pills */
+.tab-pills{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:14px 0}
+.tab-pill{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px 8px;text-align:center;font-size:12px;font-weight:700;color:var(--text);position:relative}
+.tab-pill-icon{font-size:22px;margin-bottom:4px;line-height:1}
+.tab-pill.star{border-color:var(--star);background:linear-gradient(135deg,var(--star-bg),#fff);color:var(--star-deep);box-shadow:0 4px 12px rgba(245,158,11,0.2)}
+.tab-pill.star::after{content:"⭐";position:absolute;top:-8px;right:-6px;font-size:14px}
+
+/* Notify table */
+.ntable-wrap{margin-top:12px;overflow-x:auto}
+.ntable{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;font-size:12.5px;border:1px solid var(--border-light)}
+.ntable th{background:var(--em-pale);color:var(--em-dark);font-size:11px;font-weight:800;letter-spacing:0.06em;padding:9px 12px;text-align:left;white-space:nowrap}
+.ntable td{padding:9px 12px;border-top:1px solid var(--border-light);color:#374151;line-height:1.6;vertical-align:top}
+.ntable td b{color:var(--text)}
+.ntable .nt-emoji{font-size:15px;white-space:nowrap}
+
+.perm-chip{display:inline-block;font-size:10px;font-weight:700;background:var(--warn-bg);color:var(--star-deep);border:1px solid var(--star-border);border-radius:99px;padding:1px 8px;white-space:nowrap}
+.all-chip{display:inline-block;font-size:10px;font-weight:700;background:var(--success-bg);color:#065F46;border:1px solid var(--success-border);border-radius:99px;padding:1px 8px;white-space:nowrap}
+.flow-row.four{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr}
+
+/* Done banner */
+.done-banner{margin-top:18px;background:linear-gradient(135deg,var(--success-bg) 0%,#fff 100%);border:1.5px solid var(--success-border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
+.done-icon{font-size:24px;flex-shrink:0}
+.done-text{flex:1;font-size:13px;color:#065F46;font-weight:700}
+.done-text small{display:block;font-size:11px;color:#047857;font-weight:500;margin-top:2px}
+
+/* Next button */
+.next-btn-wrap{display:flex;justify-content:center;margin-top:18px}
+.next-btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--em-dark);text-decoration:none;font-weight:700;font-size:13px;padding:11px 22px;border-radius:99px;border:2px solid var(--em);transition:all .2s;box-shadow:0 2px 8px rgba(43,184,180,0.15)}
+.next-btn:hover{background:var(--em-dark);color:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(43,184,180,0.3)}
+.next-btn::after{content:"↓";font-weight:900}
+
+/* Final */
+.final{margin-top:56px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:32px 24px;text-align:center;position:relative;overflow:hidden}
+.final::before{content:"🎉";position:absolute;font-size:120px;opacity:0.06;top:50%;left:50%;transform:translate(-50%,-50%)}
+.final-icon{font-size:42px;margin-bottom:6px}
+.final h2{font-size:22px;font-weight:800;color:#92400E;margin-bottom:6px}
+.final p{font-size:13px;color:#78350F;line-height:1.85;max-width:480px;margin:0 auto 16px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35);transition:transform .15s,box-shadow .15s}
+.final-cta:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(43,184,180,0.45)}
+
+/* Trouble */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+.foot a:hover{text-decoration:underline}
+
+@media (max-width:768px){
+  .hero{padding:32px 18px 44px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 14px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 16px}
+  .flow-row,.flow-row.four{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .final{padding:24px 18px}
+  .final h2{font-size:18px}
+}
+
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">GUIDE ／ 共通（全ロール向け）</span>
+    <h1>営業・名刺の使い方<span>名刺交換からお礼メールまでを 6 ステップで</span></h1>
+    <div class="hero-eta">⏱ 読了 約 10 分</div>
+  </div>
+</header>
+
+<main class="container">
+
+<!-- ═══ STEP 1 ═══ -->
+<section class="step-section" id="step1">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 1</div>
+      <h2>「🤝 営業」でできること</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">名刺・出会いの記録・メールを 1 か所に</div>
+    <p>交流会などで名刺交換した相手を登録し、<b>いつ・どこで出会ったか</b>、<b>いまどこまで話が進んでいるか</b>をみんなで見られるようにする画面です。ヘッダーの <b>「🤝 営業」</b>タブ（スマホのメニューでは「🤝 営業・名刺」）から開きます。ログインしていれば全員が使えます。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">誰に何が見える？</div>
+    <div class="ntable-wrap"><table class="ntable">
+        <tr><th></th><th>内容</th><th>見える人・できる人</th></tr>
+        <tr><td class="nt-emoji">🪪</td><td><b>名刺の内容・出会いの記録・進み具合・共有メモ</b></td><td><span class="all-chip">全員</span> が見られます。<b>直せるのは担当（登録した人）と管理者</b></td></tr>
+        <tr><td class="nt-emoji">🔒</td><td><b>自分用メモ</b></td><td><b>書いた本人だけ</b>。管理者にも見えません</td></tr>
+        <tr><td class="nt-emoji">✉</td><td><b>メールの下書き・送信の記録</b></td><td><span class="all-chip">全員</span> が見られます。<b>直す・送るのは差出人本人と、本人が代理に認めた人だけ</b></td></tr>
+        <tr><td class="nt-emoji">🎬</td><td><b>プロモ動画の一覧</b></td><td><span class="all-chip">全員</span> が登録・選択できます</td></tr>
+      </table></div>
+  </div>
+  <div class="wanpoint">
+    <div class="wanpoint-title">メールは勝手に送られません</div>
+    <p>送信は必ず <strong>人が文面と宛先を確認してボタンを押したとき</strong> だけ。AI が作るのは下書きまでです。</p>
+  </div>
+  <div class="next-btn-wrap"><a class="next-btn" href="#step2">STEP 2 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 2 ═══ -->
+<section class="step-section" id="step2">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 2</div>
+      <h2>名刺を登録する</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+  <div class="flow-row four">
+    <div class="flow-step"><div class="flow-step-icon">＋</div><div class="flow-step-label">「＋ 名刺を登録」<br>を押す</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">📷</div><div class="flow-step-label">名刺の画像を<br>選ぶ / 貼り付け</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">✨</div><div class="flow-step-label">「AIで読み取る」<br>→ 内容を確認</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">💾</div><div class="flow-step-label">出会った日・場所を<br>入れて保存</div></div>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">📷 名刺の画像から自動で入力</div>
+    <p>スマホで撮った写真やスクリーンショットを <b>「📷 名刺の画像を選ぶ / 貼り付け」</b>から入れます（ドラッグ・貼り付けも可。JPEG / PNG / WebP・6MB まで）。<b>「✨ AIで読み取る」</b>を押すと、名前・会社・部署・役職・メール・電話・住所・事業内容が入力欄に入ります。<br>読み取りは間違えることがあります。<b>メールアドレスだけは必ず名刺と見比べて</b>から保存してください。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">📝 出会いの記録とメモ</div>
+    <p><b>出会った日・場所・会の名前</b>を入れておくと、あとでメールの下書きにも使われます。メモは 2 種類あります。</p>
+    <div class="ntable-wrap"><table class="ntable">
+        <tr><th></th><th>メモ</th><th>見える人</th></tr>
+        <tr><td class="nt-emoji">👥</td><td><b>共有メモ</b></td><td>全員。「採用動画に興味あり」など、チームで知っておきたいこと</td></tr>
+        <tr><td class="nt-emoji">🔒</td><td><b>自分用メモ</b></td><td>自分だけ。入力すると自動で保存されます。担当でなくても、自分の分は書けます</td></tr>
+      </table></div>
+  </div>
+  <div class="wanpoint">
+    <div class="wanpoint-title">AI が使えないときは</div>
+    <p>「✨ AIで読み取る」が押せない・上限に達したと出るときは、<strong>手入力でそのまま登録できます</strong>（画像の保存はできます）。AI の利用額と上限は「⚙ メール設定」で見られます。</p>
+  </div>
+  <div class="done-banner"><span class="done-icon">✅</span><div class="done-text">名刺の登録、完了！<small>一覧の「出会い」の列にカードが増えます</small></div></div>
+  <div class="next-btn-wrap"><a class="next-btn" href="#step3">STEP 3 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 3 ═══ -->
+<section class="step-section" id="step3">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 3</div>
+      <h2>進み具合を管理する</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">7 つの進み具合</div>
+    <p>カードは進み具合ごとの列に並びます（<b>かんばん</b>表示）。<b>担当の人はカードをドラッグ</b>して動かせます。カードを開いて「進み具合」を選び直しても同じです。表で見たいときは <b>「一覧」</b>に切り替えます。</p>
+    <div class="ntable-wrap"><table class="ntable">
+        <tr><th></th><th>進み具合</th><th>こんなとき</th></tr>
+        <tr><td class="nt-emoji">🤝</td><td><b>出会い</b></td><td>名刺を登録した直後</td></tr>
+        <tr><td class="nt-emoji">✉</td><td><b>アプローチ中</b></td><td>最初のメールを送ると、<b>自動でここへ進みます</b></td></tr>
+        <tr><td class="nt-emoji">💬</td><td><b>商談中</b></td><td>打ち合わせ・ヒアリングが始まった</td></tr>
+        <tr><td class="nt-emoji">📄</td><td><b>提案・見積</b></td><td>提案や見積を出している</td></tr>
+        <tr><td class="nt-emoji">🎉</td><td><b>受注</b></td><td>お仕事が決まった</td></tr>
+        <tr><td class="nt-emoji">⏸</td><td><b>保留</b></td><td>時期を見て再開</td></tr>
+        <tr><td class="nt-emoji">✖</td><td><b>失注</b></td><td>今回は見送り</td></tr>
+      </table></div>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">次の予定・見込み</div>
+    <p>カードを開いて <b>「編集」</b>から、<b>やること</b>と<b>次の予定（日付）</b>、<b>見込み（円・税抜）</b>を入れられます。期日が来たカードは日付が色つきで表示されます。検索欄では名前・会社・出会った場所などから探せ、「担当」で人ごとに絞れます。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">🗄 アーカイブと、元に戻す</div>
+    <p>もう追わない名刺は、カードを開いて <b>「🗄 アーカイブ」</b>で一覧から外せます（削除ではありません）。戻したいときは、一覧の下の <b>「🗄 アーカイブ済みを見る」</b>からカードを開いて <b>「↩ 一覧に戻す」</b>を押します。どちらも担当と管理者ができます。</p>
+  </div>
+  <div class="next-btn-wrap"><a class="next-btn" href="#step4">STEP 4 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 4 ═══ -->
+<section class="step-section" id="step4">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4</div>
+      <h2>メールを送る準備をする（最初の 1 回だけ）</h2>
+      <div class="step-section-eta">⏱ 約 2 分</div>
+    </div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-step"><div class="flow-step-icon">⚙</div><div class="flow-step-label">「⚙ メール設定」<br>を開く</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">📧</div><div class="flow-step-label">「Gmailと連携する」<br>を押す</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">✅</div><div class="flow-step-label">Google の画面で<br>許可する</div></div>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">📧 自分の Gmail と連携する</div>
+    <p>メールは <b>あなた自身の Gmail から</b>送られ、返信もあなたの受信箱に届きます。HFS が使うのは <b>「送信」だけ</b>で、受信箱の中身は読みません。連携は「⚙ メール設定」の「解除」でいつでも外せます。<br>「Gmail連携はまだ準備中です」と出ているあいだは、下書きの保存までできます。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">🤝 代理送信を認める（必要な人だけ）</div>
+    <p>「⚙ メール設定」の <b>「代理送信を認める人」</b>にメンバーを追加すると、その人が <b>あなたの名前（あなたの Gmail）で</b>メールを作って送れるようになります。認めるのも取り消すのも <b>本人だけ</b>。管理者でも、認められていなければ他の人の名前では送れません。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">🎬 プロモ動画を登録しておく</div>
+    <p>一覧の <b>「🎬 プロモ動画」</b>から、YouTube / Vimeo の URL とタイトルを登録します。ここに入れた動画を、メールごとに好きな本数だけ選んで付けられます。</p>
+  </div>
+  <div class="done-banner"><span class="done-icon">✅</span><div class="done-text">準備、完了！<small>次からはこの STEP は飛ばして大丈夫です</small></div></div>
+  <div class="next-btn-wrap"><a class="next-btn" href="#step5">STEP 5 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 5 ═══ -->
+<section class="step-section" id="step5">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 5</div>
+      <h2>メールを作って送る</h2>
+      <div class="step-section-eta">⏱ 約 3 分</div>
+    </div>
+  </div>
+  <div class="flow-row four">
+    <div class="flow-step"><div class="flow-step-icon">✉</div><div class="flow-step-label">カードを開いて<br>「＋ メールを作る」</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">✨</div><div class="flow-step-label">「AIで下書き」<br>→ 自分の言葉に直す</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">🎬</div><div class="flow-step-label">付ける動画を<br>選ぶ</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">📨</div><div class="flow-step-label">「確認して送信」<br>→ 宛先を確かめて送る</div></div>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">✨ 下書きを作る</div>
+    <p><b>「✨ AIで下書き」</b>を押すと、名刺の内容と出会いの記録をもとに、お礼メールの件名と本文が入ります。「追加の指示」に「採用動画の話を入れて」などと書くと方向づけできます。<b>そのまま送らず、必ず読んで直してください。</b>途中でやめるときは <b>「下書き保存」</b>で残せます。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">🎬 動画を付ける</div>
+    <p>「🎬 付ける動画」で選ぶと、選んだ動画をまとめた <b>紹介ページ</b>の URL が発行され、本文の最後に自動で入ります。署名も自動で付きます。画面の下の「送られる文面のイメージ」で仕上がりを確かめられます。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">📨 送信前の確認</div>
+    <p><b>「確認して送信」</b>を押すと、<b>宛先・差出人・件名・最終の文面</b>が大きく表示されます。宛先を声に出して確かめるくらいのつもりで見てから、<b>「この宛先に送信する」</b>を押してください。送信すると取り消せません。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">🛡 誤送信を防ぐ決まり</div>
+    <div class="ntable-wrap"><table class="ntable">
+        <tr><th></th><th>決まり</th><th>理由</th></tr>
+        <tr><td class="nt-emoji">👤</td><td><b>送れるのは差出人本人と、本人が代理に認めた人だけ</b></td><td>他の人の名前で勝手に送られないように。管理者も例外ではありません</td></tr>
+        <tr><td class="nt-emoji">1️⃣</td><td><b>宛先は 1 通につき 1 件</b></td><td>CC・BCC・一斉送信はありません。別の人のアドレスが混ざるのを防ぎます</td></tr>
+        <tr><td class="nt-emoji">🔁</td><td><b>同じメールは 1 回しか送られない</b></td><td>ボタンの連打や、2 つの画面で同時に押しても 1 通だけ</td></tr>
+        <tr><td class="nt-emoji">🚫</td><td><b>「今後メールを送らない」の相手には送れない</b></td><td>配信を断られた方は、名刺の編集でチェックを入れておきます</td></tr>
+        <tr><td class="nt-emoji">📅</td><td><b>1 人 1 日 50 通まで</b></td><td>送りすぎによる Gmail 側の制限を避けます</td></tr>
+        <tr><td class="nt-emoji">👁</td><td><b>VIEW AS 中は送れない</b></td><td>表示確認中の押し間違いを防ぎます</td></tr>
+      </table></div>
+  </div>
+  <div class="wanpoint">
+    <div class="wanpoint-title">「送信失敗」と出たら</div>
+    <p><strong>送り直す前に、差出人の Gmail の「送信済み」を確認</strong>してください。通信が途中で切れた場合、実際には届いていることがあります。届いていなければ、メールを開いてもう一度「確認して送信」を押します。</p>
+  </div>
+  <div class="next-btn-wrap"><a class="next-btn" href="#step6">STEP 6 へ進む</a></div>
+</section>
+
+<!-- ═══ STEP 6 ═══ -->
+<section class="step-section" id="step6">
+  <div class="step-section-head">
+    <div class="step-section-num">6</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 6</div>
+      <h2>紹介ページと「開封」を見る</h2>
+      <div class="step-section-eta">⏱ 約 1 分</div>
+    </div>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">🎬 紹介ページとは</div>
+    <p>相手がメールの URL を開くと、選んだ動画が並んだ <b>HARUKA FILM の紹介ページ</b>が表示されます。相手はログイン不要で、検索には載りません。URL を知っている人だけが見られます。</p>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">👀 開封の記録</div>
+    <p>相手がページを開くと、カードに <b>「👀開封」</b>が付き、メールの欄に <b>開いた回数と初回の日時</b>が出ます。メールの欄の <b>「ページを見る」</b>は自分で確かめる用で、<b>開封には数えません</b>。<br>間違えて発行したページは、発行した本人か管理者が <b>「公開を止める」</b>で見られなくできます。</p>
+  </div>
+  <div class="wanpoint">
+    <div class="wanpoint-title">開封＝メールを読んだ、ではありません</div>
+    <p>記録されるのは <strong>紹介ページを開いたかどうか</strong> です。メールそのものを読んだかは分かりません。メールソフトが自動でリンクを確かめたときに数えられることもあるので、目安として使ってください。</p>
+  </div>
+
+</section>
+
+<section class="final">
+  <div class="final-icon">🤝</div>
+  <h2>これで名刺交換のあとも迷いません</h2>
+  <p>名刺を登録 → 出会いを記録 → 下書きを直して送る → 開封を見て次の一手へ。まずは手元の名刺を 1 枚、登録してみましょう。</p>
+  <a class="final-cta" href="/haruka.html?page=sales">🤝 営業ページを開く</a>
+</section>
+
+<!-- 困ったら -->
+<section class="trouble">
+  <h3>💬 困ったら…</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">📧</span>
+      <div><div class="trouble-q">「Gmailと連携する」を押したのに送れない</div><div class="trouble-a">Google の画面で「メールの送信」のチェックを外すと連携できません。もう一度「⚙ メール設定」から連携し、チェックを付けたまま進めてください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🤝</span>
+      <div><div class="trouble-q">代理で作ったのに「送信できません」と出る</div><div class="trouble-a">差出人ご本人の Gmail 連携がまだです。ご本人に「⚙ メール設定」から連携してもらってください（下書きは残っています）</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">✏️</span>
+      <div><div class="trouble-q">他の人が登録した名刺を直したい</div><div class="trouble-a">直せるのは担当と管理者です。自分用メモは誰でも書けます。担当の人に声をかけるか、共有したい内容は担当の人に共有メモへ入れてもらってください</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">✨</span>
+      <div><div class="trouble-q">AI のボタンが押せない</div><div class="trouble-a">今月の上限に達したか、AI がオフになっています。手入力でそのまま使えます</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🗄</span>
+      <div><div class="trouble-q">アーカイブした名刺が見つからない</div><div class="trouble-a">一覧の下の「🗄 アーカイブ済みを見る」を押すと出てきます。開いて「↩ 一覧に戻す」で元に戻せます</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🆘</span>
+      <div><div class="trouble-q">それ以外</div><div class="trouble-a">右上のバグ報告か、管理者に Chatwork で気軽に。スクショを添えると早い</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a></p>
+  <p>HARUKA FILM SYSTEM ／ 営業・名刺ガイド</p>
+</footer>
+
+</body>
+</html>
