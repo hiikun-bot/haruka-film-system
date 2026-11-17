@@ -14,6 +14,7 @@ const crypto = require('crypto');
 
 const { requireAuth } = require('../auth');
 const oauthLib = require('../lib/google-oauth');
+const gmailSend = require('../lib/gmail-send');
 
 router.use(requireAuth);
 
@@ -35,10 +36,16 @@ router.get('/google/start', (req, res) => {
   req.session = req.session || {};
   req.session.googleOAuthState = stateNonce;
   req.session.googleOAuthNext = safeNext;
+  // purpose=gmail: 🤝 営業メールを本人の Gmail から送るための連携（ADR 056）。
+  //   Drive 用とは別の行（scope_key='gmail.send'）に保存する。権限は「送信」と「アドレスの確認」だけ。
+  const purpose = String(req.query.purpose || '') === 'gmail' ? 'gmail' : 'drive';
+  req.session.googleOAuthPurpose = purpose;
 
   const url = oauthLib.buildConsentUrl({
     state: stateNonce,
-    scopes: oauthLib.getConfiguredScopes(),
+    scopes: purpose === 'gmail' ? gmailSend.SCOPES : oauthLib.getConfiguredScopes(),
+    // Gmail 用のトークンに、以前許可した Drive などの権限を混ぜない（送信だけに絞る）
+    includeGrantedScopes: purpose !== 'gmail',
   });
   res.redirect(url);
 });
@@ -48,6 +55,16 @@ router.get('/google/callback', async (req, res) => {
   try {
     const { code, state, error: oauthError } = req.query || {};
     if (oauthError) {
+      // Gmail 連携を同意画面でキャンセルしたときは、行き止まりにせず営業ページへ戻す
+      if (req.session?.googleOAuthPurpose === 'gmail') {
+        const back = req.session.googleOAuthNext || '/haruka.html';
+        try {
+          delete req.session.googleOAuthState;
+          delete req.session.googleOAuthNext;
+          delete req.session.googleOAuthPurpose;
+        } catch (_) {}
+        return res.redirect(back + (back.includes('?') ? '&' : '?') + 'gmail_oauth=denied');
+      }
       return res.status(400).send(`OAuth エラー: ${String(oauthError)}`);
     }
     if (!code) return res.status(400).send('code がありません');
@@ -58,7 +75,24 @@ router.get('/google/callback', async (req, res) => {
     }
     const next = req.session?.googleOAuthNext || '/haruka.html';
 
+    const purpose = req.session?.googleOAuthPurpose === 'gmail' ? 'gmail' : 'drive';
+
     const tokens = await oauthLib.exchangeCode(String(code));
+    if (purpose === 'gmail') {
+      try {
+        delete req.session.googleOAuthState;
+        delete req.session.googleOAuthNext;
+        delete req.session.googleOAuthPurpose;
+      } catch (_) {}
+      const sepG = next.includes('?') ? '&' : '?';
+      // 同意画面で「メール送信」のチェックを外された場合は保存しない
+      if (!gmailSend.hasSendScope(tokens.scope)) {
+        return res.redirect(next + sepG + 'gmail_oauth=denied');
+      }
+      await oauthLib.saveTokens({ userId: req.user.id, tokens, scopeKey: gmailSend.SCOPE_KEY });
+      gmailSend.forgetSenderEmail(req.user.id);
+      return res.redirect(next + sepG + 'gmail_oauth=connected');
+    }
     await oauthLib.saveTokens({
       userId: req.user.id,
       tokens,
@@ -69,6 +103,7 @@ router.get('/google/callback', async (req, res) => {
     try {
       delete req.session.googleOAuthState;
       delete req.session.googleOAuthNext;
+      delete req.session.googleOAuthPurpose;
     } catch (_) {}
 
     // 戻り先に「連携成功」フラグ付きでリダイレクト
