@@ -22163,7 +22163,7 @@ function formatPricingRequester(requester, requestedAt) {
   return `申請: ${name}${when ? ' ' + when : ''}`;
 }
 
-// ADR 037: 承認前スナップショットから「変更前: クラ ¥x / 制作 ¥y」の文字列を作る。
+// ADR 037: 承認前スナップショットから「変更前: クライアント単価 ¥x / 制作単価 ¥y」の文字列を作る。
 // 制作単価は editor/designer ロールの unit_price（role_id → code は roles マスタから引く。引けなければ先頭）。
 function formatPricingPrevSnapshot(snap) {
   if (!snap || typeof snap !== 'object') return '';
@@ -22177,9 +22177,9 @@ function formatPricingPrevSnapshot(snap) {
   const prod = costs.find(c => ['editor', 'designer'].includes(roleCodeOf(c))) || costs[0] || null;
   const parts = [];
   if (hasPermission('project.client_price') && snap.client_unit_price != null) {
-    parts.push(`クラ ¥${(Number(snap.client_unit_price) || 0).toLocaleString()}`);
+    parts.push(`クライアント単価 ¥${(Number(snap.client_unit_price) || 0).toLocaleString()}`);
   }
-  parts.push(`制作 ¥${(Number(prod?.unit_price) || 0).toLocaleString()}`);
+  parts.push(`制作単価 ¥${(Number(prod?.unit_price) || 0).toLocaleString()}`);
   return `変更前: ${parts.join(' / ')}`;
 }
 
@@ -34564,17 +34564,48 @@ async function renderPricingApprovalsCard() {
     const prevProd = prevCosts.find(c => ['editor', 'designer'].includes(c?.role_code)) || prevCosts[0] || null;
     const hasPrev = !!it.prev_snapshot;
     const yen = v => `¥${(Number(v) || 0).toLocaleString()}`;
-    const prodText = hasPrev
-      ? `制作 ${yen(prevProd?.unit_price)} → <strong style="color:var(--text)">${yen(prodCost?.unit_price)}</strong>`
-      : `制作 <strong style="color:var(--text)">${yen(prodCost?.unit_price)}</strong>`;
-    const clientText = canClientPrice
-      ? (hasPrev && Number(it.prev_snapshot.client_unit_price) !== Number(it.client_unit_price)
-        ? `クラ ${yen(it.prev_snapshot.client_unit_price)} → <strong style="color:var(--text)">${yen(it.client_unit_price)}</strong>`
-        : `クラ <strong style="color:var(--text)">${yen(it.client_unit_price)}</strong>`)
-      : '';
-    const otherCosts = (Array.isArray(it.costs) ? it.costs : []).filter(c => c !== prodCost).map(c =>
-      `${esc(c.role_label || c.role_code || '')}${c.user_name ? `(${esc(c.user_name)})` : ''} ${c.pricing_type === 'percentage' ? `${Number(c.percentage) || 0}%` : yen(c.unit_price)}`
-    ).join(' ／ ');
+    // 金額の行は「項目名 ／ 変更前 → 変更後（差額）」を 1 項目 1 行で出す。変わっていない項目は「変更なし」と明記する。
+    // 変更前が実質カラ（一度も承認されていないまま月またぎで分かれた新グループ等）は、比べる相手が無いので今の値だけ出す。
+    const hasPrevPrice = hasPrev && (prevCosts.length > 0 || Number(it.prev_snapshot.client_unit_price) > 0);
+    const costVal = c => (c?.pricing_type === 'percentage'
+      ? { n: Number(c.percentage) || 0, t: `${Number(c.percentage) || 0}%`, pct: true }
+      : { n: Number(c?.unit_price) || 0, t: yen(c?.unit_price), pct: false });
+    const moneyVal = v => ({ n: Number(v) || 0, t: yen(v), pct: false });
+    const priceRow = (labelHtml, prev, cur) => {
+      const muted = 'color:var(--text-muted);font-size:11px';
+      let body;
+      if (!cur) {
+        body = `${prev.t} → <strong style="color:#B45309">なし</strong>　<span style="color:#B45309;font-size:11px">削除</span>`;
+      } else if (!hasPrevPrice) {
+        body = `<strong style="color:var(--text)">${cur.t}</strong>`;
+      } else if (!prev) {
+        body = `<strong style="color:var(--text)">${cur.t}</strong>　<span style="color:#B45309;font-size:11px">新しく追加</span>`;
+      } else if (prev.pct === cur.pct && prev.n === cur.n) {
+        body = `<span style="color:var(--text)">${cur.t}</span>　<span style="${muted}">変更なし</span>`;
+      } else {
+        const diff = cur.n - prev.n;
+        const diffText = prev.pct !== cur.pct ? '' : `${diff > 0 ? '▲' : '▼'}${cur.pct ? `${Math.abs(diff)}%` : yen(Math.abs(diff))}`;
+        body = `${prev.t} → <strong style="color:var(--text);font-size:13px">${cur.t}</strong>${diffText ? `　<span style="color:#B45309;font-size:11px;font-weight:600">${diffText}</span>` : ''}`;
+      }
+      return `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><span style="min-width:8.5em;color:var(--text-muted)">${labelHtml}</span><span>${body}</span></div>`;
+    };
+    const priceRows = [];
+    if (prodCost || prevProd) {
+      priceRows.push(priceRow('制作単価', prevProd ? costVal(prevProd) : null, prodCost ? costVal(prodCost) : null));
+    }
+    if (canClientPrice) {
+      priceRows.push(priceRow('クライアント単価', hasPrev ? moneyVal(it.prev_snapshot.client_unit_price) : null, moneyVal(it.client_unit_price)));
+    }
+    // 制作以外（ディレクター費など）は ロール×受取人 で変更前と突き合わせる
+    const costLabel = c => `${esc(c.role_label || c.role_code || '')}${c.user_name ? `(${esc(c.user_name)})` : ''}`;
+    const costKey = c => `${c?.role_code || ''}|${c?.user_id || ''}`;
+    const prevOthers = prevCosts.filter(c => c !== prevProd);
+    for (const c of (Array.isArray(it.costs) ? it.costs : []).filter(x => x !== prodCost)) {
+      const i = prevOthers.findIndex(p => costKey(p) === costKey(c));
+      const prev = i >= 0 ? prevOthers.splice(i, 1)[0] : null;
+      priceRows.push(priceRow(costLabel(c), prev ? costVal(prev) : null, costVal(c)));
+    }
+    if (hasPrevPrice) for (const p of prevOthers) priceRows.push(priceRow(costLabel(p), costVal(p), null));
     const groupLabel = [it.category_name, it.rank ? `${it.rank}ランク` : ''].filter(Boolean).join(' ');
     const requester = formatPricingRequester(it.requested_by, it.requested_at);
     const splitMonth = it.split_applies_from ? Number(String(it.split_applies_from).slice(5, 7)) : null;
@@ -34599,7 +34630,7 @@ async function renderPricingApprovalsCard() {
           <span style="font-weight:600">${esc(it.line_name || '（名称未設定）')}</span>
           ${groupLabel ? `<span style="color:var(--text-muted);margin-left:6px">${esc(groupLabel)}</span>` : ''}
         </div>
-        <div style="font-size:12px;color:var(--text-muted)">${prodText}${clientText ? `　${clientText}` : ''}${otherCosts ? `　<span style="font-size:11px">${otherCosts}</span>` : ''}</div>
+        <div style="font-size:12px;color:var(--text-muted);display:flex;flex-direction:column;gap:2px;margin:2px 0">${priceRows.join('')}</div>
         <div style="font-size:11px;color:var(--text-muted)">${esc(requester)}</div>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:center">
@@ -34616,7 +34647,7 @@ async function renderPricingApprovalsCard() {
       <div class="dash-section-title" style="color:#B45309;margin-bottom:0">💴 単価の承認待ち（${count}件）</div>
       <button type="button" class="btn" onclick="dashApproveAllPricing()" style="padding:4px 12px;font-size:11px;color:#0F7A56;border-color:#86E0BE">すべて承認</button>
     </div>
-    <div style="font-size:11px;color:var(--text-muted);margin:4px 0 8px">承認前でも集計・請求プレビューには反映されています（請求書の発行は承認後）</div>
+    <div style="font-size:11px;color:var(--text-muted);margin:4px 0 8px">承認前でも集計・請求プレビューには反映されています（請求書の発行は承認後）<br>制作単価＝メンバーに払う 1 本あたりの金額${canClientPrice ? '　／　クライアント単価＝クライアントに請求する 1 本あたりの金額' : ''}　／　金額は「変更前 → 変更後」</div>
     ${rows}
   </div>`;
   if (dashEl) { dashEl.style.marginBottom = '14px'; dashEl.innerHTML = html; }
