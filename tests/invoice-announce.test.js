@@ -17,9 +17,9 @@ jest.mock('../notifications', () => ({
 
 const {
   buildInvoiceAnnounceTexts,
+  buildSubmitCalendarUrl,
   parseHfClients,
   parseMonthStr,
-  DEFAULT_HF_CLIENTS,
 } = require('../utils/invoice-announce');
 
 const {
@@ -66,22 +66,54 @@ describe('buildInvoiceAnnounceTexts', () => {
     expect(t.slack).toContain('請求書送付についてのご案内');
   });
 
-  test('秘書チーム解体後の文面: 秘書・くるみへの言及が無く、問い合わせ先はひーくん', () => {
+  test('秘書・くるみ・ひーくんへの言及が無く、送り主は Chatwork=私／Slack・お知らせ=髙橋', () => {
     const t = buildInvoiceAnnounceTexts('2026-09');
-    for (const text of [t.chatwork, t.slack]) {
+    for (const text of [t.chatwork, t.slack, t.plain]) {
       expect(text).not.toContain('秘書');
       expect(text).not.toContain('くるみ');
-      expect(text).toContain('質問ありましたらひーくんへDM');
-      expect(text).toContain('こちらのフォルダはひーくんと本人のみ閲覧できます');
+      expect(text).not.toContain('ひーくん');
+    }
+    expect(t.chatwork).toContain('質問ありましたら私へDM');
+    expect(t.chatwork).toContain('こちらのフォルダは私とご本人のみ閲覧できます');
+    expect(t.chatwork).toContain('提出前に私へDMでご連絡ください');
+    expect(t.chatwork).not.toContain('髙橋');
+    for (const text of [t.slack, t.plain]) {
+      expect(text).toContain('質問ありましたら髙橋へDM');
+      expect(text).toContain('こちらのフォルダは髙橋とご本人のみ閲覧できます');
+      expect(text).toContain('提出前に髙橋へDMでご連絡ください');
+      expect(text).not.toMatch(/私(へ|と)/);
     }
   });
 
-  test('HF案件リストは既定値を含み、上書きも可能', () => {
-    const def = buildInvoiceAnnounceTexts('2026-09');
-    for (const c of DEFAULT_HF_CLIENTS) expect(def.chatwork).toContain(`✅${c}`);
+  test('請求システムでの提出が本線: 3ステップを案内し、旧 DM 報告手順と HF案件リストは載せない', () => {
     const t = buildInvoiceAnnounceTexts('2026-09', { hfClients: ['テスト様'] });
-    expect(t.chatwork).toContain('✅テスト様');
-    expect(t.chatwork).not.toContain('✅よたさん');
+    for (const text of [t.chatwork, t.slack, t.plain]) {
+      expect(text).toContain('【HARUKA FILM SYSTEM（請求システム）】での提出が基本です');
+      expect(text).toContain('「＋ 今月の請求書を作成」');
+      expect(text).toContain('③「提出する」ボタンを押す');
+      expect(text).toContain('従来のフォーマット（PDF提出）でも受け付けます');
+      expect(text).not.toContain('PDFのURLを');
+      expect(text).not.toContain('HF案件');
+      expect(text).not.toContain('✅');
+    }
+  });
+
+  test('提出日のすぐ後に Google カレンダー登録リンク（終日 26〜28日・Asia/Tokyo）が付く', () => {
+    const t = buildInvoiceAnnounceTexts('2026-11');
+    const u = new URL(t.calendarUrl);
+    expect(u.origin + u.pathname).toBe('https://calendar.google.com/calendar/render');
+    expect(u.searchParams.get('action')).toBe('TEMPLATE');
+    expect(u.searchParams.get('dates')).toBe('20261126/20261129');
+    expect(u.searchParams.get('ctz')).toBe('Asia/Tokyo');
+    expect(u.searchParams.get('text')).toBe('【HARUKA FILM】請求書の提出（11/26〜11/28）');
+    for (const text of [t.chatwork, t.slack, t.plain]) {
+      expect(text).toContain(`11/26(木)~11/28(土)\n📅 カレンダー登録：${t.calendarUrl}`);
+    }
+  });
+
+  test('カレンダーの終了日は月末またぎでも正しい（平年2月は 3/1、うるう年は 2/29）', () => {
+    expect(new URL(buildSubmitCalendarUrl(2027, 2)).searchParams.get('dates')).toBe('20270226/20270301');
+    expect(new URL(buildSubmitCalendarUrl(2028, 2)).searchParams.get('dates')).toBe('20280226/20280229');
   });
 
   test('不正な月指定は throw', () => {
