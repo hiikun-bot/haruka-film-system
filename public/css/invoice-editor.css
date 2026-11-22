@@ -33,6 +33,8 @@
 .ie-st-ng { color: #B91C1C; font-weight: 600; }
 .ie-close { border: none; background: none; font-size: 22px; cursor: pointer; color: #6b7280; line-height: 1; }
 .ie-banner { background: #FEF2F2; color: #991B1B; border-bottom: 1px solid #FECACA; padding: 8px 20px; font-size: 12px; }
+/* 管理者が「修正のためロックを外した」請求書（差し戻しの赤と区別する・ADR 046 追補 2026-11-22） */
+.ie-banner-unlock { background: #F0FDFA; color: #0F766E; border-bottom-color: #99F6E4; }
 .ie-meta { display: flex; flex-wrap: wrap; gap: 6px 24px; align-items: center; padding: 10px 20px; font-size: 12px; border-bottom: 1px solid var(--border, #e5e7eb); }
 .ie-meta select { margin-left: 4px; padding: 3px 6px; font-size: 12px; border: 1px solid var(--border, #d1d5db); border-radius: 4px; }
 .ie-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 20px; border-bottom: 1px solid var(--border, #e5e7eb); }

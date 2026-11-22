@@ -467,6 +467,31 @@ async function notifyPricingPendingMyChat(params) {
   return result;
 }
 
+// =============== 管理者の Chatwork マイチャットへ一報（汎用） ===============
+// 「管理者に気付いてほしい」申請系（請求書の「提出後に直したい」など・ADR 046 追補 2026-11-22）で使う。
+// 共有ルームには出さない。送れなかったら Slack のエラーチャンネルへ回す（内容は載せず種別と要約だけ）。
+//   text: Chatwork 記法の本文 / opts.kind: エラー通知の種別 / opts.summary: エラー通知に載せる短い要約（個人情報を入れない）
+async function notifyAdminMyChat(text, opts = {}) {
+  const token = process.env.CHATWORK_API_TOKEN;
+  const roomId = token ? await resolveAdminMyChatRoomId(token) : null;
+  const result = !token ? { ok: false, reason: 'no_token' }
+    : !roomId ? { ok: false, reason: 'no_room' }
+    : !text ? { ok: false, reason: 'empty_text' }
+    : await sendChatworkRoom(roomId, text, { token });
+  if (!result.ok) {
+    const kind = opts.kind || 'admin_mychat';
+    console.warn(`[notif/admin-mychat] Chatwork マイチャットへの送信に失敗 kind=${kind} room=${roomId || '-'} reason=${result.reason}`);
+    notifyAutoError({
+      source: 'server',
+      kind: `chatwork.${kind}_failed`,
+      apiPath: `chatwork:room:${roomId || '-'}`,
+      message: `管理者の Chatwork マイチャットへ送れませんでした（${result.reason}）。CHATWORK_API_TOKEN / ADMIN_MYCHAT_CHATWORK_ROOM_ID を確認してください。` +
+        (opts.summary ? `\n${opts.summary}` : ''),
+    }).catch(() => {});
+  }
+  return result;
+}
+
 // Chatwork 投稿失敗時の管理者向けメッセージを組み立てる（バグ報告 #f03ba5cd）。
 // 案件ルームへの投稿失敗・代替送信の結果を1行で要約し、notifyAutoError 経由で
 // Slack エラーチャンネルに流す。純関数としてテスト可能にするため分離。
@@ -1890,6 +1915,7 @@ module.exports = {
   buildAppUrl,
   // バグ報告の新規登録 → 管理者 Chatwork マイチャットへ一報
   notifyBugReportCreated,
+  notifyAdminMyChat,
   resolveChatworkMyRoomId,
   resolveChatworkMyAccountId,
   resolveAdminMyChatRoomId,

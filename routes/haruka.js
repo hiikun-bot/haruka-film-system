@@ -20788,15 +20788,71 @@ router.post('/invoices/:id/approve', requireAuth, requireLevel('admin'), async (
   res.json(data);
 });
 
-// 請求書差し戻し（submitted → rejected）管理者のみ
+// ==================== 提出後に直すためのロック解除（ADR 046 追補 2026-11-22） ====================
+// 文面・種別の判定・理由の検証は utils/invoice-unlock.js（純関数・画面と共有）。DB 列は足さない。
+const INV_UNLOCK = require('../utils/invoice-unlock');
+const invoiceUnlockRequestThrottle = INV_UNLOCK.createRequestThrottle();
+
+// 通知のリンク先。本人用は請求書を開く、管理者用はロック解除の確認を開く（haruka.html の applyDeepLinkOnLoad）
+const invoiceOpenLink = (id) => `/haruka.html?page=invoices&invoice=${encodeURIComponent(id)}`;
+const invoiceUnlockReviewLink = (id) => `/haruka.html?page=invoices&invoice_unlock=${encodeURIComponent(id)}`;
+
+// 本人へ「請求書を修正できる状態に戻した」を知らせる（ベル＋個別通知）。共有ルームには流さない。
+// 失敗しても呼び出し元の API は成功のまま（呼び出し側で catch）。
+async function notifyInvoiceReturnedToMember(inv, { kind, reason, senderId }) {
+  if (!inv || !inv.issuer_id || !INV_UNLOCK.isMemberInvoice(inv)) return { ok: false, reason: 'not_member_invoice' };
+  const { notifyMember, NOTIFY_USER_COLUMNS } = require('../utils/member-notify');
+  const { buildAppUrl } = require('../notifications');
+  const msg = INV_UNLOCK.buildReturnedMessage({
+    kind, invoice: inv, reason, url: buildAppUrl(invoiceOpenLink(inv.id)),
+  });
+  // 自分で自分の請求書を戻したとき（管理者本人の請求書）はベルを出さない（自分の操作なので）
+  if (String(senderId || '') !== String(inv.issuer_id)) {
+    try {
+      await createNotification({
+        userId: inv.issuer_id, type: 'invoice', title: msg.title, body: msg.body,
+        linkUrl: invoiceOpenLink(inv.id),
+        meta: { invoice_id: inv.id, kind: `returned_${kind}` },
+        senderId: senderId || null,
+      });
+    } catch (e) {
+      console.warn('[invoice-unlock] ベル通知の作成に失敗:', e?.message);
+    }
+  }
+  const { data: user, error } = await supabase.from('users').select(NOTIFY_USER_COLUMNS).eq('id', inv.issuer_id).maybeSingle();
+  if (error || !user) {
+    console.warn('[invoice-unlock] 本人の取得に失敗:', error?.message || 'not found');
+    return { ok: false, reason: 'user_not_found' };
+  }
+  const r = await notifyMember(user, { chatwork: msg.chatwork, slack: msg.slack }, { privateOnly: true });
+  if (!r.ok) console.log(`[invoice-unlock] 本人への個別通知が未送信 invoice=${inv.id}: ${r.reason}`);
+  return r;
+}
+
+// 請求書を本人が直せる状態へ戻す（submitted → rejected）管理者のみ
+//   body: { kind: 'unlock' | 'reject', rejection_reason: '理由（必須）' }
+//   kind='unlock'（修正のためロックを外す）は rejection_reason の先頭に固定文言を付けて保存する。
+//   どちらも Drive の PDF はゴミ箱へ（ADR 047）。メンバー請求書は本人へ通知する。
 router.post('/invoices/:id/reject', requireAuth, requireLevel('admin'), async (req, res) => {
-  const { rejection_reason } = req.body;
+  const kind = INV_UNLOCK.normalizeKind(req.body?.kind);
+  const rv = INV_UNLOCK.validateReason(req.body?.rejection_reason ?? req.body?.reason, {
+    label: kind === INV_UNLOCK.KIND_UNLOCK ? 'メモ（直す内容）' : '差し戻し理由',
+  });
+  if (rv.error) return res.status(400).json({ error: rv.error });
+  const nowIso = new Date().toISOString();
+  // 提出済みのものだけ戻す（条件付き更新: 二重押し・すでに戻した請求書への再通知を防ぐ）
   const { data, error } = await supabase
     .from('invoices')
-    .update({ status: 'rejected', rejected_at: new Date().toISOString(), rejection_reason: rejection_reason || null, updated_at: new Date().toISOString() })
+    .update({ status: 'rejected', rejected_at: nowIso, rejection_reason: INV_UNLOCK.buildRejectionReason(kind, rv.value), updated_at: nowIso })
     .eq('id', req.params.id)
-    .select().single();
+    .eq('status', 'submitted')
+    .select().maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) {
+    const { data: cur } = await supabase.from('invoices').select('id, status').eq('id', req.params.id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: '請求書が見つかりません' });
+    return res.status(409).json({ error: `提出済みの請求書だけ戻せます（現在: ${cur.status}）。画面を更新して確かめてください` });
+  }
   // ADR 047: 差し戻した請求書は支払対象ではないので、提出時に置いた Drive の PDF をゴミ箱へ
   // （残すと振込管理のスキャンが合算してしまう。再提出で再び保存される）
   try {
@@ -20804,7 +20860,64 @@ router.post('/invoices/:id/reject', requireAuth, requireLevel('admin'), async (r
   } catch (e) {
     console.warn('[invoice-pdf] 差戻時の Drive PDF ゴミ箱送り失敗:', e.message);
   }
-  res.json(data);
+  invoiceUnlockRequestThrottle.clear(data.id);
+  // 本人へ通知（メンバー請求書のみ）。届かなくても差し戻し自体は成功のまま返す
+  let notified = null;
+  if (INV_UNLOCK.isMemberInvoice(data)) {
+    try {
+      const r = await notifyInvoiceReturnedToMember(data, { kind, reason: rv.value, senderId: req.user?.id });
+      notified = { ok: !!r.ok, channel: r.channel || 'none', forwarded: !!r.forwarded };
+    } catch (e) {
+      console.warn('[invoice-unlock] 本人への通知に失敗（差し戻しは成功扱い）:', e?.message);
+      notified = { ok: false, channel: 'none', forwarded: false };
+    }
+  }
+  res.json({ ...data, kind, notified });
+});
+
+// 本人から「提出後に直したい」を申請する（提出済みの自分のメンバー請求書だけ・理由必須）
+//   申請の状態は DB に持たない。管理者のマイチャットへ一報し、管理者が「🔓 修正のためロックを外す」を押すのが承認。
+//   同じ請求書への申請は 10 分に 1 回まで（プロセス内で数える）。
+router.post('/invoices/:id/unlock-request', requireAuth, async (req, res) => {
+  try {
+    const rv = INV_UNLOCK.validateReason(req.body?.reason, { label: '直したい理由' });
+    if (rv.error) return res.status(400).json({ error: rv.error });
+    const { data: inv, error } = await supabase
+      .from('invoices')
+      .select('id, invoice_number, issuer_id, status, year, month, invoice_type')
+      .eq('id', req.params.id).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    // 本人判定は実ユーザー（req.user.id）。VIEW AS 中でも他人の請求書は申請できない
+    const ng = INV_UNLOCK.unlockRequestError(inv, req.user?.id);
+    if (ng) return res.status(ng.status).json({ error: ng.error });
+    const th = invoiceUnlockRequestThrottle.check(inv.id);
+    if (!th.ok) {
+      return res.status(429).json({
+        error: `すでに申請を送っています。管理者の対応をお待ちください（あと約${th.retryAfterMinutes}分は送り直せません）`,
+        code: 'UNLOCK_REQUEST_THROTTLED',
+      });
+    }
+    invoiceUnlockRequestThrottle.mark(inv.id);
+
+    const notifLib = require('../notifications');
+    const { data: me } = await supabase.from('users').select('id, full_name, nickname').eq('id', req.user.id).maybeSingle();
+    const msg = INV_UNLOCK.buildUnlockRequestMessage({
+      requesterName: formatUserLabel(me || req.user),
+      invoice: inv,
+      reason: rv.value,
+      url: notifLib.buildAppUrl(invoiceUnlockReviewLink(inv.id)),
+    });
+    const sent = await notifLib.notifyAdminMyChat(msg.chatwork, { kind: 'invoice_unlock_request', summary: `invoice=${inv.id}` })
+      .catch(e => ({ ok: false, reason: e?.message || 'error' }));
+    if (!sent.ok) {
+      // 管理者へ届いていないのに「申請済み」にすると待ちぼうけになるので、送り直せるようにして知らせる
+      invoiceUnlockRequestThrottle.clear(inv.id);
+      return res.status(502).json({ error: '管理者への連絡を送れませんでした。お手数ですが、管理者へ直接伝えてください' });
+    }
+    res.json({ ok: true, retry_after_minutes: Math.round(INV_UNLOCK.UNLOCK_REQUEST_INTERVAL_MS / 60000) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 請求書削除（draft のみ）― 子テーブルを先に削除してFK制約を回避

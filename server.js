@@ -437,6 +437,9 @@ app.use('/js/reactions.js', express.static(path.join(__dirname, 'utils/reactions
 // メンバーのポートフォリオ URL の解析・表示（utils/member-portfolio-urls.js・UMD形式）。
 // メンバー編集モーダルの入力解析とサーバーの保存時検証で同じロジックを使う
 app.use('/js/member-portfolio-urls.js', express.static(path.join(__dirname, 'utils/member-portfolio-urls.js')));
+// 🧾 請求書の「提出後に直すためのロック解除」（utils/invoice-unlock.js・UMD形式・ADR 046 追補 2026-11-22）。
+// ロック解除／差し戻しの見分け（rejection_reason の先頭の固定文言）と理由の検証を画面とサーバーで共有する
+app.use('/js/invoice-unlock.js', express.static(path.join(__dirname, 'utils/invoice-unlock.js')));
 // haruka.html は認証後のみ配信（ミニファイ + 事前圧縮 + ETag/304 の最適化配信）
 app.get('/haruka.html', requireAuth, (req, res) => {
   harukaHtmlDelivery.serve(req, res);

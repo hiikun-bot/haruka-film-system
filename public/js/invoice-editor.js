@@ -347,9 +347,27 @@
     return local.concat(srv.filter(p => !seen.has(p.code)));
   }
 
+  // 管理者に戻された請求書の見え方（ADR 046 追補 2026-11-22・utils/invoice-unlock.js）。
+  // 「不備で差し戻し」は赤で理由、「修正のためロック解除」は落ち着いた色で「修正できる状態です」
+  function returnedDisplay(inv) {
+    const U = window.InvoiceUnlockUtils;
+    if (U) return U.returnedDisplay(inv);
+    if (!inv || inv.status !== 'rejected') return null;
+    return { kind: 'reject', statusLabel: '差し戻し', heading: '差し戻し理由', note: '', reason: inv.rejection_reason || '' };
+  }
+  function returnedBannerHtml(inv) {
+    const d = returnedDisplay(inv);
+    if (!d) return '';
+    if (d.kind === 'unlock') {
+      return `<div class="ie-banner ie-banner-unlock"><b>🔓 ${h(d.heading)}</b>　${h(d.note)}${d.reason ? `　メモ: ${h(d.reason)}` : ''}</div>`;
+    }
+    return d.reason ? `<div class="ie-banner ie-banner-ng">${h(d.heading)}: ${h(d.reason)}</div>` : '';
+  }
+
   function statusText() {
     const inv = ed.state.invoice;
-    const st = { draft: '下書き', rejected: '差し戻し', submitted: '提出済み', approved: '承認済み' }[inv.status] || inv.status;
+    const rd = returnedDisplay(inv);
+    const st = (rd && rd.statusLabel) || { draft: '下書き', rejected: '差し戻し', submitted: '提出済み', approved: '承認済み' }[inv.status] || inv.status;
     if (ed.conflict) return `${st}・<span class="ie-st-ng">別の画面で更新されています</span>`;
     if (!ed.state.editable) return st;
     if (ed.saving) return `${st}・保存中…`;
@@ -371,7 +389,7 @@
           <button type="button" class="ie-close" onclick="HFSInvoiceEditor.close()" title="閉じる（入力中の内容は保存されます）">×</button>
         </div>
         ${ed.conflict ? `<div class="ie-banner">別の画面でこの請求書が更新されました。上書きしないよう保存を止めています。 <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.reload()">再読み込み</button></div>` : ''}
-        ${inv.status === 'rejected' && inv.rejection_reason ? `<div class="ie-banner ie-banner-ng">差し戻し理由: ${h(inv.rejection_reason)}</div>` : ''}
+        ${returnedBannerHtml(inv)}
         <div class="ie-meta">
           <div><b>${h(s.recipient)}</b></div>
           <div>請求者 ${h(s.issuer.full_name)}${s.issuer.invoice_registration_number ? ` / 登録番号 ${h(s.issuer.invoice_registration_number)}` : ''}</div>
