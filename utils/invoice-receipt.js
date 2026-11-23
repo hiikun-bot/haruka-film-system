@@ -140,10 +140,11 @@ function decideReceiptWrite({ prevFileId, seenFileId, status }) {
   return { write: true, conflict: false, clearFile, dropStatus };
 }
 
-// 一覧（GET /invoices）で、本人でも管理者でもない人には見せない立替経費の項目
-const RECEIPT_PRIVATE_FIELDS = ['expense_payee', 'receipt_missing_reason', 'receipt_file_id', 'receipt_file_name', 'receipt_mime_type'];
+// 一覧（GET /invoices）で、本人でも管理者でもない人には見せない立替経費の項目＝追補で足した列すべて
+// （日付・支払先・領収書の状態・理由・ファイル・保存時刻。一覧 API は本人以外の請求書を管理者にしか返さないので、ここは二重の守り）
+const RECEIPT_PRIVATE_FIELDS = RECEIPT_COLUMNS.slice();
 
-/** 請求書一覧の 1 件から、立替経費の支払先・理由・ファイルの項目を外す（元のオブジェクトを書き換える） */
+/** 請求書一覧の 1 件から、立替経費の日付・支払先・領収書の項目をすべて外す（元のオブジェクトを書き換える） */
 function stripPrivateReceiptFields(invoice) {
   for (const it of ((invoice && invoice.invoice_items) || [])) {
     for (const k of RECEIPT_PRIVATE_FIELDS) delete it[k];

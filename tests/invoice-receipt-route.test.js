@@ -5,6 +5,8 @@
 //   - PUT: 日付・支払先・状態の保存／「領収書なし」にしたら写真をゴミ箱へ／行を消したら写真をゴミ箱へ
 //   - DELETE /invoices/:id: 領収書もゴミ箱へ
 //   - submit: 日付・支払先・領収書が欠けたら 409（どの行か）。列が無い環境は従来どおり（見ない）
+//   - アップロードと提出の競合: 確認→（間に提出）→保存 で、提出済みの請求書の領収書が差し替わらない（DB の関数で確認と書き込みを一度に）
+//   - GET /invoices: 本人以外の請求書は管理者（admin/秘書・実効ロールも）だけ。それ以外は issuer_id を無視して自分の分だけ
 process.env.INVOICE_PDF_DRIVE_SYNC = 'off';
 process.env.GOOGLE_SERVICE_ACCOUNT_KEY = JSON.stringify({ client_email: 'service-account', private_key: 'x' });
 
@@ -62,16 +64,42 @@ function mockBuilder(table) {
   });
   return b;
 }
-jest.mock('../supabase', () => ({ from: (t) => mockBuilder(t), rpc: async () => ({ data: null, error: null }), storage: { from: () => ({}) } }));
+// DB の関数 attach_invoice_item_receipt（migrations/2026-11-23b_...）の偽物。状態の確認と行の書き込みを一度に行う。
+//   mockDb.onRpc … 関数が走る直前に呼ぶ（「確認の直前に提出された」を再現する）
+//   mockDb.rpcMissing … 関数がまだ無い環境（PGRST202）
+async function mockRpc(name, args) {
+  if (name !== 'attach_invoice_item_receipt') return { data: null, error: null };
+  mockDb.rpcCalls = (mockDb.rpcCalls || 0) + 1;
+  if (mockDb.rpcMissing) return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.attach_invoice_item_receipt' } };
+  if (mockDb.onRpc) mockDb.onRpc(args);
+  const inv = (mockDb.tables.invoices || []).find(r => r.id === args.p_invoice_id);
+  if (!inv) return { data: { result: 'invoice_not_found' }, error: null };
+  if (!['draft', 'rejected'].includes(inv.status)) return { data: { result: 'not_editable', status: inv.status }, error: null };
+  const it = (mockDb.tables.invoice_items || []).find(r => r.id === args.p_item_id && r.invoice_id === args.p_invoice_id);
+  if (!it) return { data: { result: 'item_not_found' }, error: null };
+  const prev = it.receipt_file_id || null;
+  const uploadedAt = new Date().toISOString();
+  Object.assign(it, {
+    receipt_status: 'attached', receipt_missing_reason: null, receipt_file_id: args.p_file_id,
+    receipt_file_name: args.p_file_name, receipt_mime_type: args.p_mime_type, receipt_uploaded_at: uploadedAt,
+  });
+  return { data: { result: 'ok', prev_file_id: prev, uploaded_at: uploadedAt }, error: null };
+}
+jest.mock('../supabase', () => ({ from: (t) => mockBuilder(t), rpc: (n, a) => mockRpc(n, a), storage: { from: () => ({}) } }));
 jest.mock('../auth', () => {
   const who = (req) => req.headers['x-test-user'] || 'u1';
-  const roleOf = (req) => (who(req) === 'admin1' ? 'admin' : 'editor');
+  const roleOf = (req) => ({ admin1: 'admin', sec1: 'secretary' }[who(req)] || 'editor');
   const pass = (req, res, next) => { req.user = { id: who(req), role: roleOf(req) }; next(); };
   return {
     requireAuth: pass, requireRole: () => pass, requireLevel: () => pass, requirePermission: () => pass,
     requireAnyPermission: () => pass, requireSuperAdmin: pass, isSuperAdminUser: () => false,
     userHasPermission: async () => false, getEffectiveRole: async (req) => req.user.role,
-    getEffectiveRoleCodes: async (req) => [req.user.role],
+    // VIEW AS: X-View-As は最高管理者（このテストでは admin1）のときだけ効く（auth.js と同じ）
+    getEffectiveRoleCodes: async (req) => {
+      const v = String(req.headers['x-view-as'] || '').trim();
+      if (v && req.user.id === 'admin1') return [v];
+      return [req.user.role];
+    },
     invalidatePermissionsCache: () => {}, invalidateUserCache: () => {},
   };
 });
@@ -93,7 +121,7 @@ const mockDrive = {
           bytes = Buffer.concat(chunks);
         }
         mockDrive.files.set(id, { id, ...requestBody, bytes });
-        if (mockDrive.onCreate && requestBody.mimeType !== 'application/vnd.google-apps.folder') mockDrive.onCreate(id);
+        if (mockDrive.onCreate && requestBody.mimeType !== 'application/vnd.google-apps.folder') await mockDrive.onCreate(id);
         mockDrive.created.push({ id, ...requestBody });
         return { data: { id } };
       },
@@ -127,7 +155,7 @@ beforeAll(async () => {
   // 本番は server.js がログイン済みの人だけを通す（GET /invoices は requireAuth を付けていないので、ここで req.user を入れる）
   app.use((req, _res, next) => {
     const id = req.headers['x-test-user'] || 'u1';
-    req.user = { id, role: id === 'admin1' ? 'admin' : 'editor' };
+    req.user = { id, role: ({ admin1: 'admin', sec1: 'secretary' })[id] || 'editor' };
     next();
   });
   app.use('/api', require('../routes/haruka'));
@@ -143,6 +171,9 @@ beforeEach(() => {
   mockDb.noReceiptCols = false;
   mockDb.onUpdate = null;
   mockDb.noRegNo = false;
+  mockDb.onRpc = null;
+  mockDb.rpcMissing = false;
+  mockDb.rpcCalls = 0;
   mockDrive.onCreate = null;
   mockDrive.files = new Map(); mockDrive.created = []; mockDrive.trashed = [];
   mockDb.tables = {
@@ -151,6 +182,7 @@ beforeEach(() => {
       { id: 'u1', full_name: 'テスト 太郎', nickname: 'たろう', business_type: 'individual', role: 'editor' },
       { id: 'u2', full_name: '別の 人', nickname: '', role: 'editor' },
       { id: 'admin1', full_name: '管理 者', nickname: '', role: 'admin' },
+      { id: 'sec1', full_name: '秘書 さん', nickname: '', role: 'secretary' },
     ],
     user_roles: [],
     member_invoice_folders: [{ user_id: 'u1', year: 2026, month: 10, folder_id: 'folder-u1-202610', folder_url: 'https://drive.test/folder' }],
@@ -247,6 +279,82 @@ describe('領収書のアップロード', () => {
     const file = mockDrive.created.find(c => c.mimeType === 'image/jpeg');
     expect(mockDrive.trashed).toEqual([file.id]);
     expect(item('ex1').receipt_file_id).toBeNull();
+  });
+
+  // 確認→（間に提出）→保存: 画面の操作で本当に提出 API が割り込む筋書き
+  const readyToSubmit = () => Object.assign(item('ex1'), { expense_date: '2026-10-25', expense_payee: 'ENEOS', receipt_status: 'missing', receipt_missing_reason: '紛失' });
+  const submitNow = () => json('POST', '/invoice-editor/inv1/submit', { expected_total: 1641, expected_payout: 1641, updated_at: inv().updated_at });
+
+  test('確認（下書き）→ 間に提出 → 保存: 提出済みの請求書の行は書き換えず 409・置いたファイルはゴミ箱へ', async () => {
+    readyToSubmit();
+    let submitted = null;
+    // アップロードの最初の確認（下書き）を通ったあと、Drive に置いているあいだに提出される
+    mockDrive.onCreate = async () => { submitted = await submitNow(); };
+    const r = await upload('ex1', JPEG);
+    expect(submitted.status).toBe(200);
+    expect(inv().status).toBe('submitted');
+    expect(r.status).toBe(409);
+    expect(r.body.code).toBe('CONFLICT');
+    const file = mockDrive.created.find(c => c.mimeType === 'image/jpeg');
+    expect(mockDrive.trashed).toEqual([file.id]);
+    // 提出したときの中身（領収書なし・理由）のまま
+    expect(item('ex1')).toMatchObject({ receipt_status: 'missing', receipt_missing_reason: '紛失', receipt_file_id: null });
+  });
+
+  test('差し替え中に提出: 提出時の写真はそのまま残り（ゴミ箱へ送らない）、新しい写真だけゴミ箱へ', async () => {
+    const first = await upload('ex1', JPEG);
+    expect(first.status).toBe(200);
+    Object.assign(item('ex1'), { expense_date: '2026-10-25', expense_payee: 'ENEOS' });
+    mockDrive.onCreate = async () => { await submitNow(); };
+    const r = await upload('ex1', PDF, { name: 'b.pdf', type: 'application/pdf' });
+    expect(r.status).toBe(409);
+    expect(inv().status).toBe('submitted');
+    expect(item('ex1')).toMatchObject({ receipt_status: 'attached', receipt_file_id: first.body.receipt_file_id, receipt_mime_type: 'image/jpeg' });
+    const second = mockDrive.created.find(c => c.mimeType === 'application/pdf');
+    expect(mockDrive.trashed).toEqual([second.id]);
+    expect(mockDrive.trashed).not.toContain(first.body.receipt_file_id);
+  });
+
+  test('確認と書き込みは DB の 1 つの処理で行う（その直前に提出が確定していれば書かない）', async () => {
+    mockDb.onRpc = () => { inv().status = 'submitted'; };
+    const r = await upload('ex1', JPEG);
+    expect(mockDb.rpcCalls).toBe(1);
+    expect(r.status).toBe(409);
+    expect(item('ex1').receipt_file_id).toBeNull();
+  });
+
+  test('行が消されていたら 409・置いたファイルはゴミ箱へ', async () => {
+    mockDb.onRpc = () => { mockDb.tables.invoice_items = mockDb.tables.invoice_items.filter(i => i.id !== 'ex1'); };
+    const r = await upload('ex1', JPEG);
+    expect(r.status).toBe(409);
+    const file = mockDrive.created.find(c => c.mimeType === 'image/jpeg');
+    expect(mockDrive.trashed).toEqual([file.id]);
+  });
+
+  test('差し替えでゴミ箱へ送るのは、書き込んだ時点で行に入っていたファイル', async () => {
+    const first = await upload('ex1', JPEG);
+    // 画面が読んだあと・書き込む前に、別の画面が写真を付け替えていた
+    mockDb.onRpc = () => { item('ex1').receipt_file_id = 'drv-other'; };
+    const r = await upload('ex1', PDF, { name: 'b.pdf', type: 'application/pdf' });
+    expect(r.status).toBe(200);
+    expect(mockDrive.trashed).toEqual(['drv-other']);
+    expect(first.body.receipt_file_id).not.toBe('drv-other');
+  });
+
+  test('関数がまだ無い環境（migration 未適用）は従来の手順で記録できる・提出済みなら 409', async () => {
+    mockDb.rpcMissing = true;
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const ok = await upload('ex1', JPEG);
+    expect(ok.status).toBe(200);
+    expect(item('ex1')).toMatchObject({ receipt_status: 'attached', receipt_file_id: ok.body.receipt_file_id });
+    const re = await upload('ex1', PDF, { name: 'b.pdf', type: 'application/pdf' });
+    expect(re.status).toBe(200);
+    expect(mockDrive.trashed).toEqual([ok.body.receipt_file_id]);
+    mockDrive.onCreate = () => { inv().status = 'submitted'; };
+    const ng = await upload('ex1', JPEG);
+    expect(ng.status).toBe(409);
+    expect(item('ex1').receipt_file_id).toBe(re.body.receipt_file_id);
+    warn.mockRestore();
   });
 
 });
@@ -383,28 +491,58 @@ describe('保存（PUT）と提出', () => {
 
 });
 
-describe('請求書一覧（GET /invoices）で他人の立替経費の中身を返さない', () => {
-  const PRIVATE = ['expense_payee', 'receipt_missing_reason', 'receipt_file_id', 'receipt_file_name', 'receipt_mime_type'];
+describe('請求書一覧（GET /invoices）: 本人以外の請求書は管理者だけ', () => {
+  const ALL_RECEIPT = ['expense_date', 'expense_payee', 'receipt_status', 'receipt_missing_reason', 'receipt_file_id', 'receipt_file_name', 'receipt_mime_type'];
   beforeEach(() => {
     // 偽 DB は埋め込み（invoice_items(...)）を解決しないので、明細を請求書に直接持たせる
     inv().invoice_items = [{
       id: 'ex1', cost_type: 'expense', creative_id: null, label: 'ガソリン代', unit_price: 1641, expense_date: '2026-10-25',
       expense_payee: 'ENEOS ○○店', receipt_status: 'missing', receipt_missing_reason: '紛失', receipt_file_id: 'drv-9', receipt_file_name: 'a.jpg', receipt_mime_type: 'image/jpeg',
     }];
+    mockDb.tables.invoices.push(
+      { id: 'inv-u2', invoice_number: 'INV-202610-020', issuer_id: 'u2', status: 'draft', year: 2026, month: 10, invoice_type: 'member', invoice_items: [] },
+      { id: 'inv-cl', invoice_number: 'CL-202610-001', issuer_id: 'admin1', status: 'draft', year: 2026, month: 10, invoice_type: 'client', invoice_items: [] },
+    );
   });
-  test('本人・管理者には返す', async () => {
-    for (const user of ['u1', 'admin1']) {
-      const r = await json('GET', '/invoices?year=2026&month=10', undefined, user);
-      expect(r.status).toBe(200);
-      expect(r.body[0].invoice_items[0]).toMatchObject({ expense_payee: 'ENEOS ○○店', receipt_missing_reason: '紛失', receipt_file_id: 'drv-9' });
+  const ids = (r) => r.body.map(i => i.id).sort();
+  const get = (q, user, headers = {}) => fetch(`${base}/invoices${q}`, { headers: { 'x-test-user': user, ...headers } })
+    .then(async r => ({ status: r.status, body: await r.json() }));
+
+  test('本人: 自分の請求書だけ（立替経費の項目もすべて返す）', async () => {
+    const r = await get('?issuer_id=u1', 'u1');
+    expect(r.status).toBe(200);
+    expect(ids(r)).toEqual(['inv1']);
+    expect(r.body[0].invoice_items[0]).toMatchObject({ expense_date: '2026-10-25', expense_payee: 'ENEOS ○○店', receipt_status: 'missing', receipt_missing_reason: '紛失', receipt_file_id: 'drv-9' });
+  });
+
+  test('管理者でない人: issuer_id を省いても・他人の id を指定しても、自分の分だけ（他人・クライアント請求書は出ない）', async () => {
+    expect(ids(await get('', 'u2'))).toEqual(['inv-u2']);
+    expect(ids(await get('?year=2026&month=10', 'u2'))).toEqual(['inv-u2']);
+    const other = await get('?issuer_id=u1', 'u2');
+    expect(other.status).toBe(200);
+    expect(ids(other)).toEqual(['inv-u2']);
+    expect(ids(await get('?issuer_id=admin1', 'u2'))).toEqual(['inv-u2']);
+  });
+
+  test('管理者・秘書: 全員分（クライアント請求書も）と、issuer_id 指定の絞り込み', async () => {
+    for (const user of ['admin1', 'sec1']) {
+      expect(ids(await get('?year=2026&month=10', user))).toEqual(['inv-cl', 'inv-u2', 'inv1']);
+      const r = await get('?issuer_id=u1', user);
+      expect(ids(r)).toEqual(['inv1']);
+      expect(r.body[0].invoice_items[0]).toMatchObject({ expense_payee: 'ENEOS ○○店', receipt_file_id: 'drv-9' });
     }
   });
-  test('他人には支払先・理由・ファイルの項目を外す（日付と状態は残す）', async () => {
-    const r = await json('GET', '/invoices?year=2026&month=10', undefined, 'u2');
-    expect(r.status).toBe(200);
-    const it = r.body[0].invoice_items[0];
-    for (const k of PRIVATE) expect(it).not.toHaveProperty(k);
-    expect(it).toMatchObject({ expense_date: '2026-10-25', receipt_status: 'missing', unit_price: 1641 });
+
+  test('VIEW AS: 最高管理者が一般メンバーを見ているあいだは自分の分だけ／管理者ロールのプレビューは全員分', async () => {
+    expect(ids(await get('?year=2026&month=10', 'admin1', { 'x-view-as': 'editor' }))).toEqual(['inv-cl']);
+    expect(ids(await get('?issuer_id=u1', 'admin1', { 'x-view-as': 'director' }))).toEqual(['inv-cl']);
+    expect(ids(await get('?year=2026&month=10', 'admin1', { 'x-view-as': 'secretary' }))).toEqual(['inv-cl', 'inv-u2', 'inv1']);
+  });
+
+  test('VIEW AS で権限は上がらない（一般メンバーが X-View-As: admin を付けても自分の分だけ）', async () => {
+    const r = await get('?issuer_id=u1', 'u2', { 'x-view-as': 'admin' });
+    expect(ids(r)).toEqual(['inv-u2']);
+    for (const it of r.body.flatMap(i => i.invoice_items || [])) for (const k of ALL_RECEIPT) expect(it).not.toHaveProperty(k);
   });
 });
 

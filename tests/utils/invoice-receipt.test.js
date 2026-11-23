@@ -194,10 +194,11 @@ describe('decideReceiptWrite（古いタブの保存で別の端末の領収書�
 });
 
 describe('stripPrivateReceiptFields（一覧で他人に見せない項目）', () => {
-  test('支払先・理由・ファイルの項目だけ外す', () => {
-    const inv = { id: 'i', invoice_items: [{ id: 'x', label: 'ガソリン代', unit_price: 100, expense_date: '2026-10-25', receipt_status: 'missing', expense_payee: 'A', receipt_missing_reason: 'B', receipt_file_id: 'C', receipt_file_name: 'D', receipt_mime_type: 'E' }] };
+  test('日付・支払先・領収書の状態・理由・ファイルの項目をすべて外す（内容と金額は残す）', () => {
+    const inv = { id: 'i', invoice_items: [{ id: 'x', label: 'ガソリン代', unit_price: 100, expense_date: '2026-10-25', receipt_status: 'missing', expense_payee: 'A', receipt_missing_reason: 'B', receipt_file_id: 'C', receipt_file_name: 'D', receipt_mime_type: 'E', receipt_uploaded_at: 'F' }] };
     R.stripPrivateReceiptFields(inv);
-    expect(inv.invoice_items[0]).toEqual({ id: 'x', label: 'ガソリン代', unit_price: 100, expense_date: '2026-10-25', receipt_status: 'missing' });
+    expect(inv.invoice_items[0]).toEqual({ id: 'x', label: 'ガソリン代', unit_price: 100 });
+    expect(R.RECEIPT_PRIVATE_FIELDS).toEqual(R.RECEIPT_COLUMNS);
     expect(R.stripPrivateReceiptFields({ id: 'no-items' })).toEqual({ id: 'no-items' });
   });
 });
