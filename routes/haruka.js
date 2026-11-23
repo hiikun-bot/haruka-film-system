@@ -16811,14 +16811,15 @@ router.get('/invoices', async (req, res) => {
   res.json(rows);
 });
 
-// 一覧で本人以外の請求書を返してよいか。実ユーザーが admin/秘書（isStaffRequester＝GET /invoices/:id と同じ）で、
-// かつ実効ロール（VIEW AS 中はプレビューのロール）も admin/秘書のときだけ。
+// 一覧（と月タブの件数）で本人以外の請求書を返してよいか。画面の管理者一覧と同じ権限 invoice.all_view
+// （権限設定で変えられる）を、実ユーザーと実効ロール（VIEW AS 中はプレビューのロール）の両方が持つときだけ。
 //   - VIEW AS で権限は上がらない（実ユーザーの判定を必ず通す）
 //   - VIEW AS で一般メンバーを見ているあいだは、そのロールと同じく自分の分だけになる（ADR 015 B「絞り込みも実効ロールで」）
 async function canListOthersInvoices(req) {
-  if (!(await isStaffRequester(req))) return false;
+  const realCodes = await getRequesterRoleCodes(req);
+  if (!(await roleCodesHavePermission(realCodes, 'invoice.all_view'))) return false;
   const codes = await getEffectiveRoleCodes(req);
-  return codes.includes('admin') || codes.includes('secretary');
+  return roleCodesHavePermission(codes, 'invoice.all_view');
 }
 
 // 一覧・詳細で立替経費の行に付ける列（領収書は「あり／なし・理由」が分かれば足りる。ファイルは GET .../receipt で見る）
@@ -16827,8 +16828,11 @@ const INVOICE_ITEM_RECEIPT_LIST_COLS = 'expense_date,expense_payee,receipt_statu
 // 請求書の存在する年月一覧（管理者一覧の月タブ構築用・軽量。明細ネストを含む全件fetchを避ける）
 // :id ルートより前に定義必須
 router.get('/invoices/months', async (req, res) => {
+  if (!req.user || !req.user.id) return res.status(401).json({ error: 'ログインが必要です' });
   const { status } = req.query;
   let q = supabase.from('invoices').select('year, month, status');
+  // 一覧と同じ線引き: 請求書一覧の閲覧権限がない人は、自分の請求書の件数だけ
+  if (!(await canListOthersInvoices(req))) q = q.eq('issuer_id', req.user.id);
   if (status) q = q.eq('status', status);
   const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
@@ -19942,7 +19946,6 @@ function ieMarkReceiptCols(ok) { ieReceiptCols.ok = !!ok; ieReceiptCols.checkedA
 /** 直近の読み出しで領収書の列があったか（提出時の必須チェック・画面の入力欄の出し分けに使う） */
 function ieReceiptSupported() { return ieReceiptCols.ok === true; }
 
-/** 立替経費の行のうち Drive に置いた領収書ファイルをゴミ箱へ（完全削除しない・失敗しても本体は止めない） */
 // 関数がまだ本番 DB に無い（migration 未適用 / スキーマキャッシュ未更新）ことによるエラーか
 function ieIsMissingRpcError(err) {
   if (!err) return false;
@@ -19988,6 +19991,7 @@ async function ieAttachReceipt({ invoiceId, itemId, fileId, fileName, mime }) {
   return { result: 'ok', prev_file_id: prevRow.receipt_file_id || null, uploaded_at: uploadedAt };
 }
 
+/** 立替経費の行のうち Drive に置いた領収書ファイルをゴミ箱へ（完全削除しない・失敗しても本体は止めない） */
 async function ieTrashReceiptFiles(fileIds, where) {
   const ids = [...new Set((fileIds || []).filter(Boolean))];
   if (!ids.length) return 0;
@@ -20996,9 +21000,21 @@ router.post('/invoice-editor/:id/items/:itemId/receipt', requireAuth, receiptUpl
     // 「請求書がまだ下書き／差し戻し中か」の確認と行への書き込みを、DB の 1 つの処理で行う（ieAttachReceipt）。
     // Drive に置いているあいだ・確認と保存のあいだに提出された請求書には付けない（今置いたファイルはゴミ箱へ戻して 409）
     const att = await ieAttachReceipt({ invoiceId: inv.id, itemId: item.id, fileId, fileName, mime });
-    if (att.error || att.result !== 'ok') {
-      await ieTrashReceiptFiles([fileId], `upload-${att.error ? 'error' : att.result}`);
-      if (att.error) return res.status(500).json({ error: att.error.message });
+    if (att.error) {
+      // 通信の切断・タイムアウトでは、DB 側で記録が済んでいることがある。行が今置いたファイルを指していたら
+      // ゴミ箱へ送らない（送ると「添付あり」なのに見られない行になる）。確かめられないときも残す側に倒す
+      let recorded = true;
+      try {
+        const { data: chk, error: chkErr } = await supabase.from('invoice_items').select('receipt_file_id')
+          .eq('id', item.id).eq('invoice_id', inv.id).maybeSingle();
+        if (!chkErr) recorded = !!chk && chk.receipt_file_id === fileId;
+      } catch (_) { /* 確かめられない＝残す */ }
+      if (!recorded) await ieTrashReceiptFiles([fileId], 'upload-error');
+      else console.warn(`[invoice-receipt] 記録エラーだが行が ${fileId} を指している（または確認できない）ためゴミ箱へ送らない: ${att.error.message}`);
+      return res.status(500).json({ error: att.error.message });
+    }
+    if (att.result !== 'ok') {
+      await ieTrashReceiptFiles([fileId], `upload-${att.result}`);
       const msg = att.result === 'not_editable' ? 'この請求書は別の画面で提出されました。再読み込みしてください'
         : att.result === 'invoice_not_found' ? '請求書が見つかりません（削除された可能性があります）'
           : 'この行は別の画面で消されています。再読み込みしてください';

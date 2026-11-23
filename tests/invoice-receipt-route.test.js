@@ -71,6 +71,7 @@ async function mockRpc(name, args) {
   if (name !== 'attach_invoice_item_receipt') return { data: null, error: null };
   mockDb.rpcCalls = (mockDb.rpcCalls || 0) + 1;
   if (mockDb.rpcMissing) return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.attach_invoice_item_receipt' } };
+  if (mockDb.rpcFailBefore) return { data: null, error: { message: 'connection refused' } };
   if (mockDb.onRpc) mockDb.onRpc(args);
   const inv = (mockDb.tables.invoices || []).find(r => r.id === args.p_invoice_id);
   if (!inv) return { data: { result: 'invoice_not_found' }, error: null };
@@ -83,6 +84,8 @@ async function mockRpc(name, args) {
     receipt_status: 'attached', receipt_missing_reason: null, receipt_file_id: args.p_file_id,
     receipt_file_name: args.p_file_name, receipt_mime_type: args.p_mime_type, receipt_uploaded_at: uploadedAt,
   });
+  // DB では記録が済んだが、応答が届かなかった（タイムアウト・切断）
+  if (mockDb.rpcErrorAfterWrite) return { data: null, error: { message: 'fetch failed' } };
   return { data: { result: 'ok', prev_file_id: prev, uploaded_at: uploadedAt }, error: null };
 }
 jest.mock('../supabase', () => ({ from: (t) => mockBuilder(t), rpc: (n, a) => mockRpc(n, a), storage: { from: () => ({}) } }));
@@ -173,6 +176,7 @@ beforeEach(() => {
   mockDb.noRegNo = false;
   mockDb.onRpc = null;
   mockDb.rpcMissing = false;
+  mockDb.rpcErrorAfterWrite = false; mockDb.rpcFailBefore = false;
   mockDb.rpcCalls = 0;
   mockDrive.onCreate = null;
   mockDrive.files = new Map(); mockDrive.created = []; mockDrive.trashed = [];
@@ -185,6 +189,11 @@ beforeEach(() => {
       { id: 'sec1', full_name: '秘書 さん', nickname: '', role: 'secretary' },
     ],
     user_roles: [],
+    // 本番と同じ: 請求書一覧の閲覧（invoice.all_view）は admin（常に許可）と秘書だけ
+    role_permissions: [
+      { role: 'secretary', permission_key: 'invoice.all_view', allowed: true, role_id: null, roles: null },
+      { role: 'editor', permission_key: 'invoice.all_view', allowed: false, role_id: null, roles: null },
+    ],
     member_invoice_folders: [{ user_id: 'u1', year: 2026, month: 10, folder_id: 'folder-u1-202610', folder_url: 'https://drive.test/folder' }],
     invoices: [{
       id: 'inv1', invoice_number: 'INV-202610-013', issuer_id: 'u1', status: 'draft', year: 2026, month: 10, notes: null,
@@ -329,6 +338,24 @@ describe('領収書のアップロード', () => {
     expect(r.status).toBe(409);
     const file = mockDrive.created.find(c => c.mimeType === 'image/jpeg');
     expect(mockDrive.trashed).toEqual([file.id]);
+  });
+
+  test('記録の応答がエラーでも、行が今置いたファイルを指していればゴミ箱へ送らない／指していなければ送る', async () => {
+    mockDb.rpcErrorAfterWrite = true;
+    const r = await upload('ex1', JPEG);
+    expect(r.status).toBe(500);
+    const file = mockDrive.created.find(c => c.mimeType === 'image/jpeg');
+    expect(item('ex1').receipt_file_id).toBe(file.id);
+    expect(mockDrive.trashed).toEqual([]);
+    // 記録される前に失敗した場合（行は変わっていない）はゴミ箱へ戻す
+    mockDb.rpcErrorAfterWrite = false;
+    mockDb.rpcFailBefore = true;
+    const r2 = await upload('ex1', PDF, { name: 'b.pdf', type: 'application/pdf' });
+    expect(r2.status).toBe(500);
+    const file2 = mockDrive.created.find(c => c.mimeType === 'application/pdf');
+    expect(item('ex1').receipt_file_id).toBe(file.id);
+    expect(mockDrive.trashed).toEqual([file2.id]);
+    mockDb.rpcFailBefore = false;
   });
 
   test('差し替えでゴミ箱へ送るのは、書き込んだ時点で行に入っていたファイル', async () => {
@@ -543,6 +570,24 @@ describe('請求書一覧（GET /invoices）: 本人以外の請求書は管理�
     const r = await get('?issuer_id=u1', 'u2', { 'x-view-as': 'admin' });
     expect(ids(r)).toEqual(['inv-u2']);
     for (const it of r.body.flatMap(i => i.invoice_items || [])) for (const k of ALL_RECEIPT) expect(it).not.toHaveProperty(k);
+  });
+
+  test('権限設定に従う: invoice.all_view を付けたロールは全員分、外した秘書は自分の分だけ', async () => {
+    mockDb.tables.role_permissions.push({ role: 'editor', permission_key: 'invoice.all_view', allowed: true, role_id: null, roles: null });
+    mockDb.tables.role_permissions = mockDb.tables.role_permissions.filter(p => !(p.role === 'editor' && p.allowed === false));
+    await require('../utils/roles').loadPermissionsByCode(true);
+    expect(ids(await get('?year=2026&month=10', 'u2'))).toEqual(['inv-cl', 'inv-u2', 'inv1']);
+    mockDb.tables.role_permissions = [{ role: 'secretary', permission_key: 'invoice.all_view', allowed: false, role_id: null, roles: null }];
+    await require('../utils/roles').loadPermissionsByCode(true);
+    expect(ids(await get('?year=2026&month=10', 'sec1'))).toEqual([]);
+  });
+
+  test('月タブの件数（GET /invoices/months）: 管理者でない人は自分の請求書の件数だけ', async () => {
+    await require('../utils/roles').loadPermissionsByCode(true);
+    const months = (user) => fetch(`${base}/invoices/months`, { headers: { 'x-test-user': user } }).then(r => r.json());
+    expect((await months('u2')).map(m => m.count)).toEqual([1]);
+    expect((await months('admin1')).map(m => m.count)).toEqual([3]);
+    expect((await months('sec1')).map(m => m.count)).toEqual([3]);
   });
 });
 
