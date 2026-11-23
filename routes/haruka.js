@@ -30,6 +30,7 @@ const {
 const { ttlCache, invalidateByKey, invalidateByPrefix } = require('../utils/ttl-cache');
 const { avatarVer, avatarRefUrl, replaceAvatarDataUrls, getAvatarRefMap, updateAvatarRefCacheEntry, applyAvatarRef } = require('../utils/avatar-ref');
 const { validateGoogleAccountEmail } = require('../utils/google-email');
+const { onlyMemberInvoices } = require('../utils/invoice-type');
 
 // マスタ系 GET エンドポイント共通の TTL。
 // utils/roles.js（ROLES_TTL_MS = 60s）と同じ「短期キャッシュ + 書き込み時 invalidate」
@@ -7156,7 +7157,7 @@ router.get('/analytics/filename-export', requireAuth, requirePermission('analyti
 // 月次売上・粗利ダッシュボード（ADR 002+005 per-line 公式）
 //
 // 売上(確定):   invoice_type='client' の当月 invoices.total_amount 合計
-// 原価(確定):   スタッフ請求書（invoice_type が NULL）の当月 total_amount 合計
+// 原価(確定):   スタッフ請求書（invoice_type が 'client' 以外＝'member' か NULL）の当月 total_amount 合計
 // 売上(見込み): 当月納期で未納品 creatives → line_id → lines.client_unit_price × planned_count
 // 原価(見込み): 同 line の line_costs を pricing_type に応じて合算
 //
@@ -7197,12 +7198,12 @@ async function aggregateMonthlyRevenue({ year, month }) {
     if (inv.recipient_client_id) ensureClient(inv.recipient_client_id, clientNameById.get(inv.recipient_client_id)).confirmed_revenue += inv.total_amount || 0;
   }
 
-  // 確定原価: スタッフ請求書（invoice_type IS NULL）当月分
-  const { data: staffNullInvoices } = await supabase
+  // 確定原価: スタッフ請求書（invoice_type が 'client' 以外＝'member' か NULL・utils/invoice-type.js）当月分
+  const { data: staffMemberInvoices } = await onlyMemberInvoices(supabase
     .from('invoices')
-    .select('id, total_amount, project_id')
-    .is('invoice_type', null).eq('year', year).eq('month', month);
-  const staffInvoicesAll = staffNullInvoices || [];
+    .select('id, total_amount, project_id'))
+    .eq('year', year).eq('month', month);
+  const staffInvoicesAll = staffMemberInvoices || [];
 
   // project_id → client_id
   const projIds = Array.from(new Set([

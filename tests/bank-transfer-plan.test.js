@@ -62,6 +62,27 @@ describe('planTransferItems', () => {
     expect(r.items[0].amount_source).toBe('pdf');
   });
 
+  // 本番のメンバー請求書は invoice_type='member'（NULL は古い行）。どちらも請求書として数える（ADR 054 追補 2026-11-22）
+  test.each([['member'], [null], [undefined]])('invoice_type=%p はメンバー請求書として数える', (type) => {
+    const r = plan.planTransferItems({ records: [record()], users: [user()], invoices: [invoice({ invoice_type: type })], year: 2026, month: 10, now: NOW });
+    expect(r.items[0].amount_source).toBe('invoice');
+    expect(r.items[0].amount).toBe(99790);
+    expect(r.items[0].gross_amount).toBe(110000);
+    expect(r.items[0].tax_amount).toBe(10000);
+    expect(r.items[0].withholding_amount).toBe(10210);
+    expect(r.warnings).toEqual([]);
+  });
+
+  test("invoice_type='client' はメンバー請求書と同月でも数えない", () => {
+    const r = plan.planTransferItems({
+      records: [record()], users: [user()],
+      invoices: [invoice({ invoice_type: 'member' }), invoice({ id: 'c1', invoice_number: 'CL-2610-01', invoice_type: 'client', payout_amount: 500000, total_amount: 550000 })],
+      year: 2026, month: 10, now: NOW,
+    });
+    expect(r.items[0].amount).toBe(99790);
+    expect(r.items[0].invoice_numbers).toEqual(['INV-2610-01']);
+  });
+
   test('同月に複数の請求書があれば合算して警告', () => {
     const r = plan.planTransferItems({ records: [record()], users: [user()], invoices: [invoice(), invoice({ id: 'i2', invoice_number: 'INV-2610-02', payout_amount: 10000, total_amount: 11000, withholding_amount: 1000, tax_amount: 1000 })], year: 2026, month: 10, now: NOW });
     expect(r.items[0].amount).toBe(109790);

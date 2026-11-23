@@ -13,7 +13,7 @@
 //        支払日 = paid_at。金額 = ledger_snapshot（Stage A2・支払時点で凍結）→ 無ければ現在の請求書（注記付き）
 //        paid_via / ledger_snapshot 列が無い環境では列を減らしながら再問い合わせ
 //   請求書の選別は Stage B の loadLedgerSnapshotForRecord と同じ:
-//        invoices.issuer_id = user_id ／ 同 year・month ／ invoice_type IS NULL ／ status IN (submitted, approved)
+//        invoices.issuer_id = user_id ／ 同 year・month ／ メンバー請求書（invoice_type が 'client' 以外＝'member' か NULL・utils/invoice-type.js）／ status IN (submitted, approved)
 //
 // 純粋な計算（行の組み立て・差額行・集計・シート行）は utils/withholding-ledger.js。
 // routes/withholding.js（API）と workers/withholding-monthly-reminder.js（月初リマインド）が共用する。
@@ -22,6 +22,7 @@
 const supabase = require('../supabase');
 const ledger = require('./withholding-ledger');
 const { EXPENSE_ITEMS_EMBED, withExpenseItems, applyExpenseAmounts } = require('./invoice-expense-source');
+const { onlyMemberInvoices } = require('./invoice-type');
 
 const INVOICE_STATUSES = ['submitted', 'approved'];
 const INVOICE_COLUMNS = 'id, issuer_id, year, month, status, tax_mode, invoice_number, invoice_type, subtotal_amount, tax_amount, withholding_amount, payout_amount, total_amount, withholding_enabled, submitted_at';
@@ -131,11 +132,11 @@ async function loadInvoices({ userIds, years, invoiceIds }) {
   };
   if (userIds.length && years.length) {
     // 立替経費（実費）の明細を埋め込んで一緒に取る（差引からの逆算にしない＝台帳の整合チェックを保つ・追加の往復なし）
-    const { data, error } = await withExpenseItems(supabase.from('invoices')
+    // メンバー請求書のみ（'client' はクライアント宛て。'member' と NULL の両方を拾う）
+    const { data, error } = await withExpenseItems(onlyMemberInvoices(supabase.from('invoices')
       .select(`${INVOICE_COLUMNS}, ${EXPENSE_ITEMS_EMBED}`)
       .in('issuer_id', userIds)
-      .in('year', years)
-      .is('invoice_type', null)              // メンバー請求書のみ（'client' はクライアント宛て）
+      .in('year', years))
       .in('status', INVOICE_STATUSES)
       .limit(10000));
     if (error) throw new Error(`invoices 取得失敗: ${error.message}`);

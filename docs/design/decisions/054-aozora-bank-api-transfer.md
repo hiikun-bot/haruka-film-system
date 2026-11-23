@@ -163,6 +163,25 @@ RLS は全テーブル ENABLE（ADR 048・service_role のみアクセス）。
   ※ 納期の特例（半年ごと）は給与・税理士報酬等が対象で、デザイン・制作報酬は対象外の見込み。**税理士と確認してから運用を決める**
 - 源泉の対象かどうか（個人／法人・業務の種類）は既存の `invoices.withholding_enabled`（ADR 046・`business_type` 由来）に従う。判定の変更は本 ADR の範囲外
 
+#### 追補（2026-11-22）: 「メンバー請求書」の選別条件の訂正
+
+§1-5（振込額の決定）と本節（台帳のデータ源）で `invoices` に結合する「請求書」は **メンバー請求書** を指す。
+実装（Stage B・D）はこれを `invoices.invoice_type IS NULL` で選別していたが、**誤り**だった。
+
+- 本番の `invoices` は、メンバー請求書が全件 `invoice_type = 'member'`、クライアント宛てが `'client'`。NULL の行は無い
+- そのため請求書が 1 件も結合されず、(a) 総合振込の明細は「請求書なし（PDF 抽出額を使用）」になり税込・消費税・源泉が空、
+  (b) 支払時に凍結する `ledger_snapshot` も請求書なしの内容、(c) 源泉徴収台帳は源泉額・税抜額が出ない、という状態だった
+- **訂正後の定義**: メンバー請求書 ＝ `invoice_type` が NULL、または `'client'` 以外。他の箇所（ADR 047 の PDF 保存など）が元から使っている
+  `invoice_type !== 'client'` にそろえる
+- 判定は `utils/invoice-type.js` の 1 か所に置く: 行の判定 `isMemberInvoice(inv)`、問い合わせの絞り込み `onlyMemberInvoices(query)`
+  （PostgREST の `or=(invoice_type.is.null,invoice_type.neq.client)`）。`.is('invoice_type', null)` 単独は `'member'` を拾えず、
+  `.neq('invoice_type', 'client')` 単独は NULL の行を落とすので、どちらも単独では使わない
+- DB は変更しない（migration なし・既存データの書き換えなし）。同じ条件だった月次売上・粗利の「確定原価」（`aggregateMonthlyRevenue`）も同時に直す
+- **訂正前に消し込んだ支払の `ledger_snapshot` は「請求書なし」の内容**（`invoice_id`・`subtotal_amount`・`payout_amount` が空）で保存されている。
+  台帳はこの形のスナップショットを凍結値として扱わず（`invoiceFromSnapshot` が null を返す）、現在の請求書から組み立てて
+  「スナップショット無し」の注記を付けるので、訂正後は過去分にも源泉額が出る。ただし凍結はされていない（請求書を後から直すと台帳も変わる）。
+  凍結し直したいときは、支払を取り消して再消し込みする
+
 ### 6. 画面（Stage C・振込管理 `#page-payout`）
 
 ```

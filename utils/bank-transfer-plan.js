@@ -4,7 +4,7 @@
 // テスト: tests/bank-transfer-plan.test.js
 //
 // 金額の決め方（§1-5）:
-//   同 issuer_id/year/month の請求書（invoice_type IS NULL・status が submitted/approved）があれば
+//   同 issuer_id/year/month のメンバー請求書（invoice_type が 'client' 以外＝'member' か NULL・status が submitted/approved）があれば
 //     exclusive … payout_amount（差引お振込額。無ければ total_amount − withholding_amount）
 //     inclusive … total_amount（税込）
 //   複数あれば合算（invoice_id は先頭・警告つき）。無ければ payout_records.invoice_amount を使い
@@ -18,6 +18,7 @@
 const crypto = require('crypto');
 const { buildBeneficiary, maskAccountNumber } = require('./zengin-format');
 const { expenseOfInvoice } = require('./invoice-editor');
+const { isMemberInvoice } = require('./invoice-type');
 
 const BANK_INFO_GUARD_DAYS = 7;
 const BILLED_INVOICE_STATUSES = ['submitted', 'approved'];
@@ -88,7 +89,7 @@ function planTransferItems({ records, notFoundIds = [], users, invoices, blocked
   const invoicesByUser = new Map();
   for (const inv of invoices || []) {
     if (!inv || !inv.issuer_id) continue;
-    if (inv.invoice_type != null) continue;                         // クライアント請求書は対象外
+    if (!isMemberInvoice(inv)) continue;                            // クライアント請求書は対象外（'member' と NULL はメンバー請求書）
     if (!BILLED_INVOICE_STATUSES.includes(String(inv.status))) continue;
     if (Number(inv.year) !== Number(year) || Number(inv.month) !== Number(month)) continue;
     if (!invoicesByUser.has(inv.issuer_id)) invoicesByUser.set(inv.issuer_id, []);
