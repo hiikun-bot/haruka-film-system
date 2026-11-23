@@ -31,6 +31,24 @@
   const REASON_MAX = 500;
   // 同じ請求書への「提出後に直したい」申請を受け付ける間隔
   const UNLOCK_REQUEST_INTERVAL_MS = 10 * 60 * 1000;
+  // 管理者へ送れなかったときに、同じ請求書の送り直しを受け付けない時間（失敗の連打で外部 API を叩き続けない）
+  const UNLOCK_REQUEST_FAILURE_RETRY_MS = 60 * 1000;
+
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // 請求書 id（UUID）として使ってよい値か。リンクの ?invoice= / &invoice_unlock= を API に渡す前に確かめる
+  function isInvoiceId(v) {
+    return typeof v === 'string' && UUID_RE.test(v);
+  }
+
+  // Chatwork 記法（[info] [To:123] [toall] など）として解釈されないよう、角かっこを全角にする。
+  // 理由・名前など、人が入力した文字を通知文へ入れる前に必ず通す。
+  function escapeChatwork(v) {
+    return String(v == null ? '' : v).replace(/\[/g, '［').replace(/\]/g, '］');
+  }
+  // Slack の mrkdwn で特別な意味を持つ & < > を逃がす（<!channel> や <url|文字> を作らせない）
+  function escapeSlack(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
 
   function normalizeKind(kind) {
     return String(kind || '').trim() === KIND_UNLOCK ? KIND_UNLOCK : KIND_REJECT;
@@ -40,8 +58,11 @@
   function validateReason(raw, opts) {
     const max = (opts && opts.max) || REASON_MAX;
     const label = (opts && opts.label) || '理由';
+    if (raw != null && typeof raw !== 'string') return { error: `${label}は文字で入力してください` };
     const value = String(raw == null ? '' : raw).replace(/\r\n?/g, '\n').trim();
     if (!value) return { error: `${label}を入力してください` };
+    // 固定文言「修正のためロック解除:」だけ（本文なし）は理由として認めない
+    if (!value.replace(UNLOCK_PREFIX_RE, '').trim()) return { error: `${label}を入力してください` };
     if (value.length > max) return { error: `${label}は${max}文字以内で入力してください` };
     return { value };
   }
@@ -133,24 +154,32 @@
     const kind = normalizeKind(p.kind);
     const month = invoiceMonthLabel(p.invoice);
     const what = `${month ? month + 'の' : ''}請求書`;
-    const number = p.invoice && p.invoice.invoice_number ? `（${p.invoice.invoice_number}）` : '';
+    const numberRaw = p.invoice && p.invoice.invoice_number ? `（${p.invoice.invoice_number}）` : '';
     const reason = String(p.reason || '').trim();
     const title = kind === KIND_UNLOCK
       ? `🔓 ${what}を修正できるようにしました`
       : `↩︎ ${what}が差し戻されました`;
-    const lead = kind === KIND_UNLOCK
-      ? `${what}${number}のロックを外しました。いまは修正できる状態です。`
-      : `${what}${number}に確認してほしい点があり、差し戻しました。`;
-    const reasonLine = `${kind === KIND_UNLOCK ? 'メモ' : '理由'}: ${reason || '（記載なし）'}`;
+    // 人が入力した文字（理由）と請求書番号は、送り先ごとの記法として解釈されないように逃がす
+    const build = (escFn) => {
+      const number = escFn(numberRaw);
+      const lead = kind === KIND_UNLOCK
+        ? `${what}${number}のロックを外しました。いまは修正できる状態です。`
+        : `${what}${number}に確認してほしい点があり、差し戻しました。`;
+      const reasonLine = `${kind === KIND_UNLOCK ? 'メモ' : '理由'}: ${escFn(reason) || '（記載なし）'}`;
+      return { lead, reasonLine };
+    };
     const howTo = '請求書（マイページ）から開いて直し、もう一度提出してください。';
     const caution = '※ もう一度提出するまで、この請求書は提出済みの扱いになりません。';
-    const lines = [lead, reasonLine, howTo, caution];
+    const plain = build(v => v);
+    const cw = build(escapeChatwork);
+    const sl = build(escapeSlack);
     const urlLine = p.url ? `開く: ${p.url}` : '';
     return {
       title,
-      body: [reasonLine, howTo].join('\n'),
-      chatwork: `[info][title]${title}[/title]${lines.concat(urlLine ? [urlLine] : []).join('\n')}[/info]`,
-      slack: [`*${title}*`].concat(lines, p.url ? [`<${p.url}|請求書を開く>`] : []).join('\n'),
+      // ベル（画面側でエスケープして表示する）
+      body: [plain.reasonLine, howTo].join('\n'),
+      chatwork: `[info][title]${title}[/title]${[cw.lead, cw.reasonLine, howTo, caution].concat(urlLine ? [urlLine] : []).join('\n')}[/info]`,
+      slack: [`*${title}*`, sl.lead, sl.reasonLine, howTo, caution].concat(p.url ? [`<${p.url}|請求書を開く>`] : []).join('\n'),
     };
   }
 
@@ -158,12 +187,12 @@
   function buildUnlockRequestMessage(params) {
     const p = params || {};
     const month = invoiceMonthLabel(p.invoice);
-    const number = p.invoice && p.invoice.invoice_number ? `（${p.invoice.invoice_number}）` : '';
+    const number = p.invoice && p.invoice.invoice_number ? `（${escapeChatwork(p.invoice.invoice_number)}）` : '';
     const title = '✏️ 請求書を提出後に直したい、と申請が届きました';
     const lines = [
-      `申請した人: ${String(p.requesterName || '').trim() || '不明'}さん`,
+      `申請した人: ${escapeChatwork(String(p.requesterName || '').trim()) || '不明'}さん`,
       `請求書: ${month || '（年月不明）'}${number}`,
-      `理由: ${String(p.reason || '').trim() || '（記載なし）'}`,
+      `理由: ${escapeChatwork(String(p.reason || '').trim()) || '（記載なし）'}`,
       '請求書を開いて「🔓 修正のためロックを外す」を押すと、本人が直せるようになります（本人へ自動で通知されます）。',
     ];
     if (p.url) lines.push(`開く: ${p.url}`);
@@ -174,31 +203,34 @@
   // プロセス内の Map で持つ（DB に申請の状態を持たない方針）。再起動で消えるが、目的は連打の抑止なので足りる。
   function createRequestThrottle(intervalMs) {
     const interval = Number(intervalMs) > 0 ? Number(intervalMs) : UNLOCK_REQUEST_INTERVAL_MS;
-    const last = new Map();
+    const until = new Map(); // key → この時刻（ms）までは受け付けない
+    const nowOf = (now) => (Number.isFinite(now) ? now : Date.now());
     return {
       // 受け付けられるなら { ok:true }、まだなら { ok:false, retryAfterMs, retryAfterMinutes }
       check(key, now) {
-        const t = Number.isFinite(now) ? now : Date.now();
-        const prev = last.get(String(key));
-        if (prev != null && t - prev < interval) {
-          const retryAfterMs = interval - (t - prev);
+        const t = nowOf(now);
+        const u = until.get(String(key));
+        if (u != null && t < u) {
+          const retryAfterMs = u - t;
           return { ok: false, retryAfterMs, retryAfterMinutes: Math.max(1, Math.ceil(retryAfterMs / 60000)) };
         }
         return { ok: true };
       },
-      mark(key, now) {
-        const t = Number.isFinite(now) ? now : Date.now();
-        // 古い記録を掃除（Map が増え続けないように）
-        for (const [k, v] of last) { if (t - v >= interval) last.delete(k); }
-        last.set(String(key), t);
+      // holdMs を渡すとその時間だけ止める（送信に失敗したときの短い待ち時間に使う）。省略時は通常の間隔
+      mark(key, now, holdMs) {
+        const t = nowOf(now);
+        // 期限切れの記録を掃除（Map が増え続けないように）
+        for (const [k, v] of until) { if (v <= t) until.delete(k); }
+        until.set(String(key), t + (Number(holdMs) > 0 ? Number(holdMs) : interval));
       },
-      clear(key) { last.delete(String(key)); },
-      size() { return last.size; },
+      clear(key) { until.delete(String(key)); },
+      size() { return until.size; },
     };
   }
 
   return {
-    KIND_UNLOCK, KIND_REJECT, UNLOCK_PREFIX, REASON_MAX, UNLOCK_REQUEST_INTERVAL_MS,
+    KIND_UNLOCK, KIND_REJECT, UNLOCK_PREFIX, REASON_MAX, UNLOCK_REQUEST_INTERVAL_MS, UNLOCK_REQUEST_FAILURE_RETRY_MS,
+    isInvoiceId, escapeChatwork, escapeSlack,
     normalizeKind, validateReason, buildRejectionReason, parseRejectionReason, isUnlockReason,
     isMemberInvoice, invoiceMonthLabel, returnedDisplay,
     unlockRequestError, canReturnToMember,

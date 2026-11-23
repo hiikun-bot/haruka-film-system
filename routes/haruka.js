@@ -20779,18 +20779,28 @@ router.post('/invoices/:id/submit', requireAuth, async (req, res) => {
 
 // 請求書承認（submitted → approved）管理者のみ
 router.post('/invoices/:id/approve', requireAuth, requireLevel('admin'), async (req, res) => {
+  // 提出済みのものだけ承認する（条件付き更新）。別の画面でロック解除・差し戻しされた請求書を、
+  // 古い一覧の「承認」で承認済みに上書きしてしまわないように（ADR 046 追補 2026-11-22）
   const { data, error } = await supabase
     .from('invoices')
     .update({ status: 'approved', approved_at: new Date().toISOString(), approved_by: req.user?.id || null, updated_at: new Date().toISOString() })
     .eq('id', req.params.id)
-    .select().single();
+    .eq('status', 'submitted')
+    .select().maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) {
+    const { data: cur } = await supabase.from('invoices').select('id').eq('id', req.params.id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: '請求書が見つかりません' });
+    return res.status(409).json({ error: '提出済みの請求書だけ承認できます。画面を更新してください', code: 'NOT_SUBMITTED' });
+  }
   res.json(data);
 });
 
 // ==================== 提出後に直すためのロック解除（ADR 046 追補 2026-11-22） ====================
 // 文面・種別の判定・理由の検証は utils/invoice-unlock.js（純関数・画面と共有）。DB 列は足さない。
 const INV_UNLOCK = require('../utils/invoice-unlock');
+// 振込済み・総合振込を依頼中の月の請求書は戻さない（判定は utils/invoice-payout-lock.js）
+const { loadInvoicePayoutLock } = require('../utils/invoice-payout-lock');
 const invoiceUnlockRequestThrottle = INV_UNLOCK.createRequestThrottle();
 
 // 通知のリンク先。本人用は請求書を開く、管理者用はロック解除の確認を開く（haruka.html の applyDeepLinkOnLoad）
@@ -20839,6 +20849,18 @@ router.post('/invoices/:id/reject', requireAuth, requireLevel('admin'), async (r
     label: kind === INV_UNLOCK.KIND_UNLOCK ? 'メモ（直す内容）' : '差し戻し理由',
   });
   if (rv.error) return res.status(400).json({ error: rv.error });
+  // 振込済み・総合振込を依頼中の月のメンバー請求書は戻さない（払った額と請求書がずれるため）
+  const { data: target, error: tErr } = await supabase
+    .from('invoices').select('id, issuer_id, year, month, invoice_type, status')
+    .eq('id', req.params.id).maybeSingle();
+  if (tErr) return res.status(500).json({ error: tErr.message });
+  if (!target) return res.status(404).json({ error: '請求書が見つかりません' });
+  try {
+    const lock = await loadInvoicePayoutLock(supabase, target);
+    if (lock) return res.status(409).json({ error: lock.error, code: `PAYOUT_${lock.code.toUpperCase()}` });
+  } catch (e) {
+    return res.status(500).json({ error: `振込の状態を確認できませんでした（${e.message}）` });
+  }
   const nowIso = new Date().toISOString();
   // 提出済みのものだけ戻す（条件付き更新: 二重押し・すでに戻した請求書への再通知を防ぐ）
   const { data, error } = await supabase
@@ -20890,10 +20912,13 @@ router.post('/invoices/:id/unlock-request', requireAuth, async (req, res) => {
     // 本人判定は実ユーザー（req.user.id）。VIEW AS 中でも他人の請求書は申請できない
     const ng = INV_UNLOCK.unlockRequestError(inv, req.user?.id);
     if (ng) return res.status(ng.status).json({ error: ng.error });
+    // 振込済み・総合振込を依頼中の月は戻せないので、申請も受け付けない（管理者に届いても外せない）
+    const lock = await loadInvoicePayoutLock(supabase, inv);
+    if (lock) return res.status(409).json({ error: lock.error, code: `PAYOUT_${lock.code.toUpperCase()}` });
     const th = invoiceUnlockRequestThrottle.check(inv.id);
     if (!th.ok) {
       return res.status(429).json({
-        error: `すでに申請を送っています。管理者の対応をお待ちください（あと約${th.retryAfterMinutes}分は送り直せません）`,
+        error: `この請求書の申請は続けて送れません（あと約${th.retryAfterMinutes}分）。すでに申請が届いている場合は、管理者の対応をお待ちください`,
         code: 'UNLOCK_REQUEST_THROTTLED',
       });
     }
@@ -20910,9 +20935,10 @@ router.post('/invoices/:id/unlock-request', requireAuth, async (req, res) => {
     const sent = await notifLib.notifyAdminMyChat(msg.chatwork, { kind: 'invoice_unlock_request', summary: `invoice=${inv.id}` })
       .catch(e => ({ ok: false, reason: e?.message || 'error' }));
     if (!sent.ok) {
-      // 管理者へ届いていないのに「申請済み」にすると待ちぼうけになるので、送り直せるようにして知らせる
-      invoiceUnlockRequestThrottle.clear(inv.id);
-      return res.status(502).json({ error: '管理者への連絡を送れませんでした。お手数ですが、管理者へ直接伝えてください' });
+      // 管理者へ届いていないのに 10 分待たせると待ちぼうけになるので、通常の間隔では止めない。
+      // ただし失敗の連打で外部 API を叩き続けないよう、同じ請求書は 1 分だけ送り直しを止める
+      invoiceUnlockRequestThrottle.mark(inv.id, undefined, INV_UNLOCK.UNLOCK_REQUEST_FAILURE_RETRY_MS);
+      return res.status(502).json({ error: '管理者への連絡を送れませんでした。1分ほど待って送り直すか、管理者へ直接伝えてください', code: 'ADMIN_NOTIFY_FAILED' });
     }
     res.json({ ok: true, retry_after_minutes: Math.round(INV_UNLOCK.UNLOCK_REQUEST_INTERVAL_MS / 60000) });
   } catch (e) {

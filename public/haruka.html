@@ -39285,8 +39285,14 @@ async function saveInvoiceEdit() {
 async function approveInvoice(id) {
   return btnBusy(busyBtnFrom(), async () => {
   if (!confirm('この請求書を承認しますか？')) return;
-  const res = await apiFetch(`${API}/invoices/${id}/approve`, { method: 'POST' });
-  if (!res.ok) { showToast('承認に失敗しました', 'error'); return; }
+  const res = await apiFetch(`${API}/invoices/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+  if (!res.ok) {
+    // 409 = 別の画面でロック解除・差し戻し済みなど（提出済みではなくなった）。理由を出して一覧を読み直す
+    const j = await res.json().catch(() => ({}));
+    showToast(j.error || '承認に失敗しました', res.status === 409 ? 'warn' : 'error');
+    if (res.status === 409 || res.status === 404) await loadAdminInvoices();
+    return;
+  }
   await loadAdminInvoices();
   });
 }
@@ -39310,7 +39316,23 @@ const INVOICE_RETURN_KINDS = {
     button: '差し戻す', doneToast: '差し戻しました',
     note: '本人に理由つきで通知し、直して再提出してもらいます（Drive の PDF はいったんゴミ箱へ移ります）。',
   },
+  // クライアント宛ての請求書（発行）: 従来どおりの差し戻しだけ。通知は出ないので「本人に通知されます」とは書かない
+  client: {
+    icon: '↩︎', title: 'この請求書を差し戻しますか？', color: '#92400E',
+    reasonLabel: '差し戻し理由（必須）',
+    placeholder: '例: 宛名を確認してください',
+    button: '差し戻す', doneToast: '差し戻しました',
+    note: 'クライアント宛ての請求書です。通知は送られません。',
+  },
 };
+
+// 請求書 id（UUID）として使ってよい値か。リンクの ?invoice= / &invoice_unlock= は必ずこれを通してから使う
+function isInvoiceIdValue(v) {
+  const U = window.InvoiceUnlockUtils;
+  if (U) return U.isInvoiceId(v);
+  return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+}
+function isClientInvoice(inv) { return !!inv && inv.invoice_type === 'client'; }
 
 // 戻された請求書（status='rejected'）の見え方。ロック解除か差し戻しかは rejection_reason の先頭で見分ける
 function invoiceReturnedDisplay(inv) {
@@ -39348,7 +39370,7 @@ function _invoiceMonthText(inv) {
 }
 
 async function openInvoiceUnlockRequest(id) {
-  const res = await apiFetch(`${API}/invoices/${id}`);
+  const res = await apiFetch(`${API}/invoices/${encodeURIComponent(id)}`);
   if (!res.ok) { showToast('請求書の取得に失敗しました', 'error'); return; }
   const inv = await res.json();
   if (inv.status !== 'submitted') {
@@ -39381,16 +39403,17 @@ async function executeInvoiceUnlockRequest() {
   const btn = document.getElementById('invq-execute-btn');
   if (btn) btn.disabled = true;
   try {
-    const res = await apiFetch(`${API}/invoices/${id}/unlock-request`, {
+    const res = await apiFetch(`${API}/invoices/${encodeURIComponent(id)}/unlock-request`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason }),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
-      // 10 分以内の送り直しは「申請済み」として扱う（ボタンも無効化）
-      if (res.status === 429) {
-        _invoiceUnlockRequested.add(id);
+      // 429 = 続けて送れない（10 分以内の送り直し）→「申請済み」として扱い、ボタンも無効化
+      // 409 = 振込済み・振込依頼中の月、または状態が変わった → サーバーの文言をそのまま出して一覧を読み直す
+      if (res.status === 429 && j.code === 'UNLOCK_REQUEST_THROTTLED') _invoiceUnlockRequested.add(id);
+      if (res.status === 429 || res.status === 409) {
         closeModal('modal-invoice-unlock-request');
         await loadMyInvoices();
       }
@@ -39410,6 +39433,10 @@ async function executeInvoiceUnlockRequest() {
 // （VIEW AS で admin 以外を見ているときは出さない・ADR 015）
 function invoiceReturnButtonsHtml(inv) {
   if (!inv || inv.status !== 'submitted' || !isTopAdmin()) return '';
+  // クライアント宛ての請求書（発行）は従来どおり「差戻」1 つだけ（ロック解除・本人への通知は対象外）
+  if (isClientInvoice(inv)) {
+    return `<button class="btn btn-sm" style="font-size:11px;padding:3px 10px;color:#A32D2D;border-color:#F09595;margin-left:4px" onclick="openInvoiceReturnModal('${inv.id}','reject')">差戻</button>`;
+  }
   // 操作列の幅を広げないよう、2 つのボタンは既存ボタンの下の段に置く（収まらなければ折り返す。これまでの操作列は約 250px）
   return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;max-width:250px;white-space:normal">`
     + `<button class="btn btn-sm" style="font-size:11px;padding:3px 10px;color:#0F766E;border-color:#99F6E4;white-space:nowrap" onclick="openInvoiceReturnModal('${inv.id}','unlock')" title="本人が直せる状態に戻します（本人に通知されます）">🔓 修正のためロックを外す</button>`
@@ -39419,15 +39446,17 @@ function invoiceReturnButtonsHtml(inv) {
 
 async function openInvoiceReturnModal(id, kind) {
   if (!isTopAdmin()) { showToast('この操作は管理者だけができます', 'warn'); return; }
-  const k = INVOICE_RETURN_KINDS[kind] ? kind : 'reject';
-  const def = INVOICE_RETURN_KINDS[k];
-  const res = await apiFetch(`${API}/invoices/${id}`);
+  const res = await apiFetch(`${API}/invoices/${encodeURIComponent(id)}`);
   if (!res.ok) { showToast('請求書の取得に失敗しました', 'error'); return; }
   const inv = await res.json();
   if (inv.status !== 'submitted') {
     showToast(['draft', 'rejected'].includes(inv.status) ? 'この請求書はすでに本人が直せる状態です' : `提出済みの請求書だけ戻せます（現在: ${inv.status}）`, 'warn');
     return;
   }
+  // クライアント宛ての請求書はロック解除の対象外。差し戻しだけ・通知なしの文言で出す（サーバーへ送る kind は reject）
+  const isClient = isClientInvoice(inv);
+  const k = isClient ? 'reject' : (kind === 'unlock' ? 'unlock' : 'reject');
+  const def = isClient ? INVOICE_RETURN_KINDS.client : INVOICE_RETURN_KINDS[k];
   document.getElementById('invr-invoice-id').value = id;
   document.getElementById('invr-kind').value = k;
   document.getElementById('invr-icon').textContent = def.icon;
@@ -39436,7 +39465,9 @@ async function openInvoiceReturnModal(id, kind) {
   titleEl.style.color = def.color;
   const issuerName = inv.issuer ? NameDisplay.full(inv.issuer) : '';
   document.getElementById('invr-message').innerHTML =
-    `<div><strong>${esc(issuerName || '（請求者不明）')}</strong> さんの ${esc(_invoiceMonthText(inv) || '請求書')} ${esc(inv.invoice_number || '')}</div>`
+    (isClient
+      ? `<div><strong>${esc(inv.invoice_number || '請求書')}</strong>（クライアント宛て）</div>`
+      : `<div><strong>${esc(issuerName || '（請求者不明）')}</strong> さんの ${esc(_invoiceMonthText(inv) || '請求書')} ${esc(inv.invoice_number || '')}</div>`)
     + `<div><a href="javascript:void(0)" onclick="closeModal('modal-invoice-return');editInvoice('${inv.id}')" style="color:var(--em-dark)">明細を見る</a></div>`;
   document.getElementById('invr-reason-label').textContent = def.reasonLabel;
   const reasonEl = document.getElementById('invr-reason');
@@ -39468,14 +39499,20 @@ async function executeInvoiceReturn() {
   const btn = document.getElementById('invr-execute-btn');
   if (btn) btn.disabled = true;
   try {
-    const res = await apiFetch(`${API}/invoices/${id}/reject`, {
+    const res = await apiFetch(`${API}/invoices/${encodeURIComponent(id)}/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind, rejection_reason: reason }),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
-      showToast(j.error || `${kind === 'unlock' ? 'ロック解除' : '差し戻し'}に失敗しました（${res.status}）`, 'error');
+      // 409 = 振込済み・振込依頼中の月、または提出済みではなくなった。サーバーの文言をそのまま出して一覧を読み直す
+      showToast(j.error || `${kind === 'unlock' ? 'ロック解除' : '差し戻し'}に失敗しました（${res.status}）`, res.status === 409 ? 'warn' : 'error');
+      if (res.status === 409) {
+        closeModal('modal-invoice-return');
+        _adminInvoiceMonthCache = {};
+        await loadAdminInvoices();
+      }
       return;
     }
     closeModal('modal-invoice-return');
@@ -39494,6 +39531,9 @@ async function executeInvoiceReturn() {
 // 通知のリンク（?page=invoices&invoice=<id> / &invoice_unlock=<id>）から請求書ページを開く
 async function openInvoicesPageFromLink({ invoiceId, unlockId }) {
   showPage('invoices', document.querySelector('.nav-btn[data-page="invoices"]'));
+  // リンクの値は UUID の形のものだけ使う（それ以外は請求書ページを出すだけ。API の URL やボタンの onclick に入れない）
+  if (!isInvoiceIdValue(invoiceId)) invoiceId = null;
+  if (!isInvoiceIdValue(unlockId)) unlockId = null;
   if (unlockId) {
     // 「提出後に直したい」申請の確認。管理者だけがロック解除の確認を開ける（それ以外は請求書ページを出すだけ）
     if (isTopAdmin()) await openInvoiceReturnModal(unlockId, 'unlock');

@@ -249,6 +249,84 @@ describe('createRequestThrottle（同じ請求書への申請は 10 分に 1 回
   });
 });
 
+describe('validateReason（追加: 型と固定文言だけ）', () => {
+  test('文字列でない値は 400 相当のエラー（null / undefined は「入力してください」）', () => {
+    for (const v of [0, 123, true, {}, [], ['a'], () => 'x']) {
+      expect(U.validateReason(v).error).toMatch(/文字で入力/);
+    }
+    expect(U.validateReason(null).error).toMatch(/入力してください/);
+    expect(U.validateReason(undefined).error).toMatch(/入力してください/);
+  });
+  test('固定文言だけ（本文なし）は不可。本文があれば通る', () => {
+    expect(U.validateReason('修正のためロック解除:').error).toBeTruthy();
+    expect(U.validateReason('修正のためロック解除: ').error).toBeTruthy();
+    expect(U.validateReason('修正のためロック解除：\n').error).toBeTruthy();
+    expect(U.validateReason('修正のためロック解除: 1件足す')).toEqual({ value: '修正のためロック解除: 1件足す' });
+    // 通ったものは buildRejectionReason 後の本文が必ず空でない
+    expect(U.parseRejectionReason(U.buildRejectionReason('unlock', '修正のためロック解除: 1件足す')).reason).toBe('1件足す');
+  });
+});
+
+describe('escapeChatwork / escapeSlack', () => {
+  test('Chatwork: 角かっこを全角にする（[info] [To:] [toall] [hr] を作らせない）', () => {
+    expect(U.escapeChatwork('[To:123] [toall][info][title]x[/title][/info]')).toBe('［To:123］ ［toall］［info］［title］x［/title］［/info］');
+    expect(U.escapeChatwork('かっこ無し')).toBe('かっこ無し');
+    expect(U.escapeChatwork(null)).toBe('');
+    expect(U.escapeChatwork(12)).toBe('12');
+  });
+  test('Slack: & < > を逃がす（<!channel> やリンクを作らせない）', () => {
+    expect(U.escapeSlack('<!channel> <https://x.test|ここ> A&B')).toBe('&lt;!channel&gt; &lt;https://x.test|ここ&gt; A&amp;B');
+    expect(U.escapeSlack(undefined)).toBe('');
+  });
+  test('buildReturnedMessage: 理由は Chatwork / Slack それぞれの形で逃がし、ベル本文は入力のまま', () => {
+    const m = U.buildReturnedMessage({ kind: 'unlock', invoice: { year: 2026, month: 10, invoice_number: 'INV[1]' }, reason: '[toall] <!here> a&b', url: 'https://x.test/a' });
+    expect(m.chatwork).toContain('メモ: ［toall］ <!here> a&b');
+    expect(m.chatwork).toContain('（INV［1］）');
+    expect(m.chatwork.match(/\[info\]/g)).toHaveLength(1);
+    expect(m.slack).toContain('メモ: [toall] &lt;!here&gt; a&amp;b');
+    expect(m.slack).toContain('<https://x.test/a|請求書を開く>'); // 自分で組んだリンクは残す
+    expect(m.body).toContain('メモ: [toall] <!here> a&b');
+  });
+  test('buildUnlockRequestMessage: 申請者名と理由の角かっこを全角にする', () => {
+    const m = U.buildUnlockRequestMessage({ requesterName: '[To:1]たろ', invoice: { year: 2026, month: 1 }, reason: '[/info][toall]', url: 'https://x.test/a' });
+    expect(m.chatwork).toContain('申請した人: ［To:1］たろさん');
+    expect(m.chatwork).toContain('理由: ［/info］［toall］');
+    expect(m.chatwork.match(/\[\/info\]/g)).toHaveLength(1);
+    expect(m.chatwork).not.toContain('[toall]');
+  });
+});
+
+describe('isInvoiceId（リンクの id は UUID の形だけ使う）', () => {
+  test('UUID は通る（大文字も可）', () => {
+    expect(U.isInvoiceId('3f2b8c1e-9a4d-4e7b-8c2f-1a2b3c4d5e6f')).toBe(true);
+    expect(U.isInvoiceId('3F2B8C1E-9A4D-4E7B-8C2F-1A2B3C4D5E6F')).toBe(true);
+  });
+  test('それ以外は通さない', () => {
+    for (const v of ['', 'abc', '../users', "x');alert(1)//", '3f2b8c1e-9a4d-4e7b-8c2f-1a2b3c4d5e6f/reject', ' 3f2b8c1e-9a4d-4e7b-8c2f-1a2b3c4d5e6f', '3f2b8c1e9a4d4e7b8c2f1a2b3c4d5e6f', null, undefined, 123, {}]) {
+      expect(U.isInvoiceId(v)).toBe(false);
+    }
+  });
+});
+
+describe('createRequestThrottle（追加: 失敗時の短い待ち時間）', () => {
+  const T0 = Date.UTC(2026, 10, 22, 1, 0, 0);
+  test('holdMs を渡すとその時間だけ止まる（1 分）', () => {
+    const th = U.createRequestThrottle();
+    th.mark('inv1', T0, U.UNLOCK_REQUEST_FAILURE_RETRY_MS);
+    const r = th.check('inv1', T0 + 1000);
+    expect(r.ok).toBe(false);
+    expect(r.retryAfterMinutes).toBe(1);
+    expect(th.check('inv1', T0 + 59999).ok).toBe(false);
+    expect(th.check('inv1', T0 + 60000).ok).toBe(true);
+  });
+  test('成功時の mark で通常の 10 分に上書きされる', () => {
+    const th = U.createRequestThrottle();
+    th.mark('inv1', T0, 60000);
+    th.mark('inv1', T0 + 60000);
+    expect(th.check('inv1', T0 + 5 * 60000).ok).toBe(false);
+  });
+});
+
 describe('ブラウザ（UMD）でも同じ API が window に出る', () => {
   test('module が無い環境では root.InvoiceUnlockUtils に入る', () => {
     const fs = require('fs');

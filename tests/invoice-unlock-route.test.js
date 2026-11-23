@@ -4,7 +4,7 @@
 
 process.env.INVOICE_PDF_DRIVE_SYNC = 'off'; // Drive へは行かない（PDF のゴミ箱送りは別テストの範囲）
 
-const mockDb = { tables: {} };
+const mockDb = { tables: {}, missingTables: new Set(), failingTables: new Set() };
 const mockSent = { member: [], adminMyChat: [], bell: [], memberResult: { ok: true, channel: 'chatwork_direct', reason: null }, adminResult: { ok: true }, memberThrows: false };
 function mockReset() {
   mockDb.tables = {
@@ -21,7 +21,12 @@ function mockReset() {
       { id: 'inv-client', invoice_number: 'C-1', issuer_id: 'admin1', status: 'submitted', year: 2026, month: 10, invoice_type: 'client' },
     ],
     member_invoice_folders: [],
+    payout_records: [],
+    payout_transfer_batches: [],
+    payout_transfer_items: [],
   };
+  mockDb.missingTables = new Set();
+  mockDb.failingTables = new Set();
   mockSent.member = []; mockSent.adminMyChat = []; mockSent.bell = [];
   mockSent.memberResult = { ok: true, channel: 'chatwork_direct', reason: null };
   mockSent.adminResult = { ok: true };
@@ -35,6 +40,9 @@ function mockBuilder(table) {
   const rows = () => (mockDb.tables[table] || (mockDb.tables[table] = []));
   const match = () => rows().filter(r => filters.every(f => f(r)));
   const run = () => {
+    // migration 未適用（テーブルなし）・一時的な読み出し失敗の再現
+    if (mockDb.missingTables.has(table)) return { data: null, error: { code: 'PGRST205', message: `Could not find the table 'public.${table}' in the schema cache` } };
+    if (mockDb.failingTables.has(table)) return { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } };
     if (op === 'update') { const m = match(); m.forEach(r => Object.assign(r, payload)); return { data: m.map(r => ({ ...r })), error: null }; }
     return { data: match().map(r => ({ ...r })), error: null };
   };
@@ -43,6 +51,7 @@ function mockBuilder(table) {
       if (prop === 'then') return (res, rej) => Promise.resolve(run()).then(res, rej);
       if (prop === 'update') return (p) => { op = 'update'; payload = p; return b; };
       if (prop === 'eq') return (c, v) => { filters.push(r => r[c] === v); return b; };
+      if (prop === 'in') return (c, vs) => { filters.push(r => vs.includes(r[c])); return b; };
       if (prop === 'single' || prop === 'maybeSingle') return async () => {
         const r = run();
         return { ...r, data: Array.isArray(r.data) ? (r.data[0] || null) : r.data };
@@ -99,7 +108,7 @@ afterAll(() => server && server.close());
 beforeEach(() => mockReset());
 
 const call = async (path, body, user = 'm1') => {
-  const r = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-test-user': user }, body: JSON.stringify(body || {}) });
+  const r = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-test-user': user }, body: typeof body === 'string' ? body : JSON.stringify(body || {}) });
   return { status: r.status, body: await r.json().catch(() => ({})) };
 };
 const inv = (id) => mockDb.tables.invoices.find(i => i.id === id);
@@ -198,6 +207,98 @@ describe('POST /invoices/:id/reject', () => {
   test('存在しない請求書は 404', async () => {
     expect((await call('/invoices/nope/reject', { kind: 'unlock', rejection_reason: 'a' }, 'admin1')).status).toBe(404);
   });
+
+  test('理由が文字列でない・固定文言だけのときは 400', async () => {
+    for (const rejection_reason of [123, { a: 1 }, ['x'], true, '修正のためロック解除:', '修正のためロック解除：  ']) {
+      const r = await call('/invoices/inv-sub/reject', { kind: 'unlock', rejection_reason }, 'admin1');
+      expect(r.status).toBe(400);
+    }
+    expect(inv('inv-sub').status).toBe('submitted');
+    expect(mockSent.member).toHaveLength(0);
+  });
+
+  test('理由の Chatwork 記法は全角かっこに置き換えて送る（保存する理由は入力のまま）', async () => {
+    const r = await call('/invoices/inv-sub/reject', { kind: 'reject', rejection_reason: '[toall] [To:999] 確認を' }, 'admin1');
+    expect(r.status).toBe(200);
+    expect(inv('inv-sub').rejection_reason).toBe('[toall] [To:999] 確認を');
+    const cw = mockSent.member[0].message.chatwork;
+    expect(cw).toContain('理由: ［toall］ ［To:999］ 確認を');
+    expect(cw).not.toContain('[toall]');
+    expect(cw).not.toContain('[To:999]');
+  });
+
+  describe('振込済み・振込依頼中の月は戻せない', () => {
+    test('同じ本人・年月の振込レコードが paid なら 409（状態も通知も変わらない）', async () => {
+      mockDb.tables.payout_records.push({ id: 'pr1', user_id: 'm1', year: 2026, month: 10, status: 'paid' });
+      const r = await call('/invoices/inv-sub/reject', { kind: 'unlock', rejection_reason: 'a' }, 'admin1');
+      expect(r.status).toBe(409);
+      expect(r.body.code).toBe('PAYOUT_PAID');
+      expect(r.body.error).toMatch(/振込済みのため/);
+      expect(inv('inv-sub').status).toBe('submitted');
+      expect(mockSent.member).toHaveLength(0);
+    });
+    test('unpaid・別の月・別の人の paid は止めない', async () => {
+      mockDb.tables.payout_records.push(
+        { id: 'pr1', user_id: 'm1', year: 2026, month: 10, status: 'unpaid' },
+        { id: 'pr2', user_id: 'm1', year: 2026, month: 9, status: 'paid' },
+        { id: 'pr3', user_id: 'm2', year: 2026, month: 10, status: 'paid' },
+      );
+      expect((await call('/invoices/inv-sub/reject', { kind: 'unlock', rejection_reason: 'a' }, 'admin1')).status).toBe(200);
+    });
+    test('進行中の総合振込に本人の明細があれば 409。失敗・組戻しの明細や取消済みの依頼は止めない', async () => {
+      mockDb.tables.payout_transfer_batches.push({ id: 'b1', year: 2026, month: 10, status: 'awaiting_approval' });
+      mockDb.tables.payout_transfer_items.push({ id: 'i1', batch_id: 'b1', user_id: 'm1', status: 'pending' });
+      const r = await call('/invoices/inv-sub/reject', { kind: 'reject', rejection_reason: 'a' }, 'admin1');
+      expect(r.status).toBe(409);
+      expect(r.body.code).toBe('PAYOUT_TRANSFER_IN_PROGRESS');
+      expect(r.body.error).toMatch(/総合振込を依頼中/);
+      expect(inv('inv-sub').status).toBe('submitted');
+
+      mockDb.tables.payout_transfer_items[0].status = 'failed';
+      mockDb.tables.payout_transfer_batches.push({ id: 'b2', year: 2026, month: 10, status: 'cancelled' });
+      mockDb.tables.payout_transfer_items.push({ id: 'i2', batch_id: 'b2', user_id: 'm1', status: 'pending' });
+      expect((await call('/invoices/inv-sub/reject', { kind: 'reject', rejection_reason: 'a' }, 'admin1')).status).toBe(200);
+    });
+    test('振込のテーブルが無い環境（migration 未適用）は「該当なし」で通す', async () => {
+      mockDb.missingTables = new Set(['payout_records', 'payout_transfer_batches', 'payout_transfer_items']);
+      expect((await call('/invoices/inv-sub/reject', { kind: 'unlock', rejection_reason: 'a' }, 'admin1')).status).toBe(200);
+      expect(inv('inv-sub').status).toBe('rejected');
+    });
+    test('振込の状態を読めなかったときは戻さない（500）', async () => {
+      mockDb.failingTables = new Set(['payout_records']);
+      expect((await call('/invoices/inv-sub/reject', { kind: 'unlock', rejection_reason: 'a' }, 'admin1')).status).toBe(500);
+      expect(inv('inv-sub').status).toBe('submitted');
+    });
+    test('クライアント宛ての請求書は振込の判定をしない', async () => {
+      mockDb.tables.payout_records.push({ id: 'pr1', user_id: 'admin1', year: 2026, month: 10, status: 'paid' });
+      expect((await call('/invoices/inv-client/reject', { kind: 'reject', rejection_reason: 'a' }, 'admin1')).status).toBe(200);
+    });
+  });
+});
+
+describe('POST /invoices/:id/approve（提出済みだけ承認する）', () => {
+  test('提出済みは承認できる', async () => {
+    const r = await call('/invoices/inv-sub/approve', {}, 'admin1');
+    expect(r.status).toBe(200);
+    expect(r.body.status).toBe('approved');
+    expect(inv('inv-sub')).toMatchObject({ status: 'approved', approved_by: 'admin1' });
+  });
+  test('ロック解除・差し戻し済み、下書き、承認済みは 409 で上書きしない', async () => {
+    await call('/invoices/inv-sub/reject', { kind: 'unlock', rejection_reason: 'a' }, 'admin1');
+    const r = await call('/invoices/inv-sub/approve', {}, 'admin1');
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('提出済みの請求書だけ承認できます。画面を更新してください');
+    expect(inv('inv-sub').status).toBe('rejected');
+    expect(inv('inv-sub').approved_at).toBeUndefined();
+    expect((await call('/invoices/inv-draft/approve', {}, 'admin1')).status).toBe(409);
+    expect((await call('/invoices/inv-app/approve', {}, 'admin1')).status).toBe(409);
+    expect(inv('inv-draft').status).toBe('draft');
+  });
+  test('存在しない請求書は 404、管理者以外は 403', async () => {
+    expect((await call('/invoices/nope/approve', {}, 'admin1')).status).toBe(404);
+    expect((await call('/invoices/inv-sub/approve', {}, 'm1')).status).toBe(403);
+    expect(inv('inv-sub').status).toBe('submitted');
+  });
 });
 
 describe('POST /invoices/:id/unlock-request', () => {
@@ -260,12 +361,58 @@ describe('POST /invoices/:id/unlock-request', () => {
     expect((await call('/invoices/inv-t1/unlock-request', { reason: 'd' }, 'm1')).status).toBe(200);
   });
 
-  test('管理者へ送れなかったら 502 を返し、すぐ送り直せる', async () => {
+  test('管理者へ送れなかったら 502。同じ請求書は 1 分だけ送り直せない（10 分は待たせない）', async () => {
     // 連打制限はプロセス内で持つので、ほかのテストで使っていない請求書を足して確かめる
     mockDb.tables.invoices.push({ id: 'inv-fail', invoice_number: 'INV-9', issuer_id: 'm1', status: 'submitted', year: 2026, month: 7, invoice_type: 'member' });
     mockSent.adminResult = { ok: false, reason: 'no_token' };
-    expect((await call('/invoices/inv-fail/unlock-request', { reason: 'a' }, 'm1')).status).toBe(502);
+    const first = await call('/invoices/inv-fail/unlock-request', { reason: 'a' }, 'm1');
+    expect(first.status).toBe(502);
+    expect(first.body.code).toBe('ADMIN_NOTIFY_FAILED');
     mockSent.adminResult = { ok: true };
-    expect((await call('/invoices/inv-fail/unlock-request', { reason: 'a' }, 'm1')).status).toBe(200);
+    const again = await call('/invoices/inv-fail/unlock-request', { reason: 'a' }, 'm1');
+    expect(again.status).toBe(429);
+    expect(again.body.error).toMatch(/あと約1分/); // 10 分ではなく 1 分
+    expect(mockSent.adminMyChat).toHaveLength(1);
+  });
+
+  test('理由が文字列でない・固定文言だけのときは 400', async () => {
+    for (const reason of [1, { a: 1 }, ['x'], '修正のためロック解除: ']) {
+      expect((await call('/invoices/inv-sub/unlock-request', { reason }, 'm1')).status).toBe(400);
+    }
+    expect(mockSent.adminMyChat).toHaveLength(0);
+  });
+
+  test('理由・申請者名の Chatwork 記法は全角かっこに置き換えて送る', async () => {
+    mockDb.tables.users.find(u => u.id === 'm1').nickname = '[toall]はな';
+    mockDb.tables.invoices.push({ id: 'inv-esc', invoice_number: 'INV-E', issuer_id: 'm1', status: 'submitted', year: 2026, month: 4, invoice_type: 'member' });
+    expect((await call('/invoices/inv-esc/unlock-request', { reason: '[info][To:1]直したい[/info]' }, 'm1')).status).toBe(200);
+    const text = mockSent.adminMyChat[0].text;
+    expect(text).toContain('申請した人: ［toall］はな（山田 花子）さん');
+    expect(text).toContain('理由: ［info］［To:1］直したい［/info］');
+    expect(text).not.toContain('[toall]');
+    expect(text).not.toContain('[To:1]');
+    // 外枠の [info]…[/info] は 1 組だけ
+    expect(text.match(/\[info\]/g)).toHaveLength(1);
+    expect(text.match(/\[\/info\]/g)).toHaveLength(1);
+  });
+
+  test('振込済み・振込依頼中の月は申請も受け付けない（409・管理者へは送らない）', async () => {
+    mockDb.tables.invoices.push({ id: 'inv-paid', invoice_number: 'INV-P', issuer_id: 'm1', status: 'submitted', year: 2026, month: 3, invoice_type: 'member' });
+    mockDb.tables.payout_records.push({ id: 'pr1', user_id: 'm1', year: 2026, month: 3, status: 'paid' });
+    const r = await call('/invoices/inv-paid/unlock-request', { reason: 'a' }, 'm1');
+    expect(r.status).toBe(409);
+    expect(r.body.code).toBe('PAYOUT_PAID');
+
+    mockDb.tables.payout_records = [];
+    mockDb.tables.payout_transfer_batches.push({ id: 'b1', year: 2026, month: 3, status: 'requested' });
+    mockDb.tables.payout_transfer_items.push({ id: 'i1', batch_id: 'b1', user_id: 'm1', status: 'pending' });
+    const r2 = await call('/invoices/inv-paid/unlock-request', { reason: 'a' }, 'm1');
+    expect(r2.status).toBe(409);
+    expect(r2.body.code).toBe('PAYOUT_TRANSFER_IN_PROGRESS');
+    expect(mockSent.adminMyChat).toHaveLength(0);
+
+    // 409 は連打制限に数えない（振込の依頼が取り消されたら、すぐ申請できる）
+    mockDb.tables.payout_transfer_batches[0].status = 'cancelled';
+    expect((await call('/invoices/inv-paid/unlock-request', { reason: 'a' }, 'm1')).status).toBe(200);
   });
 });
