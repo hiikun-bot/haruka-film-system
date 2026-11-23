@@ -21,6 +21,7 @@ const { maskAccountNumber } = require('./zengin-format');
 const { notifyMember } = require('./member-notify');
 const { buildPayoutMessage } = require('./payout');
 const { EXPENSE_ITEMS_EMBED, withExpenseItems, applyExpenseAmounts } = require('./invoice-expense-source');
+const { onlyMemberInvoices } = require('./invoice-type');
 
 const PREVIEW_TOKEN_TTL_MS = 10 * 60 * 1000;
 const REAUTH_TTL_MS = 10 * 60 * 1000;
@@ -135,8 +136,8 @@ async function loadPlanInputs({ year, month, payoutRecordIds }) {
 
   const [{ data: users, error: uErr }, { data: invoices, error: iErr }, blockedUserIds] = await Promise.all([
     supabase.from('users').select(USER_COLUMNS).in('id', userIds),
-    supabase.from('invoices').select(INVOICE_COLUMNS).in('issuer_id', userIds).eq('year', year).eq('month', month)
-      .is('invoice_type', null).in('status', plan.BILLED_INVOICE_STATUSES),
+    onlyMemberInvoices(supabase.from('invoices').select(INVOICE_COLUMNS).in('issuer_id', userIds).eq('year', year).eq('month', month))
+      .in('status', plan.BILLED_INVOICE_STATUSES),
     loadBlockedUserIds({ year, month, userIds }),
   ]);
   if (uErr) throw new Error(`users 取得失敗: ${uErr.message}`);
@@ -523,10 +524,10 @@ async function notifyBatchOutcome(batch, items, { prevStatus, itemPatches }) {
 async function loadLedgerSnapshotForRecord(rec, amount) {
   if (!rec || !rec.user_id) return plan.buildLedgerSnapshot({ amount, invoices: [] });
   // 立替経費（実費）は明細の合計で凍結する（差引からの逆算にしない）。明細は同じ問い合わせに埋め込んで取る
-  const { data: invoices, error } = await withExpenseItems(supabase
+  const { data: invoices, error } = await withExpenseItems(onlyMemberInvoices(supabase
     .from('invoices').select(`${INVOICE_COLUMNS}, ${EXPENSE_ITEMS_EMBED}`)
-    .eq('issuer_id', rec.user_id).eq('year', rec.year).eq('month', rec.month)
-    .is('invoice_type', null).in('status', plan.BILLED_INVOICE_STATUSES));
+    .eq('issuer_id', rec.user_id).eq('year', rec.year).eq('month', rec.month))
+    .in('status', plan.BILLED_INVOICE_STATUSES));
   if (error) throw new Error(`invoices 取得失敗: ${error.message}`);
   return plan.buildLedgerSnapshot({ amount, invoices: applyExpenseAmounts(invoices || []) });
 }
