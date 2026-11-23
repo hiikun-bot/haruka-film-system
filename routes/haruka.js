@@ -16756,8 +16756,14 @@ router.post('/members/:id/invoice-folders/generate', requireAuth, async (req, re
 // ==================== 請求書 ====================
 
 // 請求書一覧
+//   本人以外の請求書（全員分・他人の issuer_id 指定・クライアント請求書）を返すのは、請求書を見られる管理者だけ
+//   （canListOthersInvoices）。それ以外の人は issuer_id の指定を無視して自分の請求書だけを返す
+//   （画面の「請求書（マイページ）」は自分の id を付けて呼ぶので、403 にせず絞る方を選んだ。ADR 046 追補 2026-11-23 その2）
 router.get('/invoices', async (req, res) => {
-  const { issuer_id, year, month, status } = req.query;
+  if (!req.user || !req.user.id) return res.status(401).json({ error: 'ログインが必要です' });
+  const { year, month, status } = req.query;
+  const staff = await canListOthersInvoices(req);
+  const issuer_id = staff ? req.query.issuer_id : req.user.id;
   const buildQuery = (selectStr) => {
     let q = supabase.from('invoices').select(selectStr).order('created_at', { ascending: false });
     if (issuer_id) q = q.eq('issuer_id', issuer_id);
@@ -16796,14 +16802,25 @@ router.get('/invoices', async (req, res) => {
     ({ data, error } = await runChain(false));
   }
   if (error) return res.status(500).json({ error: error.message });
-  // 立替経費の支払先・領収書なしの理由・ファイル名は、本人の請求書か管理者（admin/秘書）のときだけ返す
-  // （GET /invoices/:id・領収書の閲覧と同じ線引き。一覧 API 自体の権限は別件）
-  const staff = await isStaffRequester(req);
+  // 念のための二重の守り: 本人でも管理者でもない人に他人の請求書が混ざっていたら、立替経費の日付・支払先・
+  // 領収書の状態・理由・ファイルの項目をすべて外す（上で自分の分だけに絞っているので、通常は何も起きない）
+  const rows = data || [];
   if (!staff) {
-    for (const inv of (data || [])) if (!req.user || inv.issuer_id !== req.user.id) RCPT.stripPrivateReceiptFields(inv);
+    for (const inv of rows) if (inv.issuer_id !== req.user.id) RCPT.stripPrivateReceiptFields(inv);
   }
-  res.json(data);
+  res.json(rows);
 });
+
+// 一覧（と月タブの件数）で本人以外の請求書を返してよいか。画面の管理者一覧と同じ権限 invoice.all_view
+// （権限設定で変えられる）を、実ユーザーと実効ロール（VIEW AS 中はプレビューのロール）の両方が持つときだけ。
+//   - VIEW AS で権限は上がらない（実ユーザーの判定を必ず通す）
+//   - VIEW AS で一般メンバーを見ているあいだは、そのロールと同じく自分の分だけになる（ADR 015 B「絞り込みも実効ロールで」）
+async function canListOthersInvoices(req) {
+  const realCodes = await getRequesterRoleCodes(req);
+  if (!(await roleCodesHavePermission(realCodes, 'invoice.all_view'))) return false;
+  const codes = await getEffectiveRoleCodes(req);
+  return roleCodesHavePermission(codes, 'invoice.all_view');
+}
 
 // 一覧・詳細で立替経費の行に付ける列（領収書は「あり／なし・理由」が分かれば足りる。ファイルは GET .../receipt で見る）
 const INVOICE_ITEM_RECEIPT_LIST_COLS = 'expense_date,expense_payee,receipt_status,receipt_missing_reason,receipt_file_id,receipt_file_name,receipt_mime_type';
@@ -16811,8 +16828,11 @@ const INVOICE_ITEM_RECEIPT_LIST_COLS = 'expense_date,expense_payee,receipt_statu
 // 請求書の存在する年月一覧（管理者一覧の月タブ構築用・軽量。明細ネストを含む全件fetchを避ける）
 // :id ルートより前に定義必須
 router.get('/invoices/months', async (req, res) => {
+  if (!req.user || !req.user.id) return res.status(401).json({ error: 'ログインが必要です' });
   const { status } = req.query;
   let q = supabase.from('invoices').select('year, month, status');
+  // 一覧と同じ線引き: 請求書一覧の閲覧権限がない人は、自分の請求書の件数だけ
+  if (!(await canListOthersInvoices(req))) q = q.eq('issuer_id', req.user.id);
   if (status) q = q.eq('status', status);
   const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
@@ -19926,6 +19946,51 @@ function ieMarkReceiptCols(ok) { ieReceiptCols.ok = !!ok; ieReceiptCols.checkedA
 /** 直近の読み出しで領収書の列があったか（提出時の必須チェック・画面の入力欄の出し分けに使う） */
 function ieReceiptSupported() { return ieReceiptCols.ok === true; }
 
+// 関数がまだ本番 DB に無い（migration 未適用 / スキーマキャッシュ未更新）ことによるエラーか
+function ieIsMissingRpcError(err) {
+  if (!err) return false;
+  const msg = String(err.message || '');
+  return err.code === 'PGRST202' || err.code === '42883' || /could not find the function/i.test(msg);
+}
+
+/**
+ * 領収書ファイルを立替経費の行に記録する（ADR 046 追補 2026-11-23 その2）。
+ * DB の関数 attach_invoice_item_receipt（migrations/2026-11-23b_invoice_item_receipt_attach_fn.sql）が、
+ * 請求書の行を FOR SHARE で押さえて「下書き／差し戻し中か」を確かめ、同じトランザクションで invoice_items を書く。
+ * 提出（invoices の UPDATE）はこの処理が終わるまで待たされ、先に提出が確定していればこちらが not_editable になる
+ * ＝提出済みの請求書の領収書は差し替わらない。
+ * @returns {Promise<{ result?: 'ok'|'not_editable'|'invoice_not_found'|'item_not_found', prev_file_id?: string|null, uploaded_at?: string, error?: Error }>}
+ */
+async function ieAttachReceipt({ invoiceId, itemId, fileId, fileName, mime }) {
+  const { data, error } = await supabase.rpc('attach_invoice_item_receipt', {
+    p_invoice_id: invoiceId, p_item_id: itemId, p_file_id: fileId, p_file_name: fileName, p_mime_type: mime,
+  });
+  if (!error) {
+    const r = (Array.isArray(data) ? data[0] : data) || {};
+    if (!r.result) return { error: new Error('領収書の記録結果を読めませんでした') };
+    return { result: r.result, prev_file_id: r.prev_file_id || null, uploaded_at: r.uploaded_at || new Date().toISOString() };
+  }
+  if (!ieIsMissingRpcError(error)) return { error };
+  // 関数がまだ無い環境: 従来どおり「状態を読み直してから書く」（確認と保存のあいだの提出は防げない）
+  console.warn('[invoice-receipt] attach_invoice_item_receipt が未作成のため従来の手順で記録:', error.message);
+  const { data: cur, error: curErr } = await supabase.from('invoices').select('id, status').eq('id', invoiceId).maybeSingle();
+  if (curErr) return { error: curErr };
+  if (!cur) return { result: 'invoice_not_found' };
+  if (!['draft', 'rejected'].includes(cur.status)) return { result: 'not_editable' };
+  const { data: prevRow, error: prevErr } = await supabase.from('invoice_items').select('id, receipt_file_id')
+    .eq('id', itemId).eq('invoice_id', invoiceId).maybeSingle();
+  if (prevErr) return { error: prevErr };
+  if (!prevRow) return { result: 'item_not_found' };
+  const uploadedAt = new Date().toISOString();
+  const { data: upd, error: upErr } = await supabase.from('invoice_items').update({
+    receipt_status: IE.RECEIPT_ATTACHED, receipt_missing_reason: null,
+    receipt_file_id: fileId, receipt_file_name: fileName, receipt_mime_type: mime, receipt_uploaded_at: uploadedAt,
+  }).eq('id', itemId).eq('invoice_id', invoiceId).select('id');
+  if (upErr) return { error: upErr };
+  if (!upd || !upd.length) return { result: 'item_not_found' };
+  return { result: 'ok', prev_file_id: prevRow.receipt_file_id || null, uploaded_at: uploadedAt };
+}
+
 /** 立替経費の行のうち Drive に置いた領収書ファイルをゴミ箱へ（完全削除しない・失敗しても本体は止めない） */
 async function ieTrashReceiptFiles(fileIds, where) {
   const ids = [...new Set((fileIds || []).filter(Boolean))];
@@ -20932,32 +20997,39 @@ router.post('/invoice-editor/:id/items/:itemId/receipt', requireAuth, receiptUpl
       supportsAllDrives: true,
     });
     const fileId = created.data.id;
-    // Drive に置いているあいだに提出・承認された請求書には付けない（今置いたファイルはゴミ箱へ戻す）
-    const { data: cur, error: curErr } = await supabase.from('invoices').select('id, status').eq('id', inv.id).maybeSingle();
-    if (curErr || !cur || !['draft', 'rejected'].includes(cur.status)) {
-      await ieTrashReceiptFiles([fileId], 'upload-status-changed');
-      if (curErr) return res.status(500).json({ error: curErr.message });
-      return res.status(409).json({ error: cur ? 'この請求書は別の画面で提出されました。再読み込みしてください' : '請求書が見つかりません（削除された可能性があります）', code: 'CONFLICT' });
+    // 「請求書がまだ下書き／差し戻し中か」の確認と行への書き込みを、DB の 1 つの処理で行う（ieAttachReceipt）。
+    // Drive に置いているあいだ・確認と保存のあいだに提出された請求書には付けない（今置いたファイルはゴミ箱へ戻して 409）
+    const att = await ieAttachReceipt({ invoiceId: inv.id, itemId: item.id, fileId, fileName, mime });
+    if (att.error) {
+      // 通信の切断・タイムアウトでは、DB 側で記録が済んでいることがある。行が今置いたファイルを指していたら
+      // ゴミ箱へ送らない（送ると「添付あり」なのに見られない行になる）。確かめられないときも残す側に倒す
+      let recorded = true;
+      try {
+        const { data: chk, error: chkErr } = await supabase.from('invoice_items').select('receipt_file_id')
+          .eq('id', item.id).eq('invoice_id', inv.id).maybeSingle();
+        if (!chkErr) recorded = !!chk && chk.receipt_file_id === fileId;
+      } catch (_) { /* 確かめられない＝残す */ }
+      if (!recorded) await ieTrashReceiptFiles([fileId], 'upload-error');
+      else console.warn(`[invoice-receipt] 記録エラーだが行が ${fileId} を指している（または確認できない）ためゴミ箱へ送らない: ${att.error.message}`);
+      return res.status(500).json({ error: att.error.message });
     }
-    const nowIso = new Date().toISOString();
+    if (att.result !== 'ok') {
+      await ieTrashReceiptFiles([fileId], `upload-${att.result}`);
+      const msg = att.result === 'not_editable' ? 'この請求書は別の画面で提出されました。再読み込みしてください'
+        : att.result === 'invoice_not_found' ? '請求書が見つかりません（削除された可能性があります）'
+          : 'この行は別の画面で消されています。再読み込みしてください';
+      return res.status(409).json({ error: msg, code: 'CONFLICT' });
+    }
     const patch = {
       receipt_status: IE.RECEIPT_ATTACHED,
       receipt_missing_reason: null,
       receipt_file_id: fileId,
       receipt_file_name: fileName,
       receipt_mime_type: mime,
-      receipt_uploaded_at: nowIso,
+      receipt_uploaded_at: att.uploaded_at,
     };
-    const { data: upd, error: upErr } = await supabase.from('invoice_items').update(patch)
-      .eq('id', item.id).eq('invoice_id', inv.id).select('id');
-    if (upErr || !upd || !upd.length) {
-      // 書き込めなかった（その間に行が消された等）。今置いたファイルは残さない
-      await ieTrashReceiptFiles([fileId], 'upload-rollback');
-      if (upErr) return res.status(500).json({ error: upErr.message });
-      return res.status(409).json({ error: 'この行は別の画面で消されています。再読み込みしてください', code: 'CONFLICT' });
-    }
-    // 差し替え: 前の写真はゴミ箱へ
-    if (item.receipt_file_id && item.receipt_file_id !== fileId) await ieTrashReceiptFiles([item.receipt_file_id], 'upload-replace');
+    // 差し替え: 前の写真はゴミ箱へ（書き込んだ時点で行に入っていたもの。読んだあとに別の画面で差し替わっていてもそちらを送る）
+    if (att.prev_file_id && att.prev_file_id !== fileId) await ieTrashReceiptFiles([att.prev_file_id], 'upload-replace');
     res.json({ ok: true, item_id: item.id, ...ieReceiptView({ ...item, ...patch }) });
   } catch (e) {
     console.error('[invoice-receipt][upload]', e);
