@@ -3588,3 +3588,17 @@ CREATE INDEX IF NOT EXISTS idx_sales_ai_usage_created
   ON sales_ai_usage(created_at DESC);
 
 ALTER TABLE sales_ai_usage ENABLE ROW LEVEL SECURITY;
+
+-- ==================== 立替経費の日付・支払先・領収書（ADR 046 追補 2026-11-23） ====================
+-- migrations/2026-11-23_invoice_items_expense_receipt.sql と同内容（COMMENT ON は migration 側のみ）
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS expense_date           DATE;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS expense_payee          TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS receipt_status         TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS receipt_missing_reason TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS receipt_file_id        TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS receipt_file_name      TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS receipt_mime_type      TEXT;
+ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS receipt_uploaded_at    TIMESTAMPTZ;
+ALTER TABLE invoice_items DROP CONSTRAINT IF EXISTS invoice_items_receipt_status_check;
+ALTER TABLE invoice_items ADD CONSTRAINT invoice_items_receipt_status_check
+  CHECK (receipt_status IS NULL OR receipt_status IN ('attached', 'missing'));
