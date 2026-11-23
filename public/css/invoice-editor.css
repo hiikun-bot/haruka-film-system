@@ -104,6 +104,32 @@
 .ie-tag-exp { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: #FFEDD5; color: #9A3412; white-space: nowrap; }
 .ie-exp-note { margin-top: 3px; color: #9A3412; font-size: 11px; }
 
+/* 立替経費の枠（日付・支払先・領収書。ADR 046 追補 2026-11-23） */
+.ie-exp-head { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin-bottom: 6px; }
+.ie-exp-head .ie-exp-note { margin-top: 0; }
+.ie-exp-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 10px; align-items: center; max-width: 560px; }
+.ie-exp-k { font-size: 11px; font-weight: 600; color: #9A3412; white-space: nowrap; align-self: start; padding-top: 5px; }
+.ie-in-wide { width: 100%; min-width: 0; }
+.ie-in-edate { width: 150px; }
+.ie-rcpt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ie-rcpt-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; }
+.ie-rcpt-opt { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+.ie-rcpt-pick { position: relative; cursor: pointer; }
+.ie-rcpt-pick.is-busy { opacity: .6; cursor: progress; }
+/* ファイル選択は label を押して開く（iOS でも開くよう display:none にしない） */
+.ie-rcpt-file { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+.ie-rcpt-link { color: #1D4ED8; word-break: break-all; }
+.ie-rcpt-ok { color: #15803D; font-weight: 700; }
+.ie-rcpt-hint, .ie-rcpt-none { color: #6B7280; font-size: 11px; }
+.ie-rcpt-missing { color: #B45309; background: #FEF3C7; border: 1px solid #F59E0B; border-radius: 6px; padding: 3px 8px; font-weight: 600; }
+.ie-in-rreason { width: 100%; max-width: 420px; }
+@media (max-width: 640px) {
+  .ie-exp-grid { grid-template-columns: 1fr; gap: 2px; }
+  .ie-exp-k { padding-top: 4px; }
+  .ie-in-edate { width: 100%; }
+  .ie-exp-grid .ie-in { font-size: 16px; } /* iOS のフォーカス時ズームを防ぐ */
+}
+
 .ie-foot { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; padding: 12px 20px; border-top: 1px solid var(--border, #e5e7eb); }
 .ie-notes { flex: 1 1 280px; }
 .ie-totals { min-width: 280px; font-size: 12px; }

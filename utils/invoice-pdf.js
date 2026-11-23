@@ -473,7 +473,8 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
     } else if (kind === 'fixed') {
       label = it.creative_label || it.label || '';
     } else if (kind === 'expense') {
-      label = IE.expenseItemLabel(it);
+      // 「＋ 立替経費」の行は領収書の有無を小さく添える（写真そのものは PDF に入れない・追補 2026-11-23）
+      label = IE.expenseItemLabel(it) + IE.receiptNoteOf(it);
     } else {
       label = it.label || '明細';
     }

@@ -9,6 +9,7 @@
 //   - 候補 CR の判定（請求できるか＝納品済み / 初稿請求案件は初稿提出済み・ADR 034、計上月、前月以前の遡り 3 か月）
 //   - 本人のその CR での役割（1 CR × 役割 = 1 行）
 //   - 提出時の過剰請求チェック（本人の分 / 納品済み / 二重請求 / 単価未入力 / 参考単価超の理由 / HFS外の理由 / 合計一致）
+//   - 立替経費の日付・支払先・領収書（写真の添付 or 「領収書なし」の理由）の提出前チェック（追補 2026-11-23）
 //
 // ⚠️ 時刻ルール: 月・日付の判定はすべて JST 固定。TIMESTAMPTZ は
 //   toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) で JST の 'YYYY-MM-DD' にしてから扱う。
@@ -62,6 +63,11 @@
   const BILLED_STATUSES = ['submitted', 'approved'];
   // 請求の役割にならない担当（Wチェックは報酬の単価が無い確認役。制作担当の一覧に混ぜない）
   const NON_BILLABLE_ASSIGNMENT_ROLES = ['wcheck'];
+  // 立替経費の領収書（追補 2026-11-23）。attached=写真/PDF を添付 / missing=領収書なし（理由必須）
+  const RECEIPT_ATTACHED = 'attached';
+  const RECEIPT_MISSING = 'missing';
+  const RECEIPT_STATUSES = [RECEIPT_ATTACHED, RECEIPT_MISSING];
+  const PAYEE_MAX = 200;
 
   // ---------- 年月ヘルパー（JST・TZ 非依存） ----------
 
@@ -370,14 +376,74 @@
     return businessType !== 'corporation';
   }
 
+  // ---------- 立替経費の日付・支払先・領収書（追補 2026-11-23） ----------
+
+  /**
+   * 立替経費の日付の入力値 → 'YYYY-MM-DD'。'2026/10/25' / '2026-10-25' / '２０２６年１０月２５日' を受け付ける。
+   * '' / null → { value: null }（未入力）。存在しない日付・形式違いは { error }。TZ 変換はしない（DATE 列）。
+   */
+  function parseExpenseDate(v) {
+    if (v === null || v === undefined) return { value: null };
+    const s = String(v).trim().replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+    if (!s) return { value: null };
+    const m = /^(\d{4})\s*[-\/.年]\s*(\d{1,2})\s*[-\/.月]\s*(\d{1,2})\s*日?$/.exec(s);
+    if (!m) return { error: '日付は 2026/10/25 の形で入力してください' };
+    const y = parseInt(m[1], 10), mo = parseInt(m[2], 10), d = parseInt(m[3], 10);
+    const dt = new Date(Date.UTC(y, mo - 1, d));
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d || y < 2000 || y > 2100) {
+      return { error: '存在しない日付です' };
+    }
+    return { value: `${y}-${pad2(mo)}-${pad2(d)}` };
+  }
+
+  /** 領収書の状態の入力値 → 'attached' / 'missing' / null（それ以外は null） */
+  function normalizeReceiptStatus(v) {
+    return RECEIPT_STATUSES.includes(v) ? v : null;
+  }
+
+  /**
+   * 「＋ 立替経費」の行の提出前チェック（日付・支払先・領収書）。下書き保存は止めず、提出時だけ止める。
+   *   日付（必須）/ 支払先（必須）/ 領収書: 写真を添付（ファイル必須）か「領収書なし」（理由必須）のどちらか
+   * 作業時間報告の立替経費（hourly_expense）は対象外。
+   */
+  function expenseReceiptIssues(item) {
+    const out = [];
+    if (!isManualExpenseLine(item)) return out;
+    if (!dateOnly(item.expense_date) || parseExpenseDate(dateOnly(item.expense_date)).error) {
+      out.push({ code: 'EXPENSE_DATE_MISSING', message: '立替経費の日付を入力してください' });
+    }
+    if (!String(item.expense_payee || '').trim()) {
+      out.push({ code: 'EXPENSE_PAYEE_MISSING', message: '支払先を入力してください（例: ENEOS ○○店）' });
+    }
+    const st = normalizeReceiptStatus(item.receipt_status);
+    if (!st) {
+      out.push({ code: 'RECEIPT_STATUS_MISSING', message: '領収書の写真を添付するか、「領収書なし」を選んで理由を書いてください' });
+    } else if (st === RECEIPT_ATTACHED && !String(item.receipt_file_id || '').trim()) {
+      out.push({ code: 'RECEIPT_FILE_MISSING', message: '領収書の写真（または PDF）を添付してください' });
+    } else if (st === RECEIPT_MISSING && !String(item.receipt_missing_reason || '').trim()) {
+      out.push({ code: 'RECEIPT_REASON_MISSING', message: '領収書がない理由を書いてください（例: レシートを紛失したため）' });
+    }
+    return out;
+  }
+
+  /** 請求書（PDF・プレビュー）で立替経費の行に小さく添える領収書の有無。「＋ 立替経費」の行で状態があるときだけ */
+  function receiptNoteOf(item) {
+    if (!isManualExpenseLine(item)) return '';
+    const st = normalizeReceiptStatus(item && item.receipt_status);
+    if (st === RECEIPT_ATTACHED && item.receipt_file_id) return '（領収書あり）';
+    if (st === RECEIPT_MISSING) return '（領収書なし）';
+    return '';
+  }
+
   // ---------- 行のチェック ----------
 
   /**
    * 1 行の注意（保存時は警告、提出時はエラー）。
    * refPrice: 参考単価（0 / null なら参考単価超の判定はしない）
+   * opts.requireReceipt: false なら立替経費の日付・支払先・領収書を見ない（列がまだ無い環境）。既定は見る
    * @returns {Array<{code, message}>}
    */
-  function lineIssues(item, refPrice) {
+  function lineIssues(item, refPrice, opts) {
     const out = [];
     if (!item) return out;
     if (item.unit_price === null || item.unit_price === undefined || item.unit_price === '') {
@@ -391,6 +457,8 @@
       }
     } else if (isManualExpenseLine(item)) {
       if (!String(item.label || '').trim()) out.push({ code: 'LABEL_MISSING', message: '立替経費の内容を入力してください（例: 10/25 撮影 タクシー代）' });
+      // 日付・支払先・領収書（追補 2026-11-23）。列がまだ無い環境（opts.requireReceipt=false）では見ない
+      if (!(opts && opts.requireReceipt === false)) out.push(...expenseReceiptIssues(item));
     } else if (isManualLine(item)) {
       if (!String(item.manual_reason || '').trim()) out.push({ code: 'MANUAL_NO_REASON', message: 'HFS外の行は理由が必要です' });
       if (!String(item.label || '').trim()) out.push({ code: 'LABEL_MISSING', message: '品目を入力してください' });
@@ -412,6 +480,7 @@
    * @param {boolean}  p.withholdingEnabled
    * @param {number}   p.expectedTotal      画面に出ていたご請求金額（税込）
    * @param {number}   p.expectedPayout     画面に出ていた差引お振込額
+   * @param {boolean}  [p.requireReceipt]   false なら立替経費の日付・支払先・領収書を見ない（列が無い環境）。既定は見る
    * @returns {{ problems: Array<{item_id, index, code, message}>, totals }}
    */
   function checkInvoiceForSubmit(p) {
@@ -436,7 +505,7 @@
         seen.add(key);
       }
       const ref = isCrLine(it) && p.refPriceByKey ? p.refPriceByKey.get(billedKey(it.creative_id, it.cost_type)) : null;
-      for (const iss of lineIssues(it, ref)) push(it, idx, iss.code, iss.message);
+      for (const iss of lineIssues(it, ref, { requireReceipt: p.requireReceipt !== false })) push(it, idx, iss.code, iss.message);
     });
 
     const totals = computeTotals(items, { withholding_enabled: !!p.withholdingEnabled });
@@ -513,6 +582,8 @@
     TAX_NUM, TAX_DEN, WH_NUM, WH_DEN, WITHHOLDING_WARN_THRESHOLD, LOOKBACK_MONTHS, DEFAULT_EXCLUSIVE_FROM,
     REASON_MAX, LABEL_MAX, MAX_PRICE, MAX_QUANTITY, MAX_ITEMS,
     COST_TYPE_LABELS, FIXED_COST_TYPES, CR_COST_TYPES, EXPENSE_COST_TYPES, MANUAL_EXPENSE_COST_TYPE, BILLED_STATUSES, NON_BILLABLE_ASSIGNMENT_ROLES,
+    RECEIPT_ATTACHED, RECEIPT_MISSING, RECEIPT_STATUSES, PAYEE_MAX,
+    parseExpenseDate, normalizeReceiptStatus, expenseReceiptIssues, receiptNoteOf,
     ymOf, addMonthsYm, jstDateOfIso, dateOnly, jstMonthRangeIso, paymentDueDate, invoiceDate,
     parseExclusiveFrom, isExclusiveYm,
     billingTimingOf, isBillableCreative, billingDateOf, lookbackStartYm, previousStartYm, classifyCandidate,
