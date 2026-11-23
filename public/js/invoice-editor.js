@@ -327,7 +327,9 @@
     }
     ed.id = id;
     ed.state = data;
-    ed.rows = data.items.map(it => ({ ...it, _key: `k${++ed.keySeq}`, _sel: false }));
+    // _baseReceiptFileId: この画面が最後にサーバーと合わせた領収書ファイル（保存時に送って食い違いを見つける）
+    ed.rows = data.items.map(it => ({ ...it, _key: `k${++ed.keySeq}`, _sel: false, _baseReceiptFileId: it.receipt_file_id || null }));
+    ed.receiptReloadPending = false;
     ed.updatedAt = data.invoice.updated_at;
     ed.withholding = !!data.invoice.withholding_enabled;
     ed.notes = data.invoice.notes || '';
@@ -550,7 +552,10 @@
   // ---------- 立替経費の日付・支払先・領収書（ADR 046 追補 2026-11-23） ----------
   function receiptUrl(r, download) {
     if (!ed.id || !r.id) return '';
-    return `${API}/invoices/${encodeURIComponent(ed.id)}/items/${encodeURIComponent(r.id)}/receipt${download ? '?download=1' : ''}`;
+    // ?v= はファイルごとに変わる（差し替え後にブラウザのキャッシュで古い写真が見えないように）
+    const v = r.receipt_file_id ? `v=${encodeURIComponent(r.receipt_file_id)}` : '';
+    const qs = [v, download ? 'download=1' : ''].filter(Boolean).join('&');
+    return `${API}/invoices/${encodeURIComponent(ed.id)}/items/${encodeURIComponent(r.id)}/receipt${qs ? '?' + qs : ''}`;
   }
   function receiptLinkHtml(r) {
     if (!r.receipt_file_id) return '';
@@ -652,8 +657,10 @@
     if (!r || r.kind !== 'expense' || !editable() || r._uploading) return;
     const refresh = () => { const i = ed.rows.indexOf(r); if (i >= 0) refreshRow(i); };
     r._uploading = true;
+    const statusBefore = r.receipt_status ?? null; // 失敗したら戻す（「写真を添付」のまま写真なし、にしない）
     r.receipt_status = 'attached';
     refresh();
+    let uploaded = false;
     try {
       // 新しい行は先に保存して ID を受け取る（入力途中の値もここで保存される）
       ed.dirty = true;
@@ -667,12 +674,19 @@
       if (!res.ok) throw new Error(data.error || '領収書を保存できませんでした');
       ['receipt_status', 'receipt_missing_reason', 'receipt_file_id', 'receipt_file_name', 'receipt_mime_type', 'receipt_uploaded_at']
         .forEach(k => { if (k in data) r[k] = data[k] ?? (k === 'receipt_missing_reason' ? '' : data[k]); });
+      r._baseReceiptFileId = r.receipt_file_id || null; // サーバーと合わせた領収書（次の保存で送る）
+      uploaded = true;
       ed.problems.delete(r.id);
       showToast('領収書を保存しました（本人の請求書フォルダの「領収書」に入ります）', 'success', 3000);
     } catch (e) {
       showToast(e.message || '領収書を保存できませんでした', 'error', 6000);
     } finally {
       r._uploading = false;
+      if (!uploaded && ed.rows.includes(r) && !r.receipt_file_id && statusBefore !== 'attached') {
+        // 送れなかったので選ぶ前の状態に戻して保存し直す
+        r.receipt_status = statusBefore;
+        scheduleSave();
+      }
       refresh();
     }
   }
@@ -1092,6 +1106,9 @@
         manual_reason: r.manual_reason,
         // 立替経費の日付・支払先・領収書の状態（写真そのものは別の API で送る）
         ...(r.kind === 'expense' && receiptOn() ? {
+          // この画面が知っている領収書ファイル。サーバーは DB と一致するときだけ領収書欄を書く
+          // （古いタブの保存で、別の端末が付けた写真を消さないため）
+          receipt_file_id: r._baseReceiptFileId || null,
           expense_date: r.expense_date || null,
           expense_payee: r.expense_payee || '',
           receipt_status: r.receipt_status || null,
@@ -1122,11 +1139,27 @@
       // 新しく足した HFS外・立替経費の行に ID を振る
       const idMap = data.id_map || {};
       for (const r of ed.rows) if (!r.id && idMap[r._key]) r.id = idMap[r._key];
+      // 別の画面で領収書が付け替えられていた行は書かれていない → 知らせて読み直す
+      const conflicts = new Set(data.receipt_conflicts || []);
+      for (const r of sentRows) {
+        if (r.kind === 'expense' && r.id && !conflicts.has(r.id)) r._baseReceiptFileId = r.receipt_file_id || null;
+      }
+      if (conflicts.size) {
+        showToast(data.receipt_conflict_message || '別の画面で領収書が更新されています。再読み込みしてください', 'warn', 8000);
+        ed.receiptReloadPending = true;
+      }
       return true;
     })();
     const ok = await ed.saving;
     ed.saving = null;
     refreshStatus();
+    if (ok && ed.receiptReloadPending) {
+      // 領収書の食い違いは画面を読み直して最新にする（入力途中の値は保存してから）
+      if (ed.dirty) { scheduleSave(); return ok; }
+      ed.receiptReloadPending = false;
+      await open(ed.id);
+      return false; // 読み直したので、続けて提出・追加などはしない（最新の画面で操作し直してもらう）
+    }
     if (ok && ed.dirty) scheduleSave();
     return ok;
   }

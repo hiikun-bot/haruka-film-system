@@ -38086,7 +38086,8 @@ function invoiceReceiptSummaryHtml(inv) {
     const what = `${fmtDate(it.expense_date)} ${it.expense_payee || ''} ${it.label || ''}`.trim();
     const amt = `¥${(Number(it.unit_price) || 0).toLocaleString()}`;
     if (it.receipt_status === 'attached' && it.receipt_file_id) {
-      const href = `${API}/invoices/${encodeURIComponent(inv.id)}/items/${encodeURIComponent(it.id)}/receipt`;
+      // ?v= はファイルごとに変わる（差し替え後にキャッシュで古い写真が見えないように）
+      const href = `${API}/invoices/${encodeURIComponent(inv.id)}/items/${encodeURIComponent(it.id)}/receipt?v=${encodeURIComponent(it.receipt_file_id)}`;
       return `<a href="${esc(href)}" target="_blank" rel="noopener" title="${esc(what)}（${amt}）の領収書を開く" style="font-size:11px;font-weight:600;color:#1D4ED8;white-space:nowrap">📎 領収書 ${amt}</a>`;
     }
     if (it.receipt_status === 'missing') {
@@ -63782,7 +63783,7 @@ function votStatusBadge(status) {
 <!-- 🧾 請求書エディタ（ADR 046）: 計算・判定はサーバーと同じ utils/invoice-editor.js を server.js が配信 → 画面 -->
 <script src="/js/invoice-editor-calc.js?v=20261123"></script>
 <!-- ?v= は「ご請求金額」に立替経費を含める変更（2026-11-05）を、1 時間のキャッシュを待たずに届けるため -->
-<script src="/js/invoice-editor.js?v=20261123"></script>
+<script src="/js/invoice-editor.js?v=20261123b"></script>
 
 <!-- 通知UI（Phase 1 段階2）— 順序重要: card → bell → panel → realtime -->
 <!-- card: 描画ヘルパー / bell: バッジ管理 / panel: 開閉 + read-all / realtime: Supabase購読 -->

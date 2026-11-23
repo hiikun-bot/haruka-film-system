@@ -6,7 +6,7 @@
 //   - DELETE /invoices/:id: 領収書もゴミ箱へ
 //   - submit: 日付・支払先・領収書が欠けたら 409（どの行か）。列が無い環境は従来どおり（見ない）
 process.env.INVOICE_PDF_DRIVE_SYNC = 'off';
-process.env.GOOGLE_SERVICE_ACCOUNT_KEY = JSON.stringify({ client_email: 'sa@test.invalid', private_key: 'x' });
+process.env.GOOGLE_SERVICE_ACCOUNT_KEY = JSON.stringify({ client_email: 'service-account', private_key: 'x' });
 
 const mockDb = { tables: {}, noReceiptCols: false };
 let mockSeq = 0;
@@ -19,8 +19,12 @@ function mockBuilder(table) {
     // migration 未適用の再現: 領収書の列を読む・書くと 42703
     const touchesReceipt = RECEIPT_COL_RE.test(st.select)
       || ((st.op === 'update' || st.op === 'insert') && JSON.stringify(st.payload || {}).match(/"(expense_date|expense_payee|receipt_[a-z_]+)"/));
-    if (mockDb.noReceiptCols && table === 'invoice_items' && touchesReceipt) {
+    // 一覧・詳細は invoices から明細を埋め込みで読むので、invoices の select でも同じエラーにする
+    if (mockDb.noReceiptCols && (table === 'invoice_items' || table === 'invoices') && touchesReceipt) {
       return { data: null, error: { code: '42703', message: 'column invoice_items.receipt_status does not exist' } };
+    }
+    if (mockDb.noRegNo && /invoice_registration_number/.test(st.select)) {
+      return { data: null, error: { code: '42703', message: 'column users.invoice_registration_number does not exist' } };
     }
     if (st.op === 'insert') {
       const list = (Array.isArray(st.payload) ? st.payload : [st.payload]).map(p => ({ id: `new-${++mockSeq}`, ...p }));
@@ -28,6 +32,7 @@ function mockBuilder(table) {
       return { data: list.map(r => ({ ...r })), error: null };
     }
     if (st.op === 'update') {
+      if (mockDb.onUpdate) mockDb.onUpdate(table, st.payload || {});
       const hit = rowsOf().filter(match);
       hit.forEach(r => Object.assign(r, st.payload));
       return { data: hit.map(r => ({ ...r })), error: null };
@@ -47,6 +52,7 @@ function mockBuilder(table) {
       if (prop === 'delete') return () => { st.op = 'delete'; return b; };
       if (prop === 'eq') return (k, v) => { st.filters.push(r => r[k] === v); return b; };
       if (prop === 'in') return (k, vs) => { st.filters.push(r => vs.includes(r[k])); return b; };
+      if (prop === 'is') return (k, v) => { st.filters.push(r => (r[k] ?? null) === v); return b; };
       if (prop === 'single' || prop === 'maybeSingle') return async () => {
         const r = run();
         return { ...r, data: Array.isArray(r.data) ? (r.data[0] || null) : r.data };
@@ -87,6 +93,7 @@ const mockDrive = {
           bytes = Buffer.concat(chunks);
         }
         mockDrive.files.set(id, { id, ...requestBody, bytes });
+        if (mockDrive.onCreate && requestBody.mimeType !== 'application/vnd.google-apps.folder') mockDrive.onCreate(id);
         mockDrive.created.push({ id, ...requestBody });
         return { data: { id } };
       },
@@ -117,6 +124,12 @@ const express = require('express');
 let server; let base;
 beforeAll(async () => {
   const app = express(); app.use(express.json());
+  // 本番は server.js がログイン済みの人だけを通す（GET /invoices は requireAuth を付けていないので、ここで req.user を入れる）
+  app.use((req, _res, next) => {
+    const id = req.headers['x-test-user'] || 'u1';
+    req.user = { id, role: id === 'admin1' ? 'admin' : 'editor' };
+    next();
+  });
   app.use('/api', require('../routes/haruka'));
   await new Promise((r) => { server = app.listen(0, r); });
   base = `http://127.0.0.1:${server.address().port}/api`;
@@ -128,12 +141,16 @@ const PDF = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(60, 2)]);
 
 beforeEach(() => {
   mockDb.noReceiptCols = false;
+  mockDb.onUpdate = null;
+  mockDb.noRegNo = false;
+  mockDrive.onCreate = null;
   mockDrive.files = new Map(); mockDrive.created = []; mockDrive.trashed = [];
   mockDb.tables = {
     users: [
-      { id: 'u1', full_name: 'テスト 太郎', nickname: 'たろう', email: 'u1@test.invalid', business_type: 'individual', role: 'editor' },
-      { id: 'u2', full_name: '別の 人', nickname: '', email: 'u2@test.invalid', role: 'editor' },
-      { id: 'admin1', full_name: '管理 者', nickname: '', email: 'admin@test.invalid', role: 'admin' },
+      // 月フォルダは member_invoice_folders に登録済み（フォルダを新しく作らないのでメールアドレスは要らない）
+      { id: 'u1', full_name: 'テスト 太郎', nickname: 'たろう', business_type: 'individual', role: 'editor' },
+      { id: 'u2', full_name: '別の 人', nickname: '', role: 'editor' },
+      { id: 'admin1', full_name: '管理 者', nickname: '', role: 'admin' },
     ],
     user_roles: [],
     member_invoice_folders: [{ user_id: 'u1', year: 2026, month: 10, folder_id: 'folder-u1-202610', folder_url: 'https://drive.test/folder' }],
@@ -223,6 +240,15 @@ describe('領収書のアップロード', () => {
     expect((await upload('ex1', JPEG)).status).toBe(400);
   });
 
+  test('Drive に置いているあいだに提出されたら 409・置いたファイルはゴミ箱へ戻し、行も書かない', async () => {
+    mockDrive.onCreate = () => { inv().status = 'submitted'; };
+    const r = await upload('ex1', JPEG);
+    expect(r.status).toBe(409);
+    const file = mockDrive.created.find(c => c.mimeType === 'image/jpeg');
+    expect(mockDrive.trashed).toEqual([file.id]);
+    expect(item('ex1').receipt_file_id).toBeNull();
+  });
+
 });
 
 describe('領収書を見る（プロキシ）', () => {
@@ -233,6 +259,8 @@ describe('領収書を見る（プロキシ）', () => {
       expect(r.status).toBe(200);
       expect(r.headers.get('content-type')).toBe('application/pdf');
       expect(r.headers.get('content-disposition')).toMatch(/^inline; /);
+      expect(r.headers.get('content-security-policy')).toBe('sandbox');
+      expect(r.headers.get('x-content-type-options')).toBe('nosniff');
       expect(Buffer.from(await r.arrayBuffer()).equals(PDF)).toBe(true);
     }
     const ng = await fetch(`${base}/invoices/inv1/items/ex1/receipt`, { headers: { 'x-test-user': 'u2' } });
@@ -276,12 +304,56 @@ describe('保存（PUT）と提出', () => {
     expect(item('ex1')).toMatchObject({ expense_date: '2026-10-25', expense_payee: 'ENEOS', receipt_status: 'missing', receipt_missing_reason: '紛失' });
   });
 
-  test('「領収書なし」に切り替えたら添付していた写真はゴミ箱へ・行からも外す', async () => {
+  test('「領収書なし」に切り替えたら添付していた写真はゴミ箱へ・行からも外す（画面が見ていた写真と同じとき）', async () => {
     const up = await upload('ex1', JPEG);
-    const r = await putItems({ expense_date: '2026-10-25', expense_payee: 'ENEOS', receipt_status: 'missing', receipt_missing_reason: 'レシートを紛失したため' });
+    const r = await putItems({ receipt_file_id: up.body.receipt_file_id, expense_date: '2026-10-25', expense_payee: 'ENEOS', receipt_status: 'missing', receipt_missing_reason: 'レシートを紛失したため' });
     expect(r.status).toBe(200);
+    expect(r.body.receipt_conflicts).toBeUndefined();
     expect(mockDrive.trashed).toEqual([up.body.receipt_file_id]);
     expect(item('ex1')).toMatchObject({ receipt_status: 'missing', receipt_file_id: null, receipt_missing_reason: 'レシートを紛失したため' });
+  });
+
+  test('古いタブ: PC が「領収書なし」→ スマホで写真を付けた → PC の古い自動保存が来ても写真は残る', async () => {
+    // PC: 写真なしで「領収書なし」を保存（PC の画面が知っている領収書ファイルは無し）
+    let r = await putItems({ receipt_file_id: null, expense_date: '2026-10-25', expense_payee: 'ENEOS', receipt_status: 'missing', receipt_missing_reason: '後で探す' });
+    expect(r.status).toBe(200);
+    expect(item('ex1')).toMatchObject({ receipt_status: 'missing', receipt_file_id: null });
+    // スマホ: 写真を付ける（attached になり理由は消える）
+    const up = await upload('ex1', JPEG);
+    expect(item('ex1')).toMatchObject({ receipt_status: 'attached', receipt_file_id: up.body.receipt_file_id });
+    // PC: 開いたままの古い画面が自動保存（領収書なし・ファイルは知らない）
+    r = await putItems({ receipt_file_id: null, expense_date: '2026-10-25', expense_payee: 'ENEOS 本店', receipt_status: 'missing', receipt_missing_reason: '後で探す' });
+    expect(r.status).toBe(200);
+    expect(r.body.receipt_conflicts).toEqual(['ex1']);
+    expect(r.body.receipt_conflict_message).toBe('別の画面で領収書が更新されています。再読み込みしてください');
+    // 写真は残り、領収書欄は書かれない（日付・支払先はいつもどおり保存）
+    expect(mockDrive.trashed).toEqual([]);
+    expect(item('ex1')).toMatchObject({ receipt_status: 'attached', receipt_file_id: up.body.receipt_file_id, receipt_missing_reason: null, expense_payee: 'ENEOS 本店' });
+  });
+
+  test('写真がある行の状態を空（null）に戻す保存は無視する', async () => {
+    const up = await upload('ex1', JPEG);
+    const r = await putItems({ receipt_file_id: up.body.receipt_file_id, receipt_status: null });
+    expect(r.status).toBe(200);
+    expect(item('ex1')).toMatchObject({ receipt_status: 'attached', receipt_file_id: up.body.receipt_file_id });
+    expect(mockDrive.trashed).toEqual([]);
+  });
+
+  test('読んだあとに写真が付け替えられていたら（条件付き更新が 0 件）書かずに知らせる', async () => {
+    const up = await upload('ex1', JPEG);
+    // 保存の途中（明細の通常の更新のとき）に、別の端末が写真を差し替えた状況を再現する
+    mockDb.onUpdate = (table, payload) => {
+      if (table === 'invoice_items' && 'sort_order' in payload && !('receipt_status' in payload)) {
+        item('ex1').receipt_file_id = 'drv-other';
+        mockDb.onUpdate = null;
+      }
+    };
+    const r = await putItems({ receipt_file_id: up.body.receipt_file_id, receipt_status: 'missing', receipt_missing_reason: 'x' });
+    expect(r.status).toBe(200);
+    expect(item('ex1').receipt_status).toBe('attached');
+    expect(item('ex1').receipt_file_id).toBe('drv-other');
+    expect(mockDrive.trashed).not.toContain('drv-other');
+    expect(r.body.receipt_conflicts).toEqual(['ex1']);
   });
 
   test('立替経費の行を消したら写真もゴミ箱へ', async () => {
@@ -311,6 +383,31 @@ describe('保存（PUT）と提出', () => {
 
 });
 
+describe('請求書一覧（GET /invoices）で他人の立替経費の中身を返さない', () => {
+  const PRIVATE = ['expense_payee', 'receipt_missing_reason', 'receipt_file_id', 'receipt_file_name', 'receipt_mime_type'];
+  beforeEach(() => {
+    // 偽 DB は埋め込み（invoice_items(...)）を解決しないので、明細を請求書に直接持たせる
+    inv().invoice_items = [{
+      id: 'ex1', cost_type: 'expense', creative_id: null, label: 'ガソリン代', unit_price: 1641, expense_date: '2026-10-25',
+      expense_payee: 'ENEOS ○○店', receipt_status: 'missing', receipt_missing_reason: '紛失', receipt_file_id: 'drv-9', receipt_file_name: 'a.jpg', receipt_mime_type: 'image/jpeg',
+    }];
+  });
+  test('本人・管理者には返す', async () => {
+    for (const user of ['u1', 'admin1']) {
+      const r = await json('GET', '/invoices?year=2026&month=10', undefined, user);
+      expect(r.status).toBe(200);
+      expect(r.body[0].invoice_items[0]).toMatchObject({ expense_payee: 'ENEOS ○○店', receipt_missing_reason: '紛失', receipt_file_id: 'drv-9' });
+    }
+  });
+  test('他人には支払先・理由・ファイルの項目を外す（日付と状態は残す）', async () => {
+    const r = await json('GET', '/invoices?year=2026&month=10', undefined, 'u2');
+    expect(r.status).toBe(200);
+    const it = r.body[0].invoice_items[0];
+    for (const k of PRIVATE) expect(it).not.toHaveProperty(k);
+    expect(it).toMatchObject({ expense_date: '2026-10-25', receipt_status: 'missing', unit_price: 1641 });
+  });
+});
+
 describe('請求書の削除', () => {
   test('下書きを消すと領収書もゴミ箱へ', async () => {
     const up = await upload('ex1', JPEG);
@@ -330,6 +427,14 @@ describe('列が無い環境（migration 未適用）', () => {
       { id: 'mn1', label: '撮影補助', unit_price: 0, quantity: 1, manual_reason: '直接依頼' },
     ],
   });
+  test('請求書の詳細は、領収書の列と登録番号の列が両方無くても読める', async () => {
+    mockDb.noReceiptCols = true;
+    mockDb.noRegNo = true;
+    const r = await json('GET', '/invoices/inv1', undefined, 'u1');
+    expect(r.status).toBe(200);
+    expect(r.body.id).toBe('inv1');
+  });
+
   test('列が無い環境（migration 未適用）は 503 で止める', async () => {
     mockDb.noReceiptCols = true;
     const r = await upload('ex1', JPEG);

@@ -16327,24 +16327,10 @@ function driveFolderUrl(folderId) {
   return `https://drive.google.com/drive/folders/${folderId}`;
 }
 
-// 指定フォルダ配下に trashed=false のアイテムが1個以上あるかを返す
-// エラー時は false（UIブロックしない・ログ警告のみ）
-async function checkFolderHasFiles(drive, folderId) {
-  if (!folderId) return false;
-  try {
-    const r = await drive.files.list({
-      q: `'${folderId}' in parents and trashed=false`,
-      fields: 'files(id)',
-      pageSize: 1,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-    });
-    return Array.isArray(r.data.files) && r.data.files.length > 0;
-  } catch (e) {
-    console.warn(`[invoice-folders] checkFolderHasFiles warn folder=${folderId}: ${e.message}`);
-    return false;
-  }
-}
+// 指定フォルダ直下に trashed=false のファイルが1個以上あるかを返す（サブフォルダは数えない）。
+// 立替経費の「領収書」サブフォルダ（ADR 046 追補 2026-11-23）だけの月を「請求書提出済み」にしないため。
+// エラー時は false（UIブロックしない・ログ警告のみ）。本体は utils/invoice-receipt.js（jest あり）
+const checkFolderHasFiles = (drive, folderId) => require('../utils/invoice-receipt').checkFolderHasFiles(drive, folderId);
 
 // 並列度制限付き map（p-limit が依存に無いので自前実装）
 async function mapLimit(items, limit, fn) {
@@ -16810,6 +16796,12 @@ router.get('/invoices', async (req, res) => {
     ({ data, error } = await runChain(false));
   }
   if (error) return res.status(500).json({ error: error.message });
+  // 立替経費の支払先・領収書なしの理由・ファイル名は、本人の請求書か管理者（admin/秘書）のときだけ返す
+  // （GET /invoices/:id・領収書の閲覧と同じ線引き。一覧 API 自体の権限は別件）
+  const staff = await isStaffRequester(req);
+  if (!staff) {
+    for (const inv of (data || [])) if (!req.user || inv.issuer_id !== req.user.id) RCPT.stripPrivateReceiptFields(inv);
+  }
   res.json(data);
 });
 
@@ -17239,23 +17231,19 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
         invoice_item_details(cost_type, unit_price, amount)
       )
     `;
-  let { data, error } = await supabase.from('invoices').select(buildSelect(true, true)).eq('id', req.params.id).single();
-  if (error && RCPT.isMissingReceiptColumnError(error)) {
-    console.warn('[invoices/:id] 領収書の列が未反映のためフォールバック select を使用:', error.message);
-    withReceipt = false;
-    ({ data, error } = await supabase.from('invoices').select(buildSelect(true, true)).eq('id', req.params.id).single());
-  }
-  if (error && /invoice_registration_number/.test(error.message || '')) {
-    console.warn('[invoices/:id] invoice_registration_number 列未反映のためフォールバック select を使用:', error.message);
-    ({ data, error } = await supabase.from('invoices').select(buildSelect(true, false)).eq('id', req.params.id).single());
-  }
-  if (error && /original_unit_price|price_change_reason/.test(error.message || '')) {
-    console.warn('[invoices/:id] 監査列未反映のためフォールバック select を使用:', error.message);
-    ({ data, error } = await supabase.from('invoices').select(buildSelect(false, true)).eq('id', req.params.id).single());
-    if (error && /invoice_registration_number/.test(error.message || '')) {
-      console.warn('[invoices/:id] invoice_registration_number 列も未反映のため二重フォールバック:', error.message);
-      ({ data, error } = await supabase.from('invoices').select(buildSelect(false, false)).eq('id', req.params.id).single());
-    }
+  // 列が無いエラーが出たら、その列だけ外して読み直す（領収書・登録番号・監査列のどれが欠けていても、
+  // 複数欠けていても順に外していけば通る。外せる列が無いエラーはそのまま返す）
+  let audit = true, regNo = true;
+  let data, error;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    ({ data, error } = await supabase.from('invoices').select(buildSelect(audit, regNo)).eq('id', req.params.id).single());
+    if (!error) break;
+    const msg = error.message || '';
+    if (withReceipt && RCPT.isMissingReceiptColumnError(error)) withReceipt = false;
+    else if (regNo && /invoice_registration_number/.test(msg)) regNo = false;
+    else if (audit && /original_unit_price|price_change_reason/.test(msg)) audit = false;
+    else break;
+    console.warn('[invoices/:id] 列未反映のためフォールバック select を使用:', msg);
   }
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: '請求書が見つかりません' });
@@ -20581,6 +20569,8 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
       return { row };
     };
     const trashReceiptIds = []; // 「領収書なし」に切り替えた行・消した行の古い領収書（DB を書いたあとでゴミ箱へ）
+    const receiptWrites = [];   // { id, rc, guardFileId, trashFileId } 領収書の状態・理由（ファイルが変わっていないときだけ書く）
+    const receiptConflicts = []; // 画面が見ていた領収書と DB が食い違った行（別の画面で付け替えられた）
 
     const next = [];       // 保存後の全行（計算用）
     const updates = [];    // { id, row }
@@ -20596,6 +20586,7 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
         if (keep.has(li.id)) return res.status(400).json({ error: `${i + 1}行目: 同じ明細が重複しています`, index: i });
         keep.add(li.id);
         let row;
+        let rcForMerge = null; // 書くことにした領収書の状態・理由（保存後の注意の計算用）
         if (IE.isCrLine(prev)) {
           row = { unit_price: price.value, quantity: 1, price_change_reason: str(li.price_change_reason, IE.REASON_MAX) || null, sort_order: i };
         } else if (IE.isFixedLine(prev)) {
@@ -20605,11 +20596,25 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
           if (receiptOn) {
             const ex = expenseFields(li, i);
             if (ex.error) return res.status(400).json({ error: ex.error, index: i });
-            Object.assign(row, ex.row);
-            // 「領収書なし」に切り替えたら添付していた写真は外す（Drive ではゴミ箱へ）
-            if (ex.row.receipt_status === IE.RECEIPT_MISSING && prev.receipt_file_id) {
-              trashReceiptIds.push(prev.receipt_file_id);
-              Object.assign(row, { receipt_file_id: null, receipt_file_name: null, receipt_mime_type: null, receipt_uploaded_at: null });
+            const { receipt_status: st, receipt_missing_reason: why, ...plain } = ex.row;
+            Object.assign(row, plain); // 日付・支払先はいつでも書く
+            if (st !== undefined || why !== undefined) {
+              // 領収書の状態・理由は「画面が見ていた領収書ファイル」と DB が同じときだけ書く。
+              // 古いタブの自動保存が、別の端末で付けた写真を「領収書なし」で消さないように（食い違えば書かずに知らせる）
+              const d = RCPT.decideReceiptWrite({ prevFileId: prev.receipt_file_id, seenFileId: li.receipt_file_id, status: st });
+              if (d.conflict) {
+                receiptConflicts.push(prev.id);
+              } else {
+                const rc = {};
+                if (st !== undefined && !d.dropStatus) rc.receipt_status = st;
+                if (why !== undefined) rc.receipt_missing_reason = why;
+                // 「領収書なし」に切り替えたら添付していた写真は外す（Drive ではゴミ箱へ。DB を書けたときだけ）
+                if (d.clearFile) Object.assign(rc, { receipt_file_id: null, receipt_file_name: null, receipt_mime_type: null, receipt_uploaded_at: null });
+                if (Object.keys(rc).length) {
+                  receiptWrites.push({ id: prev.id, rc, guardFileId: prev.receipt_file_id || null, trashFileId: d.clearFile ? prev.receipt_file_id : null });
+                  rcForMerge = rc;
+                }
+              }
             }
           }
         } else {
@@ -20623,7 +20628,7 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
             sort_order: i,
           };
         }
-        const merged = { ...prev, ...row };
+        const merged = { ...prev, ...row, ...(rcForMerge || {}) };
         row.total_amount = IE.lineAmount(merged);
         merged.total_amount = row.total_amount;
         updates.push({ id: li.id, row });
@@ -20710,6 +20715,22 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
       const firstErr = errs.find(Boolean);
       if (firstErr) return res.status(500).json({ error: firstErr.message });
     }
+    // 領収書の状態・理由: 読み出してからここまでのあいだに別の画面で写真が付け替えられていたら書かない
+    // （receipt_file_id が読んだときと同じ行だけ更新する条件付き更新。0 件なら食い違いとして知らせる）
+    if (receiptWrites.length) {
+      const results = await Promise.all(receiptWrites.map(async (w) => {
+        let q = supabase.from('invoice_items').update(w.rc).eq('id', w.id).eq('invoice_id', inv.id);
+        q = w.guardFileId ? q.eq('receipt_file_id', w.guardFileId) : q.is('receipt_file_id', null);
+        const { data, error } = await q.select('id');
+        return { w, error, ok: !error && Array.isArray(data) && data.length > 0 };
+      }));
+      const firstErr = results.find(r => r.error);
+      if (firstErr) return res.status(500).json({ error: firstErr.error.message });
+      for (const r of results) {
+        if (!r.ok) { receiptConflicts.push(r.w.id); continue; }
+        if (r.w.trashFileId) trashReceiptIds.push(r.w.trashFileId);
+      }
+    }
 
     // 消した行・「領収書なし」にした行の領収書をゴミ箱へ（DB を書き終えてから。失敗しても保存は成功のまま）
     if (trashReceiptIds.length) await ieTrashReceiptFiles(trashReceiptIds, 'put');
@@ -20719,7 +20740,14 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
       id: it.id,
       issues: IE.lineIssues(it, IE.isCrLine(it) ? (it.original_unit_price ?? null) : null, { requireReceipt: receiptOn }),
     })).filter(x => x.issues.length);
-    res.json({ ok: true, updated_at: locked[0].updated_at, totals, id_map: idMap, issues, saved_at: newUpdatedAt });
+    res.json({
+      ok: true, updated_at: locked[0].updated_at, totals, id_map: idMap, issues, saved_at: newUpdatedAt,
+      // 別の画面で領収書が付け替えられていた行（その行の領収書欄は書いていない）。画面は知らせて読み直す
+      ...(receiptConflicts.length ? {
+        receipt_conflicts: [...new Set(receiptConflicts)],
+        receipt_conflict_message: '別の画面で領収書が更新されています。再読み込みしてください',
+      } : {}),
+    });
   } catch (e) {
     console.error('[invoice-editor][put]', e);
     res.status(500).json({ error: e.message });
@@ -20904,6 +20932,13 @@ router.post('/invoice-editor/:id/items/:itemId/receipt', requireAuth, receiptUpl
       supportsAllDrives: true,
     });
     const fileId = created.data.id;
+    // Drive に置いているあいだに提出・承認された請求書には付けない（今置いたファイルはゴミ箱へ戻す）
+    const { data: cur, error: curErr } = await supabase.from('invoices').select('id, status').eq('id', inv.id).maybeSingle();
+    if (curErr || !cur || !['draft', 'rejected'].includes(cur.status)) {
+      await ieTrashReceiptFiles([fileId], 'upload-status-changed');
+      if (curErr) return res.status(500).json({ error: curErr.message });
+      return res.status(409).json({ error: cur ? 'この請求書は別の画面で提出されました。再読み込みしてください' : '請求書が見つかりません（削除された可能性があります）', code: 'CONFLICT' });
+    }
     const nowIso = new Date().toISOString();
     const patch = {
       receipt_status: IE.RECEIPT_ATTACHED,
@@ -20957,6 +20992,8 @@ router.get('/invoices/:id/items/:itemId/receipt', requireAuth, async (req, res) 
     res.setHeader('Content-Disposition', RCPT.receiptContentDisposition(item.receipt_file_name || 'receipt', { download }));
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    // 中身はメンバーが上げたファイル。開いたページでスクリプト等を動かさない（HFS のオリジンとして扱わせない）
+    res.setHeader('Content-Security-Policy', 'sandbox');
     media.data.on('error', (e) => {
       console.warn('[invoice-receipt][view] stream error:', e.message);
       if (!res.headersSent) res.status(502).json({ error: '領収書を読み込めませんでした' }); else res.end();
@@ -21275,13 +21312,15 @@ async function fetchInvoiceForPdf(invoiceId) {
         )
       )
     `;
-  let { data, error } = await supabase.from('invoices').select(buildSelect(true)).eq('id', invoiceId).maybeSingle();
-  if (error && RCPT.isMissingReceiptColumnError(error)) {
-    withReceipt = false;
-    ({ data, error } = await supabase.from('invoices').select(buildSelect(true)).eq('id', invoiceId).maybeSingle());
-  }
-  if (error && /invoice_registration_number/.test(error.message || '')) {
-    ({ data, error } = await supabase.from('invoices').select(buildSelect(false)).eq('id', invoiceId).maybeSingle());
+  // 列が無いエラーが出たら、その列だけ外して読み直す（領収書・登録番号の両方が欠けていても順に外せば通る）
+  let regNo = true;
+  let data, error;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    ({ data, error } = await supabase.from('invoices').select(buildSelect(regNo)).eq('id', invoiceId).maybeSingle());
+    if (!error) break;
+    if (withReceipt && RCPT.isMissingReceiptColumnError(error)) withReceipt = false;
+    else if (regNo && /invoice_registration_number/.test(error.message || '')) regNo = false;
+    else break;
   }
   if (error) throw new Error(`請求書の取得に失敗: ${error.message}`);
   return data || null;

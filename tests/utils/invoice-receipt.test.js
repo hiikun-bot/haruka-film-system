@@ -173,3 +173,59 @@ describe('請求書 PDF に領収書の有無を添える（写真は入れな�
     expect(buf.slice(0, 4).toString()).toBe('%PDF');
   });
 });
+
+describe('decideReceiptWrite（古いタブの保存で別の端末の領収書を消さない）', () => {
+  test('画面が見ていたファイルと DB が同じなら書く。「領収書なし」でファイルを外す', () => {
+    expect(R.decideReceiptWrite({ prevFileId: null, seenFileId: null, status: 'missing' })).toEqual({ write: true, conflict: false, clearFile: false, dropStatus: false });
+    expect(R.decideReceiptWrite({ prevFileId: 'f1', seenFileId: 'f1', status: 'missing' })).toEqual({ write: true, conflict: false, clearFile: true, dropStatus: false });
+    expect(R.decideReceiptWrite({ prevFileId: 'f1', seenFileId: 'f1', status: 'attached' })).toEqual({ write: true, conflict: false, clearFile: false, dropStatus: false });
+  });
+  test('食い違ったら書かない（別の画面で付けた・付け替えた・外した）', () => {
+    expect(R.decideReceiptWrite({ prevFileId: 'f2', seenFileId: null, status: 'missing' }).conflict).toBe(true);
+    expect(R.decideReceiptWrite({ prevFileId: 'f2', seenFileId: 'f1', status: 'missing' }).conflict).toBe(true);
+    expect(R.decideReceiptWrite({ prevFileId: null, seenFileId: 'f1', status: 'missing' }).conflict).toBe(true);
+    // 送られてこない（古い画面）は「ファイル無し」を見ていた扱い
+    expect(R.decideReceiptWrite({ prevFileId: 'f2', seenFileId: undefined, status: 'missing' }).conflict).toBe(true);
+  });
+  test('ファイルがある行の状態を空に戻す保存は状態を書かない', () => {
+    expect(R.decideReceiptWrite({ prevFileId: 'f1', seenFileId: 'f1', status: null })).toEqual({ write: true, conflict: false, clearFile: false, dropStatus: true });
+    expect(R.decideReceiptWrite({ prevFileId: null, seenFileId: null, status: null }).dropStatus).toBe(false);
+  });
+});
+
+describe('stripPrivateReceiptFields（一覧で他人に見せない項目）', () => {
+  test('支払先・理由・ファイルの項目だけ外す', () => {
+    const inv = { id: 'i', invoice_items: [{ id: 'x', label: 'ガソリン代', unit_price: 100, expense_date: '2026-10-25', receipt_status: 'missing', expense_payee: 'A', receipt_missing_reason: 'B', receipt_file_id: 'C', receipt_file_name: 'D', receipt_mime_type: 'E' }] };
+    R.stripPrivateReceiptFields(inv);
+    expect(inv.invoice_items[0]).toEqual({ id: 'x', label: 'ガソリン代', unit_price: 100, expense_date: '2026-10-25', receipt_status: 'missing' });
+    expect(R.stripPrivateReceiptFields({ id: 'no-items' })).toEqual({ id: 'no-items' });
+  });
+});
+
+describe('checkFolderHasFiles（メンバー一覧の「請求書提出済み」）', () => {
+  // q の条件どおりに絞る偽の Drive
+  const fakeDrive = (children) => ({
+    files: {
+      list: async ({ q }) => {
+        const parent = /'([^']+)' in parents/.exec(q)[1];
+        const noFolders = /mimeType != 'application\/vnd\.google-apps\.folder'/.test(q);
+        return { data: { files: (children[parent] || []).filter(f => !noFolders || f.mimeType !== 'application/vnd.google-apps.folder').slice(0, 1) } };
+      },
+    },
+  });
+  const FOLDER = 'application/vnd.google-apps.folder';
+  test('「領収書」サブフォルダだけの月は提出済みにしない', async () => {
+    const drive = fakeDrive({ m: [{ id: 'r', name: '領収書', mimeType: FOLDER }] });
+    await expect(R.checkFolderHasFiles(drive, 'm')).resolves.toBe(false);
+  });
+  test('請求書の PDF があれば提出済み', async () => {
+    const drive = fakeDrive({ m: [{ id: 'r', name: '領収書', mimeType: FOLDER }, { id: 'p', name: '請求書.pdf', mimeType: 'application/pdf' }] });
+    await expect(R.checkFolderHasFiles(drive, 'm')).resolves.toBe(true);
+  });
+  test('フォルダ ID なし・Drive のエラーは false', async () => {
+    await expect(R.checkFolderHasFiles(fakeDrive({}), null)).resolves.toBe(false);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(R.checkFolderHasFiles({ files: { list: async () => { throw new Error('boom'); } } }, 'm')).resolves.toBe(false);
+    warn.mockRestore();
+  });
+});

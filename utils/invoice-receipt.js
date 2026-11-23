@@ -120,8 +120,63 @@ function receiptContentDisposition(name, { download = false } = {}) {
   return `${download ? 'attachment' : 'inline'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safe)}`;
 }
 
+/**
+ * 保存（PUT）で領収書の状態・理由を書いてよいか（古いタブの自動保存で、別の端末が付けた領収書を消さないため）。
+ *   prevFileId : DB に今入っている領収書ファイル（無ければ null）
+ *   seenFileId : 画面が見ていた領収書ファイル（送られてこなければ null 扱い）
+ *   status     : 画面が送ってきた状態（'attached' / 'missing' / null）。undefined は「送っていない」
+ * @returns {{ write: boolean, conflict: boolean, clearFile: boolean, dropStatus: boolean }}
+ *   write      … receipt_status / receipt_missing_reason を書く
+ *   conflict   … 画面が古い（別の画面で領収書が付け替えられた）。何も書かずに「再読み込みして」を返す
+ *   clearFile  … 「領収書なし」に切り替えたので、今のファイルを外してゴミ箱へ
+ *   dropStatus … ファイルがある行の状態を空（null）に戻そうとしている → 状態は書かない（理由は書く）
+ */
+function decideReceiptWrite({ prevFileId, seenFileId, status }) {
+  const prev = prevFileId || null;
+  const seen = seenFileId || null;
+  if (prev !== seen) return { write: false, conflict: true, clearFile: false, dropStatus: false };
+  const clearFile = !!prev && status === 'missing';
+  const dropStatus = !!prev && status === null;
+  return { write: true, conflict: false, clearFile, dropStatus };
+}
+
+// 一覧（GET /invoices）で、本人でも管理者でもない人には見せない立替経費の項目
+const RECEIPT_PRIVATE_FIELDS = ['expense_payee', 'receipt_missing_reason', 'receipt_file_id', 'receipt_file_name', 'receipt_mime_type'];
+
+/** 請求書一覧の 1 件から、立替経費の支払先・理由・ファイルの項目を外す（元のオブジェクトを書き換える） */
+function stripPrivateReceiptFields(invoice) {
+  for (const it of ((invoice && invoice.invoice_items) || [])) {
+    for (const k of RECEIPT_PRIVATE_FIELDS) delete it[k];
+  }
+  return invoice;
+}
+
+/**
+ * フォルダ直下にファイル（サブフォルダは数えない）が 1 つ以上あるか。メンバー一覧の「請求書提出済み」表示に使う。
+ * 「領収書」サブフォルダだけがある月（領収書を付けたが請求書はまだ）を提出済みにしないため、フォルダを除いて数える。
+ * エラー時は false（画面を止めない）
+ */
+async function checkFolderHasFiles(drive, folderId) {
+  if (!folderId) return false;
+  try {
+    const r = await drive.files.list({
+      q: `'${folderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'`,
+      fields: 'files(id)',
+      pageSize: 1,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+    return Array.isArray(r.data.files) && r.data.files.length > 0;
+  } catch (e) {
+    console.warn(`[invoice-folders] checkFolderHasFiles warn folder=${folderId}: ${e.message}`);
+    return false;
+  }
+}
+
 module.exports = {
   RECEIPT_MAX_BYTES, RECEIPT_COLUMNS, RECEIPT_SELECT, RECEIPT_MIME_TYPES, RECEIPT_MIME_EXT, RECEIPT_FOLDER_NAME,
+  RECEIPT_PRIVATE_FIELDS,
   isMissingReceiptColumnError, sniffReceiptMime, extOfMime, sanitizeFileNamePart, jstToday,
   buildReceiptFileName, canViewReceipt, receiptContentDisposition,
+  decideReceiptWrite, stripPrivateReceiptFields, checkFolderHasFiles,
 };
