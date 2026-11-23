@@ -89,8 +89,10 @@ const addExpenses = () => call('PUT', '/invoice-editor/inv1', {
   updated_at: inv().updated_at, withholding_enabled: true,
   items: [
     keepRow,
-    { client_key: 'k1', kind: 'expense', label: 'アートホテル撮影 移動タクシー代', unit_price: 2000, quantity: 7, manual_reason: '無視される' },
-    { client_key: 'k2', kind: 'expense', label: 'アートホテル撮影 ガソリン代', unit_price: '1,641' },
+    { client_key: 'k1', kind: 'expense', label: 'アートホテル撮影 移動タクシー代', unit_price: 2000, quantity: 7, manual_reason: '無視される',
+      expense_date: '2026/10/25', expense_payee: '○○タクシー', receipt_status: 'missing', receipt_missing_reason: 'レシートを紛失したため' },
+    { client_key: 'k2', kind: 'expense', label: 'アートホテル撮影 ガソリン代', unit_price: '1,641',
+      expense_date: '2026-10-25', expense_payee: 'ENEOS ○○店', receipt_status: 'missing', receipt_missing_reason: '受け取り忘れ' },
   ],
 });
 

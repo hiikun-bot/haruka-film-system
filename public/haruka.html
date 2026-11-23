@@ -23,7 +23,7 @@
 <link rel="stylesheet" href="/css/tweets-page.css">
 <link rel="stylesheet" href="/css/contract.css">
 <!-- 🧾 請求書エディタ（ADR 046 Stage 3） -->
-<link rel="stylesheet" href="/css/invoice-editor.css">
+<link rel="stylesheet" href="/css/invoice-editor.css?v=20261123">
 <link rel="stylesheet" href="/css/memories.css">
 <link rel="stylesheet" href="/css/sales.css">
 <style>
@@ -38073,6 +38073,30 @@ function invoiceExpenseAmount(inv) {
 }
 function invoiceBilledAmount(inv) { return (inv.total_amount || 0) + invoiceExpenseAmount(inv); }
 
+// 立替経費の行ごとの領収書（ADR 046 追補 2026-11-23）。管理者の一覧で「📎 領収書」リンク／「⚠ 領収書なし: 理由」を出す。
+// 写真は公開リンクにせず、HFS の API（本人と管理者だけ見られる）から開く。列がまだ無い環境では何も出さない
+function invoiceReceiptSummaryHtml(inv) {
+  const C = window.InvoiceEditorCalc;
+  if (!C || !inv || inv.tax_mode !== 'exclusive' || !Array.isArray(inv.invoice_items)) return '';
+  const rows = inv.invoice_items.filter(it => C.isManualExpenseLine(it) && it.receipt_status)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  if (!rows.length) return '';
+  const fmtDate = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '');
+  return `<div style="margin-top:4px;display:flex;flex-direction:column;gap:3px;align-items:flex-end">${rows.map(it => {
+    const what = `${fmtDate(it.expense_date)} ${it.expense_payee || ''} ${it.label || ''}`.trim();
+    const amt = `¥${(Number(it.unit_price) || 0).toLocaleString()}`;
+    if (it.receipt_status === 'attached' && it.receipt_file_id) {
+      const href = `${API}/invoices/${encodeURIComponent(inv.id)}/items/${encodeURIComponent(it.id)}/receipt`;
+      return `<a href="${esc(href)}" target="_blank" rel="noopener" title="${esc(what)}（${amt}）の領収書を開く" style="font-size:11px;font-weight:600;color:#1D4ED8;white-space:nowrap">📎 領収書 ${amt}</a>`;
+    }
+    if (it.receipt_status === 'missing') {
+      return `<span title="${esc(what)}（${amt}）" style="font-size:11px;font-weight:700;color:#92400E;background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:1px 6px;max-width:220px;text-align:left;white-space:normal">⚠ 領収書なし ${amt}: ${esc(it.receipt_missing_reason || '（理由なし）')}</span>`;
+    }
+    // 状態が無い行（この機能より前に出された請求書・下書きの途中）は何も出さない（遡って警告しない）
+    return '';
+  }).join('')}</div>`;
+}
+
 async function loadMyInvoices() {
   const uid = currentUser?.supabase_id || currentUser?.id;
   if (!uid) return;
@@ -38258,7 +38282,7 @@ function _renderAdminMonthTable(key, invs) {
         <td style="padding:10px 12px;text-align:center">${isClient?'<span style="color:#1A56DB;font-size:11px">→クライアント</span>':nthLabel}</td>
         <td style="padding:10px 12px;font-size:12px;color:var(--em-dark);white-space:nowrap;font-weight:600">${inv.invoice_number ? `<span style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px" onclick="editInvoice('${inv.id}')" title="クリックで明細を表示">${esc(inv.invoice_number)}</span>` : '—'}</td>
         <td style="padding:10px 12px;font-size:12px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isClient?(inv.recipient_client?.name||'—'):(inv.projects?.name||'全案件')}</td>
-        <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;color:var(--em-dark);white-space:nowrap">¥${invoiceBilledAmount(inv).toLocaleString()}${invoiceExpenseAmount(inv) ? `<div style="font-size:10px;font-weight:400;color:var(--text-muted)">うち立替経費 ¥${invoiceExpenseAmount(inv).toLocaleString()}</div>` : ''}</td>
+        <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:14px;color:var(--em-dark);white-space:nowrap">¥${invoiceBilledAmount(inv).toLocaleString()}${invoiceExpenseAmount(inv) ? `<div style="font-size:10px;font-weight:400;color:var(--text-muted)">うち立替経費 ¥${invoiceExpenseAmount(inv).toLocaleString()}</div>` : ''}${invoiceReceiptSummaryHtml(inv)}</td>
         <td style="padding:10px 12px;text-align:center">
           <span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;background:${st.bg};color:${st.color};white-space:nowrap"${returned && returned.reason ? ` title="${esc(returned.reason)}"` : ''}>${st.label}</span>
         </td>
@@ -63756,9 +63780,9 @@ function votStatusBadge(status) {
 <!-- 🧾 源泉徴収（ADR 054 §5）: 振込管理の「🧾 源泉徴収」モーダル（集計・スプレッドシート出力） -->
 <script src="/js/withholding.js"></script>
 <!-- 🧾 請求書エディタ（ADR 046）: 計算・判定はサーバーと同じ utils/invoice-editor.js を server.js が配信 → 画面 -->
-<script src="/js/invoice-editor-calc.js"></script>
+<script src="/js/invoice-editor-calc.js?v=20261123"></script>
 <!-- ?v= は「ご請求金額」に立替経費を含める変更（2026-11-05）を、1 時間のキャッシュを待たずに届けるため -->
-<script src="/js/invoice-editor.js?v=20261122"></script>
+<script src="/js/invoice-editor.js?v=20261123"></script>
 
 <!-- 通知UI（Phase 1 段階2）— 順序重要: card → bell → panel → realtime -->
 <!-- card: 描画ヘルパー / bell: バッジ管理 / panel: 開閉 + read-all / realtime: Supabase購読 -->

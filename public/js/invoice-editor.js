@@ -3,6 +3,7 @@
 //   (a) 「＋ 今月の請求書を作成」モーダルの一覧（新方式の月だけ。旧方式の月は haruka.html の従来描画のまま）
 //   (b) 全画面エディタ（1 CR × 役割 = 1 行・単価は空欄から・参考単価・自動保存 1.5 秒・提出はサーバー再チェック）
 // 計算・判定は utils/invoice-editor.js（/js/invoice-editor-calc.js → window.InvoiceEditorCalc）をサーバーと共有する。
+// 立替経費の行は日付・支払先・領収書（写真の添付 or 「領収書なし」の理由）も入れる（ADR 046 追補 2026-11-23）。
 // haruka.html のグローバル（API / apiFetch / showToast / esc / openModal / closeModal / loadMyInvoices /
 // notifyInvoiceDrivePdfResult）を使う。本人のデータだけを扱う（issuer_id は送らない＝VIEW AS 中もログイン本人）。
 (function () {
@@ -340,8 +341,12 @@
 
   function totals() { return C().computeTotals(ed.rows, { withholding_enabled: ed.withholding }); }
 
+  // 領収書の列が本番にあるか（無い環境では立替経費の日付・支払先・領収書の欄を出さず、提出時にも見ない）
+  function receiptOn() { return !!(ed.state && ed.state.receipt_supported); }
+
   function rowIssues(r) {
-    const local = C().lineIssues(r, r.kind === 'cr' ? r.ref_price : null);
+    // 立替経費の日付・支払先・領収書は直せる状態のときだけ見る（提出済みの古い請求書に遡って赤を出さない）
+    const local = C().lineIssues(r, r.kind === 'cr' ? r.ref_price : null, { requireReceipt: receiptOn() && editable() });
     const srv = r.id ? (ed.problems.get(r.id) || []) : [];
     const seen = new Set(local.map(i => i.code));
     return local.concat(srv.filter(p => !seen.has(p.code)));
@@ -542,15 +547,164 @@
     }
   }
 
+  // ---------- 立替経費の日付・支払先・領収書（ADR 046 追補 2026-11-23） ----------
+  function receiptUrl(r, download) {
+    if (!ed.id || !r.id) return '';
+    return `${API}/invoices/${encodeURIComponent(ed.id)}/items/${encodeURIComponent(r.id)}/receipt${download ? '?download=1' : ''}`;
+  }
+  function receiptLinkHtml(r) {
+    if (!r.receipt_file_id) return '';
+    return `<a class="ie-rcpt-link" href="${h(receiptUrl(r))}" target="_blank" rel="noopener" title="領収書を別のタブで開く">📎 ${h(r.receipt_file_name || '領収書')}</a>`;
+  }
+
+  /**
+   * ＋ 立替経費の枠（合意した画面）
+   *   内容   [　　　　　　]
+   *   金額   [　　] 円
+   *   日付   [2026/10/25]
+   *   支払先 [　　　　　　]
+   *   領収書  ◉ 写真を添付 [📷 選ぶ] 領収書_….jpg ✓
+   *           ○ 領収書なし（理由を書く） [　　　　]
+   */
+  function expenseBlockHtml(r, i, canEdit, priceInput) {
+    const dis = canEdit ? '' : 'disabled';
+    const st = r.receipt_status || '';
+    const name = `ie-rcpt-${h(r._key)}`;
+    const pickBtn = canEdit
+      ? `<label class="btn btn-sm ie-rcpt-pick${r._uploading ? ' is-busy' : ''}" title="スマホならカメラで撮る・写真から選ぶ・ファイルから選べます">${r._uploading ? '⏳ 送信中…' : (r.receipt_file_id ? '📷 撮り直す・選び直す' : '📷 選ぶ')}<input type="file" class="ie-rcpt-file" data-i="${i}" accept="image/*,application/pdf" ${r._uploading ? 'disabled' : ''}></label>`
+      : '';
+    const attachedLine = `${pickBtn} ${r.receipt_file_id ? `${receiptLinkHtml(r)} <span class="ie-rcpt-ok">✓</span>` : (canEdit ? '<span class="ie-rcpt-hint">写真・PDF（10MBまで）</span>' : '<span class="ie-rcpt-none">未添付</span>')}`;
+    const receiptRead = !canEdit
+      ? (st === 'attached' ? `<div class="ie-rcpt-line">${attachedLine}</div>`
+        : st === 'missing' ? `<div class="ie-rcpt-line ie-rcpt-missing">⚠ 領収書なし: ${h(r.receipt_missing_reason || '（理由なし）')}</div>`
+          : '<div class="ie-rcpt-line ie-rcpt-none">未入力</div>')
+      : `<div class="ie-rcpt-line"><label class="ie-rcpt-opt"><input type="radio" class="ie-rcpt-st" name="${name}" data-i="${i}" value="attached" ${st === 'attached' ? 'checked' : ''}> 写真を添付</label> ${attachedLine}</div>
+         <div class="ie-rcpt-line"><label class="ie-rcpt-opt"><input type="radio" class="ie-rcpt-st" name="${name}" data-i="${i}" value="missing" ${st === 'missing' ? 'checked' : ''}> 領収書なし（理由を書く）</label></div>
+         ${st === 'missing' ? `<div class="ie-rcpt-line"><input class="ie-in ie-in-rreason" data-i="${i}" data-col="rreason" maxlength="500" value="${h(r.receipt_missing_reason)}" placeholder="例: レシートを紛失したため" ${dis}></div>` : ''}`;
+    return `<div class="ie-exp-head"><span class="ie-tag-exp">立替経費（実費）</span><span class="ie-exp-note">領収書どおりの金額を入れてください。消費税・源泉徴収はかからず、そのままの額が振り込まれます</span></div>
+      <div class="ie-exp-grid">
+        <span class="ie-exp-k">内容</span><span><input class="ie-in ie-in-label ie-in-wide" data-i="${i}" data-col="label" maxlength="200" value="${h(r.label)}" placeholder="例: アートホテル撮影 ガソリン代" ${dis}></span>
+        <span class="ie-exp-k">金額</span><span>${priceInput} 円</span>
+        <span class="ie-exp-k">日付</span><span><input type="date" class="ie-in ie-in-edate" data-i="${i}" data-col="edate" value="${h(r.expense_date || '')}" ${dis}></span>
+        <span class="ie-exp-k">支払先</span><span><input class="ie-in ie-in-wide" data-i="${i}" data-col="payee" maxlength="200" value="${h(r.expense_payee)}" placeholder="例: ENEOS ○○店" ${dis}></span>
+        <span class="ie-exp-k">領収書</span><div class="ie-rcpt">${receiptRead}</div>
+      </div>`;
+  }
+
+  /** 画像は長辺 2000px 程度の JPEG にしてから送る（重い写真をそのまま送らない）。PDF はそのまま */
+  const RECEIPT_MAX_EDGE = 2000;
+  async function imageToJpeg(file, maxEdge) {
+    let src = null, w = 0, hh = 0, cleanup = () => {};
+    if (typeof createImageBitmap === 'function') {
+      try {
+        src = await createImageBitmap(file, { imageOrientation: 'from-image' });
+        w = src.width; hh = src.height; const bmp = src; cleanup = () => { try { bmp.close(); } catch (_) { /* noop */ } };
+      } catch (_) { src = null; }
+    }
+    if (!src) {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      try {
+        await new Promise((ok, ng) => { img.onload = ok; img.onerror = () => ng(new Error('decode')); img.src = url; });
+      } catch (e) { URL.revokeObjectURL(url); throw e; }
+      src = img; w = img.naturalWidth; hh = img.naturalHeight; cleanup = () => URL.revokeObjectURL(url);
+    }
+    try {
+      if (!w || !hh) throw new Error('decode');
+      const scale = Math.min(1, maxEdge / Math.max(w, hh));
+      const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(hh * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = cw; canvas.height = ch;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch); // 透過 PNG の背景を白に
+      ctx.drawImage(src, 0, 0, cw, ch);
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+      if (!blob) throw new Error('encode');
+      return blob;
+    } finally { cleanup(); }
+  }
+  async function prepareReceiptFile(file) {
+    const max = (ed.state && ed.state.receipt_max_bytes) || 10 * 1024 * 1024;
+    const tooBig = () => new Error(`ファイルが大きすぎます（${Math.round(max / 1024 / 1024)}MB まで）`);
+    const type = String(file.type || '').toLowerCase();
+    const fname = String(file.name || '');
+    const base = fname.replace(/\.[^.]+$/, '') || 'receipt';
+    if (type === 'application/pdf' || /\.pdf$/i.test(fname)) {
+      if (file.size > max) throw tooBig();
+      return { blob: file, name: fname || 'receipt.pdf' };
+    }
+    const isHeic = /hei[cf]/.test(type) || /\.hei[cf]$/i.test(fname);
+    if (!type.startsWith('image/') && !isHeic) throw new Error('画像（写真）か PDF を選んでください');
+    try {
+      const jpeg = await imageToJpeg(file, RECEIPT_MAX_EDGE);
+      if (jpeg.size > max) throw tooBig();
+      return { blob: jpeg, name: `${base}.jpg` };
+    } catch (e) {
+      if (/大きすぎ/.test(e.message)) throw e;
+      // ブラウザが読めない HEIC などは、そのまま送る（サーバーで種類を確かめて保存する）
+      if (file.size <= max && (isHeic || type === 'image/jpeg' || type === 'image/png')) return { blob: file, name: fname || `${base}.heic` };
+      if (file.size > max) throw tooBig();
+      throw new Error('この画像は読み込めませんでした。別の写真か PDF を選んでください');
+    }
+  }
+
+  async function uploadReceipt(r, file) {
+    if (!r || r.kind !== 'expense' || !editable() || r._uploading) return;
+    const refresh = () => { const i = ed.rows.indexOf(r); if (i >= 0) refreshRow(i); };
+    r._uploading = true;
+    r.receipt_status = 'attached';
+    refresh();
+    try {
+      // 新しい行は先に保存して ID を受け取る（入力途中の値もここで保存される）
+      ed.dirty = true;
+      const saved = await save();
+      if (saved === false || !r.id) throw new Error('先に行を保存できませんでした。少し待ってからもう一度選んでください');
+      const prepared = await prepareReceiptFile(file);
+      const fd = new FormData();
+      fd.append('file', prepared.blob, prepared.name);
+      const res = await apiFetch(`${API}/invoice-editor/${encodeURIComponent(ed.id)}/items/${encodeURIComponent(r.id)}/receipt`, { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '領収書を保存できませんでした');
+      ['receipt_status', 'receipt_missing_reason', 'receipt_file_id', 'receipt_file_name', 'receipt_mime_type', 'receipt_uploaded_at']
+        .forEach(k => { if (k in data) r[k] = data[k] ?? (k === 'receipt_missing_reason' ? '' : data[k]); });
+      ed.problems.delete(r.id);
+      showToast('領収書を保存しました（本人の請求書フォルダの「領収書」に入ります）', 'success', 3000);
+    } catch (e) {
+      showToast(e.message || '領収書を保存できませんでした', 'error', 6000);
+    } finally {
+      r._uploading = false;
+      refresh();
+    }
+  }
+
+  function onReceiptStatus(t) {
+    const i = Number(t.dataset.i);
+    const r = ed.rows[i];
+    if (!r || !editable()) return;
+    const v = t.value;
+    if (v === 'missing' && r.receipt_file_id) {
+      if (!window.confirm('添付した領収書を外して「領収書なし」にしますか？（ファイルはゴミ箱に移ります）')) { refreshRow(i); return; }
+      Object.assign(r, { receipt_file_id: null, receipt_file_name: '', receipt_mime_type: '', receipt_uploaded_at: null });
+    }
+    r.receipt_status = v;
+    if (r.id) ed.problems.delete(r.id);
+    refreshRow(i);
+    if (v === 'missing') focusCell(i, 'rreason');
+    scheduleSave();
+  }
+
   function rowHtml(r, i, canEdit) {
     const issues = rowIssues(r);
     const isNg = issues.length > 0;
     const dis = canEdit ? '' : 'disabled';
     const cls = ['ie-row', r.kind === 'manual' ? 'ie-row-manual' : '', r.kind === 'expense' ? 'ie-row-expense' : '', isNg ? 'ie-row-ng' : ''].join(' ');
     const sel = canEdit ? `<input type="checkbox" class="ie-sel" data-i="${i}" ${r._sel ? 'checked' : ''}>` : '';
+    const priceInput = `<input class="ie-in ie-in-price" data-i="${i}" data-col="price" inputmode="numeric" value="${r.unit_price == null ? '' : h(r.unit_price)}" placeholder="未入力" ${dis}>`;
+    // 立替経費（領収書の欄があるとき）は金額も内容・日付・支払先と同じ枠の中で入れる（合意した画面どおり）
+    const expenseBlock = r.kind === 'expense' && receiptOn();
     const priceIn = (r.kind === 'fixed')
       ? `<span class="ie-fixed">${yen(r.unit_price)}</span>`
-      : `<input class="ie-in ie-in-price" data-i="${i}" data-col="price" inputmode="numeric" value="${r.unit_price == null ? '' : h(r.unit_price)}" placeholder="未入力" ${dis}>`;
+      : (expenseBlock ? '' : priceInput);
     const qty = r.kind === 'manual'
       ? `<input class="ie-in ie-in-qty" data-i="${i}" data-col="qty" inputmode="numeric" value="${h(r.quantity)}" ${dis}>`
       : '1';
@@ -565,6 +719,8 @@
     } else if (r.kind === 'manual') {
       label = `<div class="ie-manual"><input class="ie-in ie-in-label" data-i="${i}" data-col="label" maxlength="200" value="${h(r.label)}" placeholder="品目（例: 撮影補助 10/12）" ${dis}> <span class="ie-tag-blue">HFS未登録</span></div>
         <div class="ie-reason">理由: <input class="ie-in ie-in-reason" data-i="${i}" data-col="reason" maxlength="500" value="${h(r.manual_reason)}" placeholder="HFSに無い理由（必須）" ${dis}></div>`;
+    } else if (expenseBlock) {
+      label = expenseBlockHtml(r, i, canEdit, priceInput);
     } else if (r.kind === 'expense') {
       label = `<div class="ie-manual"><input class="ie-in ie-in-label" data-i="${i}" data-col="label" maxlength="200" value="${h(r.label)}" placeholder="立替経費の内容（例: 10/25 撮影 タクシー代）" ${dis}> <span class="ie-tag-exp">立替経費（実費）</span></div>
         <div class="ie-exp-note">領収書どおりの金額を入れてください。消費税・源泉徴収はかからず、そのままの額が振り込まれます（領収書は管理者へ）</div>`;
@@ -628,6 +784,11 @@
       if (r.kind === 'cr') r.price_change_reason = String(raw ?? '');
       else if (r.kind === 'manual') r.manual_reason = String(raw ?? '');
       else return false;
+    } else if (col === 'edate' || col === 'payee' || col === 'rreason') {
+      if (r.kind !== 'expense') return false;
+      if (col === 'edate') { const d = C().parseExpenseDate(raw); if (d.error) return false; r.expense_date = d.value; }
+      else if (col === 'payee') r.expense_payee = String(raw ?? '');
+      else r.receipt_missing_reason = String(raw ?? '');
     } else return false;
     if (r.id) ed.problems.delete(r.id);
     return true;
@@ -661,6 +822,14 @@
 
   function onChange(e) {
     const t = e.target;
+    if (t.classList && t.classList.contains('ie-rcpt-st')) { onReceiptStatus(t); return; }
+    if (t.classList && t.classList.contains('ie-rcpt-file')) {
+      const r = ed.rows[Number(t.dataset.i)];
+      const file = t.files && t.files[0];
+      t.value = ''; // 同じファイルを選び直しても change が来るように
+      if (r && file) uploadReceipt(r, file);
+      return;
+    }
     if (t.classList && t.classList.contains('ie-sel')) {
       const r = ed.rows[Number(t.dataset.i)];
       if (r) r._sel = t.checked;
@@ -710,6 +879,7 @@
       return;
     }
     if (e.key === 'Enter') { e.preventDefault(); moveVert(i, col, e.shiftKey ? -1 : 1); return; }
+    if (t.type === 'date' && /^Arrow/.test(e.key)) return; // 日付欄の矢印は日付の上げ下げに使う
     if (e.key === 'ArrowDown') { e.preventDefault(); moveVert(i, col, 1); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); moveVert(i, col, -1); return; }
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -811,6 +981,7 @@
     ed.rows.push({
       id: null, _key: `k${++ed.keySeq}`, _sel: false, kind: 'expense', creative_id: null, cost_type: C().MANUAL_EXPENSE_COST_TYPE, is_expense: true,
       label: '', creative_label: '', unit_price: null, quantity: 1, ref_price: null, price_change_reason: '', manual_reason: '', billing_date: null,
+      expense_date: null, expense_payee: '', receipt_status: null, receipt_missing_reason: '', receipt_file_id: null, receipt_file_name: '',
     });
     render();
     focusCell(ed.rows.length - 1, 'label');
@@ -919,6 +1090,13 @@
         quantity: r.quantity,
         price_change_reason: r.price_change_reason,
         manual_reason: r.manual_reason,
+        // 立替経費の日付・支払先・領収書の状態（写真そのものは別の API で送る）
+        ...(r.kind === 'expense' && receiptOn() ? {
+          expense_date: r.expense_date || null,
+          expense_payee: r.expense_payee || '',
+          receipt_status: r.receipt_status || null,
+          receipt_missing_reason: r.receipt_missing_reason || '',
+        } : {}),
       })),
     };
     ed.saving = (async () => {
@@ -1027,7 +1205,7 @@
     const rows = ed.rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td>
       <td class="c">${r.kind === 'cr' ? slashDate(r.billing_date) : ''}</td>
-      <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.is_expense ? C().expenseItemLabel(r) : (r.kind === 'fixed' ? (r.creative_label || r.label) : r.label))}</td>
+      <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.is_expense ? C().expenseItemLabel(r) + C().receiptNoteOf(r) : (r.kind === 'fixed' ? (r.creative_label || r.label) : r.label))}</td>
       <td class="r">${r.unit_price == null ? '' : yen(r.unit_price)}</td>
       <td class="c">${r.kind === 'manual' ? h(r.quantity) : 1}</td>
       <td class="r">${r.unit_price == null ? '' : yen(C().lineAmount(r))}</td>

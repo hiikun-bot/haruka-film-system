@@ -13,6 +13,8 @@ const IE = require('../../utils/invoice-editor');
 const { buildInvoicePdfModel, renderInvoicePdf } = require('../../utils/invoice-pdf');
 
 const ME = 'u-me';
+// 立替経費の日付・支払先・領収書がそろった状態（追補 2026-11-23。ここでは内容と金額のチェックを見る）
+const RECEIPT_OK = { expense_date: '2026-10-25', expense_payee: '○○タクシー', receipt_status: 'attached', receipt_file_id: 'drv-1' };
 const OTHER = 'u-other';
 
 function cr(over = {}) {
@@ -339,7 +341,7 @@ describe('行の注意 lineIssues', () => {
     expect(IE.lineIssues({ creative_id: null, cost_type: null, label: '撮影補助', unit_price: 100, quantity: 1, manual_reason: '現場対応' })).toEqual([]);
   });
   test('立替経費の行は内容と金額が必要（理由・数量は見ない）', () => {
-    const ok = { creative_id: null, cost_type: 'expense', label: '10/25 撮影 タクシー代', unit_price: 2000, quantity: 1 };
+    const ok = { creative_id: null, cost_type: 'expense', label: '10/25 撮影 タクシー代', unit_price: 2000, quantity: 1, ...RECEIPT_OK };
     expect(IE.lineIssues(ok)).toEqual([]);
     expect(IE.lineIssues({ ...ok, label: '  ' }).map(i => i.code)).toEqual(['LABEL_MISSING']);
     expect(IE.lineIssues({ ...ok, unit_price: null }).map(i => i.code)).toEqual(['PRICE_MISSING']);
@@ -396,7 +398,7 @@ describe('提出時チェック checkInvoiceForSubmit', () => {
   });
   test('立替経費があるときは ご請求金額（立替経費込み）と差引で合計一致を見る', () => {
     const p = base();
-    p.items.push({ id: 'i4', creative_id: null, cost_type: 'expense', label: 'タクシー代', unit_price: 2000, quantity: 1 });
+    p.items.push({ id: 'i4', creative_id: null, cost_type: 'expense', label: 'タクシー代', unit_price: 2000, quantity: 1, ...RECEIPT_OK });
     // 立替経費を入れる前の合計のままでは通らない
     expect(codes(IE.checkInvoiceForSubmit(p))).toEqual(['TOTAL_MISMATCH']);
     // 報酬の税込（33,000）を送っても通らない（画面に出ているのは立替経費込みの 35,000）
@@ -407,7 +409,7 @@ describe('提出時チェック checkInvoiceForSubmit', () => {
   });
   test('内容が空の立替経費は提出できない', () => {
     const p = base();
-    p.items.push({ id: 'i4', creative_id: null, cost_type: 'expense', label: '', unit_price: 2000, quantity: 1 });
+    p.items.push({ id: 'i4', creative_id: null, cost_type: 'expense', label: '', unit_price: 2000, quantity: 1, ...RECEIPT_OK });
     expect(codes(IE.checkInvoiceForSubmit({ ...p, expectedTotal: 35000, expectedPayout: 31937 }))).toEqual(['LABEL_MISSING']);
   });
   test('他人の CR', () => {

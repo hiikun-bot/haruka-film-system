@@ -444,8 +444,44 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
     <p>・作るときに選び漏れた作品は <b>「＋ HFSのCRを追加」</b> でファイル名を入れて探し、「＋ 追加」で足せます（単価は空欄で入るので、ほかの行と同じように入れてください）。</p>
     <p>・明細の順番は <b>「並び替え…」</b> で「納品日が新しい順」「納品日が古い順」「クライアント名順」に並べ替えられます。PDF もその順になります。</p>
     <p>・HFS に登録されていない仕事は <b>「＋ HFS外の行」</b> で足します。品目・単価・数量を入れ、<b>理由（どの案件・誰からの依頼か）が必要</b> です。青い行になります。</p>
-    <p>・交通費など <b>立て替えた実費</b> は <b>「＋ 立替経費」</b> で足します。内容（例: 10/25 撮影 タクシー代）と、<b>領収書どおりの金額</b> を入れてください。この行には消費税も源泉徴収もかからず、入れた金額がそのまま振り込まれます。領収書は管理者に渡してください。</p>
+    <p>・交通費など <b>立て替えた実費</b> は <b>「＋ 立替経費」</b> で足します。この行には消費税も源泉徴収もかからず、入れた金額がそのまま振り込まれます（入れ方は下の「立替経費の入れ方」）。</p>
     <p>・請求しないものは、チェックを付けて <b>「削除」</b> します（提出前の下書きのあいだだけ）。</p>
+  </div>
+</section>
+
+<!-- 立替経費の入れ方（ADR 046 追補 2026-11-23） -->
+<section class="step-section" id="expense">
+  <div class="step-section-head">
+    <div class="step-section-num">＋</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">STEP 4 のつづき</div>
+      <h2>立替経費の入れ方（領収書の写真を付ける）</h2>
+    </div>
+  </div>
+  <div class="step-card">
+    <p>「＋ 立替経費」を押すと、オレンジの枠が 1 行増えます。上から順に入れてください。</p>
+<pre class="ie-note" style="white-space:pre;overflow-x:auto;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.6;background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;padding:10px 12px">内容   [アートホテル撮影 ガソリン代]
+金額   [1641] 円
+日付   [2026/10/25]
+支払先 [ENEOS ○○店]
+領収書  ◉ 写真を添付  [📷 選ぶ] 領収書_….jpg ✓
+        ○ 領収書なし（理由を書く）</pre>
+    <p>・<b>内容</b>：何の費用か（例: アートホテル撮影 ガソリン代）。</p>
+    <p>・<b>金額</b>：<b>領収書どおりの金額</b>（税込のまま・円単位）。</p>
+    <p>・<b>日付</b>：支払った日。<b>支払先</b>：お店・会社の名前（例: ENEOS ○○店、○○タクシー）。</p>
+    <p>・<b>領収書</b>：「写真を添付」の <b>「📷 選ぶ」</b> を押します。スマホでは <b>その場でカメラで撮る・写真から選ぶ・ファイルから選ぶ</b> のどれでもできます。PDF の領収書（ネットで払ったときなど）も付けられます。1 行に 1 枚、10MB までです。大きな写真は自動で小さくしてから送ります。</p>
+    <p>・付けると、ファイル名の横に <b>✓</b> が付きます。ファイル名を押すと中身を確かめられます。選び直すと新しいものに差し替わります。</p>
+    <p>・写真はあなたの <b>請求書フォルダ（Drive）の「領収書」フォルダ</b> に入ります。見られるのは、あなたと管理者だけです。</p>
+    <p>・2 枚以上ある（行きと帰りのタクシーなど）ときは、<b>領収書ごとに 1 行ずつ</b> 足してください。</p>
+  </div>
+  <div class="wanpoint">
+    <div class="wanpoint-title">領収書がないとき</div>
+    <p>「<b>領収書なし（理由を書く）</b>」を選んで、理由を書いてください（例: レシートを紛失したため、券売機で領収書が出なかったため）。管理者の画面では目立つ色で表示され、確認のうえで支払われます。</p>
+    <p>立替経費を源泉徴収の対象外にできるのは、領収書などで実際にかかった額だと示せる場合です。できるだけ写真を付けてください。</p>
+  </div>
+  <div class="step-card">
+    <p class="ie-note">💡 日付・支払先・領収書（写真か「領収書なし」の理由）がそろっていない立替経費があると、<b>提出のときに止まり</b>、どの行かが赤く表示されます。下書きのあいだは、途中のままでも保存されます。</p>
+    <p class="ie-note">💡 提出した PDF には、立替経費の行に「（領収書あり）」「（領収書なし）」が小さく付きます。写真そのものは PDF に入りません。</p>
   </div>
 </section>
 
@@ -503,7 +539,7 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
       <div class="color-card"><h3><span class="pill prev">黄</span> 入力する欄</h3><p>単価や、HFS外の行の内容を入れるところ。</p></div>
       <div class="color-card"><h3><span class="pill w">赤</span> 確認が必要</h3><p>参考単価より高い、理由が空いているなど。直すか理由を書きます。</p></div>
       <div class="color-card"><h3><span class="pill i">青</span> HFS未登録</h3><p>自分で足した行。HFS への登録漏れを見つける手がかりにもなります。</p></div>
-      <div class="color-card"><h3><span class="pill exp">オレンジ</span> 立替経費（実費）</h3><p>「＋ 立替経費」で足した行。消費税・源泉徴収がかからず、入れた金額がそのまま振り込まれます。</p></div>
+      <div class="color-card"><h3><span class="pill exp">オレンジ</span> 立替経費（実費）</h3><p>「＋ 立替経費」で足した行。消費税・源泉徴収がかからず、入れた金額がそのまま振り込まれます。日付・支払先・領収書の写真（または「領収書なし」の理由）も入れます。</p></div>
     </div>
   </div>
 </section>
@@ -532,6 +568,10 @@ kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;border:1px solid var
 <section class="trouble">
   <h3>💬 よくある質問</h3>
   <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">📷</span>
+      <div><div class="trouble-q">領収書の写真が付けられない</div><div class="trouble-a">付けられるのは写真（JPEG・PNG・HEIC）と PDF で、10MB までです。「先に行を保存できませんでした」と出たときは、数秒待ってからもう一度「📷 選ぶ」を押してください。それでも付けられないときは「領収書なし」を選んで理由に「写真は別で送ります」と書き、管理者へ送ってください。</div></div>
+    </div>
     <div class="trouble-item">
       <span class="trouble-icon">⏳</span>
       <div><div class="trouble-q">まだ納品していない仕事を請求したい</div><div class="trouble-a">この画面では選べません。納品が完了してから、その月の請求書に入れてください。初稿の時点で請求する約束の案件は、初稿を提出した時点で選べるようになります。</div></div>

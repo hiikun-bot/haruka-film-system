@@ -16786,23 +16786,35 @@ router.get('/invoices', async (req, res) => {
   //   3) 監査列 + 登録番号なし
   //   4) どちらもなし
   // migration 適用前後どちらでも 500 にならないようにする。
-  const select = ({ audit, regNo }) => `*, projects(id,name,clients(id,name${regNo ? ',invoice_registration_number' : ''})), issuer:issuer_id(id,full_name${regNo ? ',invoice_registration_number' : ''}), invoice_items(id,total_amount,is_special,special_reason${audit ? ',original_unit_price,price_change_reason' : ''},label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,project_id,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`;
-  let { data, error } = await buildQuery(select({ audit: true, regNo: true }));
-  if (error && /invoice_registration_number/.test(error.message || '')) {
-    console.warn('[invoices] invoice_registration_number 列未反映のためフォールバック:', error.message);
-    ({ data, error } = await buildQuery(select({ audit: true, regNo: false })));
-  }
-  if (error && /original_unit_price|price_change_reason/.test(error.message || '')) {
-    console.warn('[invoices] 監査列未反映のためフォールバック select を使用:', error.message);
-    ({ data, error } = await buildQuery(select({ audit: false, regNo: true })));
+  //   さらに立替経費の日付・支払先・領収書（ADR 046 追補 2026-11-23）の列が無ければ、その列だけ外して読み直す
+  const select = ({ audit, regNo, receipt }) => `*, projects(id,name,clients(id,name${regNo ? ',invoice_registration_number' : ''})), issuer:issuer_id(id,full_name${regNo ? ',invoice_registration_number' : ''}), invoice_items(id,total_amount,is_special,special_reason${audit ? ',original_unit_price,price_change_reason' : ''}${receipt ? `,${INVOICE_ITEM_RECEIPT_LIST_COLS}` : ''},label,quantity,unit,unit_price,sort_order,cost_type,creative_label,creative_id,creatives(id,file_name,project_id,creative_type,final_deadline,draft_deadline,updated_at),invoice_item_details(*))`;
+  const runChain = async (receipt) => {
+    let { data, error } = await buildQuery(select({ audit: true, regNo: true, receipt }));
     if (error && /invoice_registration_number/.test(error.message || '')) {
-      console.warn('[invoices] invoice_registration_number 列も未反映のため二重フォールバック:', error.message);
-      ({ data, error } = await buildQuery(select({ audit: false, regNo: false })));
+      console.warn('[invoices] invoice_registration_number 列未反映のためフォールバック:', error.message);
+      ({ data, error } = await buildQuery(select({ audit: true, regNo: false, receipt })));
     }
+    if (error && /original_unit_price|price_change_reason/.test(error.message || '')) {
+      console.warn('[invoices] 監査列未反映のためフォールバック select を使用:', error.message);
+      ({ data, error } = await buildQuery(select({ audit: false, regNo: true, receipt })));
+      if (error && /invoice_registration_number/.test(error.message || '')) {
+        console.warn('[invoices] invoice_registration_number 列も未反映のため二重フォールバック:', error.message);
+        ({ data, error } = await buildQuery(select({ audit: false, regNo: false, receipt })));
+      }
+    }
+    return { data, error };
+  };
+  let { data, error } = await runChain(true);
+  if (error && RCPT.isMissingReceiptColumnError(error)) {
+    console.warn('[invoices] 領収書の列が未反映のためフォールバック:', error.message);
+    ({ data, error } = await runChain(false));
   }
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
+
+// 一覧・詳細で立替経費の行に付ける列（領収書は「あり／なし・理由」が分かれば足りる。ファイルは GET .../receipt で見る）
+const INVOICE_ITEM_RECEIPT_LIST_COLS = 'expense_date,expense_payee,receipt_status,receipt_missing_reason,receipt_file_id,receipt_file_name,receipt_mime_type';
 
 // 請求書の存在する年月一覧（管理者一覧の月タブ構築用・軽量。明細ネストを含む全件fetchを避ける）
 // :id ルートより前に定義必須
@@ -17205,6 +17217,8 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
   //   issuer.invoice_registration_number / clients.invoice_registration_number を含めて取得し、
   //   PDF/印刷プレビューで適格請求書発行事業者の登録番号（T+13桁）を表示する。
   //   列未反映環境（migration 未適用）でも落ちないよう、列なしフォールバック select を別途用意する。
+  // 立替経費の日付・支払先・領収書（ADR 046 追補 2026-11-23）の列は、無ければ外して読み直す（withReceipt）
+  let withReceipt = true;
   const buildSelect = (auditCols, withRegNo) => `
       *,
       projects(id, name, clients(id, name, client_code${withRegNo ? ', invoice_registration_number' : ''})),
@@ -17216,6 +17230,7 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
       invoice_items(
         id, total_amount, is_special, special_reason,
         ${auditCols ? 'original_unit_price, price_change_reason,' : ''}
+        ${withReceipt ? `${INVOICE_ITEM_RECEIPT_LIST_COLS},` : ''}
         label, quantity, unit, unit_price, sort_order,
         cost_type, creative_label, creative_id,
         creatives(id, file_name, project_id, creative_type, final_deadline, draft_deadline, updated_at,
@@ -17225,6 +17240,11 @@ router.get('/invoices/:id', requireAuth, async (req, res) => {
       )
     `;
   let { data, error } = await supabase.from('invoices').select(buildSelect(true, true)).eq('id', req.params.id).single();
+  if (error && RCPT.isMissingReceiptColumnError(error)) {
+    console.warn('[invoices/:id] 領収書の列が未反映のためフォールバック select を使用:', error.message);
+    withReceipt = false;
+    ({ data, error } = await supabase.from('invoices').select(buildSelect(true, true)).eq('id', req.params.id).single());
+  }
   if (error && /invoice_registration_number/.test(error.message || '')) {
     console.warn('[invoices/:id] invoice_registration_number 列未反映のためフォールバック select を使用:', error.message);
     ({ data, error } = await supabase.from('invoices').select(buildSelect(true, false)).eq('id', req.params.id).single());
@@ -19904,6 +19924,33 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
 //   - 発行者は本人固定。admin/秘書（isStaffRequester＝実効ロール）だけ issuer_id 指定の代理作成・閲覧・編集ができる（既存どおり）。
 //   - 「本人の分」の判定は常に請求書の issuer_id で行う（操作した人ではない）。
 const IE = require('../utils/invoice-editor');
+// 立替経費の日付・支払先・領収書（ADR 046 追補 2026-11-23）。列は migrations/2026-11-23_invoice_items_expense_receipt.sql
+const RCPT = require('../utils/invoice-receipt');
+
+// 領収書の列が本番にあるか（migration の適用前でも落ちないように、無ければ従来の列だけで読み書きする）。
+// 「無い」と分かったら 5 分は従来の列だけで動き、その後もう一度確かめる（適用後に再起動なしで有効になる）
+const ieReceiptCols = { ok: null, checkedAt: 0 };
+const IE_RECEIPT_RECHECK_MS = 5 * 60 * 1000;
+function ieReceiptColsWorthTrying() {
+  return ieReceiptCols.ok !== false || Date.now() - ieReceiptCols.checkedAt > IE_RECEIPT_RECHECK_MS;
+}
+function ieMarkReceiptCols(ok) { ieReceiptCols.ok = !!ok; ieReceiptCols.checkedAt = Date.now(); }
+/** 直近の読み出しで領収書の列があったか（提出時の必須チェック・画面の入力欄の出し分けに使う） */
+function ieReceiptSupported() { return ieReceiptCols.ok === true; }
+
+/** 立替経費の行のうち Drive に置いた領収書ファイルをゴミ箱へ（完全削除しない・失敗しても本体は止めない） */
+async function ieTrashReceiptFiles(fileIds, where) {
+  const ids = [...new Set((fileIds || []).filter(Boolean))];
+  if (!ids.length) return 0;
+  let drive;
+  try { drive = await getDriveService(); } catch (e) { console.warn(`[invoice-receipt] ${where}: Drive に接続できずゴミ箱送りを省略: ${e.message}`); return 0; }
+  let n = 0;
+  for (const id of ids) {
+    try { await trashDriveFile(drive, id); n++; }
+    catch (e) { console.warn(`[invoice-receipt] ${where}: ゴミ箱送り失敗 ${id}: ${e.message}`); }
+  }
+  return n;
+}
 
 // 候補・明細の CR 取得用 select（base64 列は入れない・PR #940）。resolveCreativeRoleCost が読む列を含める
 const IE_CREATIVE_SELECT = `
@@ -20141,7 +20188,7 @@ function ieCandidateOrFilter(year, month, notBeforeYm) {
 }
 
 /** 明細行 → 画面用（kind / 参考単価 / 注意） */
-function ieItemView(it, { creative, refPrice }) {
+function ieItemView(it, { creative, refPrice, requireReceipt = ieReceiptSupported() }) {
   const kind = IE.lineKind(it); // cr / fixed / expense（手で足した立替経費）/ manual
   const ref = kind === 'cr' ? (refPrice != null ? refPrice : (it.original_unit_price ?? null)) : null;
   const project = creative ? creative.projects : null;
@@ -20163,8 +20210,25 @@ function ieItemView(it, { creative, refPrice }) {
     manual_reason: it.manual_reason || '',
     sort_order: it.sort_order ?? 0,
     amount: IE.lineAmount(it),
-    issues: IE.lineIssues(it, ref),
+    issues: IE.lineIssues(it, ref, { requireReceipt }),
+    ...ieReceiptView(it),
     ...ieMediaView(creative),
+  };
+}
+
+/** 立替経費の行の日付・支払先・領収書（「＋ 立替経費」の行だけ。ほかの行は空） */
+function ieReceiptView(it) {
+  if (!IE.isManualExpenseLine(it)) return {};
+  const hasFile = !!it.receipt_file_id;
+  return {
+    expense_date: IE.dateOnly(it.expense_date),
+    expense_payee: it.expense_payee || '',
+    receipt_status: IE.normalizeReceiptStatus(it.receipt_status),
+    receipt_missing_reason: it.receipt_missing_reason || '',
+    receipt_file_id: hasFile ? it.receipt_file_id : null,
+    receipt_file_name: hasFile ? (it.receipt_file_name || '') : '',
+    receipt_mime_type: hasFile ? (it.receipt_mime_type || '') : '',
+    receipt_uploaded_at: hasFile ? (it.receipt_uploaded_at || null) : null,
   };
 }
 
@@ -20176,12 +20240,21 @@ function ieMediaView(creative) {
   return { thumb_file_id: f.id, media_drive_file_id: f.drive_file_id || null, media_is_video: isVideo };
 }
 
+const IE_ITEM_SELECT = 'id, creative_id, cost_type, label, creative_label, unit, unit_price, quantity, total_amount, original_unit_price, price_change_reason, manual_reason, sort_order, created_at';
 async function ieLoadItems(invoiceId) {
-  const { data, error } = await supabase.from('invoice_items')
-    .select('id, creative_id, cost_type, label, creative_label, unit, unit_price, quantity, total_amount, original_unit_price, price_change_reason, manual_reason, sort_order, created_at')
+  const run = (withReceipt) => supabase.from('invoice_items')
+    .select(withReceipt ? `${IE_ITEM_SELECT}, ${RCPT.RECEIPT_SELECT}` : IE_ITEM_SELECT)
     .eq('invoice_id', invoiceId)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
+  if (ieReceiptColsWorthTrying()) {
+    const { data, error } = await run(true);
+    if (!error) { ieMarkReceiptCols(true); return data || []; }
+    if (!RCPT.isMissingReceiptColumnError(error)) throw new Error(error.message);
+    console.warn('[invoice-editor] 領収書の列が未反映のため従来の列で読みます:', error.message);
+    ieMarkReceiptCols(false);
+  }
+  const { data, error } = await run(false);
   if (error) throw new Error(error.message);
   return data || [];
 }
@@ -20213,6 +20286,9 @@ async function ieBuildEditorState(inv) {
     items: views,
     totals,
     editable: ['draft', 'rejected'].includes(inv.status),
+    // 領収書の列が本番にあるときだけ、画面に日付・支払先・領収書の欄を出す（ADR 046 追補 2026-11-23）
+    receipt_supported: ieReceiptSupported(),
+    receipt_max_bytes: RCPT.RECEIPT_MAX_BYTES,
   };
 }
 
@@ -20469,6 +20545,8 @@ router.get('/invoice-editor/:id', requireAuth, async (req, res) => {
 //   - 固定行（作業時間・一式）: 並び順と削除だけ
 //   - id なしの行 = HFS外の行（creative_id NULL）。品目・単価・数量・理由
 //   - id なしで kind='expense' の行 = 立替経費（実費）。品目と金額だけ（数量は 1 固定・理由なし・消費税と源泉の対象外）
+//   - 立替経費の行は expense_date / expense_payee / receipt_status / receipt_missing_reason も受ける（追補 2026-11-23）。
+//     写真そのものは POST /invoice-editor/:id/items/:itemId/receipt だけが書く。「領収書なし」にした行・消した行の写真はゴミ箱へ
 //   - 送られてこなかった既存行は削除
 //   - 保存は止めず、注意（単価未入力・理由なし等）は issues として返す（提出時に 409）
 router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
@@ -20487,6 +20565,22 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
     const existing = await ieLoadItems(inv.id);
     const existingById = new Map(existing.map(it => [it.id, it]));
     const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+    // 立替経費の日付・支払先・領収書の状態（列がある環境だけ書く。ファイルはアップロード API だけが書く）
+    const receiptOn = ieReceiptSupported();
+    //   送られてきた項目だけ書く（古い画面のまま開いていたタブが保存しても、入力済みの日付などを消さない）
+    const expenseFields = (li, i) => {
+      const row = {};
+      if (li.expense_date !== undefined) {
+        const d = IE.parseExpenseDate(li.expense_date);
+        if (d.error) return { error: `${i + 1}行目: ${d.error}` };
+        row.expense_date = d.value;
+      }
+      if (li.expense_payee !== undefined) row.expense_payee = str(li.expense_payee, IE.PAYEE_MAX) || null;
+      if (li.receipt_status !== undefined) row.receipt_status = IE.normalizeReceiptStatus(li.receipt_status);
+      if (li.receipt_missing_reason !== undefined) row.receipt_missing_reason = str(li.receipt_missing_reason, IE.REASON_MAX) || null;
+      return { row };
+    };
+    const trashReceiptIds = []; // 「領収書なし」に切り替えた行・消した行の古い領収書（DB を書いたあとでゴミ箱へ）
 
     const next = [];       // 保存後の全行（計算用）
     const updates = [];    // { id, row }
@@ -20508,6 +20602,16 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
           row = { sort_order: i }; // 金額はサーバー計算の固定額
         } else if (IE.isManualExpenseLine(prev)) {
           row = { label: str(li.label, IE.LABEL_MAX) || prev.label || '', unit_price: price.value, quantity: 1, sort_order: i };
+          if (receiptOn) {
+            const ex = expenseFields(li, i);
+            if (ex.error) return res.status(400).json({ error: ex.error, index: i });
+            Object.assign(row, ex.row);
+            // 「領収書なし」に切り替えたら添付していた写真は外す（Drive ではゴミ箱へ）
+            if (ex.row.receipt_status === IE.RECEIPT_MISSING && prev.receipt_file_id) {
+              trashReceiptIds.push(prev.receipt_file_id);
+              Object.assign(row, { receipt_file_id: null, receipt_file_name: null, receipt_mime_type: null, receipt_uploaded_at: null });
+            }
+          }
         } else {
           const q = IE.parseMoney(li.quantity, { max: IE.MAX_QUANTITY });
           if (q.error) return res.status(400).json({ error: `${i + 1}行目: 数量は${q.error}`, index: i });
@@ -20544,12 +20648,19 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
           special_reason: null,
           sort_order: i,
         };
+        if (isExpense && receiptOn) {
+          const ex = expenseFields(li, i);
+          if (ex.error) return res.status(400).json({ error: ex.error, index: i });
+          Object.assign(row, ex.row);
+        }
         row.total_amount = IE.lineAmount(row);
         inserts.push({ client_key: typeof li.client_key === 'string' ? li.client_key.slice(0, 64) : null, row });
         next.push(row);
       }
     }
-    const toDelete = existing.filter(it => !keep.has(it.id)).map(it => it.id);
+    const deletedRows = existing.filter(it => !keep.has(it.id));
+    const toDelete = deletedRows.map(it => it.id);
+    for (const it of deletedRows) if (it.receipt_file_id) trashReceiptIds.push(it.receipt_file_id);
 
     const withholdingEnabled = typeof req.body.withholding_enabled === 'boolean' ? req.body.withholding_enabled : inv.withholding_enabled !== false;
     const totals = IE.computeTotals(next, { withholding_enabled: withholdingEnabled });
@@ -20600,10 +20711,13 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
       if (firstErr) return res.status(500).json({ error: firstErr.message });
     }
 
+    // 消した行・「領収書なし」にした行の領収書をゴミ箱へ（DB を書き終えてから。失敗しても保存は成功のまま）
+    if (trashReceiptIds.length) await ieTrashReceiptFiles(trashReceiptIds, 'put');
+
     // 3) 注意（保存は止めない）。参考単価は下書き作成時の控え（original_unit_price）で判定し、提出時に再計算する
     const issues = next.map(it => ({
       id: it.id,
-      issues: IE.lineIssues(it, IE.isCrLine(it) ? (it.original_unit_price ?? null) : null),
+      issues: IE.lineIssues(it, IE.isCrLine(it) ? (it.original_unit_price ?? null) : null, { requireReceipt: receiptOn }),
     })).filter(x => x.issues.length);
     res.json({ ok: true, updated_at: locked[0].updated_at, totals, id_map: idMap, issues, saved_at: newUpdatedAt });
   } catch (e) {
@@ -20681,6 +20795,8 @@ router.post('/invoice-editor/:id/submit', requireAuth, async (req, res) => {
       items, issuerId: inv.issuer_id, creativesById, billedKeys, refPriceByKey: refPrices,
       designationsByCreative,
       withholdingEnabled,
+      // 立替経費の日付・支払先・領収書（列がまだ無い環境では見ない。ieLoadItems が列の有無を確かめる）
+      requireReceipt: ieReceiptSupported(),
       expectedTotal: req.body ? req.body.expected_total : undefined,
       expectedPayout: req.body ? req.body.expected_payout : undefined,
     });
@@ -20727,6 +20843,129 @@ router.post('/invoice-editor/:id/submit', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('[invoice-editor][submit]', e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== 立替経費の領収書（写真・PDF）（ADR 046 追補 2026-11-23） ====================
+// 保存先: 本人の請求書月フォルダ（ADR 047 の member_invoice_folders）の中の「領収書」サブフォルダ。
+//   振込管理のスキャンはメンバーフォルダ直下のファイルだけを数える（サブフォルダの中は見ない）ので、領収書の PDF が
+//   請求書として合算されることはない。ファイル名は `領収書_YYYYMMDD_<内容>_<金額>円.<拡張子>`。
+// 上書きせず常に新規作成し、差し替え・「領収書なし」への切り替え・行の削除・請求書の削除で古いファイルはゴミ箱へ
+// （共有ドライブでは SA が完全削除できないため・ADR 047 と同じ）。公開リンクは作らず、見るのは下の GET（プロキシ）だけ。
+const receiptUploadMulter = multer({ storage: multer.memoryStorage(), limits: { fileSize: RCPT.RECEIPT_MAX_BYTES, files: 1 } });
+function receiptUploadMiddleware(req, res, next) {
+  receiptUploadMulter.single('file')(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: `ファイルが大きすぎます（${Math.round(RCPT.RECEIPT_MAX_BYTES / 1024 / 1024)}MB まで）`, code: 'RECEIPT_TOO_LARGE' });
+    }
+    return res.status(400).json({ error: `ファイルを受け取れませんでした（${err.message}）` });
+  });
+}
+
+// POST /invoice-editor/:id/items/:itemId/receipt（multipart: file）— 立替経費の行に領収書の写真・PDF を付ける（差し替えも同じ）
+//   本人 or admin/秘書（ieLoadInvoiceForAccess）・下書き / 差し戻し中だけ・「＋ 立替経費」の行だけ。
+//   種類は中身の先頭バイトで判定（JPEG / PNG / HEIC / PDF）。請求書の updated_at は進めない（自動保存の楽観ロックとぶつけない）
+router.post('/invoice-editor/:id/items/:itemId/receipt', requireAuth, receiptUploadMiddleware, async (req, res) => {
+  try {
+    const r = await ieLoadInvoiceForAccess(req, req.params.id);
+    if (!r.inv) return res.status(r.status).json(r.body);
+    const inv = r.inv;
+    if (!['draft', 'rejected'].includes(inv.status)) return res.status(400).json({ error: '提出済みの請求書は編集できません', code: 'NOT_EDITABLE' });
+    if (!req.file || !req.file.buffer || !req.file.buffer.length) return res.status(400).json({ error: 'ファイルを選んでください' });
+    const items = await ieLoadItems(inv.id);
+    if (!ieReceiptSupported()) return res.status(503).json({ error: '領収書の添付はまだ使えません（準備中）。管理者へ直接送ってください', code: 'RECEIPT_NOT_READY' });
+    const item = items.find(it => it.id === req.params.itemId);
+    if (!item) return res.status(404).json({ error: '明細が見つかりません（先に保存されるまで少し待ってからもう一度選んでください）' });
+    if (!IE.isManualExpenseLine(item)) return res.status(400).json({ error: '領収書を付けられるのは「＋ 立替経費」の行だけです' });
+    const mime = RCPT.sniffReceiptMime(req.file.buffer);
+    if (!mime) return res.status(415).json({ error: '画像（JPEG・PNG・HEIC）か PDF を選んでください', code: 'RECEIPT_BAD_TYPE' });
+
+    const { data: issuer, error: uErr } = await supabase.from('users').select('id, full_name, nickname, email').eq('id', inv.issuer_id).maybeSingle();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!issuer) return res.status(404).json({ error: '請求者が見つかりません' });
+
+    const drive = await getDriveService();
+    const { folderId } = await ensureInvoiceMonthFolderForUser(drive, issuer, inv.year, inv.month, req.user.id);
+    const receiptFolderId = await getOrCreateFolder(drive, folderId, RCPT.RECEIPT_FOLDER_NAME);
+    const fileName = RCPT.buildReceiptFileName({ expenseDate: IE.dateOnly(item.expense_date), label: item.label, amount: item.unit_price, mime });
+    const { PassThrough } = require('stream');
+    const body = new PassThrough();
+    body.end(req.file.buffer);
+    const created = await drive.files.create({
+      requestBody: {
+        name: fileName,
+        parents: [receiptFolderId],
+        mimeType: mime,
+        appProperties: { hfs_kind: 'invoice_receipt', hfs_invoice_id: String(inv.id), hfs_item_id: String(item.id) },
+      },
+      media: { mimeType: mime, body },
+      fields: 'id',
+      supportsAllDrives: true,
+    });
+    const fileId = created.data.id;
+    const nowIso = new Date().toISOString();
+    const patch = {
+      receipt_status: IE.RECEIPT_ATTACHED,
+      receipt_missing_reason: null,
+      receipt_file_id: fileId,
+      receipt_file_name: fileName,
+      receipt_mime_type: mime,
+      receipt_uploaded_at: nowIso,
+    };
+    const { data: upd, error: upErr } = await supabase.from('invoice_items').update(patch)
+      .eq('id', item.id).eq('invoice_id', inv.id).select('id');
+    if (upErr || !upd || !upd.length) {
+      // 書き込めなかった（その間に行が消された等）。今置いたファイルは残さない
+      await ieTrashReceiptFiles([fileId], 'upload-rollback');
+      if (upErr) return res.status(500).json({ error: upErr.message });
+      return res.status(409).json({ error: 'この行は別の画面で消されています。再読み込みしてください', code: 'CONFLICT' });
+    }
+    // 差し替え: 前の写真はゴミ箱へ
+    if (item.receipt_file_id && item.receipt_file_id !== fileId) await ieTrashReceiptFiles([item.receipt_file_id], 'upload-replace');
+    res.json({ ok: true, item_id: item.id, ...ieReceiptView({ ...item, ...patch }) });
+  } catch (e) {
+    console.error('[invoice-receipt][upload]', e);
+    res.status(500).json({ error: `領収書を保存できませんでした（${e.message}）` });
+  }
+});
+
+// GET /invoices/:id/items/:itemId/receipt[?download=1] — 領収書を見る・保存する（Drive からプロキシ。公開リンクは作らない）
+//   見られるのは本人と、請求書を見られる管理者（admin/秘書の実効ロール）だけ。判定は GET /invoices/:id と同じ作り
+router.get('/invoices/:id/items/:itemId/receipt', requireAuth, async (req, res) => {
+  try {
+    const { data: inv, error } = await supabase.from('invoices').select('id, issuer_id').eq('id', req.params.id).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!inv) return res.status(404).json({ error: '請求書が見つかりません' });
+    const isOwner = inv.issuer_id === req.user?.id;
+    if (!RCPT.canViewReceipt({ invoice: inv, userId: req.user?.id, isStaff: isOwner ? false : await isStaffRequester(req) })) {
+      return res.status(403).json({ error: 'アクセス権限がありません' });
+    }
+    const { data: item, error: iErr } = await supabase.from('invoice_items')
+      .select('id, invoice_id, receipt_file_id, receipt_file_name, receipt_mime_type')
+      .eq('id', req.params.itemId).eq('invoice_id', inv.id).maybeSingle();
+    if (iErr) {
+      if (RCPT.isMissingReceiptColumnError(iErr)) return res.status(404).json({ error: '領収書はありません' });
+      return res.status(500).json({ error: iErr.message });
+    }
+    if (!item || !item.receipt_file_id) return res.status(404).json({ error: '領収書はありません' });
+    const mime = RCPT.RECEIPT_MIME_TYPES.includes(item.receipt_mime_type) ? item.receipt_mime_type : 'application/octet-stream';
+    const drive = await getDriveService();
+    const media = await drive.files.get({ fileId: item.receipt_file_id, alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
+    const download = ['1', 'true'].includes(String(req.query.download || '').toLowerCase());
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', RCPT.receiptContentDisposition(item.receipt_file_name || 'receipt', { download }));
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    media.data.on('error', (e) => {
+      console.warn('[invoice-receipt][view] stream error:', e.message);
+      if (!res.headersSent) res.status(502).json({ error: '領収書を読み込めませんでした' }); else res.end();
+    });
+    media.data.pipe(res);
+  } catch (e) {
+    console.error('[invoice-receipt][view]', e);
+    const notFound = e && (e.code === 404 || (e.response && e.response.status === 404));
+    if (!res.headersSent) res.status(notFound ? 404 : 500).json({ error: notFound ? 'Drive に領収書が見つかりません（ゴミ箱に移された可能性があります）' : `領収書を読み込めませんでした（${e.message}）` });
   }
 });
 
@@ -20960,7 +21199,12 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'アクセス権限がありません' });
 
   // 1. invoice_item_details を削除（invoice_items 経由）
-  const { data: items } = await supabase.from('invoice_items').select('id').eq('invoice_id', invId);
+  //    立替経費の領収書（ADR 046 追補 2026-11-23）は削除後にゴミ箱へ送るので file_id も読む（列が無い環境は id だけ）
+  let { data: items, error: itemsErr } = await supabase.from('invoice_items').select('id, receipt_file_id').eq('invoice_id', invId);
+  if (itemsErr && RCPT.isMissingReceiptColumnError(itemsErr)) {
+    ({ data: items } = await supabase.from('invoice_items').select('id').eq('invoice_id', invId));
+  }
+  const receiptFileIds = (items || []).map(i => i.receipt_file_id).filter(Boolean);
   if (items?.length) {
     const itemIds = items.map(i => i.id);
     const { error: detErr } = await supabase.from('invoice_item_details').delete().in('invoice_item_id', itemIds);
@@ -20982,6 +21226,8 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
   } catch (e) {
     console.warn('[invoice-pdf] 削除時の Drive PDF ゴミ箱送り失敗:', e.message);
   }
+  // 立替経費の領収書もゴミ箱へ（完全削除はしない・失敗しても削除自体は成功扱い）
+  if (receiptFileIds.length) await ieTrashReceiptFiles(receiptFileIds, 'invoice-delete');
   res.json({ ok: true });
 });
 
@@ -21010,6 +21256,8 @@ function escapeDriveQueryValue(s) {
 // GET /invoices/:id と同じ展開で請求書を取得（PDF 用に issuer の連絡先列も含める）。
 // invoice_registration_number 列が未反映の環境でも落ちないようフォールバックする。
 async function fetchInvoiceForPdf(invoiceId) {
+  // 立替経費の行に「（領収書あり）／（領収書なし）」を添えるための列（ADR 046 追補 2026-11-23）。無ければ外す
+  let withReceipt = true;
   const buildSelect = (withRegNo) => `
       *,
       projects(id, name, clients(id, name, client_code)),
@@ -21020,7 +21268,7 @@ async function fetchInvoiceForPdf(invoiceId) {
       ),
       invoice_items(
         id, total_amount, label, quantity, unit, unit_price, sort_order, created_at,
-        cost_type, creative_label, creative_id,
+        cost_type, creative_label, creative_id,${withReceipt ? ' receipt_status, receipt_file_id,' : ''}
         creatives(id, file_name, project_id, creative_type, final_deadline, draft_deadline, updated_at,
           status, delivered_at, first_draft_submitted_at,
           projects(id, name, billing_timing, clients(id, name, client_code))
@@ -21028,6 +21276,10 @@ async function fetchInvoiceForPdf(invoiceId) {
       )
     `;
   let { data, error } = await supabase.from('invoices').select(buildSelect(true)).eq('id', invoiceId).maybeSingle();
+  if (error && RCPT.isMissingReceiptColumnError(error)) {
+    withReceipt = false;
+    ({ data, error } = await supabase.from('invoices').select(buildSelect(true)).eq('id', invoiceId).maybeSingle());
+  }
   if (error && /invoice_registration_number/.test(error.message || '')) {
     ({ data, error } = await supabase.from('invoices').select(buildSelect(false)).eq('id', invoiceId).maybeSingle());
   }
