@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>HARUKA FILM｜経費精算ガイド（立替経費の入れ方）</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif}
+:root{
+  --em:#3ECFCA;--em-dark:#2BB8B4;--em-light:#A8EDEA;--em-pale:#E6F9F8;
+  --text:#1a6b68;--text-muted:#5ABDB9;
+  --border:#A8EDEA;--border-light:#D4F4F2;
+  --surface:#F5FCFC;--white:#fff;
+  --star:#F59E0B;--star-bg:#FEF3C7;--star-border:#FCD34D;--star-deep:#92400E;
+  --warn:#F59E0B;--warn-bg:#FEF3C7;
+  --danger:#EF4444;--danger-bg:#FEE2E2;
+  --success:#10B981;--success-bg:#D1FAE5;--success-border:#6EE7B7;
+  --exp:#9A3412;--exp-bg:#FFF7ED;--exp-border:#FED7AA;
+}
+html{scroll-behavior:smooth}
+body{background:linear-gradient(180deg,#F5FCFC 0%,#fff 100%);color:var(--text);line-height:1.7;padding-bottom:120px;overflow-wrap:anywhere}
+
+/* Hero */
+.hero{background:linear-gradient(135deg,#C2410C 0%,#EA580C 100%);color:#fff;padding:40px 24px 52px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% 20%,rgba(255,255,255,0.18) 0%,transparent 40%),radial-gradient(circle at 20% 80%,rgba(255,255,255,0.12) 0%,transparent 40%)}
+.hero-inner{position:relative;max-width:760px;margin:0 auto}
+.hero-back{position:absolute;top:20px;left:20px;color:#fff;text-decoration:none;font-size:13px;font-weight:600;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;transition:background .2s;z-index:2}
+.hero-back:hover{background:rgba(255,255,255,0.28)}
+.hero-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:0.18em;background:rgba(255,255,255,0.22);padding:6px 14px;border-radius:20px;margin-bottom:14px}
+.hero h1{font-size:26px;font-weight:800;letter-spacing:0.04em;margin-bottom:8px;text-shadow:0 2px 12px rgba(0,0,0,0.18)}
+.hero h1 span{display:block;font-size:15px;font-weight:600;margin-top:4px;opacity:0.92}
+.hero-eta{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;background:rgba(255,255,255,0.22);padding:5px 14px;border-radius:20px}
+
+.container{max-width:760px;margin:0 auto;padding:0 24px}
+
+/* Step section */
+.step-section{margin-top:48px;scroll-margin-top:24px}
+.step-section-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.step-section-num{flex-shrink:0;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;font-size:19px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(43,184,180,0.3)}
+.step-section-meta{flex:1;min-width:0}
+.step-section-eyebrow{font-size:10px;font-weight:700;letter-spacing:0.14em;color:var(--em-dark);margin-bottom:1px}
+.step-section h2{font-size:20px;font-weight:800;color:var(--text);letter-spacing:0.02em}
+
+/* Flow */
+.flow-row{display:grid;grid-template-columns:1fr auto 1fr auto 1fr auto 1fr;gap:8px;align-items:stretch;margin:18px 0;padding:18px 16px;background:#fff;border-radius:14px;border:1px solid var(--border-light)}
+.flow-step{text-align:center;padding:8px 4px}
+.flow-step-icon{font-size:32px;margin-bottom:6px;line-height:1}
+.flow-step-label{font-size:11px;font-weight:700;color:var(--text);line-height:1.5}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--em-dark);font-size:20px;font-weight:300}
+
+/* Wanpoint */
+.wanpoint{margin-top:14px;background:linear-gradient(135deg,var(--star-bg) 0%,#FFFCEB 100%);border:1.5px solid var(--star-border);border-radius:12px;padding:14px 18px;position:relative;box-shadow:0 4px 14px rgba(245,158,11,0.15)}
+.wanpoint::before{content:"⭐";position:absolute;top:-12px;left:14px;background:var(--star);color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 4px 10px rgba(245,158,11,0.4)}
+.wanpoint-title{font-size:11px;font-weight:800;letter-spacing:0.14em;color:var(--star-deep);margin-left:34px;margin-bottom:4px}
+.wanpoint p{font-size:13px;color:var(--star-deep);line-height:1.7;font-weight:500}
+.wanpoint p + p{margin-top:4px}
+
+/* Cards */
+.step-card{background:#fff;border-radius:12px;padding:18px 22px;border:1px solid var(--border-light);box-shadow:0 2px 8px rgba(43,184,180,0.04);min-width:0}
+.step-card + .step-card{margin-top:12px}
+.step-card-title{font-size:14px;font-weight:800;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.step-card-title-num{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--em-pale);color:var(--em-dark);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step-card p{font-size:13px;color:#374151;line-height:1.75}
+.step-card p + p{margin-top:4px}
+.step-card ul{margin:6px 0 0 1.3em;font-size:13px;color:#374151;line-height:1.75}
+.note{margin-top:8px;font-size:12px;color:var(--text-muted)}
+
+/* 3行まとめ */
+.summary{margin-top:28px;background:linear-gradient(135deg,var(--exp-bg) 0%,#fff 70%);border:2px solid #FB923C;border-radius:14px;padding:16px 18px;box-shadow:0 4px 14px rgba(234,88,12,0.14)}
+.summary h2{font-size:15px;font-weight:800;color:var(--exp);margin-bottom:8px}
+.summary ol{margin-left:1.4em;font-size:13.5px;color:#7C2D12;line-height:1.8}
+.summary ol li + li{margin-top:4px}
+.summary b{background:rgba(251,146,60,0.22);padding:0 4px;border-radius:3px}
+
+/* もくじ */
+.toc{margin-top:16px;background:#fff;border:1px solid var(--border-light);border-radius:12px;padding:14px 18px}
+.toc-title{font-size:12px;font-weight:800;color:var(--text);margin-bottom:6px}
+.toc ol{margin-left:1.4em;font-size:13px;line-height:1.9}
+.toc a{color:var(--em-dark);font-weight:700;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+
+/* 表 */
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px}
+.tbl{border-collapse:collapse;width:100%;font-size:12.5px;color:#374151;background:#fff}
+.tbl th,.tbl td{padding:8px 10px;border-bottom:1px solid var(--border-light);text-align:left;vertical-align:top}
+.tbl th{font-size:11px;color:var(--text-muted);font-weight:700;background:var(--surface)}
+.tbl td.n,.tbl th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl td.k{white-space:nowrap;font-weight:700}
+.tbl tr.big td{font-weight:800;color:var(--text);font-size:13.5px}
+.tbl tr.exp td{background:var(--exp-bg)}
+.tbl tr.ng td{background:var(--danger-bg)}
+.tbl code{font-family:inherit;background:var(--danger-bg);color:#B91C1C;padding:1px 6px;border-radius:4px;font-size:12px;font-weight:700}
+
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.compare-card{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px 14px;min-width:0}
+.compare-card.ok{border-color:var(--success-border)}
+.compare-card.ng{border-color:#FCA5A5}
+.compare-card h3{font-size:13px;font-weight:800;margin-bottom:6px}
+.compare-card.ok h3{color:#047857}
+.compare-card.ng h3{color:#B91C1C}
+.compare-card dl{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:12.5px;color:#374151}
+.compare-card dt{color:#6b7280}
+.compare-card dd{text-align:right;font-variant-numeric:tabular-nums}
+.compare-card .tot{font-weight:800;color:var(--text);font-size:14px;border-top:1px dashed var(--border-light);padding-top:4px;margin-top:2px}
+
+/* できる・できない */
+.kinds{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+.kind{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:14px 14px;min-width:0}
+.kind h3{font-size:13.5px;font-weight:800;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.kind ul{margin-left:1.2em;font-size:12.5px;color:#374151;line-height:1.75}
+.kind.ok{border-color:var(--success-border);background:linear-gradient(180deg,#F0FDF4,#fff 60%)}
+.kind.ok h3{color:#047857}
+.kind.ask{border-color:var(--star-border);background:linear-gradient(180deg,#FFFBEB,#fff 60%)}
+.kind.ask h3{color:var(--star-deep)}
+.kind.ng{border-color:#FCA5A5;background:linear-gradient(180deg,#FEF2F2,#fff 60%)}
+.kind.ng h3{color:#B91C1C}
+
+/* 画面のイメージ（PC） */
+.mock-cap{font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.06em;margin:14px 0 6px}
+.scr{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;overflow:hidden;min-width:0}
+.scr-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:10px 12px;border-bottom:1px solid var(--border-light);background:var(--surface);font-size:12px;font-weight:700;color:var(--text)}
+.scr-sp{flex:1}
+.scr-saved{font-size:11px;font-weight:600;color:var(--text-muted)}
+.mbtn{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;border-radius:7px;padding:4px 9px;border:1.5px solid #D1D5DB;background:#fff;color:#374151;white-space:nowrap}
+.mbtn.hl{border-color:#EA580C;background:#FFEDD5;color:var(--exp);box-shadow:0 0 0 3px rgba(234,88,12,0.18)}
+.mbtn.primary{background:linear-gradient(135deg,var(--em),var(--em-dark));border-color:var(--em-dark);color:#fff}
+.mbtn.del{color:#B91C1C}
+.scr-body{padding:12px}
+
+/* 立替経費の枠（実際の画面の並びに合わせたモック） */
+.exp-box{background:var(--exp-bg);border:1.5px solid var(--exp-border);border-radius:10px;padding:10px 12px;min-width:0}
+.exp-box.ng{background:#FEF2F2;border-color:#FCA5A5}
+.exp-head{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline;margin-bottom:8px}
+.tag-exp{font-size:10px;padding:1px 7px;border-radius:8px;background:#FFEDD5;color:var(--exp);font-weight:700;white-space:nowrap}
+.exp-note{font-size:11px;color:var(--exp)}
+.exp-grid{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 10px;align-items:center}
+.exp-k{font-size:11px;font-weight:700;color:var(--exp);white-space:nowrap;align-self:start;padding-top:4px}
+.min{display:inline-block;max-width:100%;font-size:12.5px;padding:4px 8px;border:1px solid #E5C76B;border-radius:6px;background:#FEF9C3;color:#1f2937;min-height:28px;line-height:1.5}
+.min.w{width:100%}
+.min.price{width:90px;text-align:right}
+.min.empty{color:#9ca3af}
+.rc{display:flex;flex-direction:column;gap:5px;min-width:0}
+.rc-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px;color:#374151}
+.radio{display:inline-block;width:13px;height:13px;border-radius:50%;border:1.5px solid #6b7280;vertical-align:-2px;margin-right:3px;background:#fff}
+.radio.on{border-color:#2563EB;box-shadow:inset 0 0 0 3px #fff;background:#2563EB}
+.rc-link{color:#1D4ED8;font-weight:600}
+.rc-ok{color:#15803D;font-weight:800}
+.rc-hint{color:#6B7280;font-size:11px}
+.rc-missing{color:#B45309;background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:3px 8px;font-weight:700}
+.ng-msg{margin-top:8px;font-size:11.5px;font-weight:700;color:#B91C1C;line-height:1.6}
+
+/* スマホの画面イメージ */
+.phone-wrap{display:flex;justify-content:center;margin-top:12px}
+.phone{width:100%;max-width:300px;border:8px solid #1f2937;border-radius:28px;background:#fff;padding:14px 10px 18px;box-shadow:0 10px 26px rgba(0,0,0,0.15)}
+.phone-top{font-size:10.5px;font-weight:700;color:#6b7280;text-align:center;margin-bottom:8px}
+.phone .exp-grid{grid-template-columns:1fr;gap:2px}
+.phone .exp-k{padding-top:6px}
+.phone .min{font-size:14px}
+.phone .min.price{width:110px}
+
+/* iPhone の選択肢 */
+.sheet{margin-top:10px;max-width:300px;margin-left:auto;margin-right:auto;background:#F3F4F6;border-radius:14px;overflow:hidden;font-size:13px}
+.sheet div{padding:10px 14px;background:#fff;border-bottom:1px solid #E5E7EB;color:#2563EB;display:flex;justify-content:space-between;gap:8px}
+.sheet div:last-child{border-bottom:0}
+
+/* 写真の撮り方 */
+.shots{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.shot{background:#fff;border:1.5px solid var(--border-light);border-radius:12px;padding:12px;min-width:0}
+.shot.ok{border-color:var(--success-border)}
+.shot.ng{border-color:#FCA5A5}
+.shot h3{font-size:13px;font-weight:800;margin-bottom:6px}
+.shot.ok h3{color:#047857}
+.shot.ng h3{color:#B91C1C}
+.shot ul{margin-left:1.2em;font-size:12.5px;color:#374151;line-height:1.7}
+.receipt-pic{margin:0 auto 8px;width:120px;background:#fff;border:1px solid #D1D5DB;border-radius:4px;padding:8px 8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:9.5px;color:#374151;line-height:1.5;box-shadow:0 2px 6px rgba(0,0,0,0.08)}
+.receipt-pic b{display:block;text-align:center;font-size:10.5px}
+.receipt-pic.blur{filter:blur(1.4px);transform:rotate(-9deg);opacity:0.8}
+.receipt-pic .hl{background:#FEF08A}
+
+/* 良い例・悪い例 */
+.ex{display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:start;margin-top:10px;font-size:12.5px}
+.ex-badge{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:99px;white-space:nowrap}
+.ex-badge.ok{background:var(--success-bg);color:#047857}
+.ex-badge.ng{background:var(--danger-bg);color:#B91C1C}
+.ex-text{background:#fff;border:1px solid var(--border-light);border-radius:8px;padding:8px 10px;color:#374151;min-width:0}
+.ex-text small{display:block;color:#6b7280;font-size:11px;margin-top:2px}
+
+/* チェックリスト */
+.checklist{list-style:none;margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.checklist li{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid var(--border-light);border-radius:10px;padding:9px 12px;font-size:13px;color:#374151;line-height:1.6}
+.checklist input{flex-shrink:0;width:18px;height:18px;margin-top:2px;accent-color:var(--em-dark)}
+.checklist li.done{background:var(--success-bg);border-color:var(--success-border)}
+.check-status{margin-top:8px;font-size:12.5px;font-weight:700;color:var(--em-dark)}
+
+/* Trouble / FAQ */
+.trouble{margin-top:48px;background:#fff;border:1px solid var(--border-light);border-radius:14px;padding:20px 22px;scroll-margin-top:24px}
+.trouble h3{font-size:14px;font-weight:800;color:var(--text);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.trouble-list{display:flex;flex-direction:column;gap:8px}
+.trouble-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:12.5px;line-height:1.7;padding:8px 0}
+.trouble-item + .trouble-item{border-top:1px dashed var(--border-light)}
+.trouble-q{font-weight:700;color:var(--text)}
+.trouble-a{color:#4b5563}
+.trouble-icon{font-size:16px;line-height:1.4}
+.trouble a,.step-card a,.wanpoint a{color:var(--em-dark);font-weight:700}
+
+/* Final */
+.final{margin-top:56px;background:linear-gradient(135deg,#FFFEF7 0%,#FEFCE8 100%);border:2px dashed var(--warn);border-radius:18px;padding:28px 22px;text-align:center}
+.final-icon{font-size:38px;margin-bottom:6px}
+.final h2{font-size:20px;font-weight:800;color:#92400E;margin-bottom:6px}
+.final p{font-size:13px;color:#78350F;line-height:1.85;max-width:520px;margin:0 auto 14px}
+.final-cta{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--em),var(--em-dark));color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 24px;border-radius:10px;box-shadow:0 6px 18px rgba(43,184,180,0.35)}
+
+/* Foot */
+.foot{margin-top:48px;padding:28px 24px;text-align:center;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border-light)}
+.foot a{color:var(--em-dark);text-decoration:none;font-weight:600}
+
+@media (max-width:768px){
+  .hero{padding:56px 18px 44px}
+  .hero-back{top:14px;left:14px}
+  .hero h1{font-size:20px}
+  .hero h1 span{font-size:13px}
+  .container{padding:0 16px}
+  .step-section-head{gap:10px}
+  .step-section-num{width:38px;height:38px;font-size:15px}
+  .step-section h2{font-size:17px}
+  .step-card{padding:14px 14px}
+  .flow-row{grid-template-columns:1fr;gap:6px;padding:14px 12px}
+  .flow-arrow{transform:rotate(90deg);height:14px}
+  .compare,.kinds,.shots{grid-template-columns:1fr}
+  .trouble{padding:16px 14px}
+  .final{padding:22px 16px}
+  .final h2{font-size:18px}
+}
+@media (max-width:480px){
+  .exp-grid{grid-template-columns:1fr;gap:2px}
+  .exp-k{padding-top:6px}
+  .ex{grid-template-columns:1fr;gap:4px}
+  .ex-badge{justify-self:start}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="hero-back" href="/guide.html">← ガイド一覧へ</a>
+  <div class="hero-inner">
+    <span class="hero-badge">GUIDE ／ 全員共通</span>
+    <h1>🧾 経費精算ガイド<span>立て替えた交通費・駐車場代などを、請求書に入れるまで</span></h1>
+    <div class="hero-eta">⏱ 読了 約 10 分（入力は 1 件 1〜2 分）</div>
+  </div>
+</header>
+
+<main class="container">
+
+<!-- 3行まとめ -->
+<section class="summary" role="note" aria-label="3行まとめ">
+  <h2>📌 まずはこの 3 つだけ</h2>
+  <ol>
+    <li>立て替えたお金は、請求書エディタの <b>「＋ 立替経費」</b> で入れます（<b>「＋ HFS外の行」ではありません</b>）。</li>
+    <li><b>領収書どおりの金額</b> を入れ、<b>日付・支払先</b> を書いて、<b>領収書の写真</b>（スマホで撮ったもので OK）を付けます。</li>
+    <li>領収書をなくしたときは <b>「領収書なし」</b> を選び、日付・支払先・用途（どこからどこまで等）を具体的に書きます。</li>
+  </ol>
+</section>
+
+<!-- もくじ -->
+<nav class="toc" aria-label="もくじ">
+  <div class="toc-title">📖 このガイドで分かること</div>
+  <ol>
+    <li><a href="#what">立替経費とは（報酬との違い・振込額の計算）</a></li>
+    <li><a href="#kinds">立替経費にできるもの・できないもの</a></li>
+    <li><a href="#how">入力の手順（PC・スマホ）</a></li>
+    <li><a href="#photo">領収書の写真の撮り方・付け方</a></li>
+    <li><a href="#no-receipt">領収書がないとき</a></li>
+    <li><a href="#check">提出前のチェックと、提出できないときの意味</a></li>
+    <li><a href="#after">提出後に間違いに気づいたら</a></li>
+    <li><a href="#faq">よくある質問</a></li>
+  </ol>
+  <p class="note">⏱ 時給制で <b>作業時間報告</b> を使っている方の立替経費は、別の入れ方です → <a href="/guide-work-hours.html#step6">作業時間の記録ガイド</a></p>
+</nav>
+
+<!-- 全体の流れ -->
+<section class="step-section" style="margin-top:32px">
+  <div class="step-card">
+    <div class="step-card-title">💡 全体の流れを先に 1 枚で</div>
+    <p>立て替えた月の請求書を開いて、立替経費の行を 1 件ずつ足していきます。請求書は <b>月末締め・翌月末払い</b> なので、立替経費も請求書といっしょに振り込まれます。</p>
+  </div>
+  <div class="flow-row">
+    <div class="flow-step"><div class="flow-step-icon">🧾</div><div class="flow-step-label">領収書を<br>もらう・撮る</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">➕</div><div class="flow-step-label">請求書エディタで<br>「＋ 立替経費」</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">✏️</div><div class="flow-step-label">内容・金額・日付・<br>支払先・写真</div></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step"><div class="flow-step-icon">📤</div><div class="flow-step-label">請求書を<br>提出する</div></div>
+  </div>
+</section>
+
+<!-- ═══ 1 立替経費とは ═══ -->
+<section class="step-section" id="what">
+  <div class="step-section-head">
+    <div class="step-section-num">1</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">KISO</div>
+      <h2>立替経費とは（報酬との違い）</h2>
+    </div>
+  </div>
+  <div class="step-card">
+    <p><b>立替経費</b> は、お仕事のためにあなたが <b>いったん自分のお金で払ったもの</b>（撮影に行く交通費・駐車場代など）を、HARUKA FILM が <b>そのまま返す</b> お金です。あなたの「売上（報酬）」ではないので、報酬とは計算のしかたが違います。</p>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th></th><th>報酬の行<br>（作品の行・「＋ HFS外の行」）</th><th>立替経費の行<br>（「＋ 立替経費」）</th></tr></thead>
+      <tbody>
+        <tr><td>入れる金額</td><td>単価（<b>税抜</b>）</td><td><b>領収書どおり</b>の金額（税込のまま）</td></tr>
+        <tr><td>消費税 10%</td><td>足される</td><td><b>足されない</b></td></tr>
+        <tr><td>源泉徴収 10.21%</td><td>引かれる（※）</td><td><b>引かれない</b></td></tr>
+        <tr><td>振り込まれる額</td><td>税抜＋消費税−源泉</td><td><b>入れた金額がそのまま</b></td></tr>
+        <tr><td>行の色</td><td>白（HFS外の行は青）</td><td><b>オレンジ</b></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">※ 法人として登録されているメンバーは、源泉徴収は最初から「なし」です。消費税・源泉徴収とも 1 円未満は切り捨てです。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">💴 計算例：報酬 6,000 円 ＋ 立て替えた駐車場・ガソリン代 3,641 円</div>
+    <p>同じ金額でも、<b>どのボタンで入れたか</b> で振込額が変わります。</p>
+    <div class="compare">
+      <div class="compare-card ok">
+        <h3>⭕ 正しい：「＋ 立替経費」で入れた</h3>
+        <dl>
+          <dt>小計（税抜）</dt><dd>6,000</dd>
+          <dt>消費税（10%）</dt><dd>＋600</dd>
+          <dt>立替経費（実費）</dt><dd>＋3,641</dd>
+          <dt>ご請求金額（税込）</dt><dd>10,241</dd>
+          <dt>源泉徴収税額（10.21%）</dt><dd>−612</dd>
+          <dt class="tot">差引お振込額</dt><dd class="tot">9,629 円</dd>
+        </dl>
+        <p class="note" style="color:#047857">源泉 612 円は報酬 6,000 円にだけかかります。立替の 3,641 円は丸ごと戻ってきます。</p>
+      </div>
+      <div class="compare-card ng">
+        <h3>❌ よくある間違い：「＋ HFS外の行」で入れた</h3>
+        <dl>
+          <dt>小計（税抜）</dt><dd>9,641</dd>
+          <dt>消費税（10%）</dt><dd>＋964</dd>
+          <dt>立替経費（実費）</dt><dd>0</dd>
+          <dt>ご請求金額（税込）</dt><dd>10,605</dd>
+          <dt>源泉徴収税額（10.21%）</dt><dd>−984</dd>
+          <dt class="tot">差引お振込額</dt><dd class="tot">9,621 円</dd>
+        </dl>
+        <p class="note" style="color:#B91C1C">立替の 3,641 円が「報酬」扱いになり、消費税が上乗せされ、源泉も余分に引かれます。請求書としても正しくありません。</p>
+      </div>
+    </div>
+    <p class="note">金額はサンプルです。実際の画面でも、右下の合計に「立替経費（実費）」の行が出ていれば、正しく入っています。</p>
+  </div>
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>交通費・ガソリン代・駐車場代などの立て替えは、<b>必ず「＋ 立替経費」</b> から入れてください。「＋ HFS外の行」は、HFS に登録されていない <b>お仕事（報酬）</b> を入れるところです。</p>
+  </div>
+</section>
+
+<!-- ═══ 2 できるもの・できないもの ═══ -->
+<section class="step-section" id="kinds">
+  <div class="step-section-head">
+    <div class="step-section-num">2</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">WHAT</div>
+      <h2>立替経費にできるもの・できないもの</h2>
+    </div>
+  </div>
+  <div class="step-card">
+    <p>目安は <b>「HARUKA FILM の案件のために、あなたが代わりに払ったもの」</b> です。下は例なので、<b>迷ったら払う前に代表者へ相談</b> してください。</p>
+    <div class="kinds">
+      <div class="kind ok">
+        <h3>⭕ 立替経費にできる例</h3>
+        <ul>
+          <li>撮影・打ち合わせに行く交通費（電車・バス・タクシー）</li>
+          <li>撮影場所の駐車場代・高速代</li>
+          <li>案件で使う素材・小道具の購入（依頼があったもの）</li>
+          <li>案件のために頼まれて払った費用</li>
+        </ul>
+      </div>
+      <div class="kind ask">
+        <h3>💬 先に相談が要るもの</h3>
+        <ul>
+          <li><b>自家用車のガソリン代</b>（どの行に入れるか・計算のしかた）</li>
+          <li>金額の大きい買い物（事前に相談がないもの）</li>
+          <li>宿泊費・遠方への移動</li>
+          <li>ほかの案件や私用と分けにくいもの</li>
+          <li>前の月以前に立て替えて、入れ忘れていたもの</li>
+        </ul>
+      </div>
+      <div class="kind ng">
+        <h3>❌ 立替経費にできない例</h3>
+        <ul>
+          <li>私用の分（帰りに寄り道した区間など）</li>
+          <li>自分の機材・ソフト・PC など、ふだんの仕事道具</li>
+          <li>お仕事そのものの代金（それは報酬の行へ）</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="wanpoint">
+    <div class="wanpoint-title">ワンポイント</div>
+    <p>「これは入れていいのかな？」と思ったら、<b>立て替える前に</b> 代表者に一言チャットで聞くのがいちばん確実です。あとから「立替経費にできない」と分かると、自己負担になることがあります。</p>
+  </div>
+</section>
+
+<!-- ═══ 3 入力の手順 ═══ -->
+<section class="step-section" id="how">
+  <div class="step-section-head">
+    <div class="step-section-num">3</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">HOW TO</div>
+      <h2>入力の手順</h2>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">1</span>その月の請求書を開く</div>
+    <p>上のメニューの <b>「請求書」</b> を開きます。</p>
+    <ul>
+      <li>まだ作っていない月 → <b>「＋ 今月の請求書を作成」</b> で作ります（作り方は <a href="/guide-invoice-editor.html">請求書エディタの使い方</a>）。</li>
+      <li>作ってある（下書きの）月 → 自分の請求書の <b>「開いて単価を入れる・提出」</b> を押します。</li>
+    </ul>
+    <p class="note">💡 立替経費は「立て替えた月」の請求書に入れます（例：11月に払った駐車場代 → 11月分の請求書 → 12月末に振込）。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">2</span>「＋ 立替経費」を押す</div>
+    <p>請求書エディタの上のボタンの中から <b>「＋ 立替経費」</b> を押します。オレンジの枠が 1 行増えます。<b>「＋ HFS外の行」と間違えないように</b> 気をつけてください。</p>
+    <div class="mock-cap">▼ 画面のイメージ（ボタンの並び）</div>
+    <div class="scr" role="img" aria-label="請求書エディタのボタンの並び。右から2番目が「＋ 立替経費」">
+      <div class="scr-bar">10月分の請求書<span class="scr-sp"></span><span class="scr-saved">下書き・保存済み 14:05</span></div>
+      <div class="scr-bar" style="background:#fff">
+        <span class="mbtn">参考単価を入れる</span>
+        <span class="mbtn">単価をまとめて入力</span>
+        <span class="mbtn">＋ HFSのCRを追加</span>
+        <span class="mbtn">＋ HFS外の行</span>
+        <span class="mbtn hl">＋ 立替経費 👈</span>
+        <span class="mbtn del">削除</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">3</span>内容・金額・日付・支払先を入れる</div>
+    <p>枠の中を、上から順に入れます。入れたものは自動で保存されます（少し待つと「保存済み」の時刻が変わります）。</p>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>欄</th><th>入れるもの</th><th>例</th></tr></thead>
+      <tbody>
+        <tr><td class="k">内容</td><td>何のための、何の費用か。案件名や撮影名を入れると、管理者が確認しやすくなります。</td><td>○○スタジオ撮影 駐車場代</td></tr>
+        <tr><td class="k">金額</td><td><b>領収書どおりの金額</b>（税込のまま・円単位・カンマなしで OK）。税抜に直さないでください。</td><td>1200</td></tr>
+        <tr><td class="k">日付</td><td><b>支払った日</b>。押すとカレンダーが出ます。</td><td>2026/10/25</td></tr>
+        <tr><td class="k">支払先</td><td>払ったお店・会社の名前（領収書のいちばん上に書いてある名前）。</td><td>○○パーキング、○○タクシー</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">💡 1 行には 1 回分（領収書 1 枚分）を入れます。行きと帰りでタクシーに 2 回乗ったら、2 行に分けます。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">4</span>領収書の写真を付ける</div>
+    <p>「領収書」の <b>「写真を添付」</b> を選んで <b>「📷 選ぶ」</b> を押し、写真か PDF を選びます。送り終わると <b>「領収書を保存しました」</b> と出て、ファイル名の横に <b>✓</b> が付きます。</p>
+    <ul>
+      <li>付けた領収書は、ファイル名を押すと別のタブで確かめられます。</li>
+      <li>間違えたときは <b>「📷 撮り直す・選び直す」</b> を押すと、新しいものに差し替わります（古い写真はゴミ箱に移ります）。</li>
+      <li>写真を付けられるのは <b>下書き（またはロックが外れた）</b> 請求書だけです。提出済み・承認済みの請求書には付けられません。</li>
+      <li>写真はあなたの <b>請求書フォルダ（Google ドライブ）の「領収書」フォルダ</b> に保存されます。HFS で見られるのは <b>あなたと管理者だけ</b> です。</li>
+    </ul>
+
+    <div class="mock-cap">▼ PC の画面のイメージ（入れ終わったところ）</div>
+    <div class="exp-box" role="img" aria-label="立替経費の枠。内容・金額・日付・支払先・領収書が入っている">
+      <div class="exp-head"><span class="tag-exp">立替経費（実費）</span><span class="exp-note">領収書どおりの金額を入れてください。消費税・源泉徴収はかからず、そのままの額が振り込まれます</span></div>
+      <div class="exp-grid">
+        <span class="exp-k">内容</span><span class="min w">○○スタジオ撮影 駐車場代</span>
+        <span class="exp-k">金額</span><span><span class="min price">1200</span> 円</span>
+        <span class="exp-k">日付</span><span><span class="min">2026/10/25</span></span>
+        <span class="exp-k">支払先</span><span class="min w">○○パーキング</span>
+        <span class="exp-k">領収書</span>
+        <div class="rc">
+          <div class="rc-line"><span><span class="radio on"></span>写真を添付</span> <span class="mbtn">📷 撮り直す・選び直す</span> <span class="rc-link">📎 領収書_20261025_….jpg</span> <span class="rc-ok">✓</span></div>
+          <div class="rc-line"><span><span class="radio"></span>領収書なし（理由を書く）</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mock-cap">▼ スマホの画面のイメージ（欄が縦に並びます）</div>
+    <div class="phone-wrap">
+      <div class="phone" role="img" aria-label="スマホでの立替経費の枠。欄が縦に並ぶ">
+        <div class="phone-top">10月分の請求書（下書き）</div>
+        <div class="exp-box">
+          <div class="exp-head"><span class="tag-exp">立替経費（実費）</span></div>
+          <div class="exp-grid">
+            <span class="exp-k">内容</span><span class="min w">○○スタジオ撮影 駐車場代</span>
+            <span class="exp-k">金額</span><span><span class="min price">1200</span> 円</span>
+            <span class="exp-k">日付</span><span class="min w">2026/10/25</span>
+            <span class="exp-k">支払先</span><span class="min w">○○パーキング</span>
+            <span class="exp-k">領収書</span>
+            <div class="rc">
+              <div class="rc-line"><span><span class="radio on"></span>写真を添付</span></div>
+              <div class="rc-line"><span class="mbtn">📷 選ぶ</span> <span class="rc-hint">写真・PDF（10MBまで）</span></div>
+              <div class="rc-line"><span><span class="radio"></span>領収書なし（理由を書く）</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note" style="text-align:center">スマホで「📷 選ぶ」を押すと、下のような選択肢が出ます（機種によって言葉や並びは少し違います）。</p>
+    <div class="sheet" aria-label="iPhone で出る選択肢の例">
+      <div>写真ライブラリ <span>🖼</span></div>
+      <div>写真を撮る <span>📷</span></div>
+      <div>ファイルを選択 <span>📁</span></div>
+    </div>
+    <ul style="margin-top:10px">
+      <li><b>写真を撮る</b>：その場でレシートを撮って、そのまま付けられます。</li>
+      <li><b>写真ライブラリ</b>：あとで撮っておいた写真から選びます。</li>
+      <li><b>ファイルを選択</b>：メールやアプリで受け取った PDF の領収書を選びます。</li>
+    </ul>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title"><span class="step-card-title-num">5</span>ほかの行もそろえて「提出する」</div>
+    <p>立替経費がすべて入ったら、右下の合計に <b>「立替経費（実費）」</b> の行が出ていることを確かめて、作品の行と同じように <b>「提出する」</b> を押します。確認の画面に「（うち立替経費 ○○円）」と出ます。</p>
+    <p>提出すると PDF が作られます。PDF の立替経費の行には <b>「（領収書あり）」「（領収書なし）」</b> が小さく付きます（写真そのものは PDF には入りません）。</p>
+  </div>
+
+  <div class="wanpoint">
+    <div class="wanpoint-title">PC とスマホ、どちらでも</div>
+    <p>入力は PC・スマホのどちらでもできます。おすすめは「<b>レシートをもらったらその場でスマホで撮っておく → 月末に請求書を開いて付ける</b>」です。</p>
+    <p>PC とスマホで <b>同じ請求書を同時に開いたまま両方で入力しない</b> でください。「別の画面でこの請求書が更新されました」と出て保存が止まります。そのときは「再読み込み」を押してから続けます。</p>
+    <p>ほかの画面で領収書を付け替えていたときは「<b>別の画面で領収書が更新されています。再読み込みしてください</b>」と出て、画面が最新の状態に読み直されます。読み直した画面で、領収書が合っているか確かめてから続けてください。</p>
+  </div>
+</section>
+
+<!-- ═══ 4 写真の撮り方 ═══ -->
+<section class="step-section" id="photo">
+  <div class="step-section-head">
+    <div class="step-section-num">4</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">PHOTO</div>
+      <h2>領収書の写真の撮り方・付け方</h2>
+    </div>
+  </div>
+  <div class="step-card">
+    <p><b>紙の原本を送る必要はありません。</b> スマホで撮った写真で OK です。大事なのは、<b>日付・支払先・金額の 3 つがはっきり読めること</b> です。</p>
+    <div class="shots">
+      <div class="shot ok">
+        <div class="receipt-pic" aria-hidden="true"><b>○○パーキング</b><span class="hl">2026/10/25</span><br>駐車料金<br><span class="hl">¥1,200</span><br>領収書</div>
+        <h3>⭕ 読める写真</h3>
+        <ul>
+          <li>明るい場所で、真上から撮る</li>
+          <li>レシート全体が入っている</li>
+          <li><b>日付・支払先・金額</b> が読める</li>
+          <li>長いレシートは、ななめにせず全体が入る距離で</li>
+        </ul>
+      </div>
+      <div class="shot ng">
+        <div class="receipt-pic blur" aria-hidden="true"><b>○○パーキング</b>2026/10/25<br>駐車料金<br>¥1,200<br>領収書</div>
+        <h3>❌ 読めない写真</h3>
+        <ul>
+          <li>ピンぼけ・手ぶれ・暗い</li>
+          <li>指や影で金額が隠れている</li>
+          <li>端が切れて日付や店名が写っていない</li>
+          <li>感熱紙が色あせて読めない（もらったら早めに撮る）</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📎 こんなときは</div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>こんなとき</th><th>どうする</th></tr></thead>
+      <tbody>
+        <tr><td><b>領収書が 2 枚以上</b>ある（行きと帰りのタクシー、駐車場とコインパーキングなど）</td><td>1 行に付けられるのは <b>1 ファイル</b> です。<b>領収書 1 枚ごとに「＋ 立替経費」で 1 行ずつ</b> 足して、それぞれに写真を付けます。金額も領収書ごとに分けて入れます。</td></tr>
+        <tr><td><b>PDF の領収書</b>（タクシーアプリ・ネットで払ったときのメールなど）</td><td>PDF をスマホや PC に保存して、「📷 選ぶ」→ ファイルから選びます。PDF はそのまま付けられます。</td></tr>
+        <tr><td>領収書が <b>画面にしかない</b>（アプリの領収書画面など）</td><td>その画面の <b>スクリーンショット</b> を撮って、写真として付けます。日付・支払先・金額が画面に入っているか確かめてください。</td></tr>
+        <tr><td><b>iPhone の写真</b>（HEIC）</td><td>そのまま選べます。大きな写真は、送る前に自動で小さくしてから送ります。</td></tr>
+        <tr><td>1 枚のレシートに <b>私用の買い物も入っている</b></td><td>案件の分の金額だけを入れ、「内容」に「レシートのうち○○の分のみ」と書きます。迷うときは代表者に相談してください。</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">付けられるのは写真（JPEG・PNG・HEIC）と PDF で、1 ファイル 10MB までです。</p>
+  </div>
+</section>
+
+<!-- ═══ 5 領収書がないとき ═══ -->
+<section class="step-section" id="no-receipt">
+  <div class="step-section-head">
+    <div class="step-section-num">5</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">NO RECEIPT</div>
+      <h2>領収書がないとき</h2>
+    </div>
+  </div>
+  <div class="step-card">
+    <p>領収書をなくした・もらえなかったときは、「領収書」の <b>「領収書なし（理由を書く）」</b> を選びます。下に理由の欄が出るので、<b>日付・支払先・用途（どこからどこまで等）が分かるように具体的に</b> 書いてください。</p>
+    <div class="mock-cap">▼ 画面のイメージ</div>
+    <div class="exp-box" role="img" aria-label="領収書なしを選んで理由を書いたところ">
+      <div class="exp-grid">
+        <span class="exp-k">領収書</span>
+        <div class="rc">
+          <div class="rc-line"><span><span class="radio"></span>写真を添付</span> <span class="mbtn">📷 選ぶ</span> <span class="rc-hint">写真・PDF（10MBまで）</span></div>
+          <div class="rc-line"><span><span class="radio on"></span>領収書なし（理由を書く）</span></div>
+          <div class="rc-line" style="display:block"><span class="min w">レシートを紛失したため。10/25 ○○スタジオ撮影、○○駅→スタジオのタクシー代（片道）</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ex">
+      <span class="ex-badge ok">良い例</span>
+      <div class="ex-text">レシートを紛失したため。10/25 ○○スタジオ撮影の帰り、スタジオ→○○駅のタクシー代（片道）。<small>何が・いつ・どこからどこまで・なぜ領収書がないか、がそろっている</small></div>
+      <span class="ex-badge ok">良い例</span>
+      <div class="ex-text">券売機で領収書が出なかったため。11/3 ○○様打ち合わせ、○○駅⇔△△駅の電車代（往復）。<small>電車・バスなど領収書が出にくいものは、乗った区間と片道／往復を書く</small></div>
+      <span class="ex-badge ng">悪い例</span>
+      <div class="ex-text">なくしました<small>何の費用か・どこの区間か分からず、管理者が確認できない</small></div>
+      <span class="ex-badge ng">悪い例</span>
+      <div class="ex-text">交通費<small>理由になっていない。日付・区間・領収書がない理由を書く</small></div>
+    </div>
+  </div>
+  <div class="wanpoint">
+    <div class="wanpoint-title">知っておいてほしいこと</div>
+    <p><b>1,000 円を超える立替は、領収書が必要</b> です。できるだけ写真を付けてください。</p>
+    <p>「領収書なし」の行は、<b>管理者が 1 件ずつ確認して扱いを決めます</b>。確認のために連絡することがあります。</p>
+    <p>カードの利用明細やアプリの利用履歴など、代わりになりそうなものがあるときは、その扱いも代表者に相談してください。</p>
+  </div>
+</section>
+
+<!-- ═══ 6 提出前チェック ═══ -->
+<section class="step-section" id="check">
+  <div class="step-section-head">
+    <div class="step-section-num">6</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">CHECK</div>
+      <h2>提出前のチェックと、提出できないときの意味</h2>
+    </div>
+  </div>
+  <div class="step-card">
+    <div class="step-card-title">✅ 提出前のチェックリスト（押すと色が変わります）</div>
+    <ul class="checklist" id="checklist">
+      <li><input type="checkbox" id="c1"><label for="c1">立て替えたものは、すべて <b>「＋ 立替経費」</b>（オレンジの行）で入れた。「＋ HFS外の行」に入れていない。</label></li>
+      <li><input type="checkbox" id="c2"><label for="c2">金額は <b>領収書どおり</b>（税込のまま）。税抜に直していない。</label></li>
+      <li><input type="checkbox" id="c3"><label for="c3">領収書 <b>1 枚につき 1 行</b> になっている。</label></li>
+      <li><input type="checkbox" id="c4"><label for="c4">どの行にも <b>日付・支払先</b> が入っている。</label></li>
+      <li><input type="checkbox" id="c5"><label for="c5">どの行にも <b>写真（✓）</b> か <b>「領収書なし」の具体的な理由</b> が入っている。</label></li>
+      <li><input type="checkbox" id="c6"><label for="c6">付けた写真を開いて、<b>日付・支払先・金額が読める</b> ことを確かめた。</label></li>
+      <li><input type="checkbox" id="c7"><label for="c7">右下の合計に <b>「立替経費（実費）」</b> が出ていて、金額が合っている。</label></li>
+      <li><input type="checkbox" id="c8"><label for="c8">私用の分・相談が要るもの（自家用車のガソリン代など）は、<b>代表者に相談済み</b>。</label></li>
+    </ul>
+    <div class="check-status" id="check-status" role="status">0 / 8</div>
+    <p class="note">このチェックは、このページの上だけのものです（どこにも保存・送信されません）。</p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">🟥 行が赤くなる・提出できないとき</div>
+    <p>日付・支払先・領収書（写真か「領収書なし」の理由）がそろっていない立替経費の行は <b>赤く</b> なり、その行の下に何が足りないかが出ます。赤い行があるまま「提出する」を押すと <b>「赤い行が ○ 行あります。直してから提出してください」</b> と出て、最初の赤い行の場所へ移ります。</p>
+    <p><b>下書きのあいだは、途中のままでも保存されます。</b> 写真はあとで付けても大丈夫です。</p>
+    <div class="mock-cap">▼ 画面のイメージ（足りない行）</div>
+    <div class="exp-box ng" role="img" aria-label="支払先と領収書が足りずに赤くなった立替経費の行">
+      <div class="exp-grid">
+        <span class="exp-k">内容</span><span class="min w">○○スタジオ撮影 駐車場代</span>
+        <span class="exp-k">金額</span><span><span class="min price">1200</span> 円</span>
+        <span class="exp-k">日付</span><span><span class="min">2026/10/25</span></span>
+        <span class="exp-k">支払先</span><span class="min w empty">例: ENEOS ○○店</span>
+        <span class="exp-k">領収書</span>
+        <div class="rc">
+          <div class="rc-line"><span><span class="radio"></span>写真を添付</span> <span class="mbtn">📷 選ぶ</span></div>
+          <div class="rc-line"><span><span class="radio"></span>領収書なし（理由を書く）</span></div>
+        </div>
+      </div>
+      <div class="ng-msg">支払先を入力してください（例: ENEOS ○○店） / 領収書の写真を添付するか、「領収書なし」を選んで理由を書いてください</div>
+    </div>
+
+    <div class="mock-cap">▼ 出てくる言葉と、直し方</div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>出てくる言葉</th><th>意味・直し方</th></tr></thead>
+      <tbody>
+        <tr><td><code>立替経費の内容を入力してください（例: 10/25 撮影 タクシー代）</code></td><td>「内容」が空です。何の費用かを書きます。</td></tr>
+        <tr><td><code>単価が未入力です（0円で出す場合は 0 を入れてください）</code></td><td>「金額」が空です。領収書どおりの金額を入れます。</td></tr>
+        <tr><td><code>立替経費の日付を入力してください</code></td><td>「日付」が空か、正しくない日付です。支払った日を選びます。</td></tr>
+        <tr><td><code>支払先を入力してください（例: ENEOS ○○店）</code></td><td>「支払先」が空です。領収書に書いてあるお店・会社の名前を入れます。</td></tr>
+        <tr><td><code>領収書の写真を添付するか、「領収書なし」を選んで理由を書いてください</code></td><td>「写真を添付」と「領収書なし」のどちらも選ばれていません。どちらかを選びます。</td></tr>
+        <tr><td><code>領収書の写真（または PDF）を添付してください</code></td><td>「写真を添付」を選んだのに、まだファイルが付いていません。「📷 選ぶ」から付けます。</td></tr>
+        <tr><td><code>領収書がない理由を書いてください（例: レシートを紛失したため）</code></td><td>「領収書なし」を選んだのに、理由が空です。<a href="#no-receipt">良い例</a> のように書きます。</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="step-card">
+    <div class="step-card-title">📷 写真が付けられないとき</div>
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>出てくる言葉</th><th>どうする</th></tr></thead>
+      <tbody>
+        <tr><td><code>ファイルが大きすぎます（10MB まで）</code></td><td>PDF が大きすぎます。写真（スクリーンショット）で付け直すか、小さい PDF にしてください。</td></tr>
+        <tr><td><code>画像（写真）か PDF を選んでください</code></td><td>写真か PDF 以外のファイルを選んでいます。</td></tr>
+        <tr><td><code>この画像は読み込めませんでした。別の写真か PDF を選んでください</code></td><td>その写真が読めませんでした。撮り直すか、スクリーンショットを撮って付けてください。</td></tr>
+        <tr><td><code>先に行を保存できませんでした。少し待ってからもう一度選んでください</code></td><td>通信が混み合っているか、入力の保存がまだ終わっていません。数秒待ってから、もう一度「📷 選ぶ」を押します。</td></tr>
+        <tr><td><code>別の画面で領収書が更新されています。再読み込みしてください</code></td><td>PC とスマホなど、ほかの画面でこの行の領収書が付け替えられています。画面が最新の状態に読み直されるので、そこで領収書が合っているか確かめてください（読み直されないときは、請求書を開き直します）。</td></tr>
+        <tr><td><code>提出済みの請求書は編集できません</code><br><code>この請求書は別の画面で提出されました。再読み込みしてください</code></td><td>提出済み・承認済みの請求書には、写真を付けられません。付け忘れたときは「<a href="#after">提出後に間違いに気づいたら</a>」の手順でロックを外してもらってから付けます。</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">何度やっても付けられないときは、代表者に連絡してください（写真をチャットで送るなど、個別に対応します）。</p>
+  </div>
+</section>
+
+<!-- ═══ 7 提出後 ═══ -->
+<section class="step-section" id="after">
+  <div class="step-section-head">
+    <div class="step-section-num">7</div>
+    <div class="step-section-meta">
+      <div class="step-section-eyebrow">AFTER</div>
+      <h2>提出後に間違いに気づいたら</h2>
+    </div>
+  </div>
+  <div class="step-card">
+    <p>たとえば <b>「交通費を『＋ HFS外の行』に入れて提出してしまった」</b> ときは、次の手順で直します。</p>
+    <ul>
+      <li>「請求書」ページの自分の請求書（提出済み）にある <b>「✏️ 提出後に直したい」</b> を押します。</li>
+      <li><b>直したい理由</b> を書いて <b>「管理者に申請する」</b> を押します（例：交通費を HFS外の行に入れてしまったので、立替経費に直したいです）。</li>
+      <li>管理者がロックを外すと通知が届き、請求書に <b>「修正できる状態です」</b> と出ます。</li>
+      <li>請求書を開き、間違えた行の左のチェックを付けて <b>「削除」</b> → <b>「＋ 立替経費」</b> で入れ直し、領収書の写真を付けます。</li>
+      <li>もう一度 <b>「提出する」</b> を押します。</li>
+    </ul>
+    <p class="note">💡 <b>承認済み</b> の請求書には「✏️ 提出後に直したい」は出ません。<b>すでに振込が済んだ月</b>（または振込の手続き中の月）の請求書は、戻せません。どちらも、管理者に直接相談してください。</p>
+    <p class="note">くわしくは <a href="/guide-invoice-editor.html#after-submit">請求書エディタの使い方「提出後に直したいとき」</a> を見てください。</p>
+  </div>
+  <div class="wanpoint">
+    <div class="wanpoint-title">ここだけは絶対！</div>
+    <p>ロックが外れた請求書は、<b>もう一度「提出する」を押すまで提出済みの扱いになりません</b>。直し終わったら忘れずに提出してください。</p>
+  </div>
+</section>
+
+<!-- よくある質問 -->
+<section class="trouble" id="faq">
+  <h3>💬 よくある質問</h3>
+  <div class="trouble-list">
+    <div class="trouble-item">
+      <span class="trouble-icon">📄</span>
+      <div><div class="trouble-q">紙の領収書の原本は送らなくていい？</div><div class="trouble-a">送らなくて大丈夫です。スマホで撮った写真で OK です。日付・支払先・金額が読めるように撮ってください。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🪙</span>
+      <div><div class="trouble-q">1,000 円以下でも領収書は要る？</div><div class="trouble-a">領収書が必要なのは 1,000 円を超える立替です。ただし画面では、金額にかかわらず「写真を添付」か「領収書なし（理由）」のどちらかを選ばないと提出できません。領収書があれば写真を付けてください。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🚃</span>
+      <div><div class="trouble-q">電車やバス（交通系 IC カード）で領収書がない</div><div class="trouble-a">「領収書なし」を選び、理由に <b>日付・乗った区間（○○駅→△△駅）・片道か往復か・何の用事か</b> を書いてください。管理者が確認します。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">⛽</span>
+      <div><div class="trouble-q">自家用車で撮影に行った。ガソリン代はどうする？</div><div class="trouble-a">入れ方・計算のしかたが案件ごとに違うことがあるので、<b>入れる前に代表者へ相談</b> してください。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🧾</span>
+      <div><div class="trouble-q">その月は立替経費だけで、請求する作品がない</div><div class="trouble-a">請求書を作るときは、一覧から 1 件以上選ぶ必要があります。立替経費だけを請求したい月は、代表者に相談してください。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">📅</span>
+      <div><div class="trouble-q">先月の立替経費を入れ忘れていた</div><div class="trouble-a">先月の請求書をまだ提出していなければ、その請求書に足してください。提出済みのときは「<a href="#after">提出後に間違いに気づいたら</a>」の手順か、代表者に相談してください。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">💰</span>
+      <div><div class="trouble-q">立替経費はいつ振り込まれる？</div><div class="trouble-a">請求書といっしょに、<b>月末締め・翌月末払い</b> です。差引お振込額に、立替経費の金額がそのまま足されて振り込まれます。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🔒</span>
+      <div><div class="trouble-q">領収書の写真はだれが見られる？</div><div class="trouble-a">HFS から見られるのは、あなたと管理者だけです。写真はあなたの請求書フォルダ（Google ドライブ）の中の「領収書」フォルダに入ります。ほかのメンバーには見えません。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🔁</span>
+      <div><div class="trouble-q">違う写真を付けてしまった</div><div class="trouble-a">下書きのあいだなら「📷 撮り直す・選び直す」で差し替えられます。古い写真はゴミ箱に移ります。提出したあとなら「<a href="#after">提出後に間違いに気づいたら</a>」の手順で直します。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">↩︎</span>
+      <div><div class="trouble-q">写真を付けたあとで「領収書なし」に変えたい</div><div class="trouble-a">「領収書なし」を選ぶと「添付した領収書を外して『領収書なし』にしますか？」と聞かれます。OK を押すと写真が外れて（ゴミ箱に移ります）、理由の欄が出ます。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">⏱</span>
+      <div><div class="trouble-q">時給制（作業時間報告）で働いている</div><div class="trouble-a">作業時間報告の立替経費は、このガイドとは別の入れ方です。<a href="/guide-work-hours.html#step6">作業時間の記録ガイド</a> を見てください。</div></div>
+    </div>
+    <div class="trouble-item">
+      <span class="trouble-icon">🙋</span>
+      <div><div class="trouble-q">どうしても分からない</div><div class="trouble-a">入れる前に、代表者にチャットで聞いてください。「何を・いくら・いつ立て替えたか」を書いてもらえると早く答えられます。</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="final">
+  <div class="final-icon">🧾</div>
+  <h2>おつかれさまでした！</h2>
+  <p>立て替えたら <b>その場で領収書を撮る</b>、月末に <b>「＋ 立替経費」で 1 枚 1 行</b>。これだけ覚えておけば大丈夫です。</p>
+  <a class="final-cta" href="/haruka.html?page=invoices">請求書ページを開く →</a>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p style="margin-bottom:6px"><a href="/guide.html">← ガイド一覧へ</a>　｜　<a href="/guide-invoice-editor.html">請求書エディタの使い方</a></p>
+  <p>HARUKA FILM SYSTEM ／ 経費精算ガイド（立替経費の入れ方）</p>
+</footer>
+
+<script>
+(function(){
+  // 提出前チェックリスト（このページの上だけ。保存・送信はしない）
+  var list=document.getElementById('checklist'); if(!list) return;
+  var boxes=list.querySelectorAll('input[type="checkbox"]');
+  var status=document.getElementById('check-status');
+  function update(){
+    var n=0;
+    boxes.forEach(function(b){ b.closest('li').classList.toggle('done', b.checked); if(b.checked) n++; });
+    status.textContent = n===boxes.length ? '✅ ' + n + ' / ' + boxes.length + '　提出の準備ができました' : n + ' / ' + boxes.length;
+  }
+  list.addEventListener('change', update);
+  update();
+})();
+</script>
+
+</body>
+</html>
