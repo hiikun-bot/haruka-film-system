@@ -372,11 +372,12 @@ function rewriteGeneratedNameVersion(generatedName, version) {
 
 // 同一 version の未提出 creative_files 行を掃除（取消→再アップ等で version を再利用するケース）。
 // version が新規(M+1)の場合は該当行が無いので no-op。best-effort（Drive 側 orphan は許容）。
+// 戻り値: 実際に消えた行（drive_file_id / faststart_drive_file_id）。呼び出し側で Drive の公開設定を外すのに使う。
 async function cleanupCreativeFilesForVersion(creativeId, version) {
   try {
     const { data: stale } = await supabase
       .from('creative_files')
-      .select('id')
+      .select('id, drive_file_id, faststart_drive_file_id')
       .eq('creative_id', creativeId)
       .eq('version', version);
     if (stale && stale.length > 0) {
@@ -385,12 +386,50 @@ async function cleanupCreativeFilesForVersion(creativeId, version) {
       // 子テーブル best-effort（CASCADE 環境では no-op）
       try { await supabase.from('creative_file_comments').delete().in('creative_file_id', ids); } catch (_) {}
       try { await supabase.from('creative_file_likes').delete().in('creative_file_id', ids); } catch (_) {}
-      await supabase.from('creative_files').delete().in('id', ids);
+      const { error: delErr } = await supabase.from('creative_files').delete().in('id', ids);
+      if (delErr) {
+        console.warn('[creatives/upload] version cleanup delete failed (続行):', delErr.message);
+        return [];
+      }
+      return stale;
     }
   } catch (e) {
     console.warn('[creatives/upload] version cleanup failed (続行):', e?.message || e);
   }
+  return [];
 }
+
+// creative_files の行が DB から消えたあとに、その Drive ファイルに HFS が付けた「リンクを知っている全員」を外す
+// （utils/creative-file-unshare.js）。ほかの行・クライアント確認 URL・素材広場・外部作品で同じファイルを
+// 使っていれば外さない。例外は投げず、失敗はログと自動エラー通知に残す（削除そのものは成功のまま）。
+// 既定は投げっぱなし（応答を待たせない）。wait=true なら終わるまで待つ（版の差し替えのロック内など）。
+const CREATIVE_FILE_UNSHARE = require('../utils/creative-file-unshare');
+function revokeSharingForRemovedCreativeFiles(rows, reason, { wait = false } = {}) {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return Promise.resolve(null);
+  if (!Array.isArray(rows) || rows.length === 0) return Promise.resolve(null);
+  const p = CREATIVE_FILE_UNSHARE.revokeSharingForRemovedFiles({
+    supabase,
+    getDrive: getDriveService,
+    rows,
+    reason,
+    notifyError: (payload) => require('../notifications').notifyAutoError(payload),
+    // 外したファイルは direct-url の「付与済み」キャッシュからも消す（同じファイルがまた登録されたら付け直せるように）
+    onRevoked: (fileId) => { _anyoneReaderGranted.delete(fileId); },
+  }).catch((e) => {
+    console.warn(`[drive-unshare] ${reason}: 失敗（削除は完了済み）:`, e?.message || e);
+    return null;
+  });
+  if (!wait) return Promise.resolve(null);
+  // 待つ場合も Drive が遅いときに登録のロックを握り続けないよう、上限を設ける（超えたら処理は裏で続く）
+  return Promise.race([p, new Promise((resolve) => {
+    const t = setTimeout(() => {
+      console.warn(`[drive-unshare] ${reason}: ${UNSHARE_WAIT_MAX_MS}ms 以内に終わらないため待たずに続行（解除は裏で続く）`);
+      resolve(null);
+    }, UNSHARE_WAIT_MAX_MS);
+    if (t && typeof t.unref === 'function') t.unref();
+  })]);
+}
+const UNSHARE_WAIT_MAX_MS = 8000;
 
 // クリエイティブの Drive 格納先フォルダ階層（ルート/クライアント/案件/yyyymm/[週]/種別）を
 // 解決し typeFolderId を返す。multer 経路のフォルダ解決ロジックを抽出したもの。
@@ -513,13 +552,16 @@ async function withCreativeFileRegisterLock(creativeId, fn) {
 async function registerCreativeFileRow(params) {
   const { creativeId, version } = params;
   return withCreativeFileRegisterLock(creativeId, async () => {
-    await cleanupCreativeFilesForVersion(creativeId, version);
+    const removed = await cleanupCreativeFilesForVersion(creativeId, version);
     let result = await insertCreativeFileRow(params);
     if (isUniqueViolation(result.error)) {
       console.warn(`[creatives/upload] unique violation on insert (creative_id=${creativeId}, version=${version}) → cleanup して再試行`);
-      await cleanupCreativeFilesForVersion(creativeId, version);
+      removed.push(...await cleanupCreativeFilesForVersion(creativeId, version));
       result = await insertCreativeFileRow(params);
     }
+    // 差し替えで消えた古い版の公開設定を外す。新しい行の登録が済んでから、ロックの中で待って行う
+    // （同じファイルの complete が重なったとき、後続が消して入れ直す途中の行を「未使用」と見誤らないように）
+    if (removed.length > 0) await revokeSharingForRemovedCreativeFiles(removed, 'creative-version-replace', { wait: true });
     return result;
   });
 }
@@ -1877,9 +1919,40 @@ router.delete('/projects/:id', requireAuth, requirePermission('project.delete'),
     return res.status(500).json({ error: '監査ログの記録に失敗したため削除を中止しました: ' + logErr.message });
   }
 
+  // 連鎖で消えるクリエイティブのファイル（Drive の公開設定を外す対象）を削除前に読んでおく。
+  // 読めなくても案件の削除は止めない（公開設定が残るだけ。自動エラー通知で知らせる）
+  let removedFiles = [];
+  if (relCount > 0 && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+    try {
+      for (let from = 0; ; from += 1000) {
+        const { data: page, error: fErr } = await supabase
+          .from('creative_files')
+          .select('id, drive_file_id, faststart_drive_file_id, creatives!inner(project_id)')
+          .eq('creatives.project_id', projectId)
+          .order('id', { ascending: true })
+          .range(from, from + 999);
+        if (fErr) throw new Error(fErr.message);
+        removedFiles.push(...(page || []));
+        if (!page || page.length < 1000) break;
+      }
+    } catch (e) {
+      removedFiles = [];
+      console.warn('[projects/delete] 公開設定を外す対象のファイルを読めませんでした（削除は続行）:', projectId, e?.message || e);
+      try {
+        require('../notifications').notifyAutoError({
+          source: 'server', kind: 'drive-unshare-failed',
+          message: `[project-delete] 案件削除で消えるファイルを読めず、Drive の公開設定を外せません: ${e?.message || e}`,
+          apiPath: `/projects/${projectId}`,
+        }).catch(() => {});
+      } catch (_) {}
+    }
+  }
+
   // 本体削除
   const { error } = await supabase.from('projects').delete().eq('id', projectId);
   if (error) return res.status(500).json({ error: error.message });
+  // 削除が確定したので、消えたファイルの「リンクを知っている全員」を外す（投げっぱなし）
+  revokeSharingForRemovedCreativeFiles(removedFiles, 'project-delete');
   res.json({ ok: true, related_creatives_count: relCount || 0 });
 });
 
@@ -14623,10 +14696,20 @@ router.delete('/creatives', requireAuth, async (req, res) => {
   // 削除対象ファイル一覧。Drive リネーム（後述）と削除監査ログの files_snapshot の両方で使う。
   // drive_url / faststart_drive_url / version も含めて取り、復元調査時に Drive 上の
   // 「【削除】」付きファイルへ直接たどれるようにする。
-  const { data: filesToRename, error: filesErr } = await supabase
-    .from('creative_files')
-    .select('id, creative_id, version, generated_name, original_name, drive_file_id, drive_url, faststart_drive_file_id, faststart_drive_url, uploaded_at')
-    .in('creative_id', ids);
+  // 1 回の取得は最大 1000 行で切れるので、ページを送って全部読む（公開設定の解除・監査ログの取りこぼし防止）
+  const filesToRename = [];
+  let filesErr = null;
+  for (let from = 0; ; from += 1000) {
+    const { data: page, error: pageErr } = await supabase
+      .from('creative_files')
+      .select('id, creative_id, version, generated_name, original_name, drive_file_id, drive_url, faststart_drive_file_id, faststart_drive_url, uploaded_at')
+      .in('creative_id', ids)
+      .order('id', { ascending: true })
+      .range(from, from + 999);
+    if (pageErr) { filesErr = pageErr; break; }
+    filesToRename.push(...(page || []));
+    if (!page || page.length < 1000) break;
+  }
   // 読めないまま進むと監査ログの files_snapshot が空になり、Drive のリネームも漏れるので止める（まだ何も消していない）
   if (filesErr) return res.status(500).json({ error: 'ファイル情報の取得に失敗したため削除を中止しました: ' + filesErr.message });
 
@@ -14696,6 +14779,8 @@ router.delete('/creatives', requireAuth, async (req, res) => {
   if (delErr && partialDeleted) {
     // 関連行の一部は消えている。削除ログ（files_snapshot で復元できる）は残し、途中までの削除だと伝える
     console.error('[DELETE /creatives] 途中までの削除（関連行の一部を削除済み）:', ids.length, delErr.message);
+    // ファイル行は消えているので、その Drive ファイルの公開設定は外す
+    revokeSharingForRemovedCreativeFiles(filesToRename || [], 'creatives-bulk-delete-partial');
     return res.status(500).json({
       error: '削除が途中で失敗しました（ファイル情報など一部だけ削除されています）。管理者に連絡してください: ' + delErr.message,
       partial: true,
@@ -14758,6 +14843,9 @@ router.delete('/creatives', requireAuth, async (req, res) => {
       driveLog('error', `Driveサービス初期化失敗（DB側は削除済み）: ${e.message}`);
     }
   }
+
+  // DB の削除が確定したので、消えたファイルに HFS が付けた「リンクを知っている全員」を外す（投げっぱなし）
+  revokeSharingForRemovedCreativeFiles(filesToRename || [], 'creatives-bulk-delete');
 
   res.json({ ok: true, deleted: ids.length, drive_rename: renameResults });
 });
@@ -14903,7 +14991,12 @@ router.post('/creatives/:id/upload', upload.single('file'), async (req, res) => 
   } else {
     console.info(`[creatives/upload] version assigned: ${version} (creative_id=${creativeId})`);
   }
-  await cleanupCreativeFilesForVersion(creativeId, version);
+  // 同じ版の古い行が消えたら、その Drive ファイルの公開設定を外す。直送の complete と同じロックの中で
+  // 「掃除 → 解除」まで済ませる（並行する complete が同じファイルの行を入れ直す途中を「未使用」と見誤らないように）
+  await withCreativeFileRegisterLock(creativeId, async () => {
+    const removed = await cleanupCreativeFilesForVersion(creativeId, version);
+    if (removed.length > 0) await revokeSharingForRemovedCreativeFiles(removed, 'creative-version-replace', { wait: true });
+  });
   if (generated_name) {
     const replaced = rewriteGeneratedNameVersion(generated_name, version);
     if (replaced !== generated_name) {
@@ -15308,6 +15401,8 @@ router.delete('/creatives/:cid/files/:fid', requireAuth, async (req, res) => {
 
     // 4) Drive 上のファイル削除（best-effort）
     let driveError = null;
+    // 消せなかった Drive ファイル（このあと公開設定を外す対象）。消せたものは外す必要が無い
+    let notDeletedIds = [target.drive_file_id, target.faststart_drive_file_id].filter(Boolean);
     if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
       try {
         const drive = await getDriveService();
@@ -15316,6 +15411,7 @@ router.delete('/creatives/:cid/files/:fid', requireAuth, async (req, res) => {
           try {
             await drive.files.delete({ fileId: driveFileId, supportsAllDrives: true });
             driveLog('info', `Drive ファイル削除OK`, { driveFileId });
+            notDeletedIds = notDeletedIds.filter(id => id !== driveFileId);
           } catch (delErr) {
             driveLog('warn', `Drive ファイル削除失敗 (続行): ${delErr.message}`, { driveFileId });
             driveError = delErr.message;
@@ -15343,6 +15439,12 @@ router.delete('/creatives/:cid/files/:fid', requireAuth, async (req, res) => {
       .eq('id', fid)
       .eq('creative_id', cid);
     if (dErr) return res.status(500).json({ error: dErr.message });
+
+    // 7) Drive のファイルを消せなかった場合（共有ドライブでは SA に削除権限が無いことがある）は、
+    //    HFS が付けた「リンクを知っている全員」を外す（投げっぱなし）
+    if (notDeletedIds.length > 0) {
+      revokeSharingForRemovedCreativeFiles(notDeletedIds.map(id => ({ drive_file_id: id })), 'creative-file-cancel');
+    }
 
     res.json({ ok: true, deleted_version: target.version, drive_error: driveError });
   } catch (e) {
@@ -15717,10 +15819,16 @@ router.post('/creative-files/:id/regenerate-faststart', requireAuth, async (req,
   const creativeFileId = req.params.id;
   // 強制再生成のため、既存 faststart_drive_file_id があっても処理させたい場合は
   // 事前に status を pending にリセットする
-  await supabase.from('creative_files').update({
+  const { data: beforeRow } = await supabase
+    .from('creative_files').select('faststart_drive_file_id').eq('id', creativeFileId).maybeSingle();
+  const { error: resetErr } = await supabase.from('creative_files').update({
     faststart_status: 'pending',
     faststart_drive_file_id: null,
   }).eq('id', creativeFileId);
+  // 参照が外れた古い高速化版の「リンクを知っている全員」を外す（投げっぱなし）
+  if (!resetErr && beforeRow?.faststart_drive_file_id) {
+    revokeSharingForRemovedCreativeFiles([{ faststart_drive_file_id: beforeRow.faststart_drive_file_id }], 'faststart-regenerate');
+  }
 
   setImmediate(() => generateFaststart({ creativeFileId }).catch(err => {
     driveLog('error', `regenerate-faststart 失敗 [${creativeFileId}]: ${err?.message}`);
