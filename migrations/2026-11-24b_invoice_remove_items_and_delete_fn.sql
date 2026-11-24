@@ -113,6 +113,10 @@ BEGIN
     ELSIF v_inv.tax_mode IS DISTINCT FROM (v_req->'expected'->>'tax_mode')
        OR v_inv.withholding_enabled IS DISTINCT FROM (v_req->'expected'->>'withholding_enabled')::BOOLEAN THEN
       v_code := 'STALE';
+    ELSIF v_inv.tax_mode = 'exclusive'
+       AND NOT ((v_req->'totals') ?& ARRAY['subtotal_amount', 'tax_amount', 'total_amount', 'withholding_amount', 'payout_amount']) THEN
+      -- 新方式は小計〜差引の 5 列がそろっていないと NULL を書いてしまう（立替経費・源泉の集計が狂う）
+      RAISE EXCEPTION 'invoice_remove_items_recalc: exclusive invoice % needs all 5 totals', v_inv_id USING ERRCODE = '22023';
     ELSE
       -- 外したあとに残る明細が、アプリが合計を計算した明細と同じか（行の増減・単価・数量・金額・CR・役割）
       WITH cur AS (
