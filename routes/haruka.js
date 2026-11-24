@@ -29392,7 +29392,7 @@ const CREATIVE_ZIP_MAX_CREATIVES = 200;
 const CREATIVE_ZIP_MAX_BYTES = 1024 * 1024 * 1024; // 1GB（5 分以内に流し切れる目安）
 
 // creative id 群 → 各クリエイティブの最新版原本（creative_files の version 最大 → uploaded_at 新しい順）
-const { fetchAllRows: zipFetchAllRows, pickLatestFileByCreative, summarizeZipTargets } = require('../utils/creative-zip-targets');
+const { fetchAllRows: zipFetchAllRows, pickLatestFileByCreative, summarizeZipTargets, lookupDriveSize } = require('../utils/creative-zip-targets');
 async function loadCreativeZipTargets(creativeIds) {
   const files = [];
   // .in() の URL 長超過を避けるため 100 件ずつ。各チャンクは PostgREST の既定上限（1000 行）で切れないよう
@@ -29439,14 +29439,11 @@ async function loadCreativeZipTargets(creativeIds) {
     const drive = await getDriveService();
     for (let i = 0; i < missing.length; i += 10) {
       await Promise.all(missing.slice(i, i + 10).map(async (t) => {
-        try {
-          const meta = await drive.files.get({ fileId: t.drive_file_id, fields: 'size', supportsAllDrives: true });
-          const n = Number(meta.data.size);
-          if (n > 0) t.file_size = n;
-          else t.size_unknown = true;
-        } catch (_) {
-          t.size_unknown = true; // 削除済み・権限なし等。容量が確かめられないので ZIP は作らない（summarizeZipTargets）
-        }
+        // 一時的な失敗（レート制限・5xx）は取り直す。それでも聞けなければ（削除済み・権限なし等）容量不明として
+        // ZIP は作らない（summarizeZipTargets）。size が無い・0 バイトは確かめた上で 0
+        const r = await lookupDriveSize(() => drive.files.get({ fileId: t.drive_file_id, fields: 'size', supportsAllDrives: true }));
+        if (r.known) t.file_size = r.size;
+        else t.size_unknown = true;
       }));
     }
   }

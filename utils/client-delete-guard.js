@@ -9,6 +9,8 @@
 //     以前は「テーブルが無い」系のエラーを 0 件扱いにしていたため、確認できていないのに削除へ進めた。
 //   - 削除で黙って紐づきが外れる（SET NULL）・行ごと消える（CASCADE）テーブルは全部ここに並べる。
 //     クライアントを参照する FK を増やしたら、この一覧にも足すこと。
+//   - client_teams / client_configs / client_products / client_appeal_axes（CASCADE）はクライアントの設定で
+//     実データではないので対象外（products / appeal_axes 系は Stage C で削除予定）。
 
 const CLIENT_LINKED_TABLES = [
   { table: 'projects',                key: 'projects',                label: '案件' },               // NO ACTION

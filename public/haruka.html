@@ -13922,6 +13922,11 @@ async function executeClientDelete() {
         setClientDeleteBlocked(true, name, e.summary || '案件などのデータが紐づいています。');
         return;
       }
+      if (res.status === 503 && e?.code === 'client_check_failed') {
+        // 紐づくデータを確かめきれなかった → 何も消していない。取引終了へ誘導（時間をおいて再試行も可）
+        setClientDeleteBlocked(true, name, '紐づくデータを確かめられなかったため、削除を止めました（何も削除していません）。時間をおいてもう一度試してください。');
+        return;
+      }
       showToast('削除に失敗: ' + translateError(e?.error || `HTTP ${res.status}`), 'error');
     }
   } catch (err) {
@@ -48987,10 +48992,11 @@ async function openCreativeDetail(id) {
   if (revBadge) {
     // 社内（W/D/P後修正）と CL（クライアントチェック後修正）に分けて表示（旧 PR #547 の作り直し）。
     // 内訳はサーバーが遷移ログから数えて revision_breakdown で返す。取れなかったときは従来の合計表示。
-    // 遷移ログが欠けて内訳の合計が revision_count に届かないときも従来の「修正 N回」（少なく見せない・バッジを消さない）
+    // 遷移ログが欠けて内訳の合計が revision_count に届かないときも、サーバーが null を返す
+    // （utils/revision-breakdown.js の reconcileRevisionBreakdown）ので従来の「修正 N回」になる
     const bd = c.revision_breakdown;
     const legacyCnt = Number(c.revision_count) || 0;
-    if (bd && typeof bd.internal === 'number' && typeof bd.client === 'number' && (bd.internal + bd.client) >= legacyCnt) {
+    if (bd && typeof bd.internal === 'number' && typeof bd.client === 'number') {
       const parts = [];
       if (bd.internal > 0) parts.push(`社内 ${bd.internal}回`);
       if (bd.client > 0) parts.push(`CL ${bd.client}回`);
