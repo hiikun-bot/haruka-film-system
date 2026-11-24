@@ -20,7 +20,8 @@ const multer = require('multer');
 const router = express.Router();
 
 const supabase = require('../supabase');
-const { requireAuth, requireRole } = require('../auth');
+const { requireAuth, requireRole, getEffectiveRoleCodes } = require('../auth');
+const rolesUtil = require('../utils/roles');
 const guards = require('../lib/video-organization/guards');
 const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
@@ -214,6 +215,35 @@ router.get('/list', async (req, res) => {
   }
 });
 
+// 素材広場に登録済みの素材（drive_file_id が一致する行）を返す。無ければ null。
+// /preview・/download が「ファイル ID だけで Drive のどのファイルでも読める」入口にならないよう、配信前に必ず通す。
+// DB の読み取りに失敗したら throw（呼び出し側の catch で 5xx。Drive からは読まない）。
+async function findRegisteredItem(fileId, columns) {
+  if (!/^[A-Za-z0-9_-]{10,200}$/.test(String(fileId || ''))) return null;
+  const { data, error } = await supabase
+    .from('video_file_organization_tests')
+    .select(columns)
+    .eq('drive_file_id', fileId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+// 直送セッションの完了で受け取った Drive ファイルが、そのセッションで上げたものかを判定する。
+//   - セッションのアップロード先フォルダ（parent_folder_id）が親に入っている（親が読めないときも登録しない）
+//     アップロード先は init で素材広場のルートか案件フォルダに限っている（任意のフォルダは管理者だけ）
+//   - ファイルの作成時刻がセッション開始の 10 分前より後（時計のずれの余裕）。前からあるファイルは登録させない
+const UPLOAD_SESSION_CLOCK_SKEW_MS = 10 * 60 * 1000;
+function isFileFromUploadSession(meta, sess) {
+  if (!meta || !sess || !sess.parent_folder_id) return false;
+  const parents = Array.isArray(meta.parents) ? meta.parents : [];
+  if (!parents.includes(sess.parent_folder_id)) return false;
+  const created = Date.parse(meta.createdTime || '');
+  const started = Date.parse(sess.created_at || '');
+  if (!Number.isFinite(created) || !Number.isFinite(started)) return false;
+  return created >= started - UPLOAD_SESSION_CLOCK_SKEW_MS;
+}
+
 // ==================== プレビューストリーム（Drive 動画/画像を proxy）====================
 // /preview/:fileId  — Range 対応で動画を返す。3 秒ループ再生用。
 // 認証必須・admin のみ（router.use 済み）。レスポンスを公開化せず HARUKA セッション経由で配信する。
@@ -235,11 +265,9 @@ router.get('/preview/:fileId', async (req, res) => {
   if (!fileId) return res.status(400).end();
   try {
     // DB に preview 版 / faststart 版があればそれを配信
-    const { data: row } = await supabase
-      .from('video_file_organization_tests')
-      .select('preview_drive_file_id, preview_mime_type, preview_strategy, faststart_drive_file_id')
-      .eq('drive_file_id', fileId)
-      .maybeSingle();
+    // 権限確認（2026-11-24）: 素材広場に登録された素材だけ。登録の無い ID は Drive から読まない（/download と同じ）
+    const row = await findRegisteredItem(fileId, 'preview_drive_file_id, preview_mime_type, preview_strategy, faststart_drive_file_id');
+    if (!row) return res.status(404).json({ error: '素材広場に登録されていないファイルです' });
 
     const wantsOriginal = req.query.original === '1';
     let effectiveFileId = fileId;
@@ -321,6 +349,11 @@ router.get('/download/:fileId', async (req, res) => {
   const fileId = String(req.params.fileId);
   if (!fileId) return res.status(400).end();
   try {
+    // 権限確認（2026-11-24）: 素材広場に登録された素材（video_file_organization_tests の原本）だけを配信する。
+    // 以前はファイル ID さえあれば Drive 上のどのファイル（請求書・契約書など）でも SA 経由で読めた。
+    // 素材広場の一覧はログインした全員が見られるので、登録済みの素材なら閲覧権限ありとみなす。
+    const row = await findRegisteredItem(fileId, 'current_filename, original_filename');
+    if (!row) return res.status(404).json({ error: '素材広場に登録されていないファイルです' });
     // --- 公開済み(anyone reader)素材は Google から直接 DL させる（Railway プロキシ回避）---
     // 5.57GB 級の巨大ファイルを Railway 経由でストリーム配信すると、エッジの制約で
     // 「DL は始まるが進まず、部分ファイルも残らず消える」症状が出る（project_railway_upload_502 と同根）。
@@ -343,11 +376,6 @@ router.get('/download/:fileId', async (req, res) => {
     }
 
     // ファイル名は DB の current_filename → original_filename の順で採用（無ければ fileId）
-    const { data: row } = await supabase
-      .from('video_file_organization_tests')
-      .select('current_filename, original_filename')
-      .eq('drive_file_id', fileId)
-      .maybeSingle();
     const filename = row?.current_filename || row?.original_filename || `${fileId}`;
 
     const range = req.headers.range || null;
@@ -538,7 +566,9 @@ router.post('/upload', uploadWithSizeGuard, async (req, res) => {
 });
 
 // ==================== fileId による既存 Drive 登録（旧互換）====================
-router.post('/register', async (req, res) => {
+// 既存の Drive ファイル ID を素材広場に取り込む口。画面からは使っていない（アップロードは /upload・直送）。
+// 誰でも任意の ID を登録できると、登録 → /download で Drive 上のどのファイルでも読めてしまうので管理者に限る（2026-11-24）。
+router.post('/register', requireRole('admin'), async (req, res) => {
   const fileId = String(req.body?.fileId || '').trim();
   if (!fileId) return res.status(400).json({ error: 'fileId が必要です' });
   const projectId = String(req.body?.project_id || '').trim();
@@ -1742,6 +1772,16 @@ router.post('/upload-session/init', async (req, res) => {
       }
     }
 
+    // 権限確認（2026-11-24）: アップロード先フォルダを直接指定（後方互換の parentFolderId）できるのは管理者だけ。
+    // 画面からは使っていない。誰でも任意のフォルダを指定できると、そのフォルダに入った別人のファイルを
+    // complete で登録 → /download で読めてしまう（complete はセッションのフォルダを正として確かめるため）。
+    if (!projectId && parentFolderId && parentFolderId !== rootFolderId) {
+      const codes = await getEffectiveRoleCodes(req);
+      if (!rolesUtil.roleCodesMatchAny(codes, ['admin'])) {
+        return res.status(403).json({ error: 'アップロード先フォルダの指定は管理者だけができます' });
+      }
+    }
+
     if (!filename) return res.status(400).json({ error: 'filename が必要です' });
     if (!Number.isFinite(fileSize) || fileSize <= 0) {
       return res.status(400).json({ error: 'fileSize が不正です' });
@@ -1972,6 +2012,14 @@ router.post('/upload-session/:sessionId/complete', async (req, res) => {
     }
     const kind = mimeToKind(meta.mimeType, meta.fileName);
     if (!kind) return res.status(422).json({ error: `対象外の MIME: ${meta.mimeType}` });
+
+    // 権限確認（2026-11-24）: このセッションで直送したファイルだけを登録する。
+    // 任意の Drive ファイル ID を渡して登録 → /download で読む、という抜け道を塞ぐため、
+    // 「セッションのアップロード先フォルダに入っている」かつ「セッション開始より後に作られた」ことを確かめる。
+    if (!isFileFromUploadSession(meta, sess)) {
+      console.warn('[video-org] upload-session/complete: セッションで直送したファイルではないため拒否', { sessionId, driveFileId });
+      return res.status(403).json({ error: 'このファイルは登録できません' });
+    }
 
     const parentId = (meta.parents && meta.parents[0]) || sess.parent_folder_id || null;
     const parentName = await driveLib.getParentFolderName(parentId);
