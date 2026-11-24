@@ -21964,19 +21964,28 @@ router.post('/invoices/:id/submit', requireAuth, async (req, res) => {
   if ((await fetchInvoiceTaxMode(id)) === 'exclusive') {
     return res.status(409).json({ error: 'この請求書は新方式です。請求書エディタの「提出する」から提出してください', code: 'USE_INVOICE_EDITOR' });
   }
-  // 下書き・差し戻し中のときだけ（条件付き更新）。確認のあとに別の画面で提出・承認された請求書を上書きしない
+  // 下書き・差し戻し中の旧方式のときだけ（条件付き更新）。確認のあとに別の画面で提出・承認された請求書を上書きしない。
+  // tax_mode も条件に入れる（上の読み取りが失敗して inclusive 扱いになっても、新方式の請求書はここを通らない）
   const { data, error } = await supabase
     .from('invoices')
     .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id)
     .in('status', ['draft', 'rejected'])
+    .neq('tax_mode', 'exclusive')
     .select()
     .maybeSingle();
   if (error) {
     console.error('[invoices/submit] update error:', error);
     return res.status(500).json({ error: `更新失敗: ${error.message}` });
   }
-  if (!data) return res.status(409).json({ error: 'この請求書は別の画面で更新されました。再読み込みしてください', code: 'CONFLICT' });
+  if (!data) {
+    const { data: cur } = await supabase.from('invoices').select('id, tax_mode').eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: '請求書が見つかりません（削除された可能性があります）' });
+    if (cur.tax_mode === 'exclusive') {
+      return res.status(409).json({ error: 'この請求書は新方式です。請求書エディタの「提出する」から提出してください', code: 'USE_INVOICE_EDITOR' });
+    }
+    return res.status(409).json({ error: 'この請求書は別の画面で更新されました。再読み込みしてください', code: 'CONFLICT' });
+  }
   // ADR 047: 提出時点の内容で Drive の PDF を上書き（下書き中の明細修正を反映）
   const driveSync = await tryAutoSyncInvoicePdf(id, req.user?.id, 'submit');
   res.json({ ...data, ...driveSync });
