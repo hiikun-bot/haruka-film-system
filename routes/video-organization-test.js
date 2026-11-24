@@ -25,6 +25,7 @@ const guards = require('../lib/video-organization/guards');
 const driveLib = require('../lib/video-organization/drive');
 const geminiLib = require('../lib/video-organization/gemini');
 const heicLib = require('../lib/video-organization/heic');
+const SAFE_IMAGE = require('../utils/safe-image');
 const { generateFaststartForVideoOrg, generatePreviewForVideoOrg } = require('../lib/faststart');
 const googleOAuth = require('../lib/google-oauth');
 const { triggerAutoAnalyzeIfEligible, isAutoAnalyzeEnabled } = require('../lib/video-organization/auto-analyze');
@@ -263,6 +264,9 @@ router.get('/preview/:fileId', async (req, res) => {
     if (overrideContentType) {
       res.setHeader('Content-Type', overrideContentType);
     }
+    // メンバーが上げたファイルを HFS のオリジンで返すので、動画・音声・画像・PDF 以外は
+    // application/octet-stream（ダウンロード扱い）にし、nosniff / CSP sandbox を付ける
+    res.setHeader('Content-Type', SAFE_IMAGE.applyProxySafetyHeaders(res, res.getHeader('Content-Type')));
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'private, max-age=60');
     // Drive 側のステータスをそのまま転送（206 / 200 / 304 など）
@@ -352,6 +356,7 @@ router.get('/download/:fileId', async (req, res) => {
     }
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'private, max-age=60');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     // ダウンロード強制 + 日本語ファイル名は RFC5987（filename*）で安全にエンコード
     const asciiName = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
     res.setHeader(

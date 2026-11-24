@@ -28,6 +28,7 @@ function isMissingMaterialFolderUrlColumn(err) {
 }
 const MATERIAL_FOLDER_URL_NOT_READY = '素材フォルダURLの保存先がまだ準備できていません（DB の更新待ち）。URL を空にすると登録・保存できます';
 const DRIVE_ACCESS = require('../utils/drive-file-access');
+const SAFE_IMAGE = require('../utils/safe-image');
 const JOIN_REQ = require('../utils/project-join-request');
 const {
   getUserRoleCodes,
@@ -15288,6 +15289,9 @@ router.get('/files/:fileId/stream', async (req, res) => {
       }
     }
     if (!mimeType) mimeType = 'video/mp4';
+    // メンバーが上げたファイルを HFS のオリジンで返すので、動画・音声・画像・PDF 以外は
+    // application/octet-stream（ダウンロード扱い）にし、nosniff / CSP sandbox を付ける
+    mimeType = SAFE_IMAGE.applyProxySafetyHeaders(res, mimeType);
 
     const rangeHeader = req.headers.range;
 
@@ -16623,9 +16627,10 @@ router.get('/members/:id/avatar', async (req, res) => {
     const { data, error } = await supabase
       .from('users').select('avatar_url').eq('id', userId).maybeSingle();
     if (error) throw new Error(error.message);
-    const m = /^data:([^;,]+);base64,(.+)$/s.exec(data?.avatar_url || '');
-    if (!m) return null; // 未設定 → 404（null もキャッシュして DB 連打を防ぐ）
-    return { mime: m[1], buf: Buffer.from(m[2], 'base64'), ver: avatarVer(data.avatar_url) };
+    // 保存済みの mime は使わず中身から判定。許可リスト外（旧行の SVG/HTML 等）は配信しない
+    const parsed = SAFE_IMAGE.parseImageDataUrl(data?.avatar_url || '');
+    if (!parsed) return null; // 未設定 → 404（null もキャッシュして DB 連打を防ぐ）
+    return { mime: parsed.mime, buf: parsed.buf, ver: avatarVer(data.avatar_url) };
   }).catch(() => undefined);
   if (cached === undefined) return res.status(500).end();
   if (cached === null) return res.status(404).end();
@@ -16633,7 +16638,7 @@ router.get('/members/:id/avatar', async (req, res) => {
   res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
   res.setHeader('ETag', etag);
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
-  res.setHeader('Content-Type', cached.mime);
+  SAFE_IMAGE.setSafeImageHeaders(res, cached.mime);
   res.setHeader('Content-Length', cached.buf.length);
   return res.end(cached.buf);
 });
@@ -16653,15 +16658,17 @@ router.post('/members/:id/avatar', requireAuth, upload.single('file'), async (re
 
   const file = req.file;
   if (!file) return res.status(400).json({ error: 'ファイルが必要です' });
-  if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-    return res.status(400).json({ error: '画像ファイルを選択してください' });
-  }
   if (file.size > 5 * 1024 * 1024) {
     return res.status(400).json({ error: 'ファイルサイズは5MB以下にしてください' });
   }
+  // 申告の mimetype は信じず、中身（先頭バイト）で PNG/JPEG/WebP/GIF か確かめる
+  const safeImg = SAFE_IMAGE.imageBufferToDataUrl(file.buffer);
+  if (!safeImg) {
+    return res.status(400).json({ error: 'PNG・JPEG・WebP・GIF の画像を選択してください' });
+  }
 
   // Base64 data URL に変換して保存（クライアント側でリサイズ済み想定）
-  const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+  const dataUrl = safeImg.dataUrl;
   // DB 行の肥大化を避けるため、保存時点で 300KB を超えるものは拒否
   if (dataUrl.length > 300 * 1024) {
     return res.status(400).json({ error: '画像サイズが大きすぎます。再度お試しください' });
@@ -19150,13 +19157,8 @@ router.get('/tweets/unread-count', requireAuth, async (req, res) => {
 //   - :pos は 0〜3。tweet_images に該当 position が無く pos=0 のときはレガシー tweets.image_data に
 //     フォールバック（複数枚対応以前の投稿）。旧URL /tweets/:id/image も pos=0 として動く。
 function sendTweetImageDataUrl(res, dataUrl) {
-  const m = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl || '');
-  if (!m) return res.status(404).end();
-  const buf = Buffer.from(m[2], 'base64');
-  res.setHeader('Content-Type', m[1]);
-  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
-  res.setHeader('Content-Length', buf.length);
-  return res.end(buf);
+  // 保存済みの mime は使わず中身から判定。許可リスト外（旧行の SVG/HTML 等）は配信しない
+  return SAFE_IMAGE.sendStoredImageDataUrl(res, dataUrl);
 }
 
 async function serveTweetImage(req, res, pos) {
@@ -19229,10 +19231,12 @@ router.post('/tweets', requireAuth,
   }
   const dataUrls = [];
   for (const file of files) {
-    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-      return res.status(400).json({ error: '画像ファイルを選択してください' });
+    // 申告の mimetype は信じず、中身（先頭バイト）で PNG/JPEG/WebP/GIF か確かめる
+    const safeImg = SAFE_IMAGE.imageBufferToDataUrl(file.buffer);
+    if (!safeImg) {
+      return res.status(400).json({ error: 'PNG・JPEG・WebP・GIF の画像を選択してください' });
     }
-    const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+    const dataUrl = safeImg.dataUrl;
     if (dataUrl.length > TWEET_IMAGE_MAX_BYTES) {
       return res.status(400).json({ error: '画像サイズが大きすぎます（縮小してから再投稿してください）' });
     }
@@ -25058,8 +25062,12 @@ router.post('/creatives/:creativeId/comment-images', requireAuth, async (req, re
   if (imageData.length > CD_COMMENT_IMAGE_MAX_BYTES) {
     return res.status(400).json({ error: '画像サイズが大きすぎます（縮小してから貼り付けてください）' });
   }
-  const mimeMatch = /^data:([^;,]+);base64,/.exec(imageData);
-  const mime = mimeMatch ? mimeMatch[1] : null;
+  // 申告の mime は信じず、中身（先頭バイト）で PNG/JPEG/WebP/GIF か確かめて組み立て直す
+  const safeImg = SAFE_IMAGE.parseImageDataUrl(imageData);
+  if (!safeImg) {
+    return res.status(400).json({ error: 'PNG・JPEG・WebP・GIF の画像だけ添付できます' });
+  }
+  const mime = safeImg.mime;
 
   // 親クリエイティブの存在確認
   const { data: cRow, error: cErr } = await supabase
@@ -25073,7 +25081,7 @@ router.post('/creatives/:creativeId/comment-images', requireAuth, async (req, re
 
   const insertRow = {
     creative_id: creativeId,
-    image_data:  imageData,
+    image_data:  safeImg.dataUrl,
     mime,
     created_by:  req.user?.id || null,
   };
@@ -25136,13 +25144,8 @@ router.get('/comment-images/:id/image', requireAuth, async (req, res) => {
     .eq('id', req.params.id)
     .single();
   if (error || !data || data.deleted_at || !data.image_data) return res.status(404).end();
-  const m = /^data:([^;,]+);base64,(.+)$/s.exec(data.image_data);
-  if (!m) return res.status(404).end();
-  const buf = Buffer.from(m[2], 'base64');
-  res.setHeader('Content-Type', m[1]);
-  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
-  res.setHeader('Content-Length', buf.length);
-  return res.end(buf);
+  // 保存済みの mime は使わず中身から判定。許可リスト外（旧行の SVG/HTML 等）は配信しない
+  return SAFE_IMAGE.sendStoredImageDataUrl(res, data.image_data);
 });
 
 // 添付画像を論理削除（投稿者本人 or admin）。
@@ -25248,7 +25251,12 @@ function _validateDrawing(drawing) {
   if (!okNum(w) || !okNum(h)) {
     return { ok: false, error: 'drawing.w / drawing.h は正の数値である必要があります' };
   }
-  return { ok: true, value: { dataUrl, w, h } };
+  // 中身（先頭バイト）で PNG/JPEG/WebP/GIF か確かめ、判定した種類で組み立て直して保存する
+  const safeImg = SAFE_IMAGE.parseImageDataUrl(dataUrl);
+  if (!safeImg) {
+    return { ok: false, error: 'drawing.dataUrl は PNG・JPEG・WebP・GIF の画像である必要があります' };
+  }
+  return { ok: true, value: { dataUrl: safeImg.dataUrl, w, h } };
 }
 
 // ファイルのコメント一覧
@@ -26797,12 +26805,14 @@ function normalizeBugReportPayload(body, { isCreate }) {
         err.statusCode = 413;
         throw err;
       }
-      if (!s.startsWith('data:image/')) {
-        const err = new Error('スクリーンショットの形式が不正です');
+      // 中身（先頭バイト）で PNG/JPEG/WebP/GIF か確かめ、判定した種類で組み立て直して保存する
+      const safeImg = SAFE_IMAGE.parseImageDataUrl(s);
+      if (!safeImg) {
+        const err = new Error('スクリーンショットの形式が不正です（PNG・JPEG・WebP・GIF のみ）');
         err.statusCode = 400;
         throw err;
       }
-      out.screenshot_data_url = s;
+      out.screenshot_data_url = safeImg.dataUrl;
     }
   }
   if (body.annotations !== undefined) out.annotations = body.annotations || null;
@@ -27337,8 +27347,12 @@ router.post('/bug-report-comments/:commentId/images', requireAuth, express.json(
     if (imageData.length > BUG_REPORT_COMMENT_IMAGE_MAX_BYTES) {
       return res.status(413).json({ error: '画像サイズが大きすぎます（縮小してから貼り付けてください）' });
     }
-    const mimeMatch = /^data:([^;,]+);base64,/.exec(imageData);
-    const mime = mimeMatch ? mimeMatch[1] : null;
+    // 申告の mime は信じず、中身（先頭バイト）で PNG/JPEG/WebP/GIF か確かめて組み立て直す
+    const safeImg = SAFE_IMAGE.parseImageDataUrl(imageData);
+    if (!safeImg) {
+      return res.status(400).json({ error: 'PNG・JPEG・WebP・GIF の画像だけ添付できます' });
+    }
+    const mime = safeImg.mime;
 
     const { data: comment, error: cErr } = await supabase
       .from('bug_report_comments')
@@ -27360,7 +27374,7 @@ router.post('/bug-report-comments/:commentId/images', requireAuth, express.json(
       .insert({
         bug_report_id: comment.bug_report_id,
         comment_id: comment.id,
-        image_data: imageData,
+        image_data: safeImg.dataUrl,
         mime,
         created_by: req.user?.id || null,
       })
@@ -27382,13 +27396,8 @@ router.get('/bug-report-comment-images/:id/image', requireAuth, async (req, res)
     .eq('id', req.params.id)
     .maybeSingle();
   if (error || !data || data.deleted_at || !data.image_data) return res.status(404).end();
-  const m = /^data:([^;,]+);base64,(.+)$/s.exec(data.image_data);
-  if (!m) return res.status(404).end();
-  const buf = Buffer.from(m[2], 'base64');
-  res.setHeader('Content-Type', m[1]);
-  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
-  res.setHeader('Content-Length', buf.length);
-  return res.end(buf);
+  // 保存済みの mime は使わず中身から判定。許可リスト外（旧行の SVG/HTML 等）は配信しない
+  return SAFE_IMAGE.sendStoredImageDataUrl(res, data.image_data);
 });
 
 // DELETE /api/haruka/bug-report-comment-images/:id
@@ -29266,8 +29275,8 @@ router.get('/portfolio/download/:fileId', requireAuth, async (req, res) => {
       { fileId: target.drive_file_id, alt: 'media', supportsAllDrives: true },
       { responseType: 'stream' }
     );
-    res.setHeader('Content-Type', target.mime_type || 'application/octet-stream');
     res.setHeader('Content-Disposition', portfolioDispositionName(target.downloadName));
+    res.setHeader('Content-Type', SAFE_IMAGE.applyProxySafetyHeaders(res, target.mime_type));
     if (target.file_size) res.setHeader('Content-Length', String(target.file_size));
     stream.data.on('error', e => {
       console.warn('[portfolio/download] stream error:', e.message);

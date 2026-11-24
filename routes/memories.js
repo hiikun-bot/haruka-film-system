@@ -28,6 +28,7 @@ const supabase = require('../supabase');
 const { requireAuth, requireRole, getEffectiveRoleCodes } = require('../auth');
 const { roleCodesMatchAny } = require('../utils/roles');
 const M = require('../utils/memories');
+const SAFE_IMAGE = require('../utils/safe-image');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -439,9 +440,13 @@ router.get('/items/:fileId/thumb', async (req, res) => {
       _thumbLinks.delete(fileId);
       return res.status(404).end();
     }
-    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'image/jpeg');
+    // 中継元の Content-Type は使わず、中身から判定した PNG/JPEG/WebP/GIF だけを返す
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    const mime = SAFE_IMAGE.sniffImageMime(buf);
+    if (!mime) return res.status(404).end();
+    SAFE_IMAGE.setSafeImageHeaders(res, mime);
     res.setHeader('Cache-Control', 'private, max-age=86400');
-    res.end(Buffer.from(await upstream.arrayBuffer()));
+    res.end(buf);
   } catch (e) {
     console.warn('[memories][thumb]', e.message);
     res.status(500).end();
