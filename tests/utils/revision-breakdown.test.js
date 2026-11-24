@@ -34,3 +34,24 @@ describe('formatRevisionBadge', () => {
     expect(formatRevisionBadge(null)).toBeNull();
   });
 });
+
+describe('reconcileRevisionBreakdown / revisionBadgeText（遷移ログが欠けた案件・#1312 レビュー対応）', () => {
+  const { reconcileRevisionBreakdown, revisionBadgeText } = require('../../utils/revision-breakdown');
+  test('内訳の合計が revision_count 以上なら内訳を使う', () => {
+    expect(reconcileRevisionBreakdown({ internal: 2, client: 1 }, 3)).toEqual({ internal: 2, client: 1 });
+    expect(reconcileRevisionBreakdown({ internal: 2, client: 2 }, 3)).toEqual({ internal: 2, client: 2 });
+    expect(revisionBadgeText({ internal: 2, client: 1 }, 3)).toBe('社内 2回 · CL 1回');
+  });
+  test('合計が足りなければ内訳を使わず、従来の「修正 N回」', () => {
+    expect(reconcileRevisionBreakdown({ internal: 1, client: 0 }, 4)).toBeNull();
+    expect(revisionBadgeText({ internal: 1, client: 0 }, 4)).toBe('修正 4回');
+  });
+  test('ログが全く無くても（内訳 0・0）バッジを消さない', () => {
+    expect(revisionBadgeText({ internal: 0, client: 0 }, 2)).toBe('修正 2回');
+  });
+  test('どちらも 0 ならバッジなし・内訳が取れないときも従来表示', () => {
+    expect(revisionBadgeText({ internal: 0, client: 0 }, 0)).toBeNull();
+    expect(revisionBadgeText(null, 5)).toBe('修正 5回');
+    expect(revisionBadgeText(null, null)).toBeNull();
+  });
+});

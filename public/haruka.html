@@ -13922,6 +13922,11 @@ async function executeClientDelete() {
         setClientDeleteBlocked(true, name, e.summary || '案件などのデータが紐づいています。');
         return;
       }
+      if (res.status === 503 && e?.code === 'client_check_failed') {
+        // 紐づくデータを確かめきれなかった → 何も消していない。取引終了へ誘導（時間をおいて再試行も可）
+        setClientDeleteBlocked(true, name, '紐づくデータを確かめられなかったため、削除を止めました（何も削除していません）。時間をおいてもう一度試してください。');
+        return;
+      }
       showToast('削除に失敗: ' + translateError(e?.error || `HTTP ${res.status}`), 'error');
     }
   } catch (err) {
@@ -27743,8 +27748,13 @@ async function cvDownloadGroupZip(btn) {
       alert(`まとめてダウンロードできません\n\n合計 ${sizeText} あり、上限（1GB）を超えています。\n期間やステータスで絞り込んで、分けてダウンロードしてください。\n（大きい動画は詳細画面の「📁 フォルダ」や個別のダウンロードを使ってください）`);
       return;
     }
-    let skip = j.without_file > 0 ? `\n※ ファイル未アップロードの ${j.without_file} 件は含まれません` : '';
-    if (j.unreadable > 0) skip += `\n※ Drive で開けなかった ${j.unreadable} 件は「取得失敗」のメモになります`;
+    if (j.unreadable > 0) {
+      // 容量が確かめられないファイルがあると 1GB の上限を守れないので、サーバーも ZIP を作らない
+      const names = (Array.isArray(j.unreadable_names) ? j.unreadable_names : []).filter(Boolean);
+      alert(`まとめてダウンロードできません\n\nDrive で容量を確かめられないファイルが ${j.unreadable} 件あります（削除・移動された可能性があります）。\n該当のクリエイティブを絞り込みで外すか、詳細画面から個別にダウンロードしてください。${names.length ? `\n\n${names.map(n => '・' + n).join('\n')}` : ''}`);
+      return;
+    }
+    const skip = j.without_file > 0 ? `\n※ ファイル未アップロードの ${j.without_file} 件は含まれません` : '';
     if (!confirm(`${j.files} 件（合計 約${sizeText}）を ZIP でダウンロードします。\n各クリエイティブの最新版の原本が入ります。${skip}`)) return;
     showToast('ダウンロードを開始しました（ZIP の作成に少し時間がかかります）', 'success');
     cvStartZipDownload(`${API}/creatives-download-zip?${qs}`);
@@ -48983,7 +48993,10 @@ async function openCreativeDetail(id) {
   if (revBadge) {
     // 社内（W/D/P後修正）と CL（クライアントチェック後修正）に分けて表示（旧 PR #547 の作り直し）。
     // 内訳はサーバーが遷移ログから数えて revision_breakdown で返す。取れなかったときは従来の合計表示。
+    // 遷移ログが欠けて内訳の合計が revision_count に届かないときも、サーバーが null を返す
+    // （utils/revision-breakdown.js の reconcileRevisionBreakdown）ので従来の「修正 N回」になる
     const bd = c.revision_breakdown;
+    const legacyCnt = Number(c.revision_count) || 0;
     if (bd && typeof bd.internal === 'number' && typeof bd.client === 'number') {
       const parts = [];
       if (bd.internal > 0) parts.push(`社内 ${bd.internal}回`);
@@ -48994,8 +49007,8 @@ async function openCreativeDetail(id) {
         revBadge.style.display = '';
       } else revBadge.style.display = 'none';
     } else {
-      const cnt = c.revision_count || 0;
-      if (cnt > 0) { revBadge.textContent = `修正 ${cnt}回`; revBadge.style.display = ''; }
+      revBadge.title = '';
+      if (legacyCnt > 0) { revBadge.textContent = `修正 ${legacyCnt}回`; revBadge.style.display = ''; }
       else revBadge.style.display = 'none';
     }
   }
