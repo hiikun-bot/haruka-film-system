@@ -28028,50 +28028,210 @@ router.get('/portfolio/download-zip', requireAuth, async (req, res) => {
     }
 
     const stamp = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace(/-/g, '');
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', portfolioDispositionName(`作品_${stamp}.zip`));
-
-    const archiver = require('archiver');
-    // store（無圧縮）: 動画・画像は既に圧縮済みなので CPU を使っても縮まない
-    const archive = archiver('zip', { zlib: { level: 0 }, store: true });
-    archive.on('warning', err => console.warn('[portfolio/download-zip] warning:', err.message));
-    archive.on('error', err => {
-      console.error('[portfolio/download-zip] archive error:', err.message);
-      res.destroy();
-    });
-    archive.pipe(res);
-
-    const drive = await getDriveService();
-    const used = new Set();
-    for (const t of targets) {
-      // 同名衝突は連番で回避（同じ作品の別バージョン等）
-      let entry = `${t.folder}/${t.downloadName}`;
-      if (used.has(entry)) {
-        const m = t.downloadName.match(/^(.*?)(\.[a-zA-Z0-9]+)?$/);
-        let i = 2;
-        while (used.has(entry)) { entry = `${t.folder}/${m[1]}_${i}${m[2] || ''}`; i += 1; }
-      }
-      used.add(entry);
-      try {
-        const stream = await drive.files.get(
-          { fileId: t.drive_file_id, alt: 'media', supportsAllDrives: true },
-          { responseType: 'stream' }
-        );
-        archive.append(stream.data, { name: entry });
-        // 1件ずつ流し終えてから次へ（同時に何本も Drive から引かない）
-        await new Promise((resolve, reject) => {
-          stream.data.on('end', resolve);
-          stream.data.on('error', reject);
-        });
-      } catch (e) {
-        console.warn('[portfolio/download-zip] 取得失敗（スキップ）:', t.drive_file_id, e.message);
-        archive.append(`このファイルは取得できませんでした: ${t.downloadName}\n${e.message}\n`,
-          { name: `${t.folder}/_取得失敗_${portfolioSafePath(t.downloadName)}.txt` });
-      }
-    }
-    await archive.finalize();
+    await streamDriveFilesAsZip(res, targets, `作品_${stamp}.zip`, 'portfolio/download-zip');
   } catch (e) {
     console.error('[portfolio/download-zip] failed:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
+// Drive 上のファイル群をサービスアカウントで1件ずつ取り出し、ZIP（無圧縮）にしてレスポンスへ流す。
+// targets: [{ drive_file_id, folder, downloadName }]。サーバーには溜めない（streaming）。
+// 作品のまとめてDL（/portfolio/download-zip）とクリエイティブ一覧の案件まとめDL（/creatives-download-zip）で共用。
+async function streamDriveFilesAsZip(res, targets, zipName, logTag) {
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', portfolioDispositionName(zipName));
+
+  const archiver = require('archiver');
+  // store（無圧縮）: 動画・画像は既に圧縮済みなので CPU を使っても縮まない
+  const archive = archiver('zip', { zlib: { level: 0 }, store: true });
+  // 途中でやめる条件: ダウンロードが中断された（タブを閉じた等）/ ZIP 自体が壊れた。
+  // これを見ずにループを続けると、読まれない Drive ストリームの end を永遠に待って固まる。
+  let stopped = false;
+  let current = null; // 取り出し中の Drive ストリーム
+  const stop = (why) => {
+    if (stopped) return;
+    stopped = true;
+    console.warn(`[${logTag}] 中断: ${why}`);
+    try { current?.destroy(new Error(why)); } catch (_) {}
+  };
+  archive.on('warning', err => console.warn(`[${logTag}] warning:`, err.message));
+  archive.on('error', err => {
+    console.error(`[${logTag}] archive error:`, err.message);
+    stop('archive error');
+    res.destroy();
+  });
+  res.on('close', () => { if (!res.writableFinished) stop('client closed'); });
+  archive.pipe(res);
+
+  const drive = await getDriveService();
+  const used = new Set();
+  for (const t of targets) {
+    if (stopped) break;
+    // 同名衝突は連番で回避（同じ作品の別バージョン等）
+    let entry = `${t.folder}/${t.downloadName}`;
+    if (used.has(entry)) {
+      const m = t.downloadName.match(/^(.*?)(\.[a-zA-Z0-9]+)?$/);
+      let i = 2;
+      while (used.has(entry)) { entry = `${t.folder}/${m[1]}_${i}${m[2] || ''}`; i += 1; }
+    }
+    used.add(entry);
+    // Drive の応答（ヘッダー）を受けてから ZIP に足す。開けなかったファイル（削除済み等）は
+    // 中身の代わりに「取得失敗」のメモを入れて次へ進む（ここまでは ZIP は壊れない）。
+    let stream;
+    try {
+      stream = await drive.files.get(
+        { fileId: t.drive_file_id, alt: 'media', supportsAllDrives: true },
+        { responseType: 'stream' }
+      );
+    } catch (e) {
+      if (stopped) break;
+      console.warn(`[${logTag}] 取得失敗（スキップ）:`, t.drive_file_id, e.message);
+      archive.append(`このファイルは取得できませんでした: ${t.downloadName}\n${e.message}\n`,
+        { name: `${t.folder}/_取得失敗_${portfolioSafePath(t.downloadName)}.txt` });
+      continue;
+    }
+    if (stopped) { try { stream.data.destroy(); } catch (_) {} break; }
+    current = stream.data;
+    archive.append(stream.data, { name: entry });
+    try {
+      // 1件ずつ流し終えてから次へ（同時に何本も Drive から引かない）
+      await new Promise((resolve, reject) => {
+        stream.data.on('end', resolve);
+        stream.data.on('error', reject);
+        stream.data.on('close', resolve); // 中断で destroy されたとき end が来ないため
+      });
+    } catch (e) {
+      // 流している途中で切れたファイルは ZIP の中で壊れているので、ここで打ち切る
+      console.warn(`[${logTag}] 転送途中で失敗（打ち切り）:`, t.drive_file_id, e.message);
+      stop('drive stream error');
+      res.destroy();
+      break;
+    } finally {
+      current = null;
+    }
+  }
+  if (!stopped) await archive.finalize();
+  else { try { archive.abort(); } catch (_) {} }
+}
+
+// ==================== クリエイティブ一覧: 案件ごとにまとめてダウンロード（#854 置き換え） ====================
+//
+// 案件の見出しの「⬇ まとめてDL」から、表示中のクリエイティブそれぞれの「最新版の原本」を ZIP で返す。
+// Drive フォルダを「リンクを知っている全員」に公開する方式（旧 #854）は採らない:
+//   クライアントの納品物を誰でも見られる状態にするかはセキュリティ判断が必要なため。
+//   ここではサーバー（サービスアカウント）が Drive から取り出して流すので、Drive 側の共有設定は一切変えない。
+// 制約: Railway のエッジは 1 リクエスト 5 分程度で切れる（アップロード 502 の前例）。
+//   静止画の案件なら十分収まるが、動画が多い案件は上限（件数・合計容量）で止め、絞り込んで分けてもらう。
+// 認可: requireAuth（クリエイティブ一覧・作品のダウンロードと同じ。一覧 API 自体が全ロールに全件返している）。
+const CREATIVE_ZIP_MAX_CREATIVES = 200;
+const CREATIVE_ZIP_MAX_BYTES = 1024 * 1024 * 1024; // 1GB（5 分以内に流し切れる目安）
+
+// creative id 群 → 各クリエイティブの最新版原本（creative_files の version 最大 → uploaded_at 新しい順）
+async function loadCreativeZipTargets(creativeIds) {
+  const files = [];
+  // .in() の URL 長超過を避けるため 100 件ずつ
+  for (let i = 0; i < creativeIds.length; i += 100) {
+    const chunk = creativeIds.slice(i, i + 100);
+    const { data, error } = await supabase
+      .from('creative_files')
+      .select('id, creative_id, drive_file_id, generated_name, original_name, mime_type, file_size, version, uploaded_at')
+      .in('creative_id', chunk)
+      .not('drive_file_id', 'is', null);
+    if (error) throw new Error(error.message);
+    files.push(...(data || []));
+  }
+  const latest = new Map();
+  for (const f of files) {
+    const cur = latest.get(f.creative_id);
+    const newer = !cur
+      || (Number(f.version) || 0) > (Number(cur.version) || 0)
+      || ((Number(f.version) || 0) === (Number(cur.version) || 0) && String(f.uploaded_at || '') > String(cur.uploaded_at || ''));
+    if (newer) latest.set(f.creative_id, f);
+  }
+  const withFile = [...latest.keys()];
+  const creatives = [];
+  for (let i = 0; i < withFile.length; i += 100) {
+    const { data, error } = await supabase
+      .from('creatives')
+      .select('id, file_name, projects(name, clients(name))')
+      .in('id', withFile.slice(i, i + 100));
+    if (error) throw new Error(error.message);
+    creatives.push(...(data || []));
+  }
+  const byId = new Map(creatives.map(c => [c.id, c]));
+  const targets = [];
+  for (const [cid, f] of latest) {
+    const c = byId.get(cid);
+    if (!c) continue;
+    const ext = (f.generated_name || f.original_name || '').match(/\.[a-zA-Z0-9]+$/)?.[0] || '';
+    const base = portfolioSafePath(f.generated_name || f.original_name || c.file_name || 'file').replace(/\.[a-zA-Z0-9]+$/, '');
+    targets.push({
+      ...f,
+      downloadName: `${base}${ext}`,
+      folder: portfolioSafePath([c.projects?.clients?.name, c.projects?.name].filter(Boolean).join('_') || 'クリエイティブ'),
+    });
+  }
+  // creative_files.file_size はキャッシュで、古い行は NULL のことが多い。NULL を 0 と数えると
+  // 1GB 上限が素通りになるので、足りない分だけ Drive にサイズを聞く（10 件ずつ並列）。
+  const missing = targets.filter(t => !(Number(t.file_size) > 0));
+  if (missing.length > 0) {
+    const drive = await getDriveService();
+    for (let i = 0; i < missing.length; i += 10) {
+      await Promise.all(missing.slice(i, i + 10).map(async (t) => {
+        try {
+          const meta = await drive.files.get({ fileId: t.drive_file_id, fields: 'size', supportsAllDrives: true });
+          const n = Number(meta.data.size);
+          if (n > 0) t.file_size = n;
+          else t.size_unknown = true;
+        } catch (_) {
+          t.size_unknown = true; // 削除済み等。ZIP では「取得失敗」メモになる
+        }
+      }));
+    }
+  }
+  targets.sort((a, b) => a.folder.localeCompare(b.folder, 'ja') || a.downloadName.localeCompare(b.downloadName, 'ja'));
+  return targets;
+}
+
+const CREATIVE_ZIP_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// GET /api/haruka/creatives-download-zip?ids=<creative_id>,...[&check=1][&name=<ZIP名>]
+//   check=1 → ダウンロード前の確認用 JSON（件数・合計容量・上限超過か）。画面は apiFetch でこれを叩いてから遷移する
+//   それ以外 → ZIP をそのまま流す（ブラウザのナビゲーションでディスクへ直接保存）
+// ※ '/creatives/:id' と衝突しないよう別パスにしている。
+router.get('/creatives-download-zip', requireAuth, async (req, res) => {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
+  try {
+    const ids = [...new Set(String(req.query.ids || '').split(',').map(s => s.trim()).filter(s => CREATIVE_ZIP_UUID_RE.test(s)))];
+    if (!ids.length) return res.status(400).json({ error: 'ダウンロードするクリエイティブがありません' });
+    if (ids.length > CREATIVE_ZIP_MAX_CREATIVES) {
+      return res.status(400).json({ error: `一度にまとめてダウンロードできるのは ${CREATIVE_ZIP_MAX_CREATIVES} 件までです。期間やステータスで絞り込んでから押してください` });
+    }
+    const targets = await loadCreativeZipTargets(ids);
+    const totalBytes = targets.reduce((s, t) => s + (Number(t.file_size) || 0), 0);
+    const tooLarge = totalBytes > CREATIVE_ZIP_MAX_BYTES;
+    const summary = {
+      creatives: ids.length,
+      files: targets.length,
+      without_file: ids.length - targets.length,
+      total_bytes: totalBytes,
+      max_bytes: CREATIVE_ZIP_MAX_BYTES,
+      too_large: tooLarge,
+      unreadable: targets.filter(t => t.size_unknown).length, // Drive で開けなかった（削除済み等）
+    };
+    if (String(req.query.check || '') === '1') return res.json(summary);
+    if (!targets.length) return res.status(404).json({ error: 'ダウンロードできるファイルがありません（まだアップロードされていません）' });
+    if (tooLarge) {
+      const gb = (totalBytes / 1024 / 1024 / 1024).toFixed(1);
+      return res.status(400).json({ error: `合計が ${gb}GB あります。1GB 以下になるよう絞り込んで分けてダウンロードしてください` });
+    }
+    const stamp = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace(/-/g, '');
+    const rawName = String(req.query.name || '').trim().slice(0, 80);
+    const label = rawName ? portfolioSafePath(rawName) : 'クリエイティブ';
+    await streamDriveFilesAsZip(res, targets, `${label}_${stamp}.zip`, 'creatives-download-zip');
+  } catch (e) {
+    console.error('[creatives-download-zip] failed:', e.message);
     if (!res.headersSent) res.status(500).json({ error: e.message });
   }
 });
