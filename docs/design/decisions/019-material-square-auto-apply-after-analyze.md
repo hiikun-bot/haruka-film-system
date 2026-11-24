@@ -94,3 +94,12 @@ waiting_approval → processing → analysis_completed
 apply_failed → (手動 /apply 再実行) → applied | apply_failed
 applied → (画面ファイル名編集 /rename) → applied（current/recommended_filename 更新）
 ```
+
+### 2026-11-24 追記（旧 PR #810 `AUTO_APPLY_SKIP_REVIEW` の扱い）
+
+- 旧 PR #810 は「要確認でも自動リネームする」を環境変数（既定 OFF）で選べるようにする案だったが、
+  上の 2026-06-16 改訂（#813）で **要確認でも常に自動適用** が既定になっている。既定 OFF のフラグを足すと
+  逆に「確認待ちで止まる」旧挙動へ戻ってしまうため、**フラグは追加せず #810 は閉じた**。AI 解析の回数・費用は変わらない。
+- 代わりに「後から見分ける・戻す」最低限の印を画面に付けた（DB 列追加なし）:
+  - 一覧のステータス欄に `⚠ AI要確認`（`needs_human_review=true` かつ `status='applied'`・ツールチップに理由）
+  - 右パネル「振り分け提案」に理由・元のファイル名と「↩ 元の名前に戻す」（既存の `POST /rename` で `original_filename` に戻す。フォルダはそのまま）

@@ -8583,6 +8583,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
               </div>
             </div>
             <div style="margin-top:2px">📁 <span id="ms-preview-new-folder">-</span></div>
+            <!-- #810: AI が「要確認」と判定したまま自動リネームされた素材の印＋元の名前へ戻す口 -->
+            <div id="ms-review-note" style="display:none;margin-top:6px;padding:6px 8px;border:1px solid #f59e0b;border-radius:6px;background:#fffbeb;font-size:12px;line-height:1.5"></div>
           </div>
 
           <div class="ms-actions">
@@ -8645,7 +8647,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <div class="ms-drop-icon">⬆ 🎬 🖼️</div>
           <p style="margin:12px 0 4px;font-size:14px;color:var(--text)">ここにファイルをドラッグ＆ドロップ</p>
           <p style="margin:0;font-size:12px" id="ms-upload-limits-hint">複数ファイル同時OK / 1ファイル <span id="ms-hint-mb">25</span>MB まで / 動画は <span id="ms-hint-sec">30</span>秒以内</p>
-          <p style="margin:4px 0;font-size:11px;color:var(--text-muted)" id="ms-resumable-hint" style="display:none">⚡ <span id="ms-hint-resumable-mb">25</span>MB 超の大容量ファイルは Drive 直送でアップロード（数十GBの 4K 素材も OK）</p>
+          <p style="margin:4px 0;font-size:11px;color:var(--text-muted);display:none" id="ms-resumable-hint">⚡ <span id="ms-hint-resumable-mb">25</span>MB 以上のファイルは自動で Drive 直送（容量・長さの制限なし。数十GBの 4K 素材も OK）</p>
           <p style="margin:8px 0 16px;font-size:12px">対応: mp4 / mov / jpg / jpeg / png / webp / heic（heic は自動 jpeg 変換）</p>
           <button class="btn-primary" onclick="document.getElementById('ms-file-input').click()">📁 ファイルを選択</button>
           <input type="file" id="ms-file-input" multiple style="display:none"
@@ -61818,19 +61820,24 @@ function msShowUpload() {
   msResetUploadList();
   // 上限ヒントを env 連動値に更新
   msEnsureLimits().then((l) => {
-    const mb = document.getElementById('ms-hint-mb');
-    const sec = document.getElementById('ms-hint-sec');
-    if (mb) mb.textContent = String(l.max_upload_size_mb || 25);
-    if (sec) sec.textContent = String(l.max_upload_duration_seconds || 30);
+    const maxMb = Number(l.max_upload_size_mb) || 25;
+    const maxSec = Number(l.max_upload_duration_seconds) || 30;
+    const bytes = Number(l.resumable_upload_threshold_bytes) || (maxMb * 1024 * 1024);
+    const thresholdMb = Math.floor(bytes / (1024 * 1024));
+    // #838: Drive 直送（ENABLE_RESUMABLE_UPLOAD）が有効なら、閾値以上は容量・長さの制限なしで上がる。
+    //   「1ファイル 25MB まで」は直送 OFF のときだけ正しいので、ON のときは文言ごと差し替える。
+    //   長さ（N秒以内）のチェックは閾値未満の通常経路（/upload）だけにかかる。
+    const hint = document.getElementById('ms-upload-limits-hint');
+    if (hint) {
+      hint.textContent = l.resumable_upload_enabled
+        ? `複数ファイル同時OK / 容量制限なし / ${thresholdMb}MB 未満の動画は ${maxSec}秒以内`
+        : `複数ファイル同時OK / 1ファイル ${maxMb}MB まで / 動画は ${maxSec}秒以内`;
+    }
     // 大容量直送が有効ならヒント表示
     const resumableHint = document.getElementById('ms-resumable-hint');
     if (resumableHint) resumableHint.style.display = l.resumable_upload_enabled ? '' : 'none';
-    // 閾値 MB（既定は multer 上限と同値）を表示に反映
     const resumableMb = document.getElementById('ms-hint-resumable-mb');
-    if (resumableMb) {
-      const bytes = Number(l.resumable_upload_threshold_bytes) || (Number(l.max_upload_size_mb || 25) * 1024 * 1024);
-      resumableMb.textContent = String(Math.floor(bytes / (1024 * 1024)));
-    }
+    if (resumableMb) resumableMb.textContent = String(thresholdMb);
   });
   // 案件選択（アップロード先）を初期化
   msInitUploadTarget();
@@ -62548,6 +62555,39 @@ function msTagsCell(item) {
 // 「AI解析待ち」の行に、なぜ待っているかを状態バッジの下に 1 行で出す（ADR 039 D2）。
 //   wait_reason はサーバー（GET /list）が一覧取得時点の状況から導出して付ける
 //   （日次枠到達 / プレビュー生成中 / 自動解析OFF など）。全文は title（ホバー）で読める。
+// #810: AI が「要確認 (needs_human_review)」と判定したまま自動で振り分け・リネームされた素材か。
+//   ADR 019 改訂（2026-06-16）以降は要確認でも止めずに自動適用するため、後から見分けられるよう印を出す。
+function msIsAutoAppliedNeedsReview(item) {
+  return !!(item && item.needs_human_review === true && item.status === 'applied');
+}
+function msAutoAppliedReviewBadge(item) {
+  if (!msIsAutoAppliedNeedsReview(item)) return '';
+  const tip = 'AI が「要確認」と判定したまま自動でリネームしました' + (item.reason ? '\n理由: ' + item.reason : '');
+  return `<div class="ms-wait-reason" style="color:#b45309" title="${votEscape(tip)}">⚠ AI要確認</div>`;
+}
+function msRenderReviewNote(item) {
+  const el = document.getElementById('ms-review-note');
+  if (!el) return;
+  if (!msIsAutoAppliedNeedsReview(item)) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const orig = item.original_filename || '';
+  const canRestore = orig && orig !== item.current_filename;
+  el.innerHTML = `⚠ AI が「要確認」と判定したまま自動でリネームしました。`
+    + (item.reason ? `<div style="color:var(--text-muted)">理由: ${votEscape(item.reason)}</div>` : '')
+    + (orig ? `<div>元のファイル名: <span style="word-break:break-all">${votEscape(orig)}</span></div>` : '')
+    + (canRestore ? `<button class="btn-secondary" onclick="msRestoreOriginalName()" style="margin-top:4px;padding:2px 8px;font-size:12px">↩ 元の名前に戻す</button>` : '');
+  el.style.display = '';
+}
+async function msRestoreOriginalName() {
+  if (!msSelectedFileId) return;
+  const item = msItemsCache.find(x => x.drive_file_id === msSelectedFileId);
+  const orig = item && item.original_filename;
+  if (!orig) return;
+  if (!confirm(`ファイル名を元の名前に戻します。\n${orig}\n（フォルダはそのままです）`)) return;
+  const input = document.getElementById('ms-name-input');
+  if (input) input.value = orig;
+  return msSaveRename();
+}
+
 function msWaitReasonCell(item) {
   const wr = item && item.wait_reason;
   if (!wr || !wr.short) return '';
@@ -62644,7 +62684,7 @@ function msRenderRow(item) {
   return `
     <tr class="${(selected + checkedCls).trim()}" onclick="msRowClick(event, '${fid}')">
       <td class="ms-check-col"><input type="checkbox" class="ms-check" data-fid="${fid}" ${checked ? 'checked' : ''} onclick="event.preventDefault();event.stopPropagation();msRowClick(event, '${fid}')"></td>
-      <td>${votStatusBadge(item.status)}${previewProgress}${msWaitReasonCell(item)}</td>
+      <td>${votStatusBadge(item.status)}${msAutoAppliedReviewBadge(item)}${previewProgress}${msWaitReasonCell(item)}</td>
       <td style="font-size:20px;text-align:center">${msKindIcon(item.media_kind)}</td>
       <td style="word-break:break-all"><span style="display:inline-flex;align-items:center;gap:8px;vertical-align:middle">${msClientBadge(item)}<span>${votEscape(item.current_filename || item.original_filename || '-')}</span></span></td>
       <td style="color:var(--text-muted)">${msFmtSpec(item)}</td>
@@ -62915,6 +62955,7 @@ function msSelectItem(fileId, scroll = true) {
   document.getElementById('ms-preview-mood').textContent = item.mood || '-';
   document.getElementById('ms-preview-new-name').textContent = votDisplayFilename(item);
   document.getElementById('ms-preview-new-folder').textContent = item.recommended_folder || '-';
+  msRenderReviewNote(item);
   // 行を切り替えたらファイル名編集モードは閉じておく（前の素材の編集状態が残らないように）
   msCancelRename();
 
