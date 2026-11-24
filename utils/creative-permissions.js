@@ -11,21 +11,35 @@
 const LEADER_ASSIGN_ROLES = new Set(['director', 'producer', 'producer_director']);
 const DELIVERED_STATUSES = new Set(['納品', '完納', '納品済']);
 
+// ID の正規化（文字列化して前後の空白を落とし、小文字にそろえる。ID は UUID なので大文字小文字は同じ人）。
+// null / undefined / 空文字は null。
+// 本人判定・担当の差分は必ずこれを通して比べる（数値や空白混じり・大文字の ID が「別人」扱いになるのを防ぐ）
+function normId(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim().toLowerCase();
+  return s ? s : null;
+}
+
+function sameId(a, b) {
+  const na = normId(a);
+  return na !== null && na === normId(b);
+}
+
 function inArr(arr, id) {
-  return Array.isArray(arr) && !!id && arr.includes(id);
+  return Array.isArray(arr) && arr.some(v => sameId(v, id));
 }
 
 // 案件の担当 D/P か
 function isProjectLeader(project, userId) {
-  if (!userId || !project) return false;
-  return project.director_id === userId || project.producer_id === userId
+  if (!normId(userId) || !project) return false;
+  return sameId(project.director_id, userId) || sameId(project.producer_id, userId)
     || inArr(project.sub_director_ids, userId) || inArr(project.sub_producer_ids, userId);
 }
 
 // クリエイティブのチームのリーダーか
 function isTeamLeader(team, userId) {
-  if (!userId || !team) return false;
-  return team.director_id === userId || team.producer_id === userId;
+  if (!normId(userId) || !team) return false;
+  return sameId(team.director_id, userId) || sameId(team.producer_id, userId);
 }
 
 function isDeliveredCreative(c) {
@@ -145,8 +159,8 @@ const ASSIGNMENT_ROLES = new Set(['editor', 'designer', 'director', 'producer', 
 
 // 同じ顔ぶれか（順番・重複・空値は無視）
 function sameUserSet(a, b) {
-  const sa = new Set((a || []).filter(Boolean));
-  const sb = new Set((b || []).filter(Boolean));
+  const sa = new Set((a || []).map(normId).filter(Boolean));
+  const sb = new Set((b || []).map(normId).filter(Boolean));
   if (sa.size !== sb.size) return false;
   for (const v of sa) if (!sb.has(v)) return false;
   return true;
@@ -162,7 +176,9 @@ function sameUserSet(a, b) {
 //   director / producer / wcheck … 配列の顔ぶれに同期する（空配列は全員外す）
 function diffAssignmentInput(input, current, userId) {
   const asn = (current && current.assignments) || [];
-  const usersOf = (role) => asn.filter(a => a.role === role).map(a => a.user_id);
+  const usersOf = (role) => asn.filter(a => a.role === role).map(a => normId(a.user_id)).filter(Boolean);
+  const me = normId(userId);
+  const has = (list, id) => list.some(v => sameId(v, id));
   const changed = [];
   const selfAdds = [];
   if (input.assignee_id !== undefined) {
@@ -170,7 +186,7 @@ function diffAssignmentInput(input, current, userId) {
     const have = usersOf('editor');
     if (!sameUserSet(want, have)) {
       changed.push('editor');
-      if (userId && want.includes(userId) && !have.includes(userId)) selfAdds.push('editor');
+      if (me && has(want, me) && !has(have, me)) selfAdds.push('editor');
     }
   }
   for (const [key, role] of [['director_ids', 'director'], ['producer_ids', 'producer'], ['wcheck_ids', 'wcheck']]) {
@@ -179,16 +195,44 @@ function diffAssignmentInput(input, current, userId) {
     const have = usersOf(role);
     if (!sameUserSet(want, have)) {
       changed.push(role);
-      if (userId && want.includes(userId) && !have.includes(userId)) selfAdds.push(role);
+      if (me && has(want, me) && !has(have, me)) selfAdds.push(role);
     }
   }
-  if (input.team_id !== undefined && (input.team_id || null) !== ((current && current.team_id) || null)) {
+  if (input.team_id !== undefined && normId(input.team_id) !== normId(current && current.team_id)) {
     changed.push('team');
   }
   return { changed, selfAdds };
 }
 
+// ある役割の担当行を「選ばれた顔ぶれ」に合わせるための最小の書き込み計画。
+//   existingRows … 今のその役割の行 [{ id, user_id, rank_applied? }]
+//   desiredIds   … 選ばれたユーザー ID（順番・重複・空値・前後の空白は無視）
+// 返り値: { insertUserIds, deleteRowIds, changed }
+//   ・顔ぶれが同じなら何も書かない（changed=false）。行を作り直さないので rank_applied（報酬計算のランク）は保たれる
+//   ・残る人の行はそのまま。同じ人の重複行だけは 1 行に寄せる（最初の行を残す）
+//   ・呼び出し側は「足す → 成功したら消す」の順で書く（足すのに失敗しても担当が消えないように）
+function planAssignmentSync(existingRows, desiredIds) {
+  const desired = [];
+  const seen = new Set();
+  for (const raw of (desiredIds || [])) {
+    const id = normId(raw);
+    if (id && !seen.has(id)) { seen.add(id); desired.push(id); }
+  }
+  const kept = new Set();
+  const deleteRowIds = [];
+  for (const r of (existingRows || [])) {
+    const uid = normId(r && r.user_id);
+    if (uid && seen.has(uid) && !kept.has(uid)) { kept.add(uid); continue; }
+    if (r && r.id) deleteRowIds.push(r.id);
+  }
+  const insertUserIds = desired.filter(id => !kept.has(id));
+  return { insertUserIds, deleteRowIds, changed: insertUserIds.length > 0 || deleteRowIds.length > 0 };
+}
+
 module.exports = {
+  normId,
+  sameId,
+  planAssignmentSync,
   LEADER_ASSIGN_ROLES,
   isProjectLeader,
   isTeamLeader,

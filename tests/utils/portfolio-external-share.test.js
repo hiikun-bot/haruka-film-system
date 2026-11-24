@@ -1,4 +1,4 @@
-const { PERM_PROP, grantPublicRead, revokePublicRead } = require('../../utils/portfolio-external-share');
+const { PERM_PROP, grantPublicRead, revokePublicRead, grantPublicReadIfStillUsed } = require('../../utils/portfolio-external-share');
 
 function mockDrive({ appProperties = {}, permissions = [], getError = null, deleteError = null, createError = null } = {}) {
   const state = { appProperties: { ...appProperties }, permissions: permissions.map(p => ({ ...p })) };
@@ -81,5 +81,42 @@ describe('revokePublicRead', () => {
       deleteError: e,
     });
     expect(await revokePublicRead(drive, 'f1')).toMatchObject({ ok: false, error: 'backend' });
+  });
+});
+
+describe('grantPublicReadIfStillUsed（付与と削除が重なったとき）', () => {
+  test('作品が残っていれば共有を付けたまま', async () => {
+    const drive = mockDrive({ appProperties: { hfs_kind: 'portfolio_external' } });
+    const r = await grantPublicReadIfStillUsed(drive, 'f1', async () => true);
+    expect(r).toMatchObject({ ok: true, granted: true, revoked: false });
+    expect(drive.state.permissions.map(p => p.id)).toEqual(['anyoneWithLink']);
+  });
+  test('付与のあいだに作品が削除されていたら、付けた共有を外す', async () => {
+    const drive = mockDrive({ appProperties: { hfs_kind: 'portfolio_external' }, permissions: [{ id: 'owner1', type: 'user', role: 'owner' }] });
+    const r = await grantPublicReadIfStillUsed(drive, 'f1', async () => false);
+    expect(r).toMatchObject({ ok: true, granted: true, revoked: true });
+    expect(drive.state.permissions.map(p => p.id)).toEqual(['owner1']);
+    expect(drive.state.appProperties[PERM_PROP]).toBeUndefined();
+  });
+  test('残りの確認に失敗したら安全側で外す', async () => {
+    const drive = mockDrive({ appProperties: { hfs_kind: 'portfolio_external' } });
+    const check = jest.fn(async () => { throw new Error('db down'); });
+    const r = await grantPublicReadIfStillUsed(drive, 'f1', check, { sleep: async () => {} });
+    expect(check).toHaveBeenCalledTimes(3); // やり直してから諦める
+    expect(r.revoked).toBe(true);
+    expect(drive.state.permissions).toEqual([]);
+  });
+  test('確認の一時的な失敗はやり直し、生きている作品の共有は外さない', async () => {
+    const drive = mockDrive({ appProperties: { hfs_kind: 'portfolio_external' } });
+    let n = 0;
+    const r = await grantPublicReadIfStillUsed(drive, 'f1', async () => { n += 1; if (n === 1) throw new Error('blip'); return true; }, { sleep: async () => {} });
+    expect(r).toMatchObject({ ok: true, revoked: false });
+    expect(drive.state.permissions.map(p => p.id)).toEqual(['anyoneWithLink']);
+  });
+  test('付与に失敗したら確認も解除もしない', async () => {
+    const drive = mockDrive({ createError: new Error('forbidden') });
+    const check = jest.fn(async () => true);
+    expect(await grantPublicReadIfStillUsed(drive, 'f1', check)).toMatchObject({ ok: false, granted: false });
+    expect(check).not.toHaveBeenCalled();
   });
 });

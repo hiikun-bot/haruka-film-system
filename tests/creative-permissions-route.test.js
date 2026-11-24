@@ -12,6 +12,8 @@ function mockBuilder(table) {
   const rowsOf = () => (mockDb.tables[table] || (mockDb.tables[table] = []));
   const match = (r) => st.filters.every(f => f(r));
   const run = () => {
+    // 失敗の注入: mockDb.fail(table, op) が真なら DB エラーを返す（何も書かない）
+    if (mockDb.fail && mockDb.fail(table, st.op)) return { data: null, error: { message: mockDb.failMessage || 'boom', code: mockDb.failCode || 'XX000' } };
     if (st.op === 'insert') {
       const list = (Array.isArray(st.payload) ? st.payload : [st.payload]).map(p => ({ id: `new-${++mockSeq}`, ...p }));
       mockDb.tables[table] = rowsOf().concat(list);
@@ -23,7 +25,14 @@ function mockBuilder(table) {
       return { data: hit.map(r => ({ ...r })), error: null };
     }
     if (st.op === 'delete') {
+      const gone = rowsOf().filter(match).map(r => r.id);
       mockDb.tables[table] = rowsOf().filter(r => !match(r));
+      // creatives(id) ON DELETE CASCADE の再現（担当・ファイル）
+      if (table === 'creatives') {
+        for (const t of ['creative_assignments', 'creative_files']) {
+          mockDb.tables[t] = (mockDb.tables[t] || []).filter(r => !gone.includes(r.creative_id));
+        }
+      }
       return { data: null, error: null };
     }
     let rows = rowsOf().filter(match).map(r => ({ ...r }));
@@ -98,13 +107,16 @@ const project = { director_id: 'dir', producer_id: 'prd', sub_director_ids: [], 
 const FOLDER = 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
 
 beforeEach(() => {
+  mockDb.fail = null;
+  mockDb.failCode = null;
+  mockDb.failMessage = null;
   mockDb.tables = {
     creatives: [
       { id: 'cr1', file_name: 'CR1', status: '制作中', project_id: 'p1', team_id: null, projects: project },
       { id: 'cr2', file_name: 'CR2', status: '納品', delivered_at: '2026-11-01T00:00:00Z', project_id: 'p1', team_id: null, projects: project },
     ],
     creative_assignments: [
-      { id: 'a1', creative_id: 'cr1', user_id: 'ed', role: 'editor' },
+      { id: 'a1', creative_id: 'cr1', user_id: 'ed', role: 'editor', rank_applied: 'C' },
       { id: 'a2', creative_id: 'cr2', user_id: 'ed', role: 'editor' },
     ],
     creative_files: [],
@@ -266,5 +278,98 @@ describe('PUT /creatives/:id の素材フォルダURL（クリエイティブを
   test('存在しないクリエイティブは 404', async () => {
     const r = await call('PUT', '/creatives/nope', OUTSIDER, { material_folder_url: FOLDER });
     expect(r.status).toBe(404);
+  });
+});
+
+describe('PUT /creatives/:id の担当行は差分だけ書く（#1327 追加レビュー）', () => {
+  const asn = () => mockDb.tables.creative_assignments.filter(a => a.creative_id === 'cr1');
+  test('担当者を変えていない保存では担当行を作り直さない（行 ID・保存時のランクを保つ）', async () => {
+    mockDb.tables.creative_assignments.push({ id: 'd1', creative_id: 'cr1', user_id: 'dir', role: 'director', rank_applied: 'B' });
+    const r = await call('PUT', '/creatives/cr1', DIRECTOR, { assignee_id: 'ed', director_user_ids: ['dir'], producer_user_ids: [], note: 'x' });
+    expect(r.status).toBe(200);
+    expect(asn().find(a => a.id === 'a1')).toMatchObject({ user_id: 'ed', role: 'editor', rank_applied: 'C' }); // users.rank は B だが変えない
+    expect(asn().find(a => a.id === 'd1')).toMatchObject({ rank_applied: 'B' });
+    expect(asn()).toHaveLength(2);
+  });
+  test('前後に空白のある同じ ID は「変更なし」（403 にもならず、書き込みもしない）', async () => {
+    const r = await call('PUT', '/creatives/cr1', OTHER_DIRECTOR, { assignee_id: ' ed ', note: 'y' });
+    expect(r.status).toBe(200);
+    expect(asn().find(a => a.id === 'a1')).toBeTruthy();
+  });
+  test('Dチェック担当の追加は足した人だけ。残る人の行とランクはそのまま', async () => {
+    mockDb.tables.creative_assignments.push({ id: 'd1', creative_id: 'cr1', user_id: 'dir', role: 'director', rank_applied: 'B' });
+    const r = await call('PUT', '/creatives/cr1', DIRECTOR, { director_user_ids: ['dir', 'dir2'] });
+    expect(r.status).toBe(200);
+    const dirs = asn().filter(a => a.role === 'director');
+    expect(dirs.find(a => a.id === 'd1')).toMatchObject({ rank_applied: 'B' });
+    expect(dirs.map(a => a.user_id).sort()).toEqual(['dir', 'dir2']);
+  });
+  test('担当者の付け替えで登録に失敗しても、旧担当は消えない', async () => {
+    mockDb.fail = (t, op) => t === 'creative_assignments' && op === 'insert';
+    const r = await call('PUT', '/creatives/cr1', DIRECTOR, { assignee_id: 'ed2', note: 'z' });
+    expect(r.status).toBe(500); // 成功に見せない（本体の更新は済んでいる）
+    expect((await r.json()).partial).toBe(true);
+    expect(mockDb.tables.creatives[0].note).toBe('z');
+    expect(asn().filter(a => a.role === 'editor').map(a => a.user_id)).toEqual(['ed']);
+  });
+  test('ランクが読めなければ担当行を書かない（ランク空の行で置き換えない）', async () => {
+    mockDb.fail = (t, op) => t === 'users' && op === 'select';
+    const r = await call('PUT', '/creatives/cr1', DIRECTOR, { assignee_id: 'ed2' });
+    expect(r.status).toBe(500);
+    expect(asn().filter(a => a.role === 'editor')).toEqual([expect.objectContaining({ id: 'a1', user_id: 'ed', rank_applied: 'C' })]);
+  });
+  test('大文字の UUID でも同じ人なら変更なし', async () => {
+    const U = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    mockDb.tables.creative_assignments.push({ id: 'd9', creative_id: 'cr1', user_id: U, role: 'director', rank_applied: 'B' });
+    const r = await call('PUT', '/creatives/cr1', OTHER_DIRECTOR, { director_user_ids: [U.toUpperCase()], note: 'w' });
+    expect(r.status).toBe(200);
+    expect(asn().find(a => a.id === 'd9')).toMatchObject({ rank_applied: 'B' });
+  });
+  test('付け替えが成功したら旧担当の行だけ外れる', async () => {
+    const r = await call('PUT', '/creatives/cr1', DIRECTOR, { assignee_id: 'ed2' });
+    expect(r.status).toBe(200);
+    const eds = asn().filter(a => a.role === 'editor');
+    expect(eds.map(a => a.user_id)).toEqual(['ed2']);
+    expect(eds[0].rank_applied).toBe('C');
+  });
+});
+
+describe('DELETE /creatives は本体を 1 文で消し、関連行は CASCADE に任せる（#1327 追加レビュー）', () => {
+  test('成功すると本体と担当・ファイルが一緒に消え、削除ログが残る', async () => {
+    mockDb.tables.creative_files = [{ id: 'f1', creative_id: 'cr1' }];
+    const r = await call('DELETE', '/creatives', ADMIN, { ids: ['cr1'] });
+    expect(r.status).toBe(200);
+    expect(creativeIds()).toEqual(['cr2']);
+    expect(mockDb.tables.creative_assignments.some(a => a.creative_id === 'cr1')).toBe(false);
+    expect(mockDb.tables.creative_files).toEqual([]);
+    expect(mockDb.tables.creative_deletion_logs.map(l => l.creative_id)).toEqual(['cr1']);
+  });
+  test('本体の削除に失敗したら、担当もファイルも残り、削除ログも取り消す', async () => {
+    mockDb.tables.creative_files = [{ id: 'f1', creative_id: 'cr1' }];
+    mockDb.fail = (t, op) => t === 'creatives' && op === 'delete';
+    const r = await call('DELETE', '/creatives', ADMIN, { ids: ['cr1'] });
+    expect(r.status).toBe(500);
+    expect(creativeIds()).toEqual(['cr1', 'cr2']);
+    expect(mockDb.tables.creative_assignments.find(a => a.id === 'a1')).toBeTruthy();
+    expect(mockDb.tables.creative_files).toHaveLength(1);
+    expect(mockDb.tables.creative_deletion_logs).toEqual([]);
+  });
+  test('FK が CASCADE でない環境は従来の順で消す。途中で失敗したら削除ログは残し「一部だけ削除」と返す', async () => {
+    mockDb.tables.creative_files = [{ id: 'f1', creative_id: 'cr1' }];
+    mockDb.failCode = '23503';
+    mockDb.failMessage = 'update or delete on table "creatives" violates foreign key constraint "creative_files_creative_id_fkey" on table "creative_files"';
+    mockDb.fail = (t, op) => (t === 'creatives' && op === 'delete') || (t === 'creative_assignments' && op === 'delete');
+    const r = await call('DELETE', '/creatives', ADMIN, { ids: ['cr1'] });
+    expect(r.status).toBe(500);
+    expect((await r.json()).partial).toBe(true);
+    expect(mockDb.tables.creative_files).toEqual([]);
+    expect(mockDb.tables.creative_deletion_logs.map(l => l.creative_id)).toEqual(['cr1']);
+  });
+  test('ファイル情報が読めなければ何もしない', async () => {
+    mockDb.fail = (t, op) => t === 'creative_files' && op === 'select';
+    const r = await call('DELETE', '/creatives', ADMIN, { ids: ['cr1'] });
+    expect(r.status).toBe(500);
+    expect(creativeIds()).toEqual(['cr1', 'cr2']);
+    expect(mockDb.tables.creative_deletion_logs).toEqual([]);
   });
 });

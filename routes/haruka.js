@@ -12303,125 +12303,38 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     console.warn('[creative_version_history] snapshot block failed:', snapErr?.message || snapErr);
   }
 
-  // 担当者更新（assignee_id が送られてきた場合）
+  // 担当者の更新（editor / director / producer / wcheck）。どれも「選ばれた顔ぶれ」に差分同期する
+  // （syncCreativeRoleAssignments）。画面は変えていない担当者も保存のたびに送ってくるが、
+  //   ・顔ぶれが同じなら何も書かない（行を作り直さないので rank_applied＝報酬計算のランクが変わらない）
+  //   ・変わる場合も、足す人だけ INSERT → 成功してから外す人だけ DELETE（書き込み失敗で担当が消えない）
+  // 空配列 / 空値は「その役割の担当を全員外す」（旧UIの「メインDフォールバック」互換）。
+  // 担当の保存に失敗したら、最後に 500 で知らせる（本体の更新は済んでいるので、ここでは止めずに後続の処理は続ける）
+  const asnSyncResults = [];
+
+  // 担当者（assignee_id が送られてきた場合）… role='editor' を 1 人に合わせる
   if (assignee_id !== undefined) {
-    await supabase.from('creative_assignments').delete().eq('creative_id', req.params.id).eq('role', 'editor');
-    if (assignee_id) {
-      const { data: assigneeUser } = await supabase.from('users').select('rank').eq('id', assignee_id).single();
-      await supabase.from('creative_assignments').insert({
-        creative_id: req.params.id,
-        user_id: assignee_id,
-        role: 'editor',
-        rank_applied: assigneeUser?.rank || null,
-      });
-    }
+    asnSyncResults.push(await syncCreativeRoleAssignments(req.params.id, 'editor', assignee_id ? [assignee_id] : []));
   }
 
-  // Dチェック担当者更新（director_user_ids（複数）または director_user_id（単数互換）が送られてきた場合）
-  // - 案件のメインディレクター以外（サブディレクター・秘書・他チームメンバー等）に Dチェックを依頼するために、
-  //   creative_assignments role='director' を「選択されたユーザーIDセット」に同期する。
-  //   選択されたが既存にない → INSERT
-  //   既存にあるが選択されていない → DELETE
-  // - 空配列の場合は no-op（既存維持）。
-  // - 互換: director_user_id が送られてきた場合は配列化して扱う。
+  // Dチェック担当者（director_user_ids（複数）または director_user_id（単数互換））
+  // - 案件のメインディレクター以外（サブディレクター・秘書・他チームメンバー等）に Dチェックを依頼するため。
+  // - 互換: director_user_id の空文字 / null は「割当削除（メインDフォールバック）」なので空配列で表現
   let dirIdsInput = null;
   if (Array.isArray(director_user_ids)) {
     dirIdsInput = director_user_ids;
   } else if (director_user_id !== undefined) {
-    // 旧UI互換: 空文字 / null の場合は「割当削除（メインDフォールバック）」を意味していたため、空配列で表現
     dirIdsInput = director_user_id ? [director_user_id] : [];
   }
   if (dirIdsInput !== null) {
-    // 重複除去 + 偽値除去
-    const desiredIds = [...new Set(dirIdsInput.filter(Boolean))];
-
-    if (desiredIds.length === 0) {
-      // 旧UIの「メインDフォールバック」と同じ挙動を維持するため、空配列なら全削除する。
-      // （新UIは1人以上必須のためここには到達しない想定）
-      await supabase.from('creative_assignments')
-        .delete().eq('creative_id', req.params.id).eq('role', 'director');
-    } else {
-      // 既存 director assignment を取得し、差分同期
-      const { data: existing } = await supabase
-        .from('creative_assignments')
-        .select('id, user_id')
-        .eq('creative_id', req.params.id)
-        .eq('role', 'director');
-      const existingIds = new Set((existing || []).map(r => r.user_id).filter(Boolean));
-      const desiredSet = new Set(desiredIds);
-      const toDelete = (existing || []).filter(r => !desiredSet.has(r.user_id)).map(r => r.id);
-      const toInsertIds = desiredIds.filter(id => !existingIds.has(id));
-
-      if (toDelete.length > 0) {
-        const { error: dErr } = await supabase
-          .from('creative_assignments').delete().in('id', toDelete);
-        if (dErr) console.warn('[creative_assignments][director] delete failed:', dErr.message);
-      }
-      if (toInsertIds.length > 0) {
-        // 一括 rank 取得（N+1解消）
-        const { data: dirUsers } = await supabase
-          .from('users').select('id, rank').in('id', toInsertIds);
-        const rankById = new Map((dirUsers || []).map(u => [u.id, u.rank || null]));
-        const rows = toInsertIds.map(uid => ({
-          creative_id: req.params.id,
-          user_id: uid,
-          role: 'director',
-          rank_applied: rankById.get(uid) || null,
-        }));
-        const { error: iErr } = await supabase.from('creative_assignments').insert(rows);
-        if (iErr) console.warn('[creative_assignments][director] insert failed:', iErr.message);
-      }
-    }
+    asnSyncResults.push(await syncCreativeRoleAssignments(req.params.id, 'director', dirIdsInput));
   }
 
-  // Pチェック担当者更新（producer_user_ids（複数）が送られてきた場合）
-  // - 案件のメインプロデューサー以外（サブP・秘書・他チームメンバー等）に Pチェックを依頼するために、
-  //   creative_assignments role='producer' を「選択されたユーザーIDセット」に同期する。
-  //   選択されたが既存にない → INSERT
-  //   既存にあるが選択されていない → DELETE
-  // - 空配列の場合は全削除（新UIは1人以上必須のため通常到達しない）。
-  // 設計は director_user_ids と同等（PR #218 と対称）。
+  // Pチェック担当者（producer_user_ids（複数））。設計は director_user_ids と同等（PR #218 と対称）。
   if (Array.isArray(producer_user_ids)) {
-    const desiredIds = [...new Set(producer_user_ids.filter(Boolean))];
-
-    if (desiredIds.length === 0) {
-      await supabase.from('creative_assignments')
-        .delete().eq('creative_id', req.params.id).eq('role', 'producer');
-    } else {
-      const { data: existing } = await supabase
-        .from('creative_assignments')
-        .select('id, user_id')
-        .eq('creative_id', req.params.id)
-        .eq('role', 'producer');
-      const existingIds = new Set((existing || []).map(r => r.user_id).filter(Boolean));
-      const desiredSet = new Set(desiredIds);
-      const toDelete = (existing || []).filter(r => !desiredSet.has(r.user_id)).map(r => r.id);
-      const toInsertIds = desiredIds.filter(id => !existingIds.has(id));
-
-      if (toDelete.length > 0) {
-        const { error: dErr } = await supabase
-          .from('creative_assignments').delete().in('id', toDelete);
-        if (dErr) console.warn('[creative_assignments][producer] delete failed:', dErr.message);
-      }
-      if (toInsertIds.length > 0) {
-        // 一括 rank 取得（N+1解消）
-        const { data: prdUsers } = await supabase
-          .from('users').select('id, rank').in('id', toInsertIds);
-        const rankById = new Map((prdUsers || []).map(u => [u.id, u.rank || null]));
-        const rows = toInsertIds.map(uid => ({
-          creative_id: req.params.id,
-          user_id: uid,
-          role: 'producer',
-          rank_applied: rankById.get(uid) || null,
-        }));
-        const { error: iErr } = await supabase.from('creative_assignments').insert(rows);
-        if (iErr) console.warn('[creative_assignments][producer] insert failed:', iErr.message);
-      }
-    }
+    asnSyncResults.push(await syncCreativeRoleAssignments(req.params.id, 'producer', producer_user_ids));
   }
 
-  // Wチェック担当者更新（wcheck_user_ids 複数 または wcheck_user_id 単数・ADR 024）。
-  // creative_assignments role='wcheck' を「選択されたユーザーIDセット」に差分同期（director_user_ids と同設計）。
+  // Wチェック担当者（wcheck_user_ids 複数 または wcheck_user_id 単数・ADR 024）。
   // 承認後も役割の履歴として assignment 行は残す（ボールは status により自動で外れる）。
   // 注: role='wcheck' は creative_assignments_role_check 制約に含める必要がある
   //     （migrations/2026-06-24_wcheck_role_constraint.sql。漏れると insert が violates check で弾かれ担当者が無音で保存されない）。
@@ -12432,32 +12345,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     wcIdsInput = wcheck_user_id ? [wcheck_user_id] : [];
   }
   if (wcIdsInput !== null) {
-    const desiredIds = [...new Set(wcIdsInput.filter(Boolean))];
-    if (desiredIds.length === 0) {
-      await supabase.from('creative_assignments')
-        .delete().eq('creative_id', req.params.id).eq('role', 'wcheck');
-    } else {
-      const { data: existing } = await supabase
-        .from('creative_assignments').select('id, user_id')
-        .eq('creative_id', req.params.id).eq('role', 'wcheck');
-      const existingIds = new Set((existing || []).map(r => r.user_id).filter(Boolean));
-      const desiredSet = new Set(desiredIds);
-      const toDelete = (existing || []).filter(r => !desiredSet.has(r.user_id)).map(r => r.id);
-      const toInsertIds = desiredIds.filter(id => !existingIds.has(id));
-      if (toDelete.length > 0) {
-        const { error: dErr } = await supabase.from('creative_assignments').delete().in('id', toDelete);
-        if (dErr) console.warn('[creative_assignments][wcheck] delete failed:', dErr.message);
-      }
-      if (toInsertIds.length > 0) {
-        const { data: wcUsers } = await supabase.from('users').select('id, rank').in('id', toInsertIds);
-        const rankById = new Map((wcUsers || []).map(u => [u.id, u.rank || null]));
-        const rows = toInsertIds.map(uid => ({
-          creative_id: req.params.id, user_id: uid, role: 'wcheck', rank_applied: rankById.get(uid) || null,
-        }));
-        const { error: iErr } = await supabase.from('creative_assignments').insert(rows);
-        if (iErr) console.warn('[creative_assignments][wcheck] insert failed:', iErr.message);
-      }
-    }
+    asnSyncResults.push(await syncCreativeRoleAssignments(req.params.id, 'wcheck', wcIdsInput));
   }
 
   // 「クライアントチェック中」遷移時の Drive 自動共有（同期実行）
@@ -12532,6 +12420,14 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     syncCreativeLineId(req.params.id).catch(e => console.warn('[line_id] sync failed:', e.message));
   }
 
+  if (asnSyncResults.some(r => r && r.ok === false)) {
+    // 担当の保存だけ失敗（足すのに失敗したなら古い担当のまま）。成功に見せないで、もう一度保存してもらう
+    return res.status(500).json({
+      error: '担当者の保存に失敗しました（他の項目は保存済みです）。画面を開き直して担当者を確かめ、もう一度保存してください',
+      partial: true,
+      creative: data,
+    });
+  }
   res.json(data);
 });
 
@@ -13306,20 +13202,29 @@ router.put('/creatives/:id/edit-mode', requireAuth, async (req, res) => {
     .single();
   if (updErr) return res.status(500).json({ error: updErr.message });
 
-  // 担当者の付け替え（旧担当の editor 系 assignment を削除 → 新担当を role='editor' で登録）
+  // 担当者の付け替え（新担当を role='editor' で登録 → 成功してから旧担当の editor 系 assignment を削除）。
+  // 先に消すと、登録に失敗したとき担当が誰もいない状態が残るため、足してから消す。
   if (assigneeChange) {
-    const oldIds = assigneeChange.oldRows.map(r => r.id);
-    if (oldIds.length > 0) {
-      const { error: delErr } = await supabase.from('creative_assignments').delete().in('id', oldIds);
-      if (delErr) return res.status(500).json({ error: '旧担当者の解除に失敗しました: ' + delErr.message });
-    }
-    const { error: asnErr } = await supabase.from('creative_assignments').insert({
+    const { data: newAsn, error: asnErr } = await supabase.from('creative_assignments').insert({
       creative_id: creativeId,
       user_id: assigneeChange.newUser.id,
       role: 'editor',
       rank_applied: assigneeChange.newUser.rank || null,
-    });
-    if (asnErr) return res.status(500).json({ error: '新担当者の登録に失敗しました: ' + asnErr.message });
+    }).select('id');
+    if (asnErr) return res.status(500).json({ error: '新担当者の登録に失敗しました（旧担当者はそのままです）: ' + asnErr.message });
+    const oldIds = assigneeChange.oldRows.map(r => r.id);
+    if (oldIds.length > 0) {
+      const { error: delErr } = await supabase.from('creative_assignments').delete().in('id', oldIds);
+      if (delErr) {
+        // 旧担当を外せなかったので、足した新担当を取り消して元の 1 人に戻す（担当が 2 人になって二重計上されないように）
+        const newIds = (newAsn || []).map(r => r && r.id).filter(Boolean);
+        if (newIds.length > 0) {
+          const { error: rbErr } = await supabase.from('creative_assignments').delete().in('id', newIds);
+          if (rbErr) console.error('[edit-mode] 新担当の取り消しに失敗（担当が重複しています）:', creativeId, rbErr.message);
+        }
+        return res.status(500).json({ error: '旧担当者の解除に失敗したため、担当者は変更前のままです: ' + delErr.message });
+      }
+    }
   }
 
   // ボール保持者キャッシュは project 変更でも担当が変わらない限り影響しないが、念のため同期。
@@ -14429,6 +14334,57 @@ async function evaluateCreativeDeletePermission(req, ids) {
   };
 }
 
+// クリエイティブの 1 つの役割（editor / director / producer / wcheck）の担当行を、選ばれた顔ぶれに差分同期する。
+// 計画は utils/creative-permissions.js#planAssignmentSync（jest）。
+//   ・顔ぶれが同じなら何も書かない（残る人の行・rank_applied はそのまま）
+//   ・足す人だけ INSERT（ランクはメンバーの今のランク）→ 成功したときだけ、外す人の行を DELETE
+//     （INSERT に失敗したら古い担当を残す。担当が誰もいない状態を作らない）
+// 失敗はログに残して { ok:false, step } を返す（本体の更新は済んでいるので PUT 自体は止めない・従来どおり）
+async function syncCreativeRoleAssignments(creativeId, role, desiredIds) {
+  const tag = `[creative_assignments][${role}]`;
+  const { data: existing, error: selErr } = await supabase
+    .from('creative_assignments')
+    .select('id, user_id')
+    .eq('creative_id', creativeId)
+    .eq('role', role);
+  if (selErr) {
+    // 今の担当が読めないときは書かない（差分が分からないまま消す・足すと二重登録や取りこぼしになる）
+    console.warn(`${tag} select failed:`, selErr.message);
+    return { ok: false, step: 'select' };
+  }
+  const plan = CREATIVE_PERM.planAssignmentSync(existing || [], desiredIds);
+  if (!plan.changed) return { ok: true, changed: false };
+  if (plan.insertUserIds.length > 0) {
+    const { data: us, error: uErr } = await supabase
+      .from('users').select('id, rank').in('id', plan.insertUserIds);
+    if (uErr) {
+      // ランクが読めないまま足すと rank_applied が空の行で置き換わる（報酬計算が崩れる）ので書かない
+      console.warn(`${tag} rank lookup failed:`, uErr.message);
+      return { ok: false, step: 'rank' };
+    }
+    const rankById = new Map((us || []).map(u => [CREATIVE_PERM.normId(u.id), u.rank || null]));
+    const rows = plan.insertUserIds.map(uid => ({
+      creative_id: creativeId,
+      user_id: uid,
+      role,
+      rank_applied: rankById.get(uid) || null,
+    }));
+    const { error: iErr } = await supabase.from('creative_assignments').insert(rows);
+    if (iErr) {
+      console.warn(`${tag} insert failed（外す予定の担当は残す）:`, iErr.message);
+      return { ok: false, step: 'insert' };
+    }
+  }
+  if (plan.deleteRowIds.length > 0) {
+    const { error: dErr } = await supabase.from('creative_assignments').delete().in('id', plan.deleteRowIds);
+    if (dErr) {
+      console.warn(`${tag} delete failed:`, dErr.message);
+      return { ok: false, step: 'delete' };
+    }
+  }
+  return { ok: true, changed: true };
+}
+
 // 1 件のクリエイティブについて、権限判定に使う情報（案件の D/P・チームのリーダー・自分の担当行・実効ロール）を読む。
 // 担当者の変更・素材フォルダURL の変更の判定（utils/creative-permissions.js）で共用する。
 // 判定は roleCodesHavePermission（実効ロールの集合判定・X-View-As 尊重）。req.user.role は見ない。
@@ -14460,7 +14416,8 @@ async function loadCreativePermContext(req, creativeId) {
     if (tErr) return { ok: false, status: 500, error: tErr.message };
     team = t || null;
   }
-  const myRoles = userId ? assignments.filter(a => a.user_id === userId).map(a => a.role) : [];
+  // 本人判定は ID を正規化（文字列化・trim）して比べる
+  const myRoles = userId ? assignments.filter(a => CREATIVE_PERM.sameId(a.user_id, userId)).map(a => a.role) : [];
   return { ok: true, canManageAll, canDeleteAll, userId, codes, project: c.projects || null, team, teamId: c.team_id || null, myRoles, assignments };
 }
 
@@ -14569,10 +14526,12 @@ router.delete('/creatives', requireAuth, async (req, res) => {
   // 削除対象ファイル一覧。Drive リネーム（後述）と削除監査ログの files_snapshot の両方で使う。
   // drive_url / faststart_drive_url / version も含めて取り、復元調査時に Drive 上の
   // 「【削除】」付きファイルへ直接たどれるようにする。
-  const { data: filesToRename } = await supabase
+  const { data: filesToRename, error: filesErr } = await supabase
     .from('creative_files')
     .select('id, creative_id, version, generated_name, original_name, drive_file_id, drive_url, faststart_drive_file_id, faststart_drive_url, uploaded_at')
     .in('creative_id', ids);
+  // 読めないまま進むと監査ログの files_snapshot が空になり、Drive のリネームも漏れるので止める（まだ何も消していない）
+  if (filesErr) return res.status(500).json({ error: 'ファイル情報の取得に失敗したため削除を中止しました: ' + filesErr.message });
 
   // ── 削除監査ログ（creative_deletion_logs）に必ず INSERT してから削除する ──
   // project_deletion_logs（DELETE /projects/:id）と同設計。
@@ -14606,18 +14565,64 @@ router.delete('/creatives', requireAuth, async (req, res) => {
       deleted_by_name: req.user?.full_name || req.user?.email || null,
     };
   });
+  const insertedLogIds = [];
   if (logRows.length > 0) {
-    const { error: logErr } = await supabase.from('creative_deletion_logs').insert(logRows);
+    const { data: logIns, error: logErr } = await supabase.from('creative_deletion_logs').insert(logRows).select('id');
+    (logIns || []).forEach(r => r && r.id && insertedLogIds.push(r.id));
     if (logErr) {
       // 監査ログに残せない場合は削除を中断（誤削除→記録なしの再発を防ぐ）
       return res.status(500).json({ error: '削除ログの記録に失敗したため削除を中止しました: ' + logErr.message });
     }
   }
 
+  // ── DB の削除: クリエイティブ本体を 1 文で消し、関連行は FK の ON DELETE CASCADE に任せる ──
+  // creative_assignments / creative_files / creative_versions / コメント・履歴系はすべて
+  // creatives(id) ON DELETE CASCADE（supabase_schema.sql / migrations）。1 つの DELETE 文の中で一緒に消えるので、
+  // 途中で失敗しても「本体は残るのに担当だけ消えた」のような一部だけの削除にならない（文ごと取り消される）。
+  // 以前は 担当 → ファイル → 本体 の順に別々に消していたため、途中の失敗で一部だけ消えることがあった。
+  // 請求書明細（invoice_items）は CASCADE ではない（上で事前チェック済み。直前に紐付いた場合は FK 違反で何も消えない）。
+  const deleteBody = () => supabase.from('creatives').delete().in('id', ids);
+  let { error: delErr } = await deleteBody();
+  let partialDeleted = false; // 保険の経路で関連行を消し始めたか（以後は「何も消していない」と言えない）
+  if (delErr && delErr.code === '23503' && /creative_(assignments|files)/.test(delErr.message || '')) {
+    // 本番の FK が CASCADE になっていない環境の保険（スキーマ上は CASCADE）。従来どおり関連行を先に消してから本体を消す。
+    console.warn('[DELETE /creatives] FK が CASCADE ではないため関連行を先に削除します:', delErr.message);
+    const { error: fileDelErr } = await supabase.from('creative_files').delete().in('creative_id', ids);
+    if (fileDelErr) delErr = { message: 'ファイル情報の削除に失敗しました: ' + fileDelErr.message };
+    else {
+      partialDeleted = true;
+      const { error: asnDelErr } = await supabase.from('creative_assignments').delete().in('creative_id', ids);
+      if (asnDelErr) delErr = { message: '担当者の削除に失敗しました: ' + asnDelErr.message };
+      else ({ error: delErr } = await deleteBody());
+    }
+  }
+  if (delErr && partialDeleted) {
+    // 関連行の一部は消えている。削除ログ（files_snapshot で復元できる）は残し、途中までの削除だと伝える
+    console.error('[DELETE /creatives] 途中までの削除（関連行の一部を削除済み）:', ids.length, delErr.message);
+    return res.status(500).json({
+      error: '削除が途中で失敗しました（ファイル情報など一部だけ削除されています）。管理者に連絡してください: ' + delErr.message,
+      partial: true,
+    });
+  }
+  if (delErr) {
+    // 本体が消えていないので、先に書いた削除監査ログ（この削除の分）は取り消す（「消した記録があるのに残っている」を防ぐ）
+    if (insertedLogIds.length > 0) {
+      const { error: rbErr } = await supabase.from('creative_deletion_logs').delete().in('id', insertedLogIds);
+      if (rbErr) console.warn('[DELETE /creatives] 削除ログの取り消しに失敗:', rbErr.message);
+    }
+    const fk = delErr.code === '23503';
+    return res.status(fk ? 409 : 500).json({
+      error: (fk
+        ? '他のデータ（請求書の明細など）から参照されているため削除できませんでした（何も削除していません）: '
+        : '削除に失敗しました（何も削除していません）: ') + delErr.message,
+    });
+  }
+
   // Drive ファイルは「即削除」せず、「【削除】」プレフィックスを付けてリネームする。
   // 誤削除を防ぐため、後から手動で Drive 上で確認して整理する運用を想定。
   // 対象: creative_files.drive_file_id（原本） + faststart_drive_file_id（高速化版）
-
+  // DB の削除が確定してから行う（DB の削除に失敗したのに Drive だけ【削除】になるのを防ぐ）。
+  // ファイル情報は削除前に読んだ filesToRename を使う。
   const renameResults = { renamed: 0, skipped: 0, failed: 0 };
   if ((filesToRename || []).length > 0 && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
     try {
@@ -14636,7 +14641,7 @@ router.delete('/creatives', requireAuth, async (req, res) => {
           driveLog('info', `Driveファイルリネーム: ${newName}`, { driveFileId });
           return 'renamed';
         } catch (e) {
-          driveLog('warn', `Driveリネーム失敗（DB側削除は継続）: ${e.message}`, { driveFileId });
+          driveLog('warn', `Driveリネーム失敗（DB側は削除済み）: ${e.message}`, { driveFileId });
           return 'failed';
         }
       };
@@ -14653,18 +14658,10 @@ router.delete('/creatives', requireAuth, async (req, res) => {
         }
       }
     } catch (e) {
-      driveLog('error', `Driveサービス初期化失敗（DB側削除は継続）: ${e.message}`);
+      driveLog('error', `Driveサービス初期化失敗（DB側は削除済み）: ${e.message}`);
     }
   }
 
-  // DB 側の関連レコードは即削除（Driveのリネームが失敗していても DB はクリーンに）
-  // 関連行の削除に失敗したら、クリエイティブ本体は消さずに止める（中途半端な状態を広げない）
-  const { error: asnDelErr } = await supabase.from('creative_assignments').delete().in('creative_id', ids);
-  if (asnDelErr) return res.status(500).json({ error: '担当者の削除に失敗したため中止しました: ' + asnDelErr.message });
-  const { error: fileDelErr } = await supabase.from('creative_files').delete().in('creative_id', ids);
-  if (fileDelErr) return res.status(500).json({ error: 'ファイル情報の削除に失敗したため中止しました: ' + fileDelErr.message });
-  const { error } = await supabase.from('creatives').delete().in('id', ids);
-  if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true, deleted: ids.length, drive_rename: renameResults });
 });
 
@@ -28615,10 +28612,18 @@ router.post('/portfolio/external-works', requireAuth, async (req, res) => {
     // HFS の Drive に直送したファイルは、登録が確定したこの時点で再生用の anyone-reader を付ける
     // （クリエイティブの complete と同じ。付けた権限 ID はファイルに記録し、削除時はその権限だけを外す。
     //   失敗しても登録は続ける＝閲覧はサムネ代理配信で対応）
+    //   付けたあとで「同じファイルを使う外部作品がまだ残っているか」を確かめ、無ければ外す
+    //   （付与の途中に削除が重なると、削除側の「共有を外す」が先に終わって共有だけが残るため）
     if (sourceType === 'upload' && driveFileId && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
       try {
-        const g = await extShare.grantPublicRead(await getDriveService(), driveFileId);
-        if (!g.ok) console.warn('[portfolio/external] 公開権限付与失敗（閲覧はサムネ代理配信で対応）:', g.error);
+        const g = await extShare.grantPublicReadIfStillUsed(await getDriveService(), driveFileId, async () => {
+          const { data: live, error: liveErr } = await supabase.from('portfolio_external_works')
+            .select('id').eq('drive_file_id', driveFileId).is('deleted_at', null).limit(1);
+          if (liveErr) throw new Error(liveErr.message);
+          return (live || []).length > 0;
+        });
+        if (!g.ok) console.warn('[portfolio/external] 公開権限の付与／取り消しに失敗（閲覧はサムネ代理配信で対応）:', g.error);
+        else if (g.revoked) console.warn('[portfolio/external] 登録直後に削除されたため公開権限を外しました:', driveFileId);
       } catch (permErr) {
         console.warn('[portfolio/external] 公開権限付与失敗（閲覧はサムネ代理配信で対応）:', permErr.message);
       }
@@ -29505,7 +29510,7 @@ router.get('/portfolio/download-zip', requireAuth, async (req, res) => {
     }
 
     const stamp = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace(/-/g, '');
-    await streamDriveFilesAsZip(res, targets, `作品_${stamp}.zip`, 'portfolio/download-zip');
+    await streamDriveFilesAsZip(res, targets, `作品_${stamp}.zip`, 'portfolio/download-zip', { maxBytes: PORTFOLIO_DL_MAX_BYTES });
   } catch (e) {
     console.error('[portfolio/download-zip] failed:', e.message);
     if (!res.headersSent) res.status(500).json({ error: e.message });
@@ -29515,7 +29520,9 @@ router.get('/portfolio/download-zip', requireAuth, async (req, res) => {
 // Drive 上のファイル群をサービスアカウントで1件ずつ取り出し、ZIP（無圧縮）にしてレスポンスへ流す。
 // targets: [{ drive_file_id, folder, downloadName }]。サーバーには溜めない（streaming）。
 // 作品のまとめてDL（/portfolio/download-zip）とクリエイティブ一覧の案件まとめDL（/creatives-download-zip）で共用。
-async function streamDriveFilesAsZip(res, targets, zipName, logTag) {
+// maxBytes … 実際に Drive から流した合計の上限。事前チェックの容量（キャッシュ・Drive の size）が実物とずれていても、
+//            超えた時点で転送を打ち切る（ZIP は壊れた状態で終わる＝ダウンロード失敗になる）。
+async function streamDriveFilesAsZip(res, targets, zipName, logTag, { maxBytes = Infinity } = {}) {
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', portfolioDispositionName(zipName));
 
@@ -29543,6 +29550,7 @@ async function streamDriveFilesAsZip(res, targets, zipName, logTag) {
 
   const drive = await getDriveService();
   const used = new Set();
+  const sent = { total: 0, exceeded: false }; // 実際に流したバイト数（全ファイル合計）
   for (const t of targets) {
     if (stopped) break;
     // 同名衝突は連番で回避（同じ作品の別バージョン等）
@@ -29570,7 +29578,15 @@ async function streamDriveFilesAsZip(res, targets, zipName, logTag) {
     }
     if (stopped) { try { stream.data.destroy(); } catch (_) {} break; }
     current = stream.data;
-    archive.append(stream.data, { name: entry });
+    // 実際の転送量を数え、上限を超えたら打ち切る（素通しストリームを挟む。data リスナーを直に付けると
+    // archiver が読み始める前に流れ出して中身が欠けるため）
+    const limiter = createZipByteLimiter(sent, maxBytes, (total) => {
+      stop(`size limit exceeded (${total} bytes > ${maxBytes})`);
+      res.destroy();
+    });
+    // Drive 側の失敗は下の待ち（stream.data の error）で拾って打ち切る。limiter に error を伝えると
+    // 聞き手の無い error で落ちうるので伝えない
+    archive.append(stream.data.pipe(limiter), { name: entry });
     try {
       // 1件ずつ流し終えてから次へ（同時に何本も Drive から引かない）
       await new Promise((resolve, reject) => {
@@ -29605,7 +29621,7 @@ const CREATIVE_ZIP_MAX_CREATIVES = 200;
 const CREATIVE_ZIP_MAX_BYTES = 1024 * 1024 * 1024; // 1GB（5 分以内に流し切れる目安）
 
 // creative id 群 → 各クリエイティブの最新版原本（creative_files の version 最大 → uploaded_at 新しい順）
-const { fetchAllRows: zipFetchAllRows, pickLatestFileByCreative, summarizeZipTargets, lookupDriveSize } = require('../utils/creative-zip-targets');
+const { fetchAllRows: zipFetchAllRows, pickLatestFileByCreative, summarizeZipTargets, lookupDriveSize, createByteLimiter: createZipByteLimiter } = require('../utils/creative-zip-targets');
 async function loadCreativeZipTargets(creativeIds) {
   const files = [];
   // .in() の URL 長超過を避けるため 100 件ずつ。各チャンクは PostgREST の既定上限（1000 行）で切れないよう
@@ -29700,7 +29716,7 @@ router.get('/creatives-download-zip', requireAuth, async (req, res) => {
     const stamp = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace(/-/g, '');
     const rawName = String(req.query.name || '').trim().slice(0, 80);
     const label = rawName ? portfolioSafePath(rawName) : 'クリエイティブ';
-    await streamDriveFilesAsZip(res, targets, `${label}_${stamp}.zip`, 'creatives-download-zip');
+    await streamDriveFilesAsZip(res, targets, `${label}_${stamp}.zip`, 'creatives-download-zip', { maxBytes: CREATIVE_ZIP_MAX_BYTES });
   } catch (e) {
     console.error('[creatives-download-zip] failed:', e.message);
     if (!res.headersSent) res.status(500).json({ error: e.message });
