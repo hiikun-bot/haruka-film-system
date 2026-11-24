@@ -21609,14 +21609,18 @@ router.get('/invoices/:id/items/:itemId/receipt', requireAuth, async (req, res) 
 });
 
 // 請求書発行（draft → issued）
+//   下書きのときだけ（条件付き更新）。提出済み・承認済みの請求書を issued に上書きしない
+//   （ADR 046 追補 2026-11-24（3）: 請求済み記録・振込管理の集計から外れてしまうため）
 router.post('/invoices/:id/issue', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('invoices')
     .update({ status: 'issued', issued_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', req.params.id)
+    .eq('status', 'draft')
     .select()
-    .single();
+    .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(409).json({ error: '下書きの請求書だけ発行できます' });
   res.json(data);
 });
 
