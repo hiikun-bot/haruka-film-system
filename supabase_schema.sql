@@ -3603,3 +3603,54 @@ ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS receipt_uploaded_at    TIMEST
 ALTER TABLE invoice_items DROP CONSTRAINT IF EXISTS invoice_items_receipt_status_check;
 ALTER TABLE invoice_items ADD CONSTRAINT invoice_items_receipt_status_check
   CHECK (receipt_status IS NULL OR receipt_status IN ('attached', 'missing'));
+-- ===== 🌐 みんなのポートフォリオ（外部作品）ADR 045（migrations/2026-11-24_portfolio_external_works.sql）=====
+
+CREATE TABLE IF NOT EXISTS portfolio_external_works (
+  id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_by           UUID        REFERENCES users(id) ON DELETE SET NULL,
+  source_type          TEXT        NOT NULL CHECK (source_type IN ('youtube', 'drive', 'upload', 'link')),
+  source_url           TEXT,
+  youtube_id           TEXT,
+  drive_file_id        TEXT,
+  mime_type            TEXT,
+  media_kind           TEXT        NOT NULL DEFAULT 'video' CHECK (media_kind IN ('video', 'image', 'web')),
+  title                TEXT        NOT NULL CHECK (char_length(title) BETWEEN 1 AND 200),
+  description          TEXT        CHECK (description IS NULL OR char_length(description) <= 500),
+  client_name          TEXT        CHECK (client_name IS NULL OR char_length(client_name) <= 100),
+  portfolio_genre_code TEXT,
+  portfolio_style_code TEXT,
+  aspect_w             INTEGER     CHECK (aspect_w IS NULL OR aspect_w > 0),
+  aspect_h             INTEGER     CHECK (aspect_h IS NULL OR aspect_h > 0),
+  produced_at          DATE,
+  thumb_url            TEXT,
+  ai_meta              JSONB,
+  ai_model             TEXT,
+  ai_cost_jpy          NUMERIC(10,3),
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at           TIMESTAMPTZ
+);
+
+-- 一覧 API は「持ち主 × 未削除」で引き、produced_at の新しい順に並べる
+CREATE INDEX IF NOT EXISTS idx_portfolio_external_works_owner
+  ON portfolio_external_works (owner_user_id, produced_at DESC NULLS LAST, created_at DESC)
+  WHERE deleted_at IS NULL;
+-- 「👥 全員」表示（持ち主で絞らない）は未削除の全件を produced_at → created_at の新しい順で引く
+CREATE INDEX IF NOT EXISTS idx_portfolio_external_works_recent
+  ON portfolio_external_works (produced_at DESC NULLS LAST, created_at DESC)
+  WHERE deleted_at IS NULL;
+-- 月次予算ガード（ADR 039 D2）が「今月の AI 費用」を合算する
+CREATE INDEX IF NOT EXISTS idx_portfolio_external_works_ai_cost
+  ON portfolio_external_works (created_at)
+  WHERE ai_cost_jpy IS NOT NULL;
+
+-- ADR 048: 新テーブルは同じ migration で RLS を有効にする（service_role 専用・ポリシー無し）
+ALTER TABLE portfolio_external_works ENABLE ROW LEVEL SECURITY;
+
+COMMENT ON TABLE  portfolio_external_works IS '🌐 みんなのポートフォリオ（外部作品）。HFS の案件外の作品を作品ギャラリーに並べる（creatives とは分離）';
+COMMENT ON COLUMN portfolio_external_works.source_type IS 'youtube / drive（共有URL）/ upload（HFS Drive へ直送）/ link（その他URL）';
+COMMENT ON COLUMN portfolio_external_works.media_kind  IS 'video / image / web（🎬 動画 / 🎨 静止画 タブの振り分け）';
+COMMENT ON COLUMN portfolio_external_works.thumb_url   IS 'youtube / link のサムネURL。drive / upload は NULL（サーバー代理配信）';
+COMMENT ON COLUMN portfolio_external_works.ai_cost_jpy IS 'AI 提案（Gemini）の概算費用（円）。MONTHLY_ANALYSIS_BUDGET_JPY の集計対象';
+
