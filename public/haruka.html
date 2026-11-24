@@ -1568,6 +1568,12 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 .sc-overlay .sc-stage{flex:1;min-height:0;height:auto;border-radius:14px;cursor:default}
 .sc-overlay .sc-stage .sc-grid{grid-template-columns:repeat(4,minmax(0,1fr));max-width:900px;gap:10px;padding:16px;height:auto;max-height:100%;overflow:auto}
 .sc-overlay .sc-stage .sc-grid .sc-cell{aspect-ratio:1/1}
+/* 左右の余白の送りボタン。シェル幅 1200px の外側の帯の中央に置く（帯が無い幅では画像の端に 8px で重なる） */
+.sc-side{position:absolute;top:50%;transform:translateY(-50%);width:56px;height:104px;border:0;border-radius:16px;background:rgba(255,255,255,.12);color:#fff;font-size:44px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0 0 6px;z-index:2;transition:background .12s,opacity .12s;font-family:inherit}
+.sc-side:hover{background:rgba(255,255,255,.28)}
+.sc-side:disabled{opacity:.18;cursor:default;background:rgba(255,255,255,.08)}
+.sc-side-prev{left:max(8px,calc((100% - 1200px)/4 - 28px))}
+.sc-side-next{right:max(8px,calc((100% - 1200px)/4 - 28px))}
 .sc-panel{flex-shrink:0;margin-top:12px;background:#fff;color:#1f2328;border-radius:14px;padding:14px 18px;display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow-y:auto}
 .sc-panel .sc-name{font-size:16px;color:#14171a}
 .sc-panel .sc-creators{color:#374151}
@@ -2075,6 +2081,9 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
   .sc-nav{margin-left:0;width:100%;justify-content:space-between}
   .sc-shell{padding:10px 10px 12px}
   .sc-overlay .sc-stage{border-radius:10px}
+  .sc-side{width:38px;height:72px;font-size:32px;border-radius:12px;background:rgba(0,0,0,.35)}
+  .sc-side-prev{left:4px}
+  .sc-side-next{right:4px}
   .sc-panel{padding:12px 12px;max-height:52vh}
   .sc-panel .sc-name{font-size:14px}
   .sc-panel .pf-rx-main{font-size:14px;min-height:42px}
@@ -9301,6 +9310,9 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <div class="sc-stage pf-media" id="sc-stage"></div>
     <div class="sc-panel" id="sc-panel"></div>
   </div>
+  <!-- 左右の余白に置く大きな送りボタン（PC は画像の外側の暗い帯、スマホは画像の端に重ねる）。有効/無効と縦位置は scSyncSideArrows() が毎スライド更新 -->
+  <button type="button" class="sc-side sc-side-prev" id="sc-side-prev" onclick="scSlideStep(-1)" title="前へ（←）" aria-label="前へ">‹</button>
+  <button type="button" class="sc-side sc-side-next" id="sc-side-next" onclick="scSlideStep(1)" title="次へ（→）" aria-label="次へ">›</button>
 </div>
 
 <!-- 📦 一括納品完了（月次消込）— admin / secretary 専用（ADR 015: effectiveRole で判定） -->
@@ -28875,6 +28887,7 @@ function scOpenSlideshow(pos, childIdx) {
   box.classList.add('open');
   document.body.style.overflow = 'hidden';
   document.addEventListener('keydown', scSlideKey);
+  window.addEventListener('resize', scOnResizeSideArrows);
   const shell = document.getElementById('sc-shell');
   if (shell && !shell.dataset.bound) {
     shell.dataset.bound = '1';
@@ -28896,13 +28909,34 @@ function scOpenSlideshow(pos, childIdx) {
     }, { passive: true });
     // パネル内の操作（リアクション等）は自動送りを仕切り直す（押した直後に流れないように）
     document.getElementById('sc-panel')?.addEventListener('click', () => scResetTimer());
+    // 左右の送りボタンも同じ（押した直後に自動で流れないように）
+    ['sc-side-prev', 'sc-side-next'].forEach(id => document.getElementById(id)?.addEventListener('click', () => scResetTimer()));
+    // ひとことの読み込み・投稿でパネルの高さが変わるとステージの高さも変わるので、ステージの大きさが変わったら置き直す
+    const stageEl = document.getElementById('sc-stage');
+    if (stageEl && typeof ResizeObserver === 'function') new ResizeObserver(() => { if (scSlide.open) scSyncSideArrows(); }).observe(stageEl);
   }
   scRenderSlide();
 }
+// 左右の余白の送りボタン: 有効/無効を下のパネルの ← → と揃え、縦位置をステージ（画像）の中央に合わせる。
+// パネルの高さは作品ごとに変わる（ひとこと・まとめ等）ので、CSS の 50% 固定ではなく毎スライド測って置く
+function scSyncSideArrows(prevDisabled, nextDisabled) {
+  const prev = document.getElementById('sc-side-prev');
+  const next = document.getElementById('sc-side-next');
+  if (!prev || !next) return;
+  if (prevDisabled != null) prev.disabled = !!prevDisabled;
+  if (nextDisabled != null) next.disabled = !!nextDisabled;
+  const stage = document.getElementById('sc-stage');
+  const box = document.getElementById('showcase-overlay');
+  if (!stage || !box || !box.classList.contains('open')) return;
+  const r = stage.getBoundingClientRect();
+  if (r.height > 0) { const top = `${Math.round(r.top + r.height / 2)}px`; prev.style.top = top; next.style.top = top; }
+}
+function scOnResizeSideArrows() { if (scSlide.open) scSyncSideArrows(); }
 function scCloseSlideshow() {
   const box = document.getElementById('showcase-overlay');
   if (!box) return;
   scStopTimer();
+  window.removeEventListener('resize', scOnResizeSideArrows);
   const stage = document.getElementById('sc-stage');
   if (stage) stage.innerHTML = '';   // 再生を止める
   box.classList.remove('open');
@@ -28997,10 +29031,13 @@ async function scRenderSlide() {
 
   const dots = scItems.map((it, i) =>
     `<button type="button" class="sc-dot${i === scSlide.pos ? ' on' : ''}${it.type === 'bundle' ? ' bundle' : ''}" onclick="scSlideGo(${i})" title="${scItemTitle(it)}" aria-label="${i + 1}枚目"></button>`).join('');
+  const prevDisabled = scSlide.pos <= 0 && scSlide.child < 0;
+  const nextDisabled = scSlide.pos >= scItems.length - 1 && !(item.type === 'bundle' && scSlide.child >= 0 && scSlide.child < item.creatives.length - 1);
+  scSyncSideArrows(prevDisabled, nextDisabled);
   const bottom = (skipLabel) => `<div class="sc-bottom">
-      <button type="button" class="sc-arrow" onclick="scSlideStep(-1)" ${scSlide.pos <= 0 && scSlide.child < 0 ? 'disabled' : ''} title="前へ（←）">←</button>
+      <button type="button" class="sc-arrow" onclick="scSlideStep(-1)" ${prevDisabled ? 'disabled' : ''} title="前へ（←）">←</button>
       <span class="sc-dots">${dots}</span>
-      <button type="button" class="sc-arrow" onclick="scSlideStep(1)" ${scSlide.pos >= scItems.length - 1 && !(item.type === 'bundle' && scSlide.child >= 0 && scSlide.child < item.creatives.length - 1) ? 'disabled' : ''} title="次へ（→）">→</button>
+      <button type="button" class="sc-arrow" onclick="scSlideStep(1)" ${nextDisabled ? 'disabled' : ''} title="次へ（→）">→</button>
       <button type="button" class="sc-skip" onclick="scSlideSkip()">${skipLabel} ⏭</button>
     </div>`;
 
@@ -29013,6 +29050,7 @@ async function scRenderSlide() {
       ${scCreatorsHtml(item.creators, { short: true })}
       <div class="sc-actions">${scBulkBtnHtml(item, 'sc')}</div>
       ${bottom('まとめてスキップ')}`;
+    requestAnimationFrame(() => scSyncSideArrows());   // パネルの高さが決まってからステージ中央に合わせる
     scMarkSeen(item.creatives.map(c => c.creative_id));
     return;
   }
@@ -29031,6 +29069,7 @@ async function scRenderSlide() {
       <div class="sc-cm-col">${pfCommentsHtml(c, idx, 'sc')}</div>
     </div>
     ${bottom('この作品をスキップ')}`;
+  requestAnimationFrame(() => scSyncSideArrows());
   scMarkSeen(c.creative_id);
   // 💬 ひとことはパネル内でその場で読み書きする（ライトボックスに飛ばない）。本文はここで初めて取りに行く（キャッシュ済みならそのまま）
   if (!pfCommentsCache.has(c.creative_id)) pfLoadComments(c.creative_id);
