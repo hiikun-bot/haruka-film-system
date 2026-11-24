@@ -13758,66 +13758,16 @@ router.post('/creatives/:id/share-client-review', requireAuth, requirePermission
 
 // 下書き請求書の明細を外し、その請求書の合計を計算し直す（admin-status と delivery-revert で共用）。
 // 下書きは集計・振込に出ないので外してよいが、合計を直さないと請求書の金額と明細がずれる。
-// editableStatuses: 外してよい請求書の状態。消す直前に読み直し、その間に提出された請求書の明細は残す
-// （提出済みの請求書の明細・合計を書き換えない）。戻り値の skippedInvoiceIds が残した分（状態が変わった請求書だけ。
-// その間に消された請求書は含めない）。
-// allOrNothing: true なら、1 件でも状態が変わった請求書があれば何も消さずに { ok:false, code:'NOT_EDITABLE' } を返す
-// （admin-status: 一部の下書きから明細だけ消えてステータスは変わらない、という半端な状態を作らない）。
-// recalcFailedInvoiceIds: 明細は外したが合計を計算し直せなかった請求書（読めない・書けない）。
+// 請求書 1 件ごとに DB の関数 invoice_remove_items_recalc（ADR 046 追補 2026-11-24（4））が、提出と同じ順のロックの中で
+// 「状態の確認 → 明細の削除 → 合計の書き込み」を 1 トランザクションで行う（utils/invoice-remove-items.js）。
+// その間に提出された請求書の明細・合計は書き換えない（skippedInvoiceIds）。読めない・混み合ってやり直しても
+// 合わなかった請求書は何も変えずに failedInvoiceIds に入る（空の明細として 0 円の合計を書くことはない）。
+// allOrNothing: true なら、始める前に全件の状態を確かめ、外せない請求書があれば何も消さずに { ok:false, code } を返す。
+const INV_REMOVE = require('../utils/invoice-remove-items');
 async function removeDraftInvoiceItems(itemIds, invoiceIds, { editableStatuses = ['draft'], allOrNothing = false } = {}) {
-  if (!itemIds || itemIds.length === 0) return { ok: true, skippedInvoiceIds: [], recalcFailedInvoiceIds: [] };
-  const wanted = [...new Set((invoiceIds || []).filter(Boolean))];
-  const { data: invNow, error: invErr } = await supabase
-    .from('invoices').select('id, status').in('id', wanted);
-  if (invErr) return { ok: false, error: invErr.message };
-  const allowed = (invNow || []).filter(r => editableStatuses.includes(r.status)).map(r => r.id);
-  const skippedInvoiceIds = (invNow || []).filter(r => !editableStatuses.includes(r.status)).map(r => r.id);
-  if (allOrNothing && skippedInvoiceIds.length) {
-    return { ok: false, code: 'NOT_EDITABLE', error: 'invoice no longer editable', skippedInvoiceIds };
-  }
-  if (allowed.length === 0) return { ok: true, skippedInvoiceIds, recalcFailedInvoiceIds: [] };
-  const { data: targetItems, error: tiErr } = await supabase
-    .from('invoice_items').select('id').in('id', itemIds).in('invoice_id', allowed);
-  if (tiErr) return { ok: false, error: tiErr.message };
-  const targetIds = (targetItems || []).map(r => r.id);
-  if (targetIds.length === 0) return { ok: true, skippedInvoiceIds, recalcFailedInvoiceIds: [] };
-  const { error: detErr } = await supabase.from('invoice_item_details').delete().in('invoice_item_id', targetIds);
-  if (detErr) return { ok: false, error: detErr.message };
-  const { error: delErr } = await supabase.from('invoice_items').delete().in('id', targetIds);
-  if (delErr) return { ok: false, error: delErr.message };
-
-  const recalcFailed = [];
-  for (const invId of allowed) {
-    const [{ data: rem, error: remErr }, { data: invRow, error: invRowErr }] = await Promise.all([
-      supabase.from('invoice_items').select('creative_id, cost_type, unit_price, quantity, total_amount').eq('invoice_id', invId),
-      supabase.from('invoices').select('tax_mode, withholding_enabled').eq('id', invId).maybeSingle(),
-    ]);
-    // 読み取りに失敗したのに「明細なし」として計算し直すと、下書きの合計が 0 円になる。読めなければ合計は触らずに知らせる
-    if (remErr || invRowErr) {
-      console.warn('[removeDraftInvoiceItems] 合計の再計算を省略（明細・請求書を読めない）:', invId, (remErr || invRowErr).message);
-      recalcFailed.push(invId);
-      continue;
-    }
-    if (!invRow) continue; // その間に請求書ごと消された（直す合計が無い）
-    const patch = { updated_at: new Date().toISOString() };
-    if (invRow && invRow.tax_mode === 'exclusive') {
-      // 新方式（ADR 046）は小計〜差引をまとめて計算し直す。total_amount だけ直すと差引お振込額とずれ、
-      // 差引から求める立替経費（expenseOfInvoice）まで狂う
-      const t = IE.computeTotals(rem || [], { withholding_enabled: invRow.withholding_enabled !== false });
-      Object.assign(patch, {
-        subtotal_amount: t.subtotal, tax_amount: t.tax, total_amount: t.total,
-        withholding_amount: t.withholding, payout_amount: t.payout,
-      });
-    } else {
-      patch.total_amount = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
-    }
-    const { error: upErr } = await supabase.from('invoices').update(patch).eq('id', invId).in('status', editableStatuses);
-    if (upErr) {
-      console.warn('[removeDraftInvoiceItems] 合計の書き込みに失敗:', invId, upErr.message);
-      recalcFailed.push(invId);
-    }
-  }
-  return { ok: true, skippedInvoiceIds, removedItemIds: targetIds, recalcFailedInvoiceIds: recalcFailed };
+  const r = await INV_REMOVE.removeItemsFromEditableInvoices(supabase, IE, { itemIds, invoiceIds, editableStatuses, allOrNothing });
+  if (r.errors && r.errors.length) console.warn('[removeDraftInvoiceItems] 外せなかった請求書:', r.failedInvoiceIds, r.errors);
+  return r;
 }
 
 // 管理者によるステータス強制変更（戻し含む）
@@ -13892,13 +13842,11 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
       const nums = [...new Set(draftItems.filter(i => (rm.skippedInvoiceIds || []).includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
       return res.status(409).json({ error: `変更の途中で請求書が提出されたため、ステータスを変更しませんでした（${nums.join('、')}）。先に請求書を差し戻してください` });
     }
-    if (!rm.ok) return res.status(500).json({ error: rm.error });
+    if (!rm.ok) {
+      return res.status(500).json({ error: `下書きの請求書から明細を外せなかったため、ステータスを変更しませんでした。もう一度お試しください（${rm.error || '不明なエラー'}）` });
+    }
     // 応答・監査には実際に消した分だけを載せる（その間に別の画面で消された明細は数えない）
     deletedItemIds = rm.removedItemIds || [];
-    if (rm.recalcFailedInvoiceIds && rm.recalcFailedInvoiceIds.length) {
-      const nums = [...new Set(draftItems.filter(i => rm.recalcFailedInvoiceIds.includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
-      adminStatusWarnings.push(`下書きの請求書（${nums.join('、')}）から明細を外しましたが、合計を計算し直せませんでした。請求書の合計を確認してください`);
-    }
   }
 
   // クリエイティブ更新（戻し時は派生フラグもクリア）
@@ -14212,15 +14160,19 @@ router.post('/creatives/:id/delivery-revert', requireAuth, async (req, res) => {
 
     // 下書き・差し戻し中の請求書の明細を外し、合計を計算し直す
     const draftItems = (freshItems || []).filter(i => i.invoice && DR.isEditableInvoiceStatus(i.invoice.status));
-    const deletedItemIds = draftItems.map(i => i.id);
+    let deletedItemIds = draftItems.map(i => i.id);
     const affectedInvoiceIds = [...new Set(draftItems.map(i => i.invoice_id))];
     const warnings = [];
     let draftRemoved = false;
     let skippedInv = [];
+    let failedInv = [];
     if (deletedItemIds.length) {
       const rm = await removeDraftInvoiceItems(deletedItemIds, affectedInvoiceIds, { editableStatuses: DR.EDITABLE_INVOICE_STATUSES });
       draftRemoved = rm.ok;
       skippedInv = rm.skippedInvoiceIds || [];
+      failedInv = rm.failedInvoiceIds || [];
+      // 応答・監査・通知には実際に外した分だけを載せる
+      deletedItemIds = rm.ok ? (rm.removedItemIds || []) : [];
       if (!rm.ok) {
         console.warn('[delivery-revert] draft invoice cleanup failed:', rm.error);
         warnings.push('下書きの請求書から明細を外せませんでした。請求書の持ち主に手で外してもらってください');
@@ -14230,9 +14182,10 @@ router.post('/creatives/:id/delivery-revert', requireAuth, async (req, res) => {
         console.warn('[delivery-revert] invoice submitted during cleanup:', creativeId, nums);
         warnings.push(`取り消しの途中で提出された請求書（${nums.join('、')}）にこの制作が残っています。管理者に確認してください`);
       }
-      if (rm.ok && rm.recalcFailedInvoiceIds && rm.recalcFailedInvoiceIds.length) {
-        const nums = [...new Set(draftItems.filter(i => rm.recalcFailedInvoiceIds.includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
-        warnings.push(`下書きの請求書（${nums.join('、')}）から明細を外しましたが、合計を計算し直せませんでした。管理者に確認してください`);
+      if (rm.ok && rm.failedInvoiceIds && rm.failedInvoiceIds.length) {
+        // 読めなかった・混み合ってやり直しても合わなかった請求書。明細・合計はどちらも変えていない
+        const nums = [...new Set(draftItems.filter(i => rm.failedInvoiceIds.includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
+        warnings.push(`下書きの請求書（${nums.join('、')}）から明細を外せませんでした。請求書の持ち主に手で外してもらってください`);
       }
     }
     const draftWarning = warnings.length ? warnings.join('\n') : null;
@@ -14295,7 +14248,7 @@ router.post('/creatives/:id/delivery-revert', requireAuth, async (req, res) => {
       : null;
     const assigneeIds = [...new Set((ctx.assignments || []).map(a => a.user_id).filter(Boolean))];
     const draftInvoices = [...new Map(draftItems
-      .filter(i => !skippedInv.includes(i.invoice_id))
+      .filter(i => !skippedInv.includes(i.invoice_id) && !failedInv.includes(i.invoice_id))
       .map(i => [i.invoice.id, { issuer_id: i.invoice.issuer_id, invoice_number: i.invoice.invoice_number }])).values()];
     try {
       require('../notifications').notifyDeliveryReverted({
@@ -22152,26 +22105,20 @@ router.delete('/invoices/:id', requireAuth, async (req, res) => {
   if (inv.issuer_id !== req.user?.id && !(await isStaffRequester(req)))
     return res.status(403).json({ error: 'アクセス権限がありません' });
 
-  // 1. invoice_item_details を削除（invoice_items 経由）
-  //    立替経費の領収書（ADR 046 追補 2026-11-23）は削除後にゴミ箱へ送るので file_id も読む（列が無い環境は id だけ）
-  let { data: items, error: itemsErr } = await supabase.from('invoice_items').select('id, receipt_file_id').eq('invoice_id', invId);
-  if (itemsErr && RCPT.isMissingReceiptColumnError(itemsErr)) {
-    ({ data: items } = await supabase.from('invoice_items').select('id').eq('invoice_id', invId));
+  // 状態の確認と、内訳・明細・請求書の削除を DB の 1 トランザクションで（ADR 046 追補 2026-11-24（4））。
+  // 確認してから消すまでのあいだに提出された請求書は消さない。立替経費の領収書（ADR 046 追補 2026-11-23）の file_id は
+  // 関数が返すので、削除のあとにゴミ箱へ送る
+  const del = await INV_REMOVE.deleteEditableInvoice(supabase, {
+    invoiceId: invId, editableStatuses: ['draft', 'rejected'], expectedIssuerId: inv.issuer_id || null,
+  });
+  if (del.result === 'not_found') return res.status(404).json({ error: '請求書が見つかりません' });
+  if (del.result === 'not_editable') return res.status(409).json({ error: 'この請求書は別の画面で提出されました。再読み込みしてください', code: 'NOT_EDITABLE' });
+  if (del.result === 'conflict') return res.status(409).json({ error: '別の画面でこの請求書が更新されています。再読み込みしてください', code: 'CONFLICT' });
+  if (del.result !== 'ok') {
+    if (del.missingFunction) return res.status(503).json({ error: '請求書の削除の仕組みを更新中です。少し時間をおいてからもう一度お試しください（管理者: DB の更新が必要です）', code: 'ATOMIC_DELETE_NOT_READY' });
+    return res.status(500).json({ error: del.error || '請求書を削除できませんでした' });
   }
-  const receiptFileIds = (items || []).map(i => i.receipt_file_id).filter(Boolean);
-  if (items?.length) {
-    const itemIds = items.map(i => i.id);
-    const { error: detErr } = await supabase.from('invoice_item_details').delete().in('invoice_item_id', itemIds);
-    if (detErr) return res.status(500).json({ error: detErr.message });
-  }
-
-  // 2. invoice_items を削除
-  const { error: itemErr } = await supabase.from('invoice_items').delete().eq('invoice_id', invId);
-  if (itemErr) return res.status(500).json({ error: itemErr.message });
-
-  // 3. invoice を削除
-  const { error } = await supabase.from('invoices').delete().eq('id', invId);
-  if (error) return res.status(500).json({ error: error.message });
+  const receiptFileIds = del.receiptFileIds || [];
 
   // ADR 047: Drive に自動保存した PDF が残ると振込管理のスキャンが拾ってしまうのでゴミ箱へ
   // （完全削除はしない・失敗しても削除自体は成功扱い）
