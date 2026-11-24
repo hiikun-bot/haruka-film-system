@@ -9708,6 +9708,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     <!-- ADR 054: あおぞら銀行 API の接続状態（payout.transfer を持つ人・機能フラグ ON のときだけ中身を出す） -->
     <div id="po-bank-bar" style="display:none"></div>
     <div id="po-banner"></div>
+    <!-- 人をまたいだ二重請求の疑い（GET /admin/payouts/cross-duplicates・知らせるだけ） -->
+    <div id="po-crossdup"></div>
     <div id="po-summary" style="margin-bottom:12px"></div>
     <div class="card" style="padding:0;overflow-x:auto">
       <div id="po-table" style="overflow-x:auto"></div>
@@ -31496,6 +31498,8 @@ async function poFetch() {
     poScan(false); // await しない（完了後に自動で再描画）
     // ADR 054: 接続状態と依頼履歴は一覧とは別に取得（await しない。取得後に再描画して選択列・依頼バーを出す）
     poBankLoad();
+    // 人をまたいだ二重請求の疑い（await しない）
+    poCrossDupLoad();
   } catch (e) {
     console.error('[payout]', e);
     _poData = null;
@@ -31506,6 +31510,79 @@ async function poFetch() {
     _poLoading = false;
     if (rescanBtn) rescanBtn.disabled = false;
   }
+}
+
+// ---------- 人をまたいだ二重請求の疑い ----------
+// 同じ作業を別の 2 人が請求していないかを、振込前に管理者へ知らせる（止めない）。
+// 判定はサーバー（utils/invoice-cross-duplicate.js）。HFS で作った提出済み・承認済みの請求書だけが対象。
+let _poXd = null, _poXdMonth = null, _poXdOpen = false, _poXdSeq = 0;
+async function poCrossDupLoad() {
+  const el = document.getElementById('po-crossdup');
+  if (!el || !hasPermission('payout.page') || _poYear == null) return;
+  const key = `${_poYear}-${_poMonth}`;
+  const seq = ++_poXdSeq;
+  if (_poXdMonth !== key) { _poXd = null; _poXdOpen = false; el.innerHTML = ''; }
+  try {
+    const res = await apiFetch(`${API}/admin/payouts/cross-duplicates?year=${_poYear}&month=${_poMonth}`);
+    const data = await res.json();
+    if (seq !== _poXdSeq) return; // 月を切り替えた後の古い応答は捨てる
+    if (!res.ok) throw new Error(data.error || '二重請求の確認に失敗しました');
+    _poXd = data; _poXdMonth = key;
+    poCrossDupRender();
+  } catch (e) {
+    if (seq !== _poXdSeq) return;
+    console.error('[payout][cross-dup]', e);
+    el.innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">⚠️ 人をまたいだ二重請求の確認ができませんでした（${esc(e.message)}）</div>`;
+  }
+}
+
+function poCrossDupToggle() { _poXdOpen = !_poXdOpen; poCrossDupRender(); }
+
+function poCrossDupRender() {
+  const el = document.getElementById('po-crossdup');
+  const data = _poXd;
+  if (!el || !data) return;
+  const list = data.findings || [];
+  if (!list.length) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">✅ 人をまたいだ二重請求の疑いはありません（HFSで作った請求書 ${Number(data.invoice_count) || 0} 件を確認・Driveに置いただけの請求書は対象外）</div>`;
+    return;
+  }
+  const LV = {
+    high: { t: '強', bg: '#FDECEA', fg: '#C0392B' },
+    medium: { t: '中', bg: '#FFF4E5', fg: '#B9770E' },
+    low: { t: '弱', bg: '#F2F3F4', fg: '#566573' },
+  };
+  const yen = (n) => `¥${(Number(n) || 0).toLocaleString('ja-JP')}`;
+  const side = (s, fallbackLabel) => {
+    if (!s) return `<span style="color:var(--text-muted)">${esc(fallbackLabel || '')} さんの請求書（該当行の特定なし）</span>`;
+    const link = `/haruka.html?page=invoices&invoice=${encodeURIComponent(s.invoice_id)}`;
+    return `<div><b>${esc(s.issuer_label || '')}</b> <span style="color:var(--text-muted)">${s.year}年${s.month}月分</span>
+      <a href="${link}" target="_blank" rel="noopener" style="font-size:11px">請求書を開く</a></div>
+      <div style="font-size:12px">${esc(s.label || '（品目名なし）')}${s.role_label ? `<span style="color:var(--text-muted)">（${esc(s.role_label)}）</span>` : ''} <b>${yen(s.amount)}</b></div>
+      ${s.manual_reason ? `<div style="font-size:11px;color:var(--text-muted)">理由: ${esc(s.manual_reason)}</div>` : ''}`;
+  };
+  const counts = { high: 0, medium: 0, low: 0 };
+  list.forEach(f => { counts[f.level] = (counts[f.level] || 0) + 1; });
+  const countText = ['high', 'medium', 'low'].filter(k => counts[k]).map(k => `${LV[k].t} ${counts[k]}`).join('・');
+  const rows = _poXdOpen ? list.map(f => {
+    const lv = LV[f.level] || LV.low;
+    return `<div style="display:grid;grid-template-columns:36px minmax(0,1fr) 24px minmax(0,1fr);gap:8px;align-items:start;padding:8px 0;border-top:1px solid var(--border)">
+      <span style="background:${lv.bg};color:${lv.fg};font-weight:700;font-size:11px;border-radius:4px;text-align:center;padding:2px 0">${lv.t}</span>
+      <div style="min-width:0">${side(f.a)}</div>
+      <div style="text-align:center;color:var(--text-muted)">⇄</div>
+      <div style="min-width:0">${side(f.b, f.b_issuer_label)}</div>
+      <div style="grid-column:2 / -1;font-size:11px;color:${lv.fg}">${esc(f.reason)}</div>
+    </div>`;
+  }).join('') : '';
+  el.innerHTML = `<div class="card" style="padding:10px 14px;margin-bottom:12px;border-left:4px solid #E67E22">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <b>⚠️ 人をまたいだ二重請求の疑い ${list.length} 件</b>
+      <span style="font-size:12px;color:var(--text-muted)">（${countText}）</span>
+      <button class="btn-sm" style="margin-left:auto" onclick="poCrossDupToggle()">${_poXdOpen ? '閉じる' : '確認する'}</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:4px">同じ作業を別の2人が請求していないか、振込の前に確認してください。正しい請求（2人で分担した作業など）でも出ることがあります。相手は${Number(data.lookback_months) || 3}か月前までの請求書から探しています。</div>
+    ${rows}
+  </div>`;
 }
 
 // Drive スキャン（バックグラウンド実行）。fromButton=true は再スキャンボタンから
