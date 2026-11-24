@@ -109,7 +109,7 @@ function createInvoiceEditorRpcFake({ rows, setRows }) {
     if (!['draft', 'rejected'].includes(inv.status)) return { ok: false, code: 'NOT_EDITABLE', status: inv.status };
     if (!a.p_expected_updated_at || inv.updated_at !== a.p_expected_updated_at) return { ok: false, code: 'CONFLICT', updated_at: inv.updated_at };
 
-    const fp = (r) => JSON.stringify([r.id, r.creative_id || null, r.cost_type || null, intOrNull(r.unit_price), numOrNull(r.quantity)]);
+    const fp = (r) => JSON.stringify([r.id, r.creative_id || null, r.cost_type || null, intOrNull(r.unit_price), numOrNull(r.quantity), r.label ?? null, r.price_change_reason ?? null, r.manual_reason ?? null]);
     const items = rows('invoice_items').filter(r => r.invoice_id === inv.id);
     const cur = items.map(fp).sort();
     const sent = (a.p_items || []).map(fp).sort();

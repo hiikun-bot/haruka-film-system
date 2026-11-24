@@ -100,8 +100,8 @@ describe('utils/invoice-editor-atomic', () => {
       { id: 'b', creative_id: null, cost_type: null, unit_price: null, quantity: 2, original_unit_price: null },
     ];
     expect(IEA.submitFingerprint(items)).toEqual([
-      { id: 'a', creative_id: 'c1', cost_type: 'base_fee', unit_price: 5000, quantity: 1 },
-      { id: 'b', creative_id: null, cost_type: null, unit_price: null, quantity: 2 },
+      { id: 'a', creative_id: 'c1', cost_type: 'base_fee', unit_price: 5000, quantity: 1, label: null, price_change_reason: null, manual_reason: null },
+      { id: 'b', creative_id: null, cost_type: null, unit_price: null, quantity: 2, label: null, price_change_reason: null, manual_reason: null },
     ]);
     expect(IEA.refUpdatesArg(items, () => 4000)).toEqual([]);
     expect(IEA.refUpdatesArg(items, () => 4500)).toEqual([{ id: 'a', original_unit_price: 4500 }]);
@@ -305,6 +305,14 @@ describe('POST /invoice-editor/:id/submit（提出）', () => {
 
   test('検証のあと・ロックの直前に明細が書き換わったら 409 STALE_ITEMS（古い明細で確定しない）', async () => {
     mockRpcFake.before = () => { mockDb.invoice_items[0].unit_price = 1; };
+    const r = await okSubmit();
+    expect(r.status).toBe(409);
+    expect(r.body.code).toBe('STALE_ITEMS');
+    expect(inv().status).toBe('draft');
+  });
+
+  test('検証のあと・ロックの直前に理由が消されたら 409 STALE_ITEMS（理由なしで確定しない）', async () => {
+    mockRpcFake.before = () => { mockDb.invoice_items[0].manual_reason = null; };
     const r = await okSubmit();
     expect(r.status).toBe(409);
     expect(r.body.code).toBe('STALE_ITEMS');

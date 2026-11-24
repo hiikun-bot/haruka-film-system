@@ -93,7 +93,7 @@ function numOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 提出の指紋（p_items）: アプリが検証に使った明細そのもの。関数はロックの中で DB の明細と差集合で照らす */
+/** 提出の指紋（p_items）: アプリが検証に使った明細そのもの。関数はロックの中で DB の明細と差集合で照らす（領収書の列は入れない） */
 function submitFingerprint(items) {
   return (items || []).map(it => ({
     id: it.id,
@@ -101,6 +101,10 @@ function submitFingerprint(items) {
     cost_type: it.cost_type || null,
     unit_price: intOrNull(it.unit_price),
     quantity: numOrNull(it.quantity),
+    // 品目・理由も提出時のチェック（HFS外の行の理由・単価を上げた理由）に使うので、検証したものと同じか確かめる
+    label: it.label ?? null,
+    price_change_reason: it.price_change_reason ?? null,
+    manual_reason: it.manual_reason ?? null,
   }));
 }
 
