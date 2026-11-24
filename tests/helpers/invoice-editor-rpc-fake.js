@@ -143,12 +143,85 @@ function createInvoiceEditorRpcFake({ rows, setRows }) {
     return { ok: true, invoice: { ...inv } };
   }
 
+  // migrations/2026-11-24b_invoice_remove_items_and_delete_fn.sql の偽物
+  const fpKey = (r) => JSON.stringify([r.id, r.creative_id || null, r.cost_type ?? null, intOrNull(r.unit_price), numOrNull(r.quantity), intOrNull(r.total_amount)]);
+  function checkStatuses(sts) {
+    if (!Array.isArray(sts) || !sts.length || sts.some(s => !['draft', 'rejected'].includes(s))) {
+      return { error: { code: '22023', message: 'editable statuses must be draft/rejected' } };
+    }
+    return null;
+  }
+  function removeItemsRecalc(a) {
+    const bad = checkStatuses(a.p_editable_statuses);
+    if (bad) return bad;
+    const reqs = [...(a.p_requests || [])].sort((x, y) => String(x.invoice_id).localeCompare(String(y.invoice_id)));
+    if (new Set(reqs.map(r => r.invoice_id)).size !== reqs.length) return { error: { code: '22023', message: 'duplicate invoice_id in p_requests' } };
+    // 1 周目: 確かめるだけ
+    const results = [], okReqs = [];
+    let badCode = null;
+    for (const rq of reqs) {
+      const inv = rows('invoices').find(r => r.id === rq.invoice_id);
+      let code;
+      if (!inv) code = 'NOT_FOUND';
+      else if (!a.p_editable_statuses.includes(inv.status)) code = 'NOT_EDITABLE';
+      else {
+        const exp = rq.expected || {};
+        const del = new Set(rq.delete_ids || []);
+        const cur = rows('invoice_items').filter(r => r.invoice_id === inv.id && !del.has(r.id)).map(fpKey).sort();
+        const sent = (rq.remaining || []).map(fpKey).sort();
+        if ((inv.tax_mode ?? null) !== (exp.tax_mode ?? null) || (inv.withholding_enabled ?? null) !== (exp.withholding_enabled ?? null)
+          || JSON.stringify(cur) !== JSON.stringify(sent)) code = 'STALE';
+        else code = 'OK';
+      }
+      if (code === 'OK') okReqs.push(rq);
+      else {
+        results.push({ invoice_id: rq.invoice_id, result: code, status: inv ? inv.status : null });
+        if (code === 'NOT_EDITABLE') badCode = 'NOT_EDITABLE';
+        else if (code === 'STALE' && !badCode) badCode = 'STALE';
+      }
+    }
+    if (a.p_all_or_nothing && badCode) return { ok: false, code: badCode, results };
+    // 2 周目: 書く
+    for (const rq of okReqs) {
+      const inv = rows('invoices').find(r => r.id === rq.invoice_id);
+      const del = new Set(rq.delete_ids || []);
+      const gone = rows('invoice_items').filter(r => r.invoice_id === inv.id && del.has(r.id)).map(r => r.id);
+      setRows('invoice_items', rows('invoice_items').filter(r => !(r.invoice_id === inv.id && del.has(r.id))));
+      const p = rq.totals || {};
+      if (inv.tax_mode === 'exclusive') {
+        Object.assign(inv, { subtotal_amount: p.subtotal_amount, tax_amount: p.tax_amount, total_amount: p.total_amount, withholding_amount: p.withholding_amount, payout_amount: p.payout_amount });
+      } else inv.total_amount = p.total_amount;
+      inv.updated_at = now();
+      results.push({ invoice_id: inv.id, result: 'OK', status: inv.status, deleted_ids: gone });
+    }
+    return { ok: true, results };
+  }
+  function deleteEditable(a) {
+    const bad = checkStatuses(a.p_editable_statuses);
+    if (bad) return bad;
+    const inv = rows('invoices').find(r => r.id === a.p_invoice_id);
+    if (!inv) return { ok: false, code: 'NOT_FOUND' };
+    if ((inv.issuer_id ?? null) !== (a.p_expected_issuer ?? null)) return { ok: false, code: 'CONFLICT' };
+    if (!a.p_editable_statuses.includes(inv.status)) return { ok: false, code: 'NOT_EDITABLE', status: inv.status };
+    const files = rows('invoice_items').filter(r => r.invoice_id === inv.id).map(r => r.receipt_file_id).filter(Boolean);
+    setRows('invoice_items', rows('invoice_items').filter(r => r.invoice_id !== inv.id));
+    setRows('invoice_billing_claims', rows('invoice_billing_claims').filter(c => c.invoice_id !== inv.id));
+    setRows('invoices', rows('invoices').filter(r => r.id !== inv.id));
+    return { ok: true, receipt_file_ids: files };
+  }
+  const IMPL = {
+    invoice_editor_save_draft: saveDraft,
+    invoice_editor_submit: submit,
+    invoice_remove_items_recalc: removeItemsRecalc,
+    invoice_delete_editable: deleteEditable,
+  };
+
   const fake = function rpc(name, args) {
-    if (name !== 'invoice_editor_save_draft' && name !== 'invoice_editor_submit') return null;
+    if (!IMPL[name]) return null;
     fake.calls.push(name);
     if (fake.missing) return { data: null, error: { code: 'PGRST202', message: `Could not find the function public.${name}` } };
     if (fake.before) fake.before(name, args);
-    const out = name === 'invoice_editor_save_draft' ? saveDraft(args) : submit(args);
+    const out = IMPL[name](args);
     if (out && out.error) return { data: null, error: out.error };
     return { data: out, error: null };
   };
