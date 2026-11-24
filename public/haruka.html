@@ -60432,7 +60432,14 @@ async function logout() {
   return btnBusy(busyBtnFrom(), async () => {
   if (!confirm('ログアウトしますか？')) return;
   try {
-    await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+    const res = await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+    // サーバーがログイン状態を消せなかったとき（保存先のエラー）は、ログアウトできたように見せない
+    if (!res.ok) {
+      let msg = 'ログアウトに失敗しました。時間をおいてもう一度お試しください';
+      try { const d = await res.json(); if (d && d.error) msg = d.error; } catch (_) {}
+      showToast(msg, 'error');
+      return;
+    }
   } catch (e) {
     // ネットワーク断などで fetch 自体が落ちた場合、従来は未処理例外で中断していた。
     // 挙動（リダイレクトしない）は変えず、例外が未処理で漏れることだけ防ぐ。
