@@ -160,7 +160,91 @@ export function attachCardClickHandlers(root, options = {}) {
   });
 }
 
+// ---------------------------------------------------------------
+// 通知クリック → 画面が開くまでの進捗フィードバック（#449 の作り直し）
+//   ・既読化 API → openCreativeDetail() などの fetch + DOM 構築で 1〜2 秒かかり、
+//     「押せてない？」と連打されるのを防ぐ。
+//   ・画面最上部に細い流れるバー＋押したカードを半透明＋スピナー。
+//   ・すぐ終わる遷移（タブ切替だけ等）ではチラつかないよう SHOW_DELAY_MS 経ってから出す。
+//   ・成功・失敗・例外どれでも activateCard の finally で必ず片付ける。
+//   ・ページ遷移（location.href）時だけは次ページ表示までバーを残すが、
+//     遷移が起きなかった場合に備えて NAVIGATE_FALLBACK_MS で自動的に消す。
+// ---------------------------------------------------------------
+const PROGRESS_BAR_ID = 'notification-activation-progress';
+const SHOW_DELAY_MS = 150;
+const NAVIGATE_FALLBACK_MS = 8000;
+const NAVIGATING = Symbol('navigating');
+
+let progressShowTimer = null;
+let progressFallbackTimer = null;
+
+function ensureProgressBarEl() {
+  let el = document.getElementById(PROGRESS_BAR_ID);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = PROGRESS_BAR_ID;
+    el.className = 'notification-activation-progress';
+    el.setAttribute('role', 'progressbar');
+    el.setAttribute('aria-label', '読み込み中');
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+export function showActivationProgress(cardEl) {
+  clearTimeout(progressShowTimer);
+  clearTimeout(progressFallbackTimer);
+  progressShowTimer = setTimeout(() => {
+    progressShowTimer = null;
+    ensureProgressBarEl().classList.add('active');
+    if (cardEl && cardEl.isConnected) cardEl.classList.add('is-activating');
+  }, SHOW_DELAY_MS);
+}
+
+export function hideActivationProgress(cardEl) {
+  clearTimeout(progressShowTimer);
+  clearTimeout(progressFallbackTimer);
+  progressShowTimer = null;
+  progressFallbackTimer = null;
+  const bar = document.getElementById(PROGRESS_BAR_ID);
+  if (bar) bar.classList.remove('active');
+  if (cardEl) cardEl.classList.remove('is-activating');
+}
+
+// bfcache（戻るボタン）で前のページが復元されたときにバーが残らないように
+if (typeof window !== 'undefined') {
+  // （初回表示の pageshow でも消すと、読み込み直後のクリックの表示予約まで取り消してしまうので persisted のときだけ）
+  window.addEventListener('pageshow', e => { if (e.persisted) hideActivationProgress(null); });
+  // 同じページ内のハッシュ移動だけで終わった（実際にはページが切り替わらない）場合
+  window.addEventListener('hashchange', () => hideActivationProgress(null));
+}
+
 async function activateCard(cardEl, options = {}) {
+  // 二重起動ガード — 連打しても通信・遷移が増えない
+  if (cardEl.dataset.activating === '1') return;
+  cardEl.dataset.activating = '1';
+  showActivationProgress(cardEl);
+  let result;
+  try {
+    // runCardActivation は async なので、開く関数が返した Promise（openCreativeDetail 等）が
+    // 解決＝モーダルが開ききるまでここで待つ。失敗（reject）は下の catch で拾う。
+    result = await runCardActivation(cardEl, options);
+  } catch (e) {
+    console.warn('[notification-card] activateCard 失敗', e);
+  } finally {
+    cardEl.dataset.activating = '';
+    if (result === NAVIGATING) {
+      // 次ページに切り替わる瞬間に DOM ごと消えるので残しておく。遷移しなかった時の保険だけ掛ける
+      clearTimeout(progressFallbackTimer);
+      progressFallbackTimer = setTimeout(() => hideActivationProgress(cardEl), NAVIGATE_FALLBACK_MS);
+    } else {
+      hideActivationProgress(cardEl);
+    }
+  }
+}
+
+// 戻り値: NAVIGATING = location.href で別ページへ遷移中 / Promise = 画面を開いている最中 / その他 = 完了
+async function runCardActivation(cardEl, options = {}) {
   const id = cardEl.dataset.notificationId;
   const linkUrl = cardEl.dataset.linkUrl || '';
   const wasUnread = cardEl.classList.contains('unread');
@@ -213,8 +297,7 @@ async function activateCard(cardEl, options = {}) {
   }
 
   if (typeof options.onCardActivated === 'function') {
-    options.onCardActivated({ id, linkUrl, cardEl });
-    return;
+    return options.onCardActivated({ id, linkUrl, cardEl });
   }
 
   // デフォルト遷移ロジック:
@@ -234,7 +317,7 @@ async function activateCard(cardEl, options = {}) {
     // パネルを閉じてからモーダルを開くと自然
     document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
     try {
-      window.openCreativeDetail(creativeMatch[1]);
+      return window.openCreativeDetail(creativeMatch[1]);
     } catch (e) {
       console.warn('[notification-card] openCreativeDetail 失敗', e);
     }
@@ -261,21 +344,19 @@ async function activateCard(cardEl, options = {}) {
     const tweetId = m ? decodeURIComponent(m[1]) : null;
     if (typeof window.openTweetsPage === 'function') {
       try {
-        window.openTweetsPage(tweetId);
-        return;
+        return window.openTweetsPage(tweetId);
       } catch (e) {
         console.warn('[notification-card] openTweetsPage 失敗', e);
       }
     } else if (typeof window.showPage === 'function') {
       try {
-        window.showPage('tweets');
-        return;
+        return window.showPage('tweets');
       } catch (e) {
         console.warn('[notification-card] showPage(tweets) 失敗', e);
       }
     }
     window.location.href = linkUrl;
-    return;
+    return NAVIGATING;
   }
 
   // 案件への参加申請（ADR 051）: /haruka.html?join_request=<id> → リロード無しで申請モーダルを開く。
@@ -285,14 +366,13 @@ async function activateCard(cardEl, options = {}) {
     document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
     if (typeof window.openJoinRequestById === 'function') {
       try {
-        window.openJoinRequestById(decodeURIComponent(joinReqMatch[1]));
-        return;
+        return window.openJoinRequestById(decodeURIComponent(joinReqMatch[1]));
       } catch (e) {
         console.warn('[notification-card] openJoinRequestById 失敗', e);
       }
     }
     window.location.href = linkUrl;
-    return;
+    return NAVIGATING;
   }
 
   // 単価の承認待ち / 承認 / 差し戻し（ADR 037）: /haruka.html?project=<id>&tab=estimate 形式。
@@ -303,14 +383,13 @@ async function activateCard(cardEl, options = {}) {
     document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
     if (typeof window.openProjectPricing === 'function') {
       try {
-        window.openProjectPricing(decodeURIComponent(projectMatch[1]));
-        return;
+        return window.openProjectPricing(decodeURIComponent(projectMatch[1]));
       } catch (e) {
         console.warn('[notification-card] openProjectPricing 失敗', e);
       }
     }
     window.location.href = linkUrl;
-    return;
+    return NAVIGATING;
   }
 
   // 作品ギャラリー通知: /haruka.html?portfolio=<creative_id> 形式。
@@ -321,19 +400,19 @@ async function activateCard(cardEl, options = {}) {
     document.dispatchEvent(new CustomEvent('notification:requestPanelClose'));
     if (typeof window.pfOpenByCreativeId === 'function') {
       try {
-        window.pfOpenByCreativeId(decodeURIComponent(portfolioMatch[1]));
-        return;
+        return window.pfOpenByCreativeId(decodeURIComponent(portfolioMatch[1]));
       } catch (e) {
         console.warn('[notification-card] pfOpenByCreativeId 失敗', e);
       }
     }
     window.location.href = linkUrl;
-    return;
+    return NAVIGATING;
   }
 
   // /announcements/* 等の社内URLはそのまま遷移（クエリ ?creative= でディープリンクを保つ既存仕組みあり）
   if (linkUrl.startsWith('/')) {
     window.location.href = linkUrl;
+    return NAVIGATING;
   } else {
     window.open(linkUrl, '_blank', 'noopener');
   }

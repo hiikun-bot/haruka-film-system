@@ -693,3 +693,71 @@
     min-height: 44px;
   }
 }
+
+/* -----------------------------
+ * 11. 通知クリック → 画面が開くまでの進捗フィードバック（#449 作り直し）
+ *     クリック後 1〜2 秒「動いているのか分からない」状態を減らす。
+ *     画面最上部に細い流れるバー、押されたカードを半透明＋スピナー。
+ *     表示/非表示は public/js/notification-card.js の show/hideActivationProgress。
+ * ----------------------------- */
+.notification-activation-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 100000; /* 通知パネル・各種モーダルより前面 */
+  background: rgba(62, 207, 202, 0.18);
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0s linear 0.15s;
+}
+.notification-activation-progress.active {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.15s ease, visibility 0s;
+}
+.notification-activation-progress::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, #3ECFCA 50%, transparent);
+  animation: notification-progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes notification-progress-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+/* 押されたカード自身も "処理中" を伝える */
+.notification-card.is-activating {
+  opacity: 0.55;
+  pointer-events: none;
+  background: #F0FDFC;
+}
+.notification-card.is-activating::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border: 2px solid #3ECFCA;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: notification-card-spin 0.7s linear infinite;
+}
+@keyframes notification-card-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-activation-progress::before { animation-duration: 2.5s; }
+  .notification-card.is-activating::after { animation-duration: 1.6s; }
+}
