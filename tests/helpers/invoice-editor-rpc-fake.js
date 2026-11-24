@@ -154,23 +154,47 @@ function createInvoiceEditorRpcFake({ rows, setRows }) {
   function removeItemsRecalc(a) {
     const bad = checkStatuses(a.p_editable_statuses);
     if (bad) return bad;
-    const inv = rows('invoices').find(r => r.id === a.p_invoice_id);
-    if (!inv) return { ok: false, code: 'NOT_FOUND' };
-    if (!a.p_editable_statuses.includes(inv.status)) return { ok: false, code: 'NOT_EDITABLE', status: inv.status };
-    const exp = a.p_expected || {};
-    if ((inv.tax_mode ?? null) !== (exp.tax_mode ?? null) || (inv.withholding_enabled ?? null) !== (exp.withholding_enabled ?? null)) return { ok: false, code: 'STALE' };
-    const del = new Set(a.p_delete_ids || []);
-    const cur = rows('invoice_items').filter(r => r.invoice_id === inv.id && !del.has(r.id)).map(fpKey).sort();
-    const sent = (a.p_remaining || []).map(fpKey).sort();
-    if (JSON.stringify(cur) !== JSON.stringify(sent)) return { ok: false, code: 'STALE' };
-    const gone = rows('invoice_items').filter(r => r.invoice_id === inv.id && del.has(r.id)).map(r => r.id);
-    setRows('invoice_items', rows('invoice_items').filter(r => !(r.invoice_id === inv.id && del.has(r.id))));
-    const p = a.p_invoice || {};
-    if (inv.tax_mode === 'exclusive') {
-      Object.assign(inv, { subtotal_amount: p.subtotal_amount, tax_amount: p.tax_amount, total_amount: p.total_amount, withholding_amount: p.withholding_amount, payout_amount: p.payout_amount });
-    } else inv.total_amount = p.total_amount;
-    inv.updated_at = now();
-    return { ok: true, deleted_ids: gone, updated_at: inv.updated_at };
+    const reqs = [...(a.p_requests || [])].sort((x, y) => String(x.invoice_id).localeCompare(String(y.invoice_id)));
+    if (new Set(reqs.map(r => r.invoice_id)).size !== reqs.length) return { error: { code: '22023', message: 'duplicate invoice_id in p_requests' } };
+    // 1 周目: 確かめるだけ
+    const results = [], okReqs = [];
+    let badCode = null;
+    for (const rq of reqs) {
+      const inv = rows('invoices').find(r => r.id === rq.invoice_id);
+      let code;
+      if (!inv) code = 'NOT_FOUND';
+      else if (!a.p_editable_statuses.includes(inv.status)) code = 'NOT_EDITABLE';
+      else {
+        const exp = rq.expected || {};
+        const del = new Set(rq.delete_ids || []);
+        const cur = rows('invoice_items').filter(r => r.invoice_id === inv.id && !del.has(r.id)).map(fpKey).sort();
+        const sent = (rq.remaining || []).map(fpKey).sort();
+        if ((inv.tax_mode ?? null) !== (exp.tax_mode ?? null) || (inv.withholding_enabled ?? null) !== (exp.withholding_enabled ?? null)
+          || JSON.stringify(cur) !== JSON.stringify(sent)) code = 'STALE';
+        else code = 'OK';
+      }
+      if (code === 'OK') okReqs.push(rq);
+      else {
+        results.push({ invoice_id: rq.invoice_id, result: code, status: inv ? inv.status : null });
+        if (code === 'NOT_EDITABLE') badCode = 'NOT_EDITABLE';
+        else if (code === 'STALE' && !badCode) badCode = 'STALE';
+      }
+    }
+    if (a.p_all_or_nothing && badCode) return { ok: false, code: badCode, results };
+    // 2 周目: 書く
+    for (const rq of okReqs) {
+      const inv = rows('invoices').find(r => r.id === rq.invoice_id);
+      const del = new Set(rq.delete_ids || []);
+      const gone = rows('invoice_items').filter(r => r.invoice_id === inv.id && del.has(r.id)).map(r => r.id);
+      setRows('invoice_items', rows('invoice_items').filter(r => !(r.invoice_id === inv.id && del.has(r.id))));
+      const p = rq.totals || {};
+      if (inv.tax_mode === 'exclusive') {
+        Object.assign(inv, { subtotal_amount: p.subtotal_amount, tax_amount: p.tax_amount, total_amount: p.total_amount, withholding_amount: p.withholding_amount, payout_amount: p.payout_amount });
+      } else inv.total_amount = p.total_amount;
+      inv.updated_at = now();
+      results.push({ invoice_id: inv.id, result: 'OK', status: inv.status, deleted_ids: gone });
+    }
+    return { ok: true, results };
   }
   function deleteEditable(a) {
     const bad = checkStatuses(a.p_editable_statuses);

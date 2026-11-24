@@ -124,6 +124,33 @@ describe('removeItemsFromEditableInvoices', () => {
     expect(db.tables.invoice_items).toHaveLength(4);
   });
 
+  test('allOrNothing: 読んだあと・関数の直前に 2 件目が提出されたら、1 件目からも消さない（1 トランザクション）', async () => {
+    const t = seed();
+    t.invoices.push({ id: 'inv2', issuer_id: U, status: 'draft', tax_mode: 'exclusive', withholding_enabled: true, total_amount: 1 });
+    t.invoice_items.push({ id: 'z', invoice_id: 'inv2', creative_id: 'c1', cost_type: 'base_fee', unit_price: 1, quantity: 1, total_amount: 1 });
+    const db = makeDb(t);
+    db.onRpc = () => { db.tables.invoices.find(x => x.id === 'inv2').status = 'submitted'; };
+    const r = await R.removeItemsFromEditableInvoices(db.client, IE, { itemIds: ['a', 'z'], invoiceIds: ['inv1', 'inv2'], editableStatuses: ['draft'], allOrNothing: true });
+    expect(r).toMatchObject({ ok: false, code: 'NOT_EDITABLE', skippedInvoiceIds: ['inv2'] });
+    expect(db.tables.invoice_items).toHaveLength(4);
+    expect(db.tables.invoices[0].total_amount).toBe(999);
+    expect(db.fake.calls).toEqual([R.REMOVE_FN]);
+  });
+
+  test('複数の請求書: 1 回の呼び出しで両方から外し、請求書ごとに外した明細を返す', async () => {
+    const t = seed();
+    t.invoices.push({ id: 'inv2', issuer_id: 'u2', status: 'rejected', tax_mode: 'inclusive', withholding_enabled: null, total_amount: 1 });
+    t.invoice_items.push(
+      { id: 'z', invoice_id: 'inv2', creative_id: 'c1', cost_type: 'director_fee', unit_price: 3000, quantity: 1, total_amount: 3000 },
+      { id: 'y', invoice_id: 'inv2', creative_id: 'c9', cost_type: 'director_fee', unit_price: 2000, quantity: 1, total_amount: 2000 });
+    const db = makeDb(t);
+    const r = await R.removeItemsFromEditableInvoices(db.client, IE, { itemIds: ['a', 'z'], invoiceIds: ['inv2', 'inv1'], editableStatuses: ['draft', 'rejected'] });
+    expect(r.ok).toBe(true);
+    expect(r.removedByInvoice).toEqual({ inv1: ['a'], inv2: ['z'] });
+    expect(db.fake.calls).toEqual([R.REMOVE_FN]);
+    expect(db.tables.invoices.find(x => x.id === 'inv2').total_amount).toBe(2000);
+  });
+
   test('admin-status（{draft}）は差し戻し中の請求書から外さない', async () => {
     const db = makeDb(seed({ status: 'rejected' }));
     const r = await R.removeItemsFromEditableInvoices(db.client, IE, { itemIds: ['a'], invoiceIds: ['inv1'], editableStatuses: ['draft'] });

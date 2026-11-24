@@ -66,88 +66,114 @@ function rpcResult(data) {
   return r && typeof r === 'object' ? r : null;
 }
 
-/**
- * 請求書 1 件から明細を外し、合計を書き直す。指紋が合わなければ（その間に明細・設定が変わった）読み直して数回やり直す。
- * 読み取りに失敗したら関数を呼ばない（空の明細として 0 円の合計を書かない）。
- * @returns {Promise<{ result: 'ok'|'not_editable'|'not_found'|'failed', removedIds?: string[], status?: string, error?: string }>}
- */
-async function removeItemsFromInvoice(supabase, IE, { invoiceId, itemIds, editableStatuses, maxAttempts = MAX_ATTEMPTS }) {
-  let lastError = 'conflict';
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const [{ data: inv, error: invErr }, { data: items, error: itErr }] = await Promise.all([
-      supabase.from('invoices').select('id, status, tax_mode, withholding_enabled').eq('id', invoiceId).maybeSingle(),
-      supabase.from('invoice_items').select(ITEM_COLS).eq('invoice_id', invoiceId),
-    ]);
-    if (invErr || itErr) return { result: 'failed', error: (invErr || itErr).message };
-    if (!inv) return { result: 'not_found' };
-    if (!editableStatuses.includes(inv.status)) return { result: 'not_editable', status: inv.status };
-    const wanted = new Set(itemIds.map(String));
-    const present = (items || []).filter(it => wanted.has(String(it.id))).map(it => it.id);
-    if (!present.length) return { result: 'ok', removedIds: [] };
-    const remaining = remainingFingerprint(items, present);
-    const { data, error } = await supabase.rpc(REMOVE_FN, {
-      p_invoice_id: invoiceId,
-      p_editable_statuses: editableStatuses,
-      p_delete_ids: present,
-      p_remaining: remaining,
-      p_expected: { tax_mode: inv.tax_mode ?? null, withholding_enabled: inv.withholding_enabled ?? null },
-      p_invoice: totalsArg(inv, remaining, IE),
-    });
-    if (error) {
-      return {
-        result: 'failed',
-        error: isMissingFunctionError(error, REMOVE_FN)
-          ? 'DB の更新（2026-11-24b_invoice_remove_items_and_delete_fn.sql）が未適用です'
-          : error.message,
-      };
-    }
-    const r = rpcResult(data);
-    if (!r) return { result: 'failed', error: '関数の結果を読めませんでした' };
-    if (r.ok) return { result: 'ok', removedIds: Array.isArray(r.deleted_ids) ? r.deleted_ids : present };
-    if (r.code === 'NOT_EDITABLE') return { result: 'not_editable', status: r.status || null };
-    if (r.code === 'NOT_FOUND') return { result: 'not_found' };
-    lastError = String(r.code || 'conflict'); // STALE / CONFLICT … 読み直してやり直す
-  }
-  return { result: 'failed', error: `請求書の明細が更新中のため外せませんでした（${lastError}）` };
-}
+const defaultSleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /**
- * 複数の請求書から明細を外す（admin-status・納品の取り消しで共用）。
+ * 複数の請求書から明細を外し、各請求書の合計を書き直す（admin-status・納品の取り消しで共用）。
+ * 関数 invoice_remove_items_recalc を 1 回呼ぶ＝全部の請求書を 1 トランザクションで扱う。
+ * 指紋が合わない（その間に明細・設定が変わった）請求書は、読み直して数回やり直す（間を少しあける）。
+ * 読み取りに失敗したら関数を呼ばない（空の明細として 0 円の合計を書かない）。
  * @param {object} p
  * @param {string[]} p.itemIds 外したい明細 id
  * @param {string[]} p.invoiceIds その明細が載っている請求書 id
  * @param {string[]} p.editableStatuses 外してよい状態（draft / rejected の部分集合）
- * @param {boolean} [p.allOrNothing] true なら、始める前に全件の状態を確かめ、1 件でも外せない状態なら何も消さない
- *   （始めたあとに別の請求書が提出された場合はそこで止まる。その前の請求書から外した分は戻らない）
- * @returns {Promise<{ ok: boolean, code?: string, error?: string, skippedInvoiceIds: string[], failedInvoiceIds: string[], removedItemIds: string[] }>}
- *   ok=false は「始める前に止めた」（code='NOT_EDITABLE' か読み取りの失敗）。始めたあとの失敗は failedInvoiceIds に入る
+ * @param {boolean} [p.allOrNothing] true なら、1 件でも外せない請求書があれば何も書かない（DB の関数が保証する）
+ * @returns {Promise<{ ok: boolean, code?: string, error?: string, skippedInvoiceIds: string[], failedInvoiceIds: string[],
+ *   removedItemIds: string[], removedByInvoice: Object<string,string[]>, errors: string[] }>}
+ *   ok=false は allOrNothing で止めた（何も書いていない）か、最初の読み取りに失敗した（何も書いていない）とき
  */
-async function removeItemsFromEditableInvoices(supabase, IE, { itemIds, invoiceIds, editableStatuses, allOrNothing = false }) {
-  const out = { ok: true, skippedInvoiceIds: [], failedInvoiceIds: [], removedItemIds: [], errors: [] };
-  const ids = [...new Set((itemIds || []).filter(Boolean))];
-  const invIds = [...new Set((invoiceIds || []).filter(Boolean))].sort();
-  if (!ids.length || !invIds.length) return out;
-  if (allOrNothing) {
-    const { data: invNow, error } = await supabase.from('invoices').select('id, status').in('id', invIds);
-    if (error) return { ...out, ok: false, error: error.message };
-    const bad = (invNow || []).filter(r => !editableStatuses.includes(r.status)).map(r => r.id);
-    if (bad.length) return { ...out, ok: false, code: 'NOT_EDITABLE', skippedInvoiceIds: bad };
-  }
-  for (const invoiceId of invIds) {
-    const r = await removeItemsFromInvoice(supabase, IE, { invoiceId, itemIds: ids, editableStatuses });
-    if (r.result === 'ok') out.removedItemIds.push(...(r.removedIds || []));
-    else if (r.result === 'not_editable') {
-      out.skippedInvoiceIds.push(invoiceId);
-      if (allOrNothing) { out.ok = false; out.code = 'NOT_EDITABLE'; return out; }
-    } else if (r.result === 'failed') {
-      out.failedInvoiceIds.push(invoiceId);
-      out.errors.push(r.error);
-      if (allOrNothing) { out.ok = false; out.code = 'FAILED'; out.error = r.error; return out; }
+async function removeItemsFromEditableInvoices(supabase, IE, {
+  itemIds, invoiceIds, editableStatuses, allOrNothing = false, maxAttempts = MAX_ATTEMPTS, sleep = defaultSleep,
+}) {
+  const out = { ok: true, skippedInvoiceIds: [], failedInvoiceIds: [], removedItemIds: [], removedByInvoice: {}, errors: [] };
+  const ids = [...new Set((itemIds || []).filter(Boolean).map(String))];
+  let pending = [...new Set((invoiceIds || []).filter(Boolean).map(String))].sort();
+  if (!ids.length || !pending.length) return out;
+  const wanted = new Set(ids);
+  const fail = (invIds, msg) => {
+    out.failedInvoiceIds.push(...invIds);
+    out.errors.push(msg);
+    if (allOrNothing) { out.ok = false; out.code = 'FAILED'; out.error = msg; }
+    return out;
+  };
+
+  for (let attempt = 0; attempt < maxAttempts && pending.length; attempt++) {
+    if (attempt > 0) await sleep(50 * attempt + Math.floor(Math.random() * 50));
+    const [{ data: invs, error: invErr }, { data: items, error: itErr }] = await Promise.all([
+      supabase.from('invoices').select('id, status, tax_mode, withholding_enabled').in('id', pending),
+      supabase.from('invoice_items').select(`invoice_id, ${ITEM_COLS}`).in('invoice_id', pending),
+    ]);
+    if (invErr || itErr) {
+      const msg = (invErr || itErr).message;
+      if (attempt === 0 && allOrNothing) return { ...out, ok: false, error: msg, failedInvoiceIds: pending };
+      return fail(pending, msg);
     }
-    // not_found … その間に請求書ごと消された（外す明細も無い）
+    const invById = new Map((invs || []).map(r => [String(r.id), r]));
+    const itemsByInv = new Map();
+    for (const it of (items || [])) {
+      const k = String(it.invoice_id);
+      if (!itemsByInv.has(k)) itemsByInv.set(k, []);
+      itemsByInv.get(k).push(it);
+    }
+    const requests = [];
+    for (const invId of pending) {
+      const inv = invById.get(invId);
+      if (!inv) continue; // その間に請求書ごと消された
+      if (!editableStatuses.includes(inv.status)) {
+        if (allOrNothing) return { ...out, ok: false, code: 'NOT_EDITABLE', skippedInvoiceIds: [invId] };
+        out.skippedInvoiceIds.push(invId);
+        continue;
+      }
+      const invItems = itemsByInv.get(invId) || [];
+      const present = invItems.filter(it => wanted.has(String(it.id))).map(it => it.id);
+      if (!present.length) continue; // 外す明細がもう無い
+      const remaining = remainingFingerprint(invItems, present);
+      requests.push({
+        invoice_id: invId,
+        delete_ids: present,
+        remaining,
+        expected: { tax_mode: inv.tax_mode ?? null, withholding_enabled: inv.withholding_enabled ?? null },
+        totals: totalsArg(inv, remaining, IE),
+      });
+    }
+    if (!requests.length) return out;
+
+    const { data, error } = await supabase.rpc(REMOVE_FN, {
+      p_requests: requests, p_editable_statuses: editableStatuses, p_all_or_nothing: !!allOrNothing,
+    });
+    if (error) {
+      return fail(requests.map(r => r.invoice_id), isMissingFunctionError(error, REMOVE_FN)
+        ? 'DB の更新（2026-11-24b_invoice_remove_items_and_delete_fn.sql）が未適用です'
+        : error.message);
+    }
+    const res = rpcResult(data);
+    if (!res || !Array.isArray(res.results)) return fail(requests.map(r => r.invoice_id), '関数の結果を読めませんでした');
+    const byInv = new Map(res.results.map(x => [String(x.invoice_id), x]));
+    if (!res.ok) {
+      // allOrNothing で止まった（何も書いていない）。提出された請求書があれば止める、指紋違いだけなら全部やり直す
+      const notEditable = res.results.filter(x => x.result === 'NOT_EDITABLE').map(x => String(x.invoice_id));
+      if (res.code === 'NOT_EDITABLE' || notEditable.length) return { ...out, ok: false, code: 'NOT_EDITABLE', skippedInvoiceIds: notEditable };
+      pending = requests.map(r => r.invoice_id);
+      continue;
+    }
+    const stale = [];
+    for (const rq of requests) {
+      const x = byInv.get(rq.invoice_id);
+      if (!x) { stale.push(rq.invoice_id); continue; }
+      if (x.result === 'OK') {
+        const del = Array.isArray(x.deleted_ids) ? x.deleted_ids.map(String) : [];
+        out.removedItemIds.push(...del);
+        if (del.length) out.removedByInvoice[rq.invoice_id] = del;
+      } else if (x.result === 'NOT_EDITABLE') out.skippedInvoiceIds.push(rq.invoice_id);
+      else if (x.result === 'STALE') stale.push(rq.invoice_id);
+      // NOT_FOUND … その間に請求書ごと消された
+    }
+    pending = stale;
   }
+  if (pending.length) return fail(pending, '請求書の明細が更新中のため外せませんでした（やり直しても合いませんでした）');
   return out;
 }
+
 
 /**
  * 下書き・差し戻し中の請求書を明細ごと消す（DELETE /invoices/:id）。権限の確認は呼ぶ側で済ませ、そのときの発行者を渡す。
@@ -177,5 +203,5 @@ async function deleteEditableInvoice(supabase, { invoiceId, editableStatuses, ex
 module.exports = {
   REMOVE_FN, DELETE_FN, MAX_ATTEMPTS,
   remainingFingerprint, totalsArg, isMissingFunctionError,
-  removeItemsFromInvoice, removeItemsFromEditableInvoices, deleteEditableInvoice,
+  removeItemsFromEditableInvoices, deleteEditableInvoice,
 };
