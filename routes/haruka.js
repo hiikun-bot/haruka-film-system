@@ -13947,10 +13947,88 @@ router.post('/creatives/:id/back-template-status', requireAuth, async (req, res)
   });
 });
 
+// ── クリエイティブ削除の権限判定（ADR 015・複数 id を一括判定） ──
+// 許可:
+//   - 実効ロールが permission 'project.delete'（案件を丸ごと削除できる人＝admin / 秘書 / プロデューサー層。
+//     権限管理画面で ON/OFF 可）を持つ → どのクリエイティブでも削除可
+//   - それ以外 → 次の本人の分だけ
+//       ・案件リーダー（projects.director_id / producer_id / sub_director_ids / sub_producer_ids）
+//       ・そのクリエイティブに director / producer 相当で担当している人（creative_assignments）
+//       ・そのクリエイティブの担当者（editor / designer 等）… ただし納品前のものに限る
+//         （納品済みを消すと D/P を含む全員の担当行・支払い帰属が消えるため。誤登録の取り消し用途）
+// 判定は roleCodesHavePermission（user_roles の集合判定・X-View-As 尊重）。N+1 を避けて一括取得する。
+// 戻り値: { ok:true, notAllowed:[file_name...], canDeleteAny, found } / { ok:false, status, error }
+const CREATIVE_DELETE_LEADER_ASSIGN_ROLES = new Set(['director', 'producer', 'producer_director']);
+async function evaluateCreativeDeletePermission(req, ids) {
+  const codes = await getEffectiveRoleCodes(req);
+  if (await roleCodesHavePermission(codes, 'project.delete')) {
+    return { ok: true, notAllowed: [], canDeleteAny: true, found: null };
+  }
+  const userId = req.user?.id;
+  const { data: cRows, error: cErr } = await supabase
+    .from('creatives')
+    .select('id, file_name, status, delivered_at, force_delivered, projects:project_id(director_id, producer_id, sub_director_ids, sub_producer_ids)')
+    .in('id', ids);
+  if (cErr) return { ok: false, status: 500, error: cErr.message };
+  // creative_id → 自分の担当行の role 一覧
+  const myRoles = new Map();
+  if (userId && (cRows || []).length > 0) {
+    const { data: myAsn, error: aErr } = await supabase
+      .from('creative_assignments')
+      .select('creative_id, role')
+      .in('creative_id', ids)
+      .eq('user_id', userId);
+    if (aErr) return { ok: false, status: 500, error: aErr.message };
+    for (const a of (myAsn || [])) {
+      if (!myRoles.has(a.creative_id)) myRoles.set(a.creative_id, []);
+      myRoles.get(a.creative_id).push(a.role);
+    }
+  }
+  const notAllowed = [];
+  for (const c of (cRows || [])) {
+    const proj = c.projects || {};
+    const inArr = (arr) => Array.isArray(arr) && arr.includes(userId);
+    const isLeader = !!userId && (
+      proj.director_id === userId || proj.producer_id === userId ||
+      inArr(proj.sub_director_ids) || inArr(proj.sub_producer_ids));
+    const roles = myRoles.get(c.id) || [];
+    const isDpAssigned = roles.some(r => CREATIVE_DELETE_LEADER_ASSIGN_ROLES.has(r));
+    const isDelivered = c.status === '納品' || !!c.delivered_at || !!c.force_delivered;
+    const isWorkerAssigned = roles.length > 0 && !isDelivered;
+    if (!isLeader && !isDpAssigned && !isWorkerAssigned) {
+      notAllowed.push((c.file_name || c.id) + (roles.length > 0 && isDelivered ? '（納品済み）' : ''));
+    }
+  }
+  return { ok: true, notAllowed, canDeleteAny: false, found: (cRows || []).length };
+}
+
+// GET /api/creatives/:id/delete-eligibility
+// フロント: 詳細モーダルの「🗑 削除」ボタン表示制御（can_delete=false なら非表示）
+router.get('/creatives/:id/delete-eligibility', requireAuth, async (req, res) => {
+  const r = await evaluateCreativeDeletePermission(req, [req.params.id]);
+  if (!r.ok) return res.status(r.status).json({ error: r.error, can_delete: false });
+  if (!r.canDeleteAny && r.found === 0) return res.status(404).json({ error: 'クリエイティブが見つかりません', can_delete: false });
+  res.json({ can_delete: r.notAllowed.length === 0 });
+});
+
 // クリエイティブ削除（複数対応）
 router.delete('/creatives', requireAuth, async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids は必須です' });
+
+  // 権限ガード（ADR 015）: 1 件でも権限の無い対象が混ざっていれば全体を 403（部分削除の事故を防ぐ）。
+  // 従来は requireAuth のみで、ログインしていれば誰でも任意のクリエイティブを消せた。
+  const perm = await evaluateCreativeDeletePermission(req, ids);
+  if (!perm.ok) return res.status(perm.status).json({ error: perm.error });
+  if (perm.notAllowed.length > 0) {
+    return res.status(403).json({
+      error:
+        '以下のクリエイティブを削除する権限がありません。\n' +
+        '（削除できるのは 管理者・秘書・プロデューサー・PD、案件の担当ディレクター・プロデューサー、\n' +
+        '　そのクリエイティブの担当者〔編集者・デザイナーは納品前のものだけ〕です）\n\n' +
+        perm.notAllowed.map(n => `・${n}`).join('\n'),
+    });
+  }
 
   // 請求書明細に紐付いていないか事前チェック（FK 違反を分かりやすいメッセージに変換）
   const { data: linkedItems, error: linkErr } = await supabase
