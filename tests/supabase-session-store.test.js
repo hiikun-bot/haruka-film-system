@@ -46,9 +46,13 @@ function makeSupabaseMock() {
           return ret(ok ? [{ sid: sidFilter[2] }] : []);
         }
         if (op === 'delete') {
-          if (sidFilter) state.rows.delete(sidFilter[2]);
           const lt = rec.filters.find(f => f[0] === 'lt');
-          if (lt) for (const [sid, row] of state.rows) if (row.expired_at < lt[2]) state.rows.delete(sid);
+          if (sidFilter) {
+            const row = state.rows.get(sidFilter[2]);
+            if (row && (!lt || row[lt[1]] < lt[2])) state.rows.delete(sidFilter[2]);
+          } else if (lt) {
+            for (const [sid, row] of state.rows) if (row[lt[1]] < lt[2]) state.rows.delete(sid);
+          }
           return Promise.resolve(result(null));
         }
         return Promise.resolve(result(null));
@@ -127,6 +131,35 @@ describe('SupabaseSessionStore', () => {
     expect(await p(cb => store.get('old', cb))).toBeNull();
     await new Promise(r => setImmediate(r));
     expect(mock.calls.some(c => c.op === 'delete' && c.filters.some(f => f[2] === 'old'))).toBe(true);
+  });
+
+  test('get が失効行を消すときも expired_at で絞る（読んだ後に付いた失効の印は消さない）', async () => {
+    mock.state.rows.set('old', { sess: { cookie: {}, passport: { user: 'u1' } }, expired_at: new Date(Date.now() - 1000).toISOString() });
+    let release;
+    mock.state.selectGate = new Promise(r => { release = r; });
+    const pending = p(cb => store.get('old', cb));
+    // select の応答待ちの間に、別コンテナが同じ sid を logout（失効の印に置換）した想定
+    mock.state.rows.set('old', {
+      sid: 'old',
+      sess: { [REVOKED_KEY]: true },
+      expired_at: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+    });
+    release();
+    mock.state.selectGate = null;
+    expect(await pending).toBeNull();
+    await new Promise(r => setImmediate(r));
+    const del = mock.calls.find(c => c.op === 'delete' && c.filters.some(f => f[2] === 'old'));
+    expect(del.filters.some(f => f[0] === 'lt' && f[1] === 'expired_at')).toBe(true);
+    expect(mock.state.rows.get('old').sess[REVOKED_KEY]).toBe(true);
+  });
+
+  test('cleanupExpired は期限の残る失効の印を消さない', async () => {
+    await p(cb => store.set('s1', sessWithMaxAge(60000, { passport: { user: 'u1' } }), cb));
+    await p(cb => store.destroy('s1', cb));
+    mock.state.rows.set('gone', { sess: { cookie: {} }, expired_at: new Date(Date.now() - 1000).toISOString() });
+    await store.cleanupExpired();
+    expect(mock.state.rows.get('s1').sess[REVOKED_KEY]).toBe(true);
+    expect(mock.state.rows.has('gone')).toBe(false);
   });
 
   test('touch は sid ごとに間引かれ、間引き中もキャッシュ上の寿命は伸びる', async () => {
