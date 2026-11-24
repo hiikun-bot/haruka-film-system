@@ -20033,21 +20033,52 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   }
   if (itemsErr) return res.status(500).json({ error: itemsErr.message });
 
-  // 後方互換: invoice_item_details にも対応行を入れる（旧クエリで参照する画面が混在しても破綻しないように）
+  // 後方互換: invoice_item_details にも対応行を入れる（旧クエリで参照する画面が混在しても破綻しないように）。
+  // この表は invoice_items.label が空の旧データでしかフロントから読まれないため、
+  // ここでの失敗で請求書生成そのものを 500 にはしない（invoice / invoice_items は既に保存済み）。
+  // 本番DBの CHECK 制約 invoice_item_details_cost_type_check が古い種別しか許さず、
+  // producer_fee / hourly_fee / hourly_expense / installment_fee などで違反していた。
+  // 制約は migrations/2026-11-24_invoice_item_details_drop_cost_type_check.sql で撤去するが、
+  // 未適用の環境でも請求書を作れるようにフォールバックも残す。
+  const LEGACY_DETAIL_COST_TYPES = new Set(['base_fee', 'script_fee', 'ai_fee', 'other_fee', 'director_fee']);
   const allDetails = (invItems || []).map(ii => ({
     invoice_item_id: ii.id,
     cost_type:  ii.cost_type || 'other_fee',
     unit_price: ii.unit_price || 0,
     amount:     ii.unit_price || 0,
   }));
+  let detailsSaved = true;
   if (allDetails.length) {
-    const { error: detErr } = await supabase.from('invoice_item_details').insert(allDetails);
-    if (detErr) return res.status(500).json({ error: detErr.message });
+    let { error: detErr } = await supabase.from('invoice_item_details').insert(allDetails);
+    // 23514 = check_violation。制約名も見て、別の CHECK 違反を丸めで隠さない
+    if (detErr && detErr.code === '23514' && /invoice_item_details_cost_type_check/.test(detErr.message || '')) {
+      // 旧 CHECK 制約が残っている環境向け: 許容外の種別を other_fee に丸めて再試行
+      console.warn('[invoices/generate] invoice_item_details の cost_type 制約に抵触 → other_fee に丸めて再試行:', detErr.message);
+      ({ error: detErr } = await supabase.from('invoice_item_details').insert(
+        allDetails.map(d => ({ ...d, cost_type: LEGACY_DETAIL_COST_TYPES.has(d.cost_type) ? d.cost_type : 'other_fee' }))
+      ));
+    }
+    if (detErr) {
+      // 請求書本体は保存済みなので 500 にはしないが、明細だけ欠けたまま気づけない状態は避ける:
+      // 自動エラー通知（Slack）へ流し、レスポンスにも details_saved:false を返す。
+      detailsSaved = false;
+      console.warn('[invoices/generate] 後方互換 invoice_item_details の保存に失敗（請求書は作成済みのため続行）:', detErr.message);
+      try {
+        require('../notifications').notifyAutoError({
+          source: 'server',
+          kind: 'invoice-details-insert-failed',
+          message: `invoice_item_details の保存に失敗（invoice_id=${invoice.id} / ${invoiceNumber}・${allDetails.length}行）: ${detErr.message}`,
+          url: req.originalUrl || null,
+          apiPath: req.originalUrl || null,
+          statusCode: 200,
+        }).catch(() => {});
+      } catch (_) { /* 通知失敗で請求書生成を巻き込まない */ }
+    }
   }
 
   // ADR 047: Drive への PDF 自動保存は「提出時」に行う（下書きを請求書フォルダに置くと
   // 振込管理のスキャンが承認状態を見ずに合算してしまうため、作成時には保存しない）
-  res.json({ ok: true, id: invoice.id, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: itemRows.length });
+  res.json({ ok: true, id: invoice.id, invoice_number: invoiceNumber, total_amount: totalAmount, items_count: itemRows.length, details_saved: detailsSaved });
 });
 
 // ==================== 🧾 請求書エディタ（ADR 046・税抜＋源泉 / tax_mode='exclusive'） ====================
