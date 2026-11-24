@@ -10028,6 +10028,33 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   監査: 変更ごとに creative_edit_logs に1行ずつ INSERT（サーバー側）。
         案件変更時は「変更理由」が必須。
 -->
+<!-- 納品完了の取り消し（openDeliveryRevert / submitDeliveryRevert） -->
+<div class="modal-overlay" id="modal-delivery-revert" style="z-index:10001">
+  <div class="modal" style="width:520px;max-width:95vw">
+    <div class="modal-title">↩️ 納品完了を取り消す<button class="modal-close" onclick="closeModal('modal-delivery-revert')">×</button></div>
+    <div style="font-size:12px;font-family:monospace;color:var(--em-dark);font-weight:600;word-break:break-all;margin-bottom:8px" id="dr-filename"></div>
+    <div id="dr-blocked" style="display:none;background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;border-radius:8px;padding:10px 14px;font-size:12.5px;line-height:1.6;margin-bottom:10px"></div>
+    <div id="dr-form">
+      <div style="font-size:12.5px;color:var(--text-muted);line-height:1.6;margin-bottom:10px">
+        間違えて「納品」にしたときに、納品前のステータスへ戻します。納品完了日と、支払い・請求の本数カウントから外れます。だれが・いつ・なぜ戻したかは「編集履歴」に残り、案件のチャンネルにもお知らせします。
+      </div>
+      <div id="dr-warn" style="display:none;background:#fef3c7;border:1px solid #f0b429;color:#8a6500;border-radius:8px;padding:10px 14px;font-size:12.5px;line-height:1.6;margin-bottom:10px"></div>
+      <div class="form-group">
+        <label class="form-label">戻し先のステータス</label>
+        <select class="form-select" id="dr-target"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">取り消しの理由（必須・履歴に残ります）</label>
+        <textarea class="form-input" id="dr-reason" rows="2" maxlength="500" style="resize:vertical" placeholder="例: 別の制作と押し間違えて納品完了にした"></textarea>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+      <button class="btn-primary" id="dr-submit-btn" onclick="submitDeliveryRevert()">納品を取り消す</button>
+      <button class="btn" onclick="closeModal('modal-delivery-revert')">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-creative-postedit" style="z-index:10001">
   <div class="modal" style="width:760px;max-width:95vw;padding:0;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;max-height:92vh">
     <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
@@ -10252,6 +10279,13 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                   style="display:none;flex-shrink:0;background:#fff;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11.5px;color:var(--text-muted);cursor:pointer;white-space:nowrap"
                   title="案件の取り違え等を後から修正します">
             ✎ 事後修正
+          </button>
+          <!-- 納品完了の取り消し（担当D/P・管理者・PD のみ表示。GET /creatives/:id/delivery-revert-eligibility で出し分け） -->
+          <button id="cd-delivery-revert-btn"
+                  onclick="openDeliveryRevert()"
+                  style="display:none;flex-shrink:0;background:#fff;border:1px solid #f0b429;border-radius:6px;padding:4px 10px;font-size:11.5px;color:#8a6500;cursor:pointer;white-space:nowrap;margin-left:6px"
+                  title="間違えて納品完了にしたときに、納品前のステータスへ戻します">
+            ↩️ 納品を取り消す
           </button>
           <!-- クリエイティブ削除ボタン: リスト表示のチェックボックス削除と同じ DELETE /api/creatives を1件で呼ぶ。
                ガント表示・詳細モーダルからも不要クリエイティブを消せるようにするための入口（confirm で誤操作防止）。
@@ -18277,6 +18311,14 @@ function openStatusModal(id) {
   const reasonEl = document.getElementById('status-reason');
   if (reasonEl) reasonEl.value = '';
   onQuickStatusSelectChange();
+  // 非admin が納品済みを開いたとき: 戻し方の案内（実際に戻せるかは詳細画面でサーバーが判定する）
+  if (!isAdmin && c.status === '納品') {
+    const hintEl = document.getElementById('status-quick-hint');
+    if (hintEl) {
+      hintEl.textContent = '間違えて納品完了にした場合は、この制作の担当ディレクター・プロデューサーが詳細画面の「↩️ 納品を取り消す」から戻せます（ボタンが無ければ担当D/Pに依頼してください）';
+      hintEl.style.display = '';
+    }
+  }
   openModal('modal-status');
 }
 
@@ -41683,6 +41725,8 @@ const ROLE_PERM_LIST = [
   { section:'クリエイティブ', key:'creative.csv_import',         label:'一括登録（CSV）' },
   { section:'クリエイティブ', key:'creative.sos_others',         label:'他人のCLにSOSを操作' },
   { section:'クリエイティブ', key:'creative.wcheck_toggle',      label:'Wチェック要否の個別設定（静止画）' },
+  // 納品完了の取り消し: 担当D/P（今月分）・管理者・PD は権限なしでも可。ON にしたロールは担当外・先月以前も戻せる
+  { section:'クリエイティブ', key:'creative.delivery_revert_any', label:'納品完了の取り消し（担当外・先月以前も）' },
   { section:'メンバー管理',   key:'member.list',                 label:'メンバー一覧閲覧' },
   { section:'メンバー管理',   key:'member.edit_password',        label:'メンバー編集・PW変更' },
   { section:'メンバー管理',   key:'member.view_email',           label:'メンバー一覧のメール列を表示（編集は含まない）' },
@@ -48001,6 +48045,8 @@ async function openCreativeDetail(id) {
     const bh = document.getElementById('cd-ball-holder');  if (bh) { bh.style.display = 'none'; bh.innerHTML = ''; }
     // 🗑 削除ボタンは前回開いた CR の判定が残らないよう、開いた直後に一旦隠す（再表示は refreshCreativeDeleteButton）
     const db = document.getElementById('cd-delete-btn');   if (db) db.style.display = 'none';
+    // ↩️ 納品を取り消す も同様（再表示は refreshCreativeDeliveryRevertButton）
+    const drb = document.getElementById('cd-delivery-revert-btn'); if (drb) drb.style.display = 'none';
   } catch (_) {}
 
   // 1.5) extras（files / rounds / custom-fields値）の fetch を payload と同時に発射する。
@@ -48390,6 +48436,7 @@ async function openCreativeDetail(id) {
 
   // 事後修正モード: ボタン表示制御 + 編集履歴ロード（モーダル下部の追加情報なので非同期で OK・失敗しても無視）
   refreshCreativePostEditButton(id).catch(() => {});
+  refreshCreativeDeliveryRevertButton(id).catch(() => {});
   refreshCreativeEditHistory(id).catch(() => {});
   // 🗑 削除ボタン: 権限ありのときだけ表示（失敗時は非表示のまま）
   refreshCreativeDeleteButton(id).catch(() => {});
@@ -58028,6 +58075,110 @@ async function refreshCreativeDeleteButton(creativeId) {
   }
 }
 
+// =====================================================================
+// 納品完了の取り消し（「間違って納品完了にした」を現場で戻す・2026-11-24）
+// =====================================================================
+// 出し分けはサーバー（GET /creatives/:id/delivery-revert-eligibility）が決める:
+//   担当D/P（今月の納品分）・管理者・PD（全件）だけに visible=true が返る。ロール直書きはしない（ADR 015）。
+// 納品済みでない制作は API を呼ばずに非表示（詳細を開くたびの余計な往復を避ける）。
+let _drCtx = null; // { id, targets, default_target, can_revert, blocked_reason, draft_invoices, past_month }
+const DR_DELIVERED_STATUSES = ['納品', '完納', '納品済'];
+
+async function refreshCreativeDeliveryRevertButton(creativeId) {
+  const btn = document.getElementById('cd-delivery-revert-btn');
+  if (!btn) return;
+  btn.style.display = 'none';
+  _drCtx = null;
+  const c = currentCreativeDetail;
+  if (!creativeId || !c || c.id !== creativeId) return;
+  if (!DR_DELIVERED_STATUSES.includes(c.status) && c.force_delivered !== true) return;
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/delivery-revert-eligibility`);
+    if (!res.ok) return;
+    const j = await res.json();
+    if (currentCreativeDetail?.id !== creativeId) return; // 別の制作に切り替わっていたら捨てる
+    if (j?.visible) {
+      _drCtx = { id: creativeId, ...j };
+      btn.style.display = '';
+    }
+  } catch (_) {
+    // 失敗時は黙って非表示のまま
+  }
+}
+
+function openDeliveryRevert() {
+  const ctx = _drCtx;
+  const c = currentCreativeDetail;
+  if (!ctx || !c || ctx.id !== c.id) return;
+  document.getElementById('dr-filename').textContent = c.file_name || '';
+  const blocked = document.getElementById('dr-blocked');
+  const form = document.getElementById('dr-form');
+  const submit = document.getElementById('dr-submit-btn');
+  if (!ctx.can_revert) {
+    blocked.textContent = ctx.blocked_reason || 'この制作は今は戻せません';
+    blocked.style.display = '';
+    form.style.display = 'none';
+    submit.style.display = 'none';
+  } else {
+    blocked.style.display = 'none';
+    form.style.display = '';
+    submit.style.display = '';
+    const sel = document.getElementById('dr-target');
+    sel.innerHTML = (ctx.targets || []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    sel.value = ctx.default_target || (ctx.targets || [])[0] || '';
+    document.getElementById('dr-reason').value = '';
+    const warns = [];
+    if (ctx.past_month) {
+      const ymd = new Date(ctx.delivered_at).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
+      warns.push(`⚠️ 先月以前（納品完了日 ${ymd}）の納品です。締め・請求・振込の確認が済んでいないか確かめてから戻してください。`);
+    } else if (ctx.unknown_date) {
+      warns.push('⚠️ 納品完了日が記録されていない納品です。いつの月の本数に入っていたかを確かめてから戻してください。');
+    }
+    if ((ctx.draft_invoices || []).length) {
+      const nums = ctx.draft_invoices.map(d => d.invoice_number || '番号なし').join('、');
+      warns.push(`⚠️ 下書き（または差し戻し中）の請求書（${nums}）に載っています。取り消すとその明細は外れ、請求書の持ち主にお知らせが届きます。`);
+    }
+    const warnEl = document.getElementById('dr-warn');
+    warnEl.innerHTML = warns.map(esc).join('<br>');
+    warnEl.style.display = warns.length ? '' : 'none';
+  }
+  openModal('modal-delivery-revert');
+}
+
+async function submitDeliveryRevert() {
+  return btnBusy(busyBtnFrom('dr-submit-btn'), async () => {
+    const ctx = _drCtx;
+    if (!ctx || !ctx.can_revert) return;
+    const toStatus = document.getElementById('dr-target')?.value || '';
+    const reason = (document.getElementById('dr-reason')?.value || '').trim();
+    if (!reason) {
+      showToast('取り消しの理由を入力してください', 'warn');
+      document.getElementById('dr-reason')?.focus();
+      return;
+    }
+    const res = await apiFetch(`${API}/creatives/${ctx.id}/delivery-revert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to_status: toStatus, reason }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('取り消せませんでした: ' + translateError(String(j?.error || '不明')), 'error');
+      return;
+    }
+    let msg = `納品完了を取り消しました（${j.from} → ${j.to}）`;
+    if (j.deleted_invoice_items > 0) msg += `。下書き請求書の明細 ${j.deleted_invoice_items} 件を外しました`;
+    showToast(msg, 'success');
+    if (j.warning) alert(j.warning);
+    closeModal('modal-delivery-revert');
+    try { _cdInvalidateCache(ctx.id); } catch (_) {}
+    try { __cdClearDraft(ctx.id); } catch (_) {}
+    __cdSkipDirtyCheck = true;
+    closeModal('modal-creative-detail');
+    await refreshCreativeInList(ctx.id);
+  });
+}
+
 // 詳細モーダル下部の「編集履歴」を再描画
 async function refreshCreativeEditHistory(creativeId) {
   const sec = document.getElementById('cd-edit-history-section');
@@ -58058,6 +58209,7 @@ async function refreshCreativeEditHistory(creativeId) {
     final_deadline: '最終納品日',
     assignee_id: '担当者',
     team_id: 'チーム',
+    status: 'ステータス',
   };
 
   // edited_at + edited_by + reason ごとにグルーピング（同一保存の複数列変更を1ブロックに）

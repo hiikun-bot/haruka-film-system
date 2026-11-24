@@ -19,7 +19,7 @@ const { createBulkNotifications } = require('./utils/notification');
 // ADR 055: 納品完了メッセージの「当月の案件内 納品カウント（積み上げ台帳）」
 const {
   loadProjectDeliveryLedger, buildDeliveryLedgerBlock, renderLedgerSlack, renderLedgerChatwork,
-  jstYearMonthOf: ledgerJstYearMonthOf, recordLedgerPost,
+  jstYearMonthOf: ledgerJstYearMonthOf, recordLedgerPost, formatLedgerTag,
 } = require('./utils/delivery-ledger');
 
 // =============== Slack URL parser ===============
@@ -1527,6 +1527,135 @@ async function notifyProjectDeliveryLedger({ projectId, creativeIds, actorUserId
   }
 }
 
+// =============== 納品完了の取り消し（POST /creatives/:id/delivery-revert） ===============
+// 「間違って納品完了にした」を担当 D/P・管理者・PD が戻したときに 1 回だけ呼ばれる。
+//   1) 案件チャンネル／ルーム（納品完了通知と同じ投稿先）へ「↩️ 納品取り消し」と、取り消し後の
+//      当月台帳（ADR 055）を投稿する。タグは removed=<creative> を持ち、月初の自動突合が
+//      「投稿にあるが DB に無い」と誤判定しないようにする。投稿記録（delivery_ledger_posts）も残す。
+//      ※ kind 列の CHECK は 'single'|'bulk' のみなので、取り消しは 'single'（seq なし・creative_ids 空）で記録する。
+//   2) 通知ベル（1 人 1 通）: 制作担当・下書き請求書から明細が外れた人・管理者（実行者本人は除く）。
+// 失敗しても throw しない（取り消し本体は成功扱いのまま）。
+//
+// @param {object} p
+// @param {string} p.projectId
+// @param {string} p.creativeId
+// @param {string|null} p.fileName
+// @param {string|null} p.ym 取り消した納品の JST 月（元の delivered_at の月）。null なら台帳投稿しない
+// @param {string|null} p.actorUserId
+// @param {string} p.fromStatus
+// @param {string} p.toStatus
+// @param {string} p.reason
+// @param {string[]} [p.assigneeIds] 制作担当（editor / designer 等）の user_id
+// @param {Array<{issuer_id, invoice_number}>} [p.draftInvoices] 明細を外した下書き請求書
+async function notifyDeliveryReverted({ projectId, creativeId, fileName, ym, actorUserId, fromStatus, toStatus, reason, assigneeIds = [], draftInvoices = [] }) {
+  const result = { ledger: null, notified: 0 };
+  try {
+    const actor = await loadUser(actorUserId);
+    const actorName = actor?.full_name || actor?.nickname || '不明';
+    let project = null;
+    if (projectId) {
+      const { data, error } = await supabase
+        .from('projects')
+        .select('id, name, director_id, slack_channel_url, chatwork_room_id, clients(id, name, slack_channel_url, chatwork_room_id)')
+        .eq('id', projectId)
+        .maybeSingle();
+      if (error) console.warn('[notif/delivery-revert] projects select failed:', error.message);
+      project = data || null;
+    }
+    const client = project?.clients || null;
+    const projectLabel = project ? (`${client?.name ? `【${client.name}】` : ''}${project.name || ''}` || '-') : '-';
+
+    // 1) 案件チャンネル／ルームへ取り消しと台帳
+    if (project && ym) {
+      try {
+        const ledger = await loadProjectDeliveryLedger(supabase, { projectId, ym });
+        const block = buildDeliveryLedgerBlock({ ledger, projectId, currentIds: [] });
+        block.tag = formatLedgerTag({
+          projectId, ym, monthTotal: ledger.monthTotal, projectTotal: ledger.projectTotal, removedId: creativeId,
+        });
+        result.ledger = ledger;
+        const channelUrl = project.slack_channel_url || client?.slack_channel_url || null;
+        const roomId = project.chatwork_room_id || client?.chatwork_room_id || null;
+        const SEP = '━━━━━━━━━━━━━━━';
+        const head = `案件: ${projectLabel}\nファイル: ${fileName || '(ファイル名なし)'}\nステータス: ${fromStatus} → ${toStatus}\n戻した人: ${actorName}\n理由: ${reason}`;
+        let slackPost = null;
+        let cwPost = null;
+        if (channelUrl) {
+          const text = `${SEP}\n↩️ *納品完了を取り消しました*\n${SEP}\n\n${head}\n\n${renderLedgerSlack(block)}`;
+          slackPost = await sendSlackChannel(channelUrl, text);
+          if (!slackPost.ok) console.warn('[notif/delivery-revert] slack push failed:', slackPost.reason);
+          else slackPost.channelUrl = channelUrl;
+        }
+        if (roomId) {
+          const cwTok = await resolveChatworkPostToken(roomId, actor);
+          const text = `[info][title]↩️ 納品完了を取り消しました[/title]${head}\n\n${renderLedgerChatwork(block)}\n[/info]`;
+          cwPost = await sendChatworkRoom(roomId, text, { token: cwTok.token });
+          if (!cwPost.ok) console.warn('[notif/delivery-revert] chatwork push failed:', cwPost.reason);
+          else cwPost.roomId = roomId;
+        }
+        await _recordLedgerPosts({
+          projectId, ledger: { ledger, block: { ...block, seq: null } }, kind: 'single', creativeIds: [],
+          slackPost, cwPost, postedBy: actorUserId || null,
+        });
+      } catch (e) {
+        console.warn('[notif/delivery-revert] ledger post failed:', e?.message || e);
+      }
+    }
+
+    // 2) 通知ベル（1 人 1 通）
+    try {
+      // 管理者は旧 users.role と user_roles（ADR 003）の両方から拾い、在籍中の人だけに絞る
+      const [legacyAdmins, roleAdmins] = await Promise.all([
+        supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true),
+        supabase.from('user_roles').select('user_id, roles!inner(code)').eq('roles.code', 'admin'),
+      ]);
+      const adminIds = new Set((legacyAdmins.data || []).map(u => u.id));
+      const roleAdminIds = [...new Set((roleAdmins.data || []).map(r => r.user_id).filter(id => id && !adminIds.has(id)))];
+      if (roleAdminIds.length) {
+        const { data: active } = await supabase.from('users').select('id').in('id', roleAdminIds).eq('is_active', true);
+        (active || []).forEach(u => adminIds.add(u.id));
+      }
+      const staff = [...adminIds].map(id => ({ id }));
+      const draftByUser = new Map();
+      for (const d of (draftInvoices || [])) {
+        if (!d || !d.issuer_id) continue;
+        if (!draftByUser.has(d.issuer_id)) draftByUser.set(d.issuer_id, []);
+        draftByUser.get(d.issuer_id).push(d.invoice_number || '');
+      }
+      const ids = new Set([
+        ...(assigneeIds || []),
+        ...draftByUser.keys(),
+        ...((staff || []).map(u => u.id)),
+      ].filter(Boolean));
+      ids.delete(actorUserId || null);
+      const rows = [...ids].map(uid => {
+        const nums = draftByUser.get(uid);
+        const draftNote = nums && nums.length
+          ? `\nあなたの下書き請求書（${nums.filter(Boolean).join('、') || '番号なし'}）からこの制作の明細を外しました。再納品後にもう一度追加してください。`
+          : '';
+        return {
+          user_id: uid,
+          notification_type: 'delivery_reverted',
+          title: `${actorName}さんが納品完了を取り消しました`,
+          body: `${fileName || '(ファイル名なし)'}（${fromStatus} → ${toStatus}）\n理由: ${reason}${draftNote}`,
+          link_url: creativeId ? `/creatives/${creativeId}` : null, // 他のクリエイティブ通知と同じ（ベルからその場で詳細を開く）
+          meta: { creative_id: creativeId, project_id: projectId || null, from_status: fromStatus, to_status: toStatus },
+          sender_id: actorUserId || null,
+        };
+      });
+      if (rows.length) {
+        await createBulkNotifications(rows);
+        result.notified = rows.length;
+      }
+    } catch (e) {
+      console.warn('[notif/delivery-revert] in-app notify failed:', e?.message || e);
+    }
+  } catch (e) {
+    console.warn('[notif/delivery-revert] failed:', e?.message || e);
+  }
+  return result;
+}
+
 // =============== 一括納品完了（月次消込）のダイジェスト通知 ===============
 // routes/haruka.js の POST /creatives/bulk-deliver から全件処理後に1回だけ呼ばれる。
 // 件数分 notifyCreativeStatusChange を発火すると Slack/通知ベルがスパム化するため、
@@ -1899,6 +2028,7 @@ module.exports = {
   notifyBulkDelivered,
   // ADR 055: 納品カウント（積み上げ台帳）
   notifyProjectDeliveryLedger,
+  notifyDeliveryReverted,
   _appendInsideChatworkInfo,     // テスト用
   resolveSlackWorkspace,         // ADR 055 追補: 月初の自動突合が Slack 履歴を読むのに使う
   parseSlackChannelUrl,

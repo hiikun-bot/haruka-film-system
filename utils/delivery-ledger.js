@@ -102,14 +102,30 @@ async function loadProjectDeliveryLedger(supabase, { projectId, ym }) {
 // 機械可読タグ 1 行。AI が Slack / Chatwork の本文から正規表現で拾う前提の固定書式。
 //   [HFS-LEDGER] project=<uuid> month=YYYY-MM seq=<今回の件目> month_total=<当月件数> project_total=<案件累計> creative=<uuid>
 //   一括納品（複数件）のときは seq / creative の代わりに added=<今回の件数> を出す。
-function formatLedgerTag({ projectId, ym, seq, monthTotal, projectTotal, creativeId, added }) {
+//   納品の取り消し（POST /creatives/:id/delivery-revert）のときは seq / creative の代わりに
+//   removed=<取り消した creative の uuid> を出す（突合で「投稿にあるが DB に無い」と誤判定させないため）。
+function formatLedgerTag({ projectId, ym, seq, monthTotal, projectTotal, creativeId, added, removedId }) {
   const parts = [LEDGER_TAG, `project=${projectId}`, `month=${ym}`];
   if (seq != null) parts.push(`seq=${seq}`);
   if (added != null) parts.push(`added=${added}`);
   parts.push(`month_total=${monthTotal}`);
   parts.push(`project_total=${projectTotal}`);
   if (creativeId) parts.push(`creative=${creativeId}`);
+  if (removedId) parts.push(`removed=${removedId}`);
   return parts.join(' ');
+}
+
+// タグ列（時系列順）から「いま納品済みとして台帳に載っている creative」の集合を返す。
+//   creative=<id> で追加、removed=<id> で取り消し（そのあと再納品されれば creative=<id> で再び追加）。
+//   取り消しを考えずに creative= を全部集めると、納品を戻した制作が永遠に「投稿にあるが DB に無い」になる。
+function activeLedgerCreatives(tags) {
+  const set = new Set();
+  for (const t of (Array.isArray(tags) ? tags : [])) {
+    if (!t) continue;
+    if (t.creative) set.add(t.creative);
+    if (t.removed) set.delete(t.removed);
+  }
+  return set;
 }
 
 // 本文（Slack / Chatwork のログを貼り付けたテキスト）から [HFS-LEDGER] 行を全部拾う。
@@ -263,6 +279,7 @@ module.exports = {
   formatLedgerTag,
   parseLedgerTags,
   latestLedgerTag,
+  activeLedgerCreatives,
   buildDeliveryLedgerBlock,
   renderLedgerSlack,
   renderLedgerChatwork,

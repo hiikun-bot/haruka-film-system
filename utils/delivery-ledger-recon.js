@@ -182,7 +182,8 @@ function judgePlatform({ fetched, db, posts, projectId, ym }) {
   out.last_month_total = Number.isFinite(last.month_total) ? last.month_total : null;
 
   const dbIds = new Set(db.items.map(it => it.id));
-  const taggedIds = new Set(tagged.map(t => t.creative).filter(Boolean));
+  // 取り消し（removed=）を時系列で反映した「いま台帳に載っている」集合（納品の取り消し後も一致させる）
+  const taggedIds = L.activeLedgerCreatives(tagged);
   out.tagged_creatives = [...taggedIds];
   out.only_in_log = [...taggedIds].filter(id => !dbIds.has(id));
   // DB にあるがタグに creative として出てこない（一括納品分は added= なので creative 無し → 正常）

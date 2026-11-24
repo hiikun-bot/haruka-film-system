@@ -109,7 +109,7 @@ async function main() {
     // ログは貼り付け順＝時系列が前提（Slack / Chatwork の画面から上→下にコピーしたもの）。
     const latest = L.latestLedgerTag(tags);
     const logLast = latest ? latest.month_total : null;
-    const logCreatives = new Set(tags.map(t => t.creative).filter(Boolean));
+    const logCreatives = L.activeLedgerCreatives(tags); // removed=（納品の取り消し）を反映
     const dbCreatives = new Set(ledger.items.map(it => it.id));
     const onlyInLog = [...logCreatives].filter(id => !dbCreatives.has(id));
     const onlyInDb = ledger.items.filter(it => !logCreatives.has(it.id)).map(it => it.id);

@@ -4,6 +4,19 @@
 
 const L = require('../../utils/delivery-ledger');
 
+describe('activeLedgerCreatives / removed= タグ（納品の取り消し）', () => {
+  test('formatLedgerTag は removed= を出し、parseLedgerTags で読める', () => {
+    const t = L.formatLedgerTag({ projectId: 'p1', ym: '2026-11', monthTotal: 2, projectTotal: 9, removedId: 'c3' });
+    expect(t).toBe('[HFS-LEDGER] project=p1 month=2026-11 month_total=2 project_total=9 removed=c3');
+    expect(L.parseLedgerTags(`\`${t}\``)[0]).toMatchObject({ removed: 'c3', month_total: 2 });
+  });
+  test('時系列で追加・取り消し・再追加を反映する', () => {
+    const tags = [{ creative: 'a' }, { creative: 'b' }, { removed: 'a' }, { creative: 'c' }, { removed: 'c' }, { creative: 'c' }];
+    expect([...L.activeLedgerCreatives(tags)].sort()).toEqual(['b', 'c']);
+    expect(L.activeLedgerCreatives(null).size).toBe(0);
+  });
+});
+
 // Supabase の from().select()...チェーンを最小限に模した mock。
 // select(.., {head:true, count:'exact'}) → count 系、それ以外 → rows を返す。
 function makeSupabaseMock({ rows = [], count = 0, selectError = null } = {}) {

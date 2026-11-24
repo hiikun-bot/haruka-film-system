@@ -36,6 +36,7 @@ const {
   invalidateRolesCache,
   loadRoles,
   roleCodesHavePermission,
+  roleCodesMatchAny,
 } = require('../utils/roles');
 const { ttlCache, invalidateByKey, invalidateByPrefix } = require('../utils/ttl-cache');
 const { avatarVer, avatarRefUrl, replaceAvatarDataUrls, getAvatarRefMap, updateAvatarRefCacheEntry, applyAvatarRef } = require('../utils/avatar-ref');
@@ -13662,6 +13663,36 @@ router.post('/creatives/:id/share-client-review', requireAuth, requirePermission
   }
 });
 
+// 下書き請求書の明細を外し、その請求書の合計を計算し直す（admin-status と delivery-revert で共用）。
+// 下書きは集計・振込に出ないので外してよいが、合計を直さないと請求書の金額と明細がずれる。
+async function removeDraftInvoiceItems(itemIds, invoiceIds) {
+  if (!itemIds || itemIds.length === 0) return { ok: true };
+  await supabase.from('invoice_item_details').delete().in('invoice_item_id', itemIds);
+  const { error: delErr } = await supabase.from('invoice_items').delete().in('id', itemIds);
+  if (delErr) return { ok: false, error: delErr.message };
+
+  for (const invId of (invoiceIds || [])) {
+    const [{ data: rem }, { data: invRow }] = await Promise.all([
+      supabase.from('invoice_items').select('creative_id, cost_type, unit_price, quantity, total_amount').eq('invoice_id', invId),
+      supabase.from('invoices').select('tax_mode, withholding_enabled').eq('id', invId).maybeSingle(),
+    ]);
+    const patch = { updated_at: new Date().toISOString() };
+    if (invRow && invRow.tax_mode === 'exclusive') {
+      // 新方式（ADR 046）は小計〜差引をまとめて計算し直す。total_amount だけ直すと差引お振込額とずれ、
+      // 差引から求める立替経費（expenseOfInvoice）まで狂う
+      const t = IE.computeTotals(rem || [], { withholding_enabled: invRow.withholding_enabled !== false });
+      Object.assign(patch, {
+        subtotal_amount: t.subtotal, tax_amount: t.tax, total_amount: t.total,
+        withholding_amount: t.withholding, payout_amount: t.payout,
+      });
+    } else {
+      patch.total_amount = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
+    }
+    await supabase.from('invoices').update(patch).eq('id', invId);
+  }
+  return { ok: true };
+}
+
 // 管理者によるステータス強制変更（戻し含む）
 //
 // セキュリティ:
@@ -13725,29 +13756,8 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
   const deletedItemIds = draftItems.map(i => i.id);
   const affectedInvoiceIds = Array.from(new Set(draftItems.map(i => i.invoice_id)));
   if (deletedItemIds.length > 0) {
-    await supabase.from('invoice_item_details').delete().in('invoice_item_id', deletedItemIds);
-    const { error: delErr } = await supabase.from('invoice_items').delete().in('id', deletedItemIds);
-    if (delErr) return res.status(500).json({ error: delErr.message });
-
-    for (const invId of affectedInvoiceIds) {
-      const [{ data: rem }, { data: invRow }] = await Promise.all([
-        supabase.from('invoice_items').select('creative_id, cost_type, unit_price, quantity, total_amount').eq('invoice_id', invId),
-        supabase.from('invoices').select('tax_mode, withholding_enabled').eq('id', invId).maybeSingle(),
-      ]);
-      const patch = { updated_at: new Date().toISOString() };
-      if (invRow && invRow.tax_mode === 'exclusive') {
-        // 新方式（ADR 046）は小計〜差引をまとめて計算し直す。total_amount だけ直すと差引お振込額とずれ、
-        // 差引から求める立替経費（expenseOfInvoice）まで狂う
-        const t = IE.computeTotals(rem || [], { withholding_enabled: invRow.withholding_enabled !== false });
-        Object.assign(patch, {
-          subtotal_amount: t.subtotal, tax_amount: t.tax, total_amount: t.total,
-          withholding_amount: t.withholding, payout_amount: t.payout,
-        });
-      } else {
-        patch.total_amount = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
-      }
-      await supabase.from('invoices').update(patch).eq('id', invId);
-    }
+    const rm = await removeDraftInvoiceItems(deletedItemIds, affectedInvoiceIds);
+    if (!rm.ok) return res.status(500).json({ error: rm.error });
   }
 
   // クリエイティブ更新（戻し時は派生フラグもクリア）
@@ -13884,6 +13894,282 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
     affected_invoices: affectedInvoiceIds.length,
     creative: updated,
   });
+});
+
+// =====================================================
+// 納品完了の取り消し（「間違って納品完了にした」を現場で戻す・2026-11-24）
+// =====================================================
+// 管理者の強制変更（admin-status）とは別の入口。判定は utils/delivery-revert.js（jest）。
+//   - 全件戻せる: admin / PD（producer＋director 兼任）/ 権限管理で creative.delivery_revert_any を ON にしたロール
+//   - その制作の担当 D/P: 今月（JST）に納品完了になった分だけ戻せる（先月以前は管理者・PD へ）
+//   - 提出済み・承認済みの請求書に載っている制作は誰でも戻せない（先に請求書を差し戻す）
+//   - 下書き請求書の明細は外して合計を計算し直し、その請求書の持ち主に通知する
+//   - 副作用は admin-status の「納品以外へ戻す」と同じ（delivered_at・D/P スナップショット・
+//     is_payable・force_delivered* をクリア）。誰がいつ・何から何へ・なぜ戻したかを
+//     creative_edit_logs（詳細画面の「編集履歴」に出る）・creative_status_transitions・creative_status_audit に残す
+//   - 案件チャンネルへ「↩️ 納品取り消し」と取り消し後の当月台帳（ADR 055・removed= タグ）を投稿し、
+//     関係者（制作担当・下書き請求書の持ち主・管理者）へ通知ベル 1 通ずつ
+//   - LP / HP / LINE（工程テンプレ駆動）は status_code も絡むため対象外（従来どおり管理者が戻す）
+const DR = require('../utils/delivery-revert');
+
+async function loadDeliveryRevertContext(req, creativeId) {
+  const { data: c, error } = await supabase
+    .from('creatives')
+    .select('id, file_name, status, is_payable, force_delivered, force_delivered_reason, force_delivered_at, force_delivered_by, delivered_at, delivered_snapshot_at, updated_at, project_id, delivered_director_ids, delivered_producer_ids, director_comment, client_comment, editor_comment, projects:project_id(id, director_id, producer_id, primary_category_id)')
+    .eq('id', creativeId)
+    .maybeSingle();
+  if (error) return { error: { status: 500, message: error.message } };
+  if (!c) return { error: { status: 404, message: 'クリエイティブが見つかりません' } };
+
+  const project = c.projects || null;
+  const [codes, asnRes, itemsRes, prevRes, catRes] = await Promise.all([
+    getEffectiveRoleCodes(req),
+    supabase.from('creative_assignments').select('user_id, role').eq('creative_id', creativeId),
+    supabase.from('invoice_items').select('id, invoice_id, invoice:invoices(id, invoice_number, status, issuer_id)').eq('creative_id', creativeId),
+    supabase.from('creative_status_transitions').select('from_status').eq('creative_id', creativeId).eq('to_status', '納品')
+      .order('changed_at', { ascending: false }).limit(1).maybeSingle(),
+    project?.primary_category_id
+      ? supabase.from('creative_categories').select('code').eq('id', project.primary_category_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  if (itemsRes.error) return { error: { status: 500, message: itemsRes.error.message } };
+
+  // 権限は実効ロールの集合で判定（ADR 015。VIEW AS 中は最高管理者のプレビューロールで判定される）
+  const canRevertAny = await DR.resolveCanRevertAny(codes, { roleCodesHavePermission, roleCodesMatchAny });
+  // 担当判定は本人（ロールではなく「この制作の担当か」）
+  const isLeader = DR.isCreativeLeader({
+    creative: c, project, assignments: asnRes.data || [], userId: req.user?.id || null,
+  });
+  const items = itemsRes.data || [];
+  // 下書き・差し戻し中（本人が直せる状態）は外せる。それ以外（提出済み・承認済み等）は戻せない
+  const issuedInvoices = items.filter(i => i.invoice && !DR.isEditableInvoiceStatus(i.invoice.status)).map(i => i.invoice);
+  const draftItems = items.filter(i => i.invoice && DR.isEditableInvoiceStatus(i.invoice.status));
+
+  let decision = DR.decideDeliveryRevert({ creative: c, canRevertAny, isLeader, issuedInvoices });
+  const catCode = catRes?.data?.code || null;
+  if (decision.canRevert && catCode && ['lp', 'hp', 'line'].includes(catCode)) {
+    decision = { ...decision, canRevert: false, reason: 'LP / HP / LINE の制作は工程テンプレで進むため、管理者に戻してもらってください' };
+  }
+  const { targets, defaultTarget } = DR.buildRevertTargets({
+    hasProducer: !!project?.producer_id,
+    previousStatus: prevRes?.data?.from_status || null,
+  });
+  return { creative: c, project, assignments: asnRes.data || [], decision, draftItems, targets, defaultTarget };
+}
+
+// GET /api/haruka/creatives/:id/delivery-revert-eligibility
+// 詳細画面の「↩️ 納品を取り消す」ボタンの出し分けと、確認モーダルの中身（戻し先・下書き請求書の警告）。
+router.get('/creatives/:id/delivery-revert-eligibility', requireAuth, async (req, res) => {
+  try {
+    const ctx = await loadDeliveryRevertContext(req, req.params.id);
+    if (ctx.error) return res.status(ctx.error.status).json({ error: ctx.error.message, can_revert: false });
+    const { creative, decision, draftItems, targets, defaultTarget } = ctx;
+    // 担当でも全件権限者でもない人には理由も含めて何も見せない（ボタン自体を出さない）
+    if (!decision.scope) return res.json({ can_revert: false, visible: false });
+    const draftInvoices = [...new Map(draftItems.map(i => [i.invoice.id, { invoice_number: i.invoice.invoice_number || null }])).values()];
+    res.json({
+      visible: DR.isDeliveredCreative(creative),
+      can_revert: decision.canRevert,
+      blocked_reason: decision.reason,
+      scope: decision.scope,
+      past_month: decision.pastMonth,
+      unknown_date: decision.unknownDate,
+      delivered_at: creative.delivered_at || null,
+      targets,
+      default_target: defaultTarget,
+      draft_invoices: draftInvoices,
+    });
+  } catch (e) {
+    console.error('[delivery-revert][eligibility]', e);
+    res.status(500).json({ error: e?.message || String(e), can_revert: false });
+  }
+});
+
+// POST /api/haruka/creatives/:id/delivery-revert { to_status, reason }
+router.post('/creatives/:id/delivery-revert', requireAuth, async (req, res) => {
+  const creativeId = req.params.id;
+  try {
+    const rr = DR.normalizeRevertReason(req.body?.reason);
+    if (!rr.ok) return res.status(400).json({ error: rr.error });
+    const reason = rr.reason;
+    const toStatus = String(req.body?.to_status || '').trim();
+
+    const ctx = await loadDeliveryRevertContext(req, creativeId);
+    if (ctx.error) return res.status(ctx.error.status).json({ error: ctx.error.message });
+    const { creative, decision, targets } = ctx;
+    if (!DR.isDeliveredCreative(creative)) {
+      return res.status(409).json({ error: '納品完了になっていません（画面を開き直してください）' });
+    }
+    if (!decision.scope) {
+      return res.status(403).json({ error: '納品の取り消しは、この制作の担当ディレクター・プロデューサー、管理者、PD だけができます' });
+    }
+    if (!decision.canRevert) return res.status(409).json({ error: decision.reason });
+    if (!toStatus || !targets.includes(toStatus)) {
+      return res.status(400).json({ error: '戻し先のステータスを選んでください' });
+    }
+
+    // 本体 UPDATE（admin-status の「納品以外へ戻す」と同じ列をクリア）。
+    // first_draft_submitted_at（ADR 034・不可逆）とクライアント確認 URL の共有はいじらない
+    // （納品の取り消しは「初稿の提出」でも「先方へ新しく見せる」でもないため）。
+    // 読んだ時点から誰かがステータスを動かしていたら更新しない（.eq('status') ＋ .eq('updated_at') の条件付き更新）。
+    const nowIso = new Date().toISOString();
+    const updatePayload = {
+      status: toStatus,
+      updated_at: nowIso,
+      is_payable: false,
+      force_delivered: false,
+      force_delivered_reason: null,
+      force_delivered_at: null,
+      force_delivered_by: null,
+      delivered_at: null,                 // ADR 026: 再納品時に再セットされる
+      delivered_director_ids: null,       // ADR 009: 納品時スナップショットもクリア
+      delivered_producer_ids: null,
+      delivered_snapshot_at: null,
+    };
+    let upd = supabase
+      .from('creatives')
+      .update(updatePayload)
+      .eq('id', creativeId)
+      .eq('status', creative.status);
+    // updated_at が NULL の古い行は eq だと一致しないので IS NULL で比べる
+    upd = creative.updated_at == null ? upd.is('updated_at', null) : upd.eq('updated_at', creative.updated_at);
+    const { data: updatedRows, error: uErr } = await upd.select();
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    const updated = (updatedRows || [])[0] || null;
+    if (!updated) {
+      return res.status(409).json({ error: '他の操作と重なりました。画面を開き直してからもう一度お試しください' });
+    }
+
+    // 更新後に請求書の明細を読み直す。判定〜更新の間に請求書が提出されていたら、更新を元に戻して止める
+    // （提出済み・承認済みの請求書に載った制作は戻さない、の約束を守るため）。
+    const { data: freshItems, error: fiErr } = await supabase
+      .from('invoice_items')
+      .select('id, invoice_id, invoice:invoices(id, invoice_number, status, issuer_id)')
+      .eq('creative_id', creativeId);
+    const raceIssued = (freshItems || []).filter(i => i.invoice && !DR.isEditableInvoiceStatus(i.invoice.status));
+    if (fiErr || raceIssued.length) {
+      const restore = {
+        status: creative.status,
+        updated_at: new Date().toISOString(),
+        is_payable: creative.is_payable,
+        force_delivered: creative.force_delivered,
+        force_delivered_reason: creative.force_delivered_reason,
+        force_delivered_at: creative.force_delivered_at,
+        force_delivered_by: creative.force_delivered_by,
+        delivered_at: creative.delivered_at,
+        delivered_director_ids: creative.delivered_director_ids,
+        delivered_producer_ids: creative.delivered_producer_ids,
+        delivered_snapshot_at: creative.delivered_snapshot_at,
+      };
+      const { error: rbErr } = await supabase.from('creatives').update(restore).eq('id', creativeId);
+      if (rbErr) console.error('[delivery-revert] rollback failed:', creativeId, rbErr.message);
+      if (fiErr) return res.status(500).json({ error: '請求書の確認に失敗したため取り消しませんでした: ' + fiErr.message });
+      const nums = [...new Set(raceIssued.map(i => i.invoice.invoice_number || '(番号なし)'))];
+      return res.status(409).json({ error: `取り消しの途中で請求書が提出されたため、取り消しませんでした（${nums.join('、')}）。先に請求書を差し戻してください` });
+    }
+
+    // 下書き・差し戻し中の請求書の明細を外し、合計を計算し直す
+    const draftItems = (freshItems || []).filter(i => i.invoice && DR.isEditableInvoiceStatus(i.invoice.status));
+    const deletedItemIds = draftItems.map(i => i.id);
+    const affectedInvoiceIds = [...new Set(draftItems.map(i => i.invoice_id))];
+    const warnings = [];
+    let draftRemoved = false;
+    if (deletedItemIds.length) {
+      const rm = await removeDraftInvoiceItems(deletedItemIds, affectedInvoiceIds);
+      draftRemoved = rm.ok;
+      if (!rm.ok) {
+        console.warn('[delivery-revert] draft invoice cleanup failed:', rm.error);
+        warnings.push('下書きの請求書から明細を外せませんでした。請求書の持ち主に手で外してもらってください');
+      }
+    }
+    const draftWarning = warnings.length ? warnings.join('\n') : null;
+
+    // 監査: 詳細画面の「編集履歴」に出す（誰が・いつ・何から何へ・理由）
+    const actorName = req.user?.full_name || req.user?.nickname || null;
+    const deliveredYmd = creative.delivered_at
+      ? new Date(creative.delivered_at).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+      : null;
+    const auditReason = `【納品の取り消し】${reason}`;
+    const { error: logErr } = await supabase.from('creative_edit_logs').insert({
+      creative_id: creativeId,
+      edited_by: req.user?.id || null,
+      edited_by_name: actorName,
+      field_name: 'status',
+      old_value: deliveredYmd ? `${creative.status}（納品完了日 ${deliveredYmd}）` : creative.status,
+      new_value: toStatus,
+      reason: auditReason,
+    });
+    if (logErr) console.warn('[delivery-revert] creative_edit_logs insert failed:', logErr.message);
+    // creative_status_audit は環境によって無いことがある（失敗は warn のみ）
+    try {
+      const { error: auErr } = await supabase.from('creative_status_audit').insert({
+        creative_id: creativeId,
+        from_status: creative.status,
+        to_status: toStatus,
+        reason: auditReason,
+        changed_by: req.user?.id || null,
+        deleted_invoice_item_ids: deletedItemIds.length ? deletedItemIds : null,
+      });
+      if (auErr) console.warn('[delivery-revert] creative_status_audit insert failed:', auErr.message);
+    } catch (e) { console.warn('[delivery-revert] creative_status_audit block failed:', e?.message || e); }
+    try {
+      let versionAtChange = null;
+      try {
+        const { data: latestFile } = await supabase
+          .from('creative_files').select('version').eq('creative_id', creativeId)
+          .order('version', { ascending: false }).limit(1).maybeSingle();
+        versionAtChange = latestFile?.version ?? null;
+      } catch (_) { /* 取得失敗は null のまま */ }
+      const { error: cstErr } = await supabase.from('creative_status_transitions').insert({
+        creative_id: creativeId,
+        from_status: creative.status,
+        to_status: toStatus,
+        changed_by: req.user?.id || null,
+        changed_at: nowIso,
+        director_comment_at_change: creative.director_comment ?? null,
+        client_comment_at_change: creative.client_comment ?? null,
+        editor_comment_at_change: creative.editor_comment ?? null,
+        version_at_change: versionAtChange,
+      });
+      if (cstErr) console.warn('[delivery-revert] creative_status_transitions insert failed:', cstErr.message);
+    } catch (e) { console.warn('[delivery-revert] creative_status_transitions block failed:', e?.message || e); }
+
+    syncBallHolderId(creativeId).catch(e => console.warn('[ball_holder_id] sync failed:', e.message));
+
+    // 通知（fire-and-forget）: 案件チャンネルへ取り消し＋当月台帳、関係者へ通知ベル
+    const ym = creative.delivered_at
+      ? new Date(creative.delivered_at).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7)
+      : null;
+    const assigneeIds = [...new Set((ctx.assignments || []).map(a => a.user_id).filter(Boolean))];
+    const draftInvoices = [...new Map(draftItems.map(i => [i.invoice.id, { issuer_id: i.invoice.issuer_id, invoice_number: i.invoice.invoice_number }])).values()];
+    try {
+      require('../notifications').notifyDeliveryReverted({
+        projectId: creative.project_id || null,
+        creativeId,
+        fileName: creative.file_name || null,
+        ym: creative.status === '納品' ? ym : null,
+        actorUserId: req.user?.id || null,
+        fromStatus: creative.status,
+        toStatus,
+        reason,
+        assigneeIds,
+        draftInvoices: draftRemoved ? draftInvoices : [],
+      }).catch(e => console.warn('[delivery-revert] notify failed:', e?.message || e));
+    } catch (e) { console.warn('[delivery-revert] notify enqueue failed:', e?.message || e); }
+
+    res.json({
+      ok: true,
+      from: creative.status,
+      to: toStatus,
+      deleted_invoice_items: deletedItemIds.length,
+      affected_invoices: affectedInvoiceIds.length,
+      warning: draftWarning,
+      creative: updated,
+    });
+  } catch (e) {
+    console.error('[delivery-revert]', e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
 });
 
 // =====================================================
@@ -25631,6 +25917,7 @@ const VALID_PERMISSION_KEYS = new Set([
   // ADR 037: ディレクターの単価設定（pricing_edit）と admin の承認（pricing_approve）
   'project.pricing_edit','project.pricing_approve',
   'creative.all_projects_view','creative.rank_price_column','creative.csv_import','creative.sos_others','creative.wcheck_toggle',
+  'creative.delivery_revert_any', // 納品完了の取り消し（担当外・先月以前も）。行が無くても admin・PD・担当D/P は戻せる
   'member.list','member.edit_password','member.deactivate','member.reactivate','member.delete',
   'member.view_email', // メンバー一覧のメール列の閲覧のみ（migration 2026-11-10_member_view_email_permission.sql）
   'team.manage','team.assign','team.delete',
