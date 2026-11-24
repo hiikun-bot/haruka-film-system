@@ -443,3 +443,27 @@ invoice_editor_submit(id, expected_updated_at, items 指紋, ref_updates, totals
 - **部分一意インデックスを `invoice_items` に張る**: status が `invoices` 側にあり表せない。`invoice_items` に status を複製するのは同期漏れのもと。却下
 - **アプリ側で SELECT → UPDATE … WHERE updated_at だけで済ませる（従来）**: 別の請求書同士の同時提出は防げない。保存は請求書と明細を別々の問い合わせで書くので、提出との間を閉じられない。却下
 - **判定ロジックをすべて SQL に移す**: `resolveCreativeRoleCost`・`isCreativeOfUser` を SQL に二重実装することになり、仕様変更のたびにずれる。指紋照合で「検証した明細のまま確定」を保証する方を採用
+
+### 追補 2026-11-24（4）: 下書きから明細を外す・請求書を消すも DB の 1 トランザクションで（（3）の「残る制限」の解消）
+
+**Context**: 外部レビューの指摘を origin/main で確かめたところ本当だった。
+
+- 納品の取り消し（`POST /creatives/:id/delivery-revert`・#1319）と admin-status（`POST /creatives/:id/admin-status`）は `removeDraftInvoiceItems` で「状態を読む → 明細を消す → 残りを読んで合計を書く」を別々に行う。読んでから消すまでに提出されると、**提出済みの請求書から明細だけが消え、合計は古いまま**（合計の UPDATE は status 条件つきで飛ばされる）
+- 残りの明細の読み取りに失敗しても空として再計算するので、**下書きの合計が 0 円になる**経路があった（#1325 で応急処置）
+- 請求書の削除（`DELETE /invoices/:id`）も状態を読んでから明細・請求書を消すので、そのあいだに提出された請求書を明細ごと消しうる
+
+**Decision**: migration `2026-11-24b_invoice_remove_items_and_delete_fn.sql` で関数を 2 つ足す。ロックの順は `invoice_editor_submit` と同じ（発行者の advisory lock `hashtextextended('invoice_billing:'||issuer_id,0)` → `invoices` FOR UPDATE → `invoice_items`）。
+
+| 関数 | 使う経路 | ロックの中で行うこと |
+|---|---|---|
+| `invoice_remove_items_recalc(p_invoice_id, p_editable_statuses, p_delete_ids, p_remaining, p_expected, p_invoice)` | delivery-revert・admin-status（請求書 1 件ずつ呼ぶ） | 状態が `p_editable_statuses`（draft / rejected の部分集合）か → `tax_mode`・`withholding_enabled` が計算時と同じか → 消したあとに残る明細が指紋 `p_remaining` と同じか → 明細（と内訳）を消す → 合計（新方式は 5 列・旧方式は `total_amount`）と `updated_at` を書く |
+| `invoice_delete_editable(p_invoice_id, p_editable_statuses, p_expected_issuer)` | `DELETE /invoices/:id` | 発行者が権限確認時と同じか → 状態を確かめる → 領収書ファイル id を集める → 内訳・明細・請求書を消す |
+
+- **合計の計算はアプリ（`utils/invoice-editor.js` の `computeTotals`）が正のまま**。アプリは残りの明細の指紋とそこから計算した合計を渡し、関数は指紋が違えば何もせず `STALE` を返す（アプリが読み直して数回やり直す）。提出の関数（（3））と同じ考え方で、計算式を SQL に二重に持たない
+- 読み取りに失敗したら関数を呼ばない（空の明細で 0 円の合計を書くことがない。仮に空の指紋を送っても、明細が残っていれば `STALE` で止まる）
+- 外してよい状態の引数に draft / rejected 以外を渡すと例外（提出済み・承認済みの請求書を書き換える呼び方を DB で拒む）
+- 合計を書くと `updated_at` が進むので、開いたままのエディタの自動保存は楽観ロックで止まり再読み込みになる
+
+**Consequences**: 提出・保存・領収書・明細の取り外し・削除がすべて同じ順でロックするので、どの組み合わせでも「提出済みの請求書の明細・合計が後から変わる」「提出済みの請求書が消える」が起きない。旧方式（inclusive）の提出（`POST /invoices/:id/submit`）は関数を通らないが、`invoices` の UPDATE が行ロックを取るので FOR UPDATE と直列になる。
+
+**Alternatives**: 合計の計算式を SQL に移して関数の中で計算する案は、行の種類（CR・固定・立替経費・調整）ごとの金額・源泉の計算を二重に持つことになるので採らない。
