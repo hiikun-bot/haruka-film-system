@@ -132,6 +132,19 @@ describe('canEditExternalWork', () => {
     expect(ext.canEditExternalWork({ roleCodes: ['producer', 'director'], userId: 'u9', work })).toBe(false);
     expect(ext.canEditExternalWork({ roleCodes: ['admin'], userId: 'u9', work: null })).toBe(false);
   });
+  // ADR 015: 最低 3 ロール（admin・director・editor）× 本人／他人の出し分け
+  test.each([
+    // [実効ロール, 本人の作品, 期待]
+    [['admin'], true, true], [['admin'], false, true],
+    [['director'], true, true], [['director'], false, false],
+    [['editor'], true, true], [['editor'], false, false],
+    [['producer_director'], false, false], [['secretary'], false, false],
+  ])('ロール %j・本人の作品=%s → 編集可=%s', (roleCodes, own, expected) => {
+    expect(ext.canEditExternalWork({ roleCodes, userId: own ? 'u1' : 'u9', work })).toBe(expected);
+  });
+  test('VIEW AS: admin が editor として見ている（実効ロール editor）ときは他人の作品を編集できない', () => {
+    expect(ext.canEditExternalWork({ roleCodes: ['editor'], userId: 'admin-1', work })).toBe(false);
+  });
 });
 
 describe('YouTube URL helpers / parseOpenGraph', () => {
@@ -153,6 +166,11 @@ describe('YouTube URL helpers / parseOpenGraph', () => {
     expect(r.description).toBe('説明文');
     expect(ext.parseOpenGraph('<title>Only &amp; T</title>').title).toBe('Only & T');
     expect(ext.parseOpenGraph('').title).toBe(null);
+  });
+  test('parseOpenGraph はアポストロフィで切れず、16 進の文字参照も戻す', () => {
+    expect(ext.parseOpenGraph(`<meta property="og:title" content="Tom's Coffee | LP">`).title).toBe("Tom's Coffee | LP");
+    expect(ext.parseOpenGraph(`<meta content='Say "hi"' property='og:title'>`).title).toBe('Say "hi"');
+    expect(ext.parseOpenGraph('<meta property="og:title" content="Tom&#x27;s">').title).toBe("Tom's");
   });
 });
 
@@ -178,6 +196,10 @@ describe('isOwnPortfolioUpload（直送ファイルが本人の置き場・本�
   test('印が無いファイル（手で置かれたもの）は false', () => {
     expect(ext.isOwnPortfolioUpload({ parents: ['folderA'] }, { folderId: 'folderA', userId: 'u1' })).toBe(false);
   });
+  test('名前で引いた置き場と違っても、候補の置き場（🌐 直下）に入っていれば true', () => {
+    expect(ext.isOwnPortfolioUpload({ ...meta, parents: ['folderB'] }, { folderId: 'folderA', folderIds: ['folderB'], userId: 'u1' })).toBe(true);
+    expect(ext.isOwnPortfolioUpload({ ...meta, parents: ['folderB'] }, { folderId: 'folderA', folderIds: [], userId: 'u1' })).toBe(false);
+  });
   test('置き場が分からないときは false', () => {
     expect(ext.isOwnPortfolioUpload(meta, { folderId: null, userId: 'u1' })).toBe(false);
     expect(ext.isOwnPortfolioUpload(null, { folderId: 'folderA', userId: 'u1' })).toBe(false);
@@ -191,9 +213,14 @@ describe('isHfsInternalDriveFile（HFS 自身の Drive のファイルか）', (
   test('サービスアカウントが持ち主（マイドライブ運用）なら true', () => {
     expect(ext.isHfsInternalDriveFile({ driveId: null, ownedByMe: true }, null)).toBe(true);
   });
-  test('外部の人が共有してくれたファイルは false', () => {
+  test('外部の人がマイドライブから共有してくれたファイルは false', () => {
     expect(ext.isHfsInternalDriveFile({ driveId: null, ownedByMe: false }, 'D1')).toBe(false);
-    expect(ext.isHfsInternalDriveFile({ driveId: 'OTHER', ownedByMe: false }, 'D1')).toBe(false);
+  });
+  test('ルート以外の共有ドライブ（素材広場など SA が入っている置き場）も true', () => {
+    expect(ext.isHfsInternalDriveFile({ driveId: 'OTHER', ownedByMe: false }, 'D1')).toBe(true);
+  });
+  test('持ち主が申請者以外の HFS メンバーなら true（請求書フォルダなど）', () => {
+    expect(ext.isHfsInternalDriveFile({ driveId: null, ownedByMe: false }, 'D1', { ownerIsOtherMember: true })).toBe(true);
   });
 });
 

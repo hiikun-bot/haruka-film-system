@@ -247,10 +247,11 @@ function parseOpenGraph(html) {
   const s = String(html || '').slice(0, 512 * 1024);
   const pick = (names) => {
     for (const name of names) {
-      const re = new RegExp(`<meta[^>]+(?:property|name)=["']${name}["'][^>]*content=["']([^"']*)["']`, 'i');
-      const re2 = new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name)=["']${name}["']`, 'i');
+      // 値の中のもう一方の引用符（"Tom's Coffee"）で切れないよう、閉じ引用符は開きと同じものに合わせる
+      const re = new RegExp(`<meta[^>]+(?:property|name)=["']${name}["'][^>]*content=(["'])([^>]*?)\\1`, 'i');
+      const re2 = new RegExp(`<meta[^>]+content=(["'])([^>]*?)\\1[^>]*(?:property|name)=["']${name}["']`, 'i');
       const m = s.match(re) || s.match(re2);
-      if (m && m[1]) return decodeEntities(m[1].trim());
+      if (m && m[2]) return decodeEntities(m[2].trim());
     }
     return null;
   };
@@ -267,8 +268,8 @@ function decodeEntities(s) {
   return String(s)
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (m, n) => {
-      const cp = Number(n);
+    .replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (m, hex, dec) => {
+      const cp = hex ? parseInt(hex, 16) : Number(dec);
       // 範囲外のコードポイントは fromCodePoint が RangeError を投げるので、そのまま残す
       return (Number.isInteger(cp) && cp > 0 && cp <= 0x10FFFF) ? String.fromCodePoint(cp) : m;
     });
@@ -297,13 +298,21 @@ function comparableUrl(input) {
  * 全員に見せてしまう事故も防ぐ。
  *   - HFS の共有ドライブ（ルートフォルダと同じ driveId）に入っている
  *   - サービスアカウントが持ち主（ownedByMe）＝ HFS がマイドライブで運用しているファイル
+ *   - 共有ドライブに入っている（HFS のルートと別の共有ドライブでも。サービスアカウントが入っている共有ドライブ＝
+ *     素材広場など HFS が管理する置き場なので、外の人が「共有してくれた」ファイルではない）
+ *   - 持ち主が申請者以外の HFS メンバー（メンバーのマイドライブからサービスアカウントに共有されている請求書フォルダなど）
  * @param {{ driveId?:string|null, ownedByMe?:boolean }} meta files.get の結果
  * @param {string|null} hfsDriveId ルートフォルダの driveId（マイドライブ運用なら null）
+ * @param {{ ownerIsOtherMember?:boolean }} [opt]
  */
-function isHfsInternalDriveFile(meta, hfsDriveId) {
+function isHfsInternalDriveFile(meta, hfsDriveId, { ownerIsOtherMember = false } = {}) {
   if (!meta) return false;
   if (meta.ownedByMe === true) return true;
-  return !!(hfsDriveId && meta.driveId && meta.driveId === hfsDriveId);
+  if (meta.driveId) return true;
+  if (ownerIsOtherMember) return true;
+  // hfsDriveId は「共有ドライブなら一律で弾く」に含まれる（互換のため引数は残す）
+  void hfsDriveId;
+  return false;
 }
 
 /**
@@ -313,12 +322,16 @@ function isHfsInternalDriveFile(meta, hfsDriveId) {
  * drive_file_id を差し替えて HFS の Drive の別ファイル（請求書・契約書など）を公開・登録させないための確認。
  * 同じニックネームの人が置き場を共有してしまっても、印で他人のファイルは弾ける。
  * @param {{ parents?:string[], appProperties?:object }} meta
- * @param {{ folderId:string|null, userId:string }} who
+ * 置き場は名前で引き直すので、ニックネーム変更・同名フォルダの二重作成があると別 ID になりうる。
+ * そのため folderIds に「置き場として認める ID の候補」を複数渡せる（ルートの 🌐 フォルダ直下のフォルダ）。
+ * @param {{ parents?:string[], appProperties?:object }} meta
+ * @param {{ folderId?:string|null, folderIds?:string[], userId:string }} who
  */
-function isOwnPortfolioUpload(meta, { folderId, userId } = {}) {
-  if (!meta || !folderId || !userId) return false;
+function isOwnPortfolioUpload(meta, { folderId, folderIds, userId } = {}) {
+  const allowed = new Set([folderId, ...(Array.isArray(folderIds) ? folderIds : [])].filter(Boolean));
+  if (!meta || !allowed.size || !userId) return false;
   const parents = Array.isArray(meta.parents) ? meta.parents : [];
-  if (!parents.includes(folderId)) return false;
+  if (!parents.some(p => allowed.has(p))) return false;
   const props = (meta.appProperties && typeof meta.appProperties === 'object') ? meta.appProperties : {};
   return props.hfs_kind === 'portfolio_external' && String(props.hfs_owner_id || '') === String(userId);
 }

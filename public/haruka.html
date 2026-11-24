@@ -28362,6 +28362,9 @@ const _pfPendingSizeSync = new Map();  // file_id -> {w,h}（DBへ書き戻す�
 function pfOnThumbLoad(idx, img) {
   const item = pfItems[idx];
   if (!item || !img?.naturalWidth || !img?.naturalHeight) return;
+  // 🌐 外部作品の YouTube（hqdefault は常に 4:3）・リンク（og:image は作品そのものではない）は
+  //   サムネの寸法が作品の向きを表さないので、枠の補正も書き戻しもしない（ADR 045）
+  if (item.external && item.source_type !== 'drive' && item.source_type !== 'upload') return;
   const real = img.naturalWidth / img.naturalHeight;
   const shown = (item.aspect_w && item.aspect_h) ? (item.aspect_w / item.aspect_h) : null;
   // 2%以上ズレていたら（＝枠と実物が違う）実寸で置き換える

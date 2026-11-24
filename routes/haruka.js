@@ -27789,7 +27789,7 @@ function extServiceAccountEmail() {
 async function extFetchDriveMeta(drive, fileId) {
   const meta = await drive.files.get({
     fileId,
-    fields: 'id, name, mimeType, size, thumbnailLink, webViewLink, parents, driveId, ownedByMe, trashed, appProperties, videoMediaMetadata(width,height,durationMillis), imageMediaMetadata(width,height)',
+    fields: 'id, name, mimeType, size, thumbnailLink, webViewLink, parents, driveId, ownedByMe, owners(emailAddress), trashed, appProperties, videoMediaMetadata(width,height,durationMillis), imageMediaMetadata(width,height)',
     supportsAllDrives: true,
   });
   const d = meta.data || {};
@@ -27799,6 +27799,7 @@ async function extFetchDriveMeta(drive, fileId) {
     // 持ち主・置き場の確認用（ADR 045 追補: 本人の置き場か／HFS 自身の Drive か）
     parents: Array.isArray(d.parents) ? d.parents : [], driveId: d.driveId || null,
     ownedByMe: d.ownedByMe === true, trashed: d.trashed === true,
+    ownerEmails: Array.isArray(d.owners) ? d.owners.map(o => o?.emailAddress).filter(Boolean) : [],
     appProperties: (d.appProperties && typeof d.appProperties === 'object') ? d.appProperties : {},
     thumbnailLink: d.thumbnailLink ? String(d.thumbnailLink).replace(/=s\d+$/, '') : null,
     webViewLink: d.webViewLink || null,
@@ -27814,6 +27815,26 @@ async function extResolveUploadFolder(drive, ownerUser) {
   const top = await getOrCreateFolder(drive, rootFolderId, '🌐 みんなのポートフォリオ');
   const who = String(ownerUser?.nickname || ownerUser?.full_name || ownerUser?.id || 'member').trim().replace(/[\\/:*?"<>|]/g, '_');
   return getOrCreateFolder(drive, top, who);
+}
+
+// ファイルの親フォルダのうち「<Drive ルート>/🌐 みんなのポートフォリオ」直下にあるものを返す
+//   （同名の 🌐 フォルダが複数できていても全部を候補にする）
+async function extPortfolioUploadParentsUnderTop(drive, parentIds) {
+  const rootFolderId = await getDriveRootFolderId();
+  if (!rootFolderId || !Array.isArray(parentIds) || !parentIds.length) return [];
+  const tops = await drive.files.list({
+    q: `name='🌐 みんなのポートフォリオ' and '${rootFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id)', supportsAllDrives: true, includeItemsFromAllDrives: true,
+  });
+  const topIds = new Set((tops.data?.files || []).map(f => f.id));
+  if (!topIds.size) return [];
+  const out = [];
+  for (const pid of parentIds.slice(0, 5)) {
+    const p = await drive.files.get({ fileId: pid, fields: 'id, mimeType, parents, trashed', supportsAllDrives: true });
+    const d = p.data || {};
+    if (d.mimeType === 'application/vnd.google-apps.folder' && !d.trashed && (d.parents || []).some(x => topIds.has(x))) out.push(d.id);
+  }
+  return out;
 }
 
 // URL の実体を取りに行く（外部リンクの OGP 用）。HTML 以外・大きすぎるものは読まない
@@ -27897,7 +27918,7 @@ function extToPortfolioItem(w, { ownerUser, genreInfo, roleCodes, userId }) {
     project_name:  '🌐 みんなのポートフォリオ',
     client_id:     null,
     client_name:   w.client_name || '',
-    delivered_at:  w.produced_at || (w.created_at ? String(w.created_at).slice(0, 10) : null),
+    delivered_at:  w.produced_at || (w.created_at ? new Date(w.created_at).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) : null),
     note:          w.description || '',
     can_edit_note: false,
     can_edit_external: editable,
@@ -27981,7 +28002,16 @@ router.post('/portfolio/external-works/inspect', requireAuth, async (req, res) =
       // drive_file_id を差し替えて HFS の Drive の別ファイル（請求書・契約書など）を公開・登録させない（ADR 045 追補）
       const { data: meUp } = await supabase.from('users').select('id, full_name, nickname').eq('id', userId).maybeSingle();
       const ownFolderId = await extResolveUploadFolder(drive, meUp || { id: userId });
-      if (!dm || dm.trashed || !extUtil.isOwnPortfolioUpload(dm, { folderId: ownFolderId, userId })) {
+      // 名前で引き直した置き場と違う（ニックネーム変更・同名フォルダの二重作成）ときは、
+      // ファイルの親フォルダが「<ルート>/🌐 みんなのポートフォリオ」直下にあるかで確かめる（印の確認は同じ）
+      let altFolderIds = [];
+      if (dm && !dm.trashed && ownFolderId && !dm.parents.includes(ownFolderId)) {
+        altFolderIds = await extPortfolioUploadParentsUnderTop(drive, dm.parents).catch((e) => {
+          console.warn('[portfolio/external] 置き場の親確認失敗:', e.message);
+          return [];
+        });
+      }
+      if (!dm || dm.trashed || !extUtil.isOwnPortfolioUpload(dm, { folderId: ownFolderId, folderIds: altFolderIds, userId })) {
         return res.status(400).json({ error: 'アップロードしたファイルが見つかりません。もう一度ファイルを選んでください' });
       }
       // 再生用に anyone-reader を付ける（クリエイティブの complete と同じ。失敗しても登録は続ける）
@@ -28045,9 +28075,16 @@ router.post('/portfolio/external-works/inspect', requireAuth, async (req, res) =
         if (dm.mimeType === 'application/vnd.google-apps.folder') return res.status(400).json({ error: 'Drive のフォルダは登録できません。ファイル 1 件の共有リンクを貼ってください' });
         // HFS 自身の Drive のファイルは外部作品にしない（HFS の作品は 🏆 作品ページに納品作品として並ぶ。
         // 社内ファイルを全員に見せてしまう事故も防ぐ・ADR 045 追補 2026-11-24）
-        if (extUtil.isHfsInternalDriveFile(dm, await extHfsDriveId(drive))) {
+        // 持ち主が申請者以外の HFS メンバー（メンバーのマイドライブから SA に共有されたフォルダの中身など）も弾く
+        let ownerIsOtherMember = false;
+        const ownerAddrs = (dm.ownerEmails || []).map(s => String(s).trim().toLowerCase()).filter(Boolean);
+        if (ownerAddrs.length) {
+          const { data: ownerUsers } = await supabase.from('users').select('id, email').in('email', ownerAddrs);
+          ownerIsOtherMember = (ownerUsers || []).some(u => u.id !== userId);
+        }
+        if (extUtil.isHfsInternalDriveFile(dm, await extHfsDriveId(drive), { ownerIsOtherMember })) {
           return res.status(400).json({
-            error: 'HFS の Google ドライブの中にあるファイルは、ここでは登録できません。HFS の案件の作品は 🏆 作品ページに納品作品として並びます。'
+            error: 'HFS の Google ドライブ（共有ドライブ）や他のメンバーのドライブにあるファイルは、ここでは登録できません。HFS の案件の作品は 🏆 作品ページに納品作品として並びます。'
               + 'HFS の外で作った自分の作品なら、ファイルを「アップロード」から追加してください',
           });
         }
@@ -28289,6 +28326,8 @@ router.post('/portfolio/external-works', requireAuth, async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
     _extInspectStore.remove(body.inspect_token);   // 同じ読み取りで二重登録しない
+    // 費用は DB（ai_cost_jpy）に載ったので、未登録分の概算から差し引く（予算の二重計上を防ぐ）
+    if (aiCost) require('../lib/portfolio-external-ai').settlePendingSpend(aiCost);
     const roleCodes = await getEffectiveRoleCodes(req);
     const { data: me } = await supabase.from('users').select('id, full_name, nickname').eq('id', req.user.id).maybeSingle();
     res.status(201).json({ ok: true, work: data, item: extToPortfolioItem(data, { ownerUser: me, genreInfo, roleCodes, userId: req.user.id }) });
@@ -28331,8 +28370,10 @@ router.post('/portfolio/external-works/media-size', requireAuth, async (req, res
     for (const s of sizes) {
       const w = Number(s?.width), h = Number(s?.height);
       if (!s?.id || !(w > 0 && h > 0)) continue;
-      const { data: work } = await supabase.from('portfolio_external_works').select('id, owner_user_id').eq('id', s.id).maybeSingle();
+      const { data: work } = await supabase.from('portfolio_external_works').select('id, owner_user_id, source_type').eq('id', s.id).is('deleted_at', null).maybeSingle();
       if (!work || !extUtil.canEditExternalWork({ roleCodes, userId: req.user?.id, work })) continue;
+      // YouTube / リンクのサムネ寸法は作品の向きを表さない（hqdefault は常に 4:3）ので書き戻さない
+      if (work.source_type !== 'drive' && work.source_type !== 'upload') continue;
       const { error } = await supabase.from('portfolio_external_works').update({ aspect_w: Math.round(w), aspect_h: Math.round(h) }).eq('id', work.id);
       if (!error) updated += 1;
     }

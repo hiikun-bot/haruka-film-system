@@ -67,6 +67,8 @@ function isPrivateV6(ip) {
   }
   const first = parseInt(s.split(':')[0] || '0', 16);
   if (Number.isNaN(first)) return true;
+  // 上位が 0 のもの（IPv4 互換 ::a.b.c.d・::ffff:0:a.b.c.d など IPv4 を埋め込んだ形）は公開アドレスに無いので一律で弾く
+  if (first === 0) return true;
   if ((first & 0xfe00) === 0xfc00) return true;   // fc00::/7 ユニークローカル
   if ((first & 0xffc0) === 0xfe80) return true;   // fe80::/10 リンクローカル
   if ((first & 0xff00) === 0xff00) return true;   // ff00::/8 マルチキャスト
