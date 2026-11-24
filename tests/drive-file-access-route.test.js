@@ -265,49 +265,62 @@ describe('POST /creatives/:id/upload-session/complete', () => {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
 
-  test('init でこのクリエイティブ用の目印が付いたファイルは登録・公開設定される（案件名が変わっていても）', async () => {
-    mockDrive.files.set('taggedUpload0123456', { id: 'taggedUpload0123456', name: 'v.mp4', parents: ['somewhere-else'], mimeType: 'video/mp4', appProperties: { hfs_creative_id: 'cr1' } });
+  test('init → Drive 直送 → complete の正しい流れでは登録・公開設定される（init が目印を付ける）', async () => {
+    // init: Resumable セッション発行の fetch を偽物にし、送られたメタデータ（目印）を受け取る
+    const realFetch = global.fetch;
+    let sentMeta = null;
+    global.fetch = async (url, opts) => {
+      if (String(url).startsWith('https://www.googleapis.com/upload/drive/v3/files')) {
+        sentMeta = JSON.parse(opts.body);
+        return { ok: true, status: 200, headers: { get: () => 'https://upload.test/session' }, text: async () => '' };
+      }
+      return realFetch(url, opts);
+    };
+    mockDb.tables.creatives[0].projects.deadline_unit = null;
+    try {
+      const ri = await realFetch(`${base}/creatives/cr1/upload-session/init`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
+        body: JSON.stringify({ filename: 'cr1_v1.mp4', fileSize: 1000, mimeType: 'video/mp4' }),
+      });
+      expect(ri.status).toBe(200);
+    } finally {
+      global.fetch = realFetch;
+    }
+    expect(sentMeta.appProperties).toEqual({ hfs_creative_id: 'cr1', hfs_uploader_id: 'u1' });
+    // ブラウザが Drive へ上げ終えた状態（init のメタデータどおりのファイルができる）
+    mockDrive.files.set('taggedUpload0123456', { id: 'taggedUpload0123456', ...sentMeta, mimeType: 'video/mp4' });
     const r = await post({ driveFileId: 'taggedUpload0123456', version: 9, generated_name: 'cr1_v9.mp4', mimeType: 'video/mp4' });
     expect(r.status).toBe(200);
     expect(mockDrive.granted.map(g => g.fileId)).toEqual(['taggedUpload0123456']);
+    expect(mockDb.tables.creative_files.some(f => f.drive_file_id === 'taggedUpload0123456')).toBe(true);
   });
 
   test('別のクリエイティブ用の目印のファイルは 403', async () => {
-    mockDrive.files.set('otherTagged01234567', { id: 'otherTagged01234567', name: 'v.mp4', parents: ['f-type'], mimeType: 'video/mp4', appProperties: { hfs_creative_id: 'cr2' } });
+    mockDrive.files.set('otherTagged01234567', { id: 'otherTagged01234567', name: 'v.mp4', parents: ['f-type'], appProperties: { hfs_creative_id: 'cr2', hfs_uploader_id: 'u1' } });
     const r = await post({ driveFileId: 'otherTagged01234567', version: 9, generated_name: 'x.mp4' });
     expect(r.status).toBe(403);
     expect(mockDrive.granted).toEqual([]);
   });
 
-  test('目印なしで案件フォルダ配下でも、既に登録済み（他のクリエイティブのファイル）なら 403', async () => {
-    const r = await post({ driveFileId: VIDEO_ID, version: 9, generated_name: 'x.mp4' });
+  test('別の人がアップロード中のファイルは 403', async () => {
+    mockDrive.files.set('otherUser0123456789', { id: 'otherUser0123456789', name: 'v.mp4', parents: ['f-type'], appProperties: { hfs_creative_id: 'cr1', hfs_uploader_id: 'u2' } });
+    const r = await post({ driveFileId: 'otherUser0123456789', version: 9, generated_name: 'x.mp4' });
     expect(r.status).toBe(403);
     expect(mockDrive.granted).toEqual([]);
   });
 
-  test('目印なしで案件フォルダ配下でも、24 時間より前に作られたファイルは 403', async () => {
-    mockDrive.files.set('oldUntagged01234567', { id: 'oldUntagged01234567', name: 'v.mp4', parents: ['f-type'], mimeType: 'video/mp4', createdTime: '2020-01-01T00:00:00Z' });
-    const r = await post({ driveFileId: 'oldUntagged01234567', version: 9, generated_name: 'x.mp4' });
-    expect(r.status).toBe(403);
-  });
-
-  test('目印なし（変更前に始まったアップロード）でも案件フォルダ配下の新しいファイルは登録される', async () => {
-    const r = await post({ driveFileId: 'uploadedVideo0123456', version: 9, generated_name: 'cr1_v9.mp4', mimeType: 'video/mp4' });
-    expect(r.status).toBe(200);
-    expect(mockDrive.granted.map(g => g.fileId)).toEqual(['uploadedVideo0123456']);
-    expect(mockDb.tables.creative_files.some(f => f.drive_file_id === 'uploadedVideo0123456')).toBe(true);
-  });
-
-  test('案件フォルダの外のファイル（請求書など）は 403 で、公開設定も登録もしない', async () => {
-    const r = await post({ driveFileId: INVOICE_ID, version: 9, generated_name: 'x.mp4', mimeType: 'video/mp4' });
-    expect(r.status).toBe(403);
+  test('目印の無いファイル（案件フォルダ内の既存ファイル・請求書など）は 403 で、公開設定も登録もしない', async () => {
+    for (const id of ['uploadedVideo0123456', VIDEO_ID, INVOICE_ID]) {
+      const r = await post({ driveFileId: id, version: 9, generated_name: 'x.mp4', mimeType: 'video/mp4' });
+      expect(r.status).toBe(403);
+    }
     expect(mockDrive.granted).toEqual([]);
     expect(mockDb.tables.creative_files.some(f => f.drive_file_id === INVOICE_ID)).toBe(false);
   });
 
-  test('存在しないファイルは確認できないので 502 で、何もしない', async () => {
+  test('存在しないファイルは 403 で、何もしない', async () => {
     const r = await post({ driveFileId: 'doesNotExist01234567', version: 9, generated_name: 'x.mp4' });
-    expect(r.status).toBe(502);
+    expect(r.status).toBe(403);
     expect(mockDrive.granted).toEqual([]);
   });
 });

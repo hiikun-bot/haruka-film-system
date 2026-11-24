@@ -391,13 +391,6 @@ async function cleanupCreativeFilesForVersion(creativeId, version) {
 //     時刻依存だと JST 0:00〜8:59 のアップロードが前日扱いになっていた）。
 //     multer / Resumable 直送の両経路とも本ヘルパを通るので、ここで直せば両経路一致は保たれる。
 async function resolveCreativeTypeFolder(drive, project, isVideo) {
-  const baseFolderId = await resolveCreativeProjectBaseFolder(drive, project);
-  return resolveCreativeTypeFolderUnder(drive, project, isVideo, baseFolderId);
-}
-
-// ルート → クライアント名 → 案件名 の「案件フォルダ」を解決する（無ければ作る）。
-// クリエイティブのファイルは必ずこの配下に置かれる（/upload-session/complete の配置確認にも使う）。
-async function resolveCreativeProjectBaseFolder(drive, project) {
   const rootFolderId = await getDriveRootFolderId();
   if (!rootFolderId) throw new Error('drive_root_folder_id が未設定です');
 
@@ -408,10 +401,7 @@ async function resolveCreativeProjectBaseFolder(drive, project) {
   if (!clientFolderId) throw new Error(`クライアントフォルダ作成失敗: ${clientName}`);
   const baseFolderId = await getOrCreateFolder(drive, clientFolderId, projectName);
   if (!baseFolderId) throw new Error(`案件フォルダ作成失敗: ${projectName}`);
-  return baseFolderId;
-}
 
-async function resolveCreativeTypeFolderUnder(drive, project, isVideo, baseFolderId) {
   // JST の「今日」を UTC 値として保持し、以降は getUTC* で読む（サーバーローカル TZ 非依存）
   const [jy, jm, jd] = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).split('-').map(Number);
   const jstToday = new Date(Date.UTC(jy, jm - 1, jd));
@@ -14973,45 +14963,32 @@ router.post('/creatives/:id/upload-session/complete', async (req, res) => {
     if (!DRIVE_ACCESS.isValidDriveFileId(driveFileId)) return res.status(400).json({ error: 'driveFileId が不正です' });
     if (!Number.isFinite(version)) return res.status(400).json({ error: 'version が必要です' });
 
-    // 権限確認（2026-11-24）: 受け取った driveFileId が「init がこのクリエイティブ用に発行した
-    // アップロード先」のファイルかを確かめる。違うファイル（請求書・契約書・他クリエイティブの
-    // ファイルなど）には公開設定も creative_files 登録もしない。
-    //   1) init が付けた目印 appProperties.hfs_creative_id がこのクリエイティブと一致 → OK
-    //   2) 目印が無い（この変更より前に init したアップロードの途中だった）ときだけ救済:
-    //      案件フォルダ配下・まだどの creative_files にも登録されていない・24 時間以内に作られた
+    // 権限確認（2026-11-24）: 受け取った driveFileId が「init がこのクリエイティブ用・この人用に
+    // 発行したアップロード先」のファイルかを確かめる。init はファイルに appProperties の目印
+    // （hfs_creative_id / hfs_uploader_id。SA＝このアプリだけが書ける）を付けている。
+    // 目印が一致しないファイル（請求書・契約書・他クリエイティブのファイル・目印の無い古いファイルなど）には
+    // 公開設定も creative_files 登録もしない。
     {
-      const { data: cr, error: crErr } = await supabase
-        .from('creatives')
-        .select('id, projects(id, name, clients(id, name))')
-        .eq('id', creativeId)
-        .maybeSingle();
-      if (crErr) return res.status(500).json({ error: crErr.message });
-      if (!cr) return res.status(404).json({ error: 'クリエイティブが見つかりません' });
-      let placed = false;
+      let fmeta = null;
       try {
         const vDrive = await getDriveService();
-        const { data: fmeta } = await vDrive.files.get({
-          fileId: driveFileId, fields: 'id, appProperties, createdTime', supportsAllDrives: true,
-        });
-        const tag = fmeta?.appProperties?.hfs_creative_id;
-        if (tag) {
-          placed = tag === String(creativeId);
-        } else {
-          const createdMs = Date.parse(fmeta?.createdTime || '');
-          const fresh = Number.isFinite(createdMs) && (Date.now() - createdMs) < 24 * 60 * 60 * 1000;
-          const { data: already } = await supabase
-            .from('creative_files').select('id').eq('drive_file_id', driveFileId).limit(1);
-          if (fresh && !(already && already.length)) {
-            const baseFolderId = await resolveCreativeProjectBaseFolder(vDrive, cr.projects);
-            placed = await DRIVE_ACCESS.isDriveFileUnderFolder(vDrive, driveFileId, baseFolderId);
-          }
-        }
+        ({ data: fmeta } = await vDrive.files.get({
+          fileId: driveFileId, fields: 'id, appProperties', supportsAllDrives: true,
+        }));
       } catch (e) {
-        driveLog('warn', `resumable complete: 配置確認に失敗: ${e?.message || e}`, { creativeId, driveFileId });
+        const code = e?.code || e?.response?.status;
+        if (code === 404 || code === 403) {
+          driveLog('warn', 'resumable complete: ファイルが見つからない／見えないため拒否', { creativeId, driveFileId });
+          return res.status(403).json({ error: 'このファイルは登録できません' });
+        }
+        driveLog('warn', `resumable complete: ファイル確認に失敗: ${e?.message || e}`, { creativeId, driveFileId });
         return res.status(502).json({ error: 'アップロードしたファイルの確認に失敗しました。もう一度お試しください' });
       }
+      const ap = fmeta?.appProperties || {};
+      const placed = ap.hfs_creative_id === String(creativeId)
+        && ap.hfs_uploader_id === String(req.user?.id || '');
       if (!placed) {
-        driveLog('warn', 'resumable complete: 案件フォルダ外のファイルを拒否', { creativeId, driveFileId });
+        driveLog('warn', 'resumable complete: init の目印が一致しないファイルを拒否', { creativeId, driveFileId });
         return res.status(403).json({ error: 'このファイルは登録できません' });
       }
     }

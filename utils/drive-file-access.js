@@ -44,31 +44,10 @@ function driveUrlHasFileId(url, id) {
   return !!m && m[1] === id;
 }
 
-// fileId の親をたどって ancestorId の配下にあるかを確かめる（Drive の parents を最大 maxDepth 段）。
-// Drive の呼び出しに失敗したら例外を投げる（呼び出し側で「確かめられない＝拒否」にする）。
-async function isDriveFileUnderFolder(drive, fileId, ancestorId, maxDepth = 6) {
-  if (!fileId || !ancestorId) return false;
-  let frontier = [fileId];
-  const seen = new Set(frontier);
-  for (let depth = 0; depth < maxDepth && frontier.length; depth += 1) {
-    const next = [];
-    for (const id of frontier) {
-      const { data } = await drive.files.get({ fileId: id, fields: 'id, parents', supportsAllDrives: true });
-      for (const p of (data && data.parents) || []) {
-        if (p === ancestorId) return true;
-        if (!seen.has(p)) { seen.add(p); next.push(p); }
-      }
-    }
-    frontier = next;
-  }
-  return false;
-}
-
 module.exports = {
   isValidDriveFileId,
   escapeLikePattern,
   guessMimeFromName,
   isPlayableMime,
   driveUrlHasFileId,
-  isDriveFileUnderFolder,
 };
