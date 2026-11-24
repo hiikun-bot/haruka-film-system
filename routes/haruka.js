@@ -20682,6 +20682,15 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
               }
             }
           }
+        } else if (IE.isAdjustmentLine(prev)) {
+          // 過払いの調整（マイナス）: 品目・差し引く金額（正の数で入力）・理由。数量は 1 固定
+          row = {
+            label: str(li.label, IE.LABEL_MAX) || prev.label || '',
+            unit_price: price.value,
+            quantity: 1,
+            manual_reason: str(li.manual_reason, IE.REASON_MAX) || null,
+            sort_order: i,
+          };
         } else {
           const q = IE.parseMoney(li.quantity, { max: IE.MAX_QUANTITY });
           if (q.error) return res.status(400).json({ error: `${i + 1}行目: 数量は${q.error}`, index: i });
@@ -20700,13 +20709,14 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
         next.push(merged);
       } else {
         const isExpense = li.kind === 'expense'; // 「＋ 立替経費」の行。種類は作成時に決まり、後から変えられない
-        const q = isExpense ? { value: 1 } : IE.parseMoney(li.quantity, { max: IE.MAX_QUANTITY });
+        const isAdjust = li.kind === 'adjustment'; // 「− 過払いの調整」の行（追補 2026-11-24）
+        const q = (isExpense || isAdjust) ? { value: 1 } : IE.parseMoney(li.quantity, { max: IE.MAX_QUANTITY });
         if (q.error) return res.status(400).json({ error: `${i + 1}行目: 数量は${q.error}`, index: i });
         const row = {
           invoice_id: inv.id,
           creative_id: null,
           creative_label: null,
-          cost_type: isExpense ? IE.MANUAL_EXPENSE_COST_TYPE : null,
+          cost_type: isExpense ? IE.MANUAL_EXPENSE_COST_TYPE : (isAdjust ? IE.ADJUSTMENT_COST_TYPE : null),
           label: str(li.label, IE.LABEL_MAX),
           unit: '式',
           unit_price: price.value,

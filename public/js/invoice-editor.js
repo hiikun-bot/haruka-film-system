@@ -414,6 +414,7 @@
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.bulkPrice()" title="選んだ行に同じ単価を入れます">単価をまとめて入力</button>
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.togglePick()" title="作成のときに選び漏れた自分のクリエイティブを名前で探して足します">＋ HFSのCRを追加</button>
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.addManual()">＋ HFS外の行</button>
+          <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.addAdjustment()" title="前の月に多く受け取った分を、この請求書で差し引きます（例: 同じ作業を二重に受け取った）">− 過払いの調整</button>
           <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.addExpense()" title="交通費など立て替えた実費を足します。領収書どおりの金額を入れてください（消費税・源泉徴収はかかりません）">＋ 立替経費</button>
           <button type="button" class="btn btn-sm ie-btn-del" onclick="HFSInvoiceEditor.removeSelected()">削除</button>
           <select class="ie-sort" onchange="HFSInvoiceEditor.sortBy(this.value); this.value = ''" title="明細を並べ替えます（この順で PDF にも並びます）">
@@ -711,7 +712,7 @@
     const issues = rowIssues(r);
     const isNg = issues.length > 0;
     const dis = canEdit ? '' : 'disabled';
-    const cls = ['ie-row', r.kind === 'manual' ? 'ie-row-manual' : '', r.kind === 'expense' ? 'ie-row-expense' : '', isNg ? 'ie-row-ng' : ''].join(' ');
+    const cls = ['ie-row', (r.kind === 'manual' || r.kind === 'adjustment') ? 'ie-row-manual' : '', r.kind === 'expense' ? 'ie-row-expense' : '', isNg ? 'ie-row-ng' : ''].join(' ');
     const sel = canEdit ? `<input type="checkbox" class="ie-sel" data-i="${i}" ${r._sel ? 'checked' : ''}>` : '';
     const priceInput = `<input class="ie-in ie-in-price" data-i="${i}" data-col="price" inputmode="numeric" value="${r.unit_price == null ? '' : h(r.unit_price)}" placeholder="未入力" ${dis}>`;
     // 立替経費（領収書の欄があるとき）は金額も内容・日付・支払先と同じ枠の中で入れる（合意した画面どおり）
@@ -733,6 +734,10 @@
     } else if (r.kind === 'manual') {
       label = `<div class="ie-manual"><input class="ie-in ie-in-label" data-i="${i}" data-col="label" maxlength="200" value="${h(r.label)}" placeholder="品目（例: 撮影補助 10/12）" ${dis}> <span class="ie-tag-blue">HFS未登録</span></div>
         <div class="ie-reason">理由: <input class="ie-in ie-in-reason" data-i="${i}" data-col="reason" maxlength="500" value="${h(r.manual_reason)}" placeholder="HFSに無い理由（必須）" ${dis}></div>`;
+    } else if (r.kind === 'adjustment') {
+      label = `<div class="ie-manual"><input class="ie-in ie-in-label" data-i="${i}" data-col="label" maxlength="200" value="${h(r.label)}" placeholder="内容（例: 10月分 過払い調整（カット稿））" ${dis}> <span class="ie-tag-adj">− 過払いの調整</span></div>
+        <div class="ie-reason">理由: <input class="ie-in ie-in-reason" data-i="${i}" data-col="reason" maxlength="500" value="${h(r.manual_reason)}" placeholder="差し引く理由（必須）（例: 10月分で同じ作業を二重に受け取ったため）" ${dis}></div>
+        <div class="ie-exp-note">差し引く金額を正の数で入れてください（例: 4000）。報酬から引いたあとの金額で、消費税・源泉徴収を計算し直します</div>`;
     } else if (expenseBlock) {
       label = expenseBlockHtml(r, i, canEdit, priceInput);
     } else if (r.kind === 'expense') {
@@ -792,11 +797,11 @@
       if (p.error) return false;
       r.quantity = p.value == null ? 0 : p.value;
     } else if (col === 'label') {
-      if (r.kind !== 'manual' && r.kind !== 'expense') return false;
+      if (r.kind !== 'manual' && r.kind !== 'expense' && r.kind !== 'adjustment') return false;
       r.label = String(raw ?? '');
     } else if (col === 'reason') {
       if (r.kind === 'cr') r.price_change_reason = String(raw ?? '');
-      else if (r.kind === 'manual') r.manual_reason = String(raw ?? '');
+      else if (r.kind === 'manual' || r.kind === 'adjustment') r.manual_reason = String(raw ?? '');
       else return false;
     } else if (col === 'edate' || col === 'payee' || col === 'rreason') {
       if (r.kind !== 'expense') return false;
@@ -968,7 +973,7 @@
   function bulkPrice() {
     if (!editable()) return;
     // 立替経費は領収書ごとに金額が違うので、まとめ入力の対象にしない
-    const idx = selectedIdx().filter(i => ed.rows[i].kind !== 'fixed' && ed.rows[i].kind !== 'expense');
+    const idx = selectedIdx().filter(i => ed.rows[i].kind !== 'fixed' && ed.rows[i].kind !== 'expense' && ed.rows[i].kind !== 'adjustment');
     if (!idx.length) { showToast('先に左のチェックで行を選んでください（立替経費・金額固定の行はまとめて入力できません）', 'warn'); return; }
     const raw = window.prompt(`選んだ ${idx.length} 行に入れる税抜単価（円）`, '');
     if (raw === null) return;
@@ -996,6 +1001,18 @@
       id: null, _key: `k${++ed.keySeq}`, _sel: false, kind: 'expense', creative_id: null, cost_type: C().MANUAL_EXPENSE_COST_TYPE, is_expense: true,
       label: '', creative_label: '', unit_price: null, quantity: 1, ref_price: null, price_change_reason: '', manual_reason: '', billing_date: null,
       expense_date: null, expense_payee: '', receipt_status: null, receipt_missing_reason: '', receipt_file_id: null, receipt_file_name: '',
+    });
+    render();
+    focusCell(ed.rows.length - 1, 'label');
+    scheduleSave();
+  }
+
+  /** 過払いの調整（マイナス）の行を足す。品目・差し引く金額（正の数）・理由。数量 1。報酬から引いて消費税・源泉を計算し直す */
+  function addAdjustment() {
+    if (!editable()) return;
+    ed.rows.push({
+      id: null, _key: `k${++ed.keySeq}`, _sel: false, kind: 'adjustment', creative_id: null, cost_type: C().ADJUSTMENT_COST_TYPE,
+      label: '', creative_label: '', unit_price: null, quantity: 1, ref_price: null, price_change_reason: '', manual_reason: '', billing_date: null,
     });
     render();
     focusCell(ed.rows.length - 1, 'label');
@@ -1239,7 +1256,7 @@
       <td class="c">${i + 1}</td>
       <td class="c">${r.kind === 'cr' ? slashDate(r.billing_date) : ''}</td>
       <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.is_expense ? C().expenseItemLabel(r) + C().receiptNoteOf(r) : (r.kind === 'fixed' ? (r.creative_label || r.label) : r.label))}</td>
-      <td class="r">${r.unit_price == null ? '' : yen(r.unit_price)}</td>
+      <td class="r">${r.unit_price == null ? '' : yen(r.kind === 'adjustment' ? C().lineAmount(r) : r.unit_price)}</td>
       <td class="c">${r.kind === 'manual' ? h(r.quantity) : 1}</td>
       <td class="r">${r.unit_price == null ? '' : yen(C().lineAmount(r))}</td>
     </tr>`).join('');
@@ -1290,7 +1307,7 @@
     isCandidateMode: () => cand.active,
     createDraftFromModal,
     onThumbToggle,
-    open, close, reload, submit, preview, fillRef, bulkPrice, addManual, addExpense, removeSelected, sortBy, togglePick,
+    open, close, reload, submit, preview, fillRef, bulkPrice, addManual, addExpense, addAdjustment, removeSelected, sortBy, togglePick,
     openMedia, openCandidateMedia, closeMedia,
     onCandidateSort, searchOutside,
     _updateCandidateCount: updateCandidateCount,

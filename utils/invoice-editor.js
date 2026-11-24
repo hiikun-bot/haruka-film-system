@@ -47,6 +47,7 @@
     producer_fee: 'プロデュース費',
     hourly_fee: '時間報酬',
     hourly_expense: '立替経費',
+    adjustment: '過払いの調整',
     expense: '立替経費',
     installment_fee: '一式（分割支払）',
     manual: 'HFS外',
@@ -58,6 +59,10 @@
   //   hourly_expense : 作業時間報告の立替経費（金額はサーバー計算の固定額）
   const MANUAL_EXPENSE_COST_TYPE = 'expense';
   const EXPENSE_COST_TYPES = [MANUAL_EXPENSE_COST_TYPE, 'hourly_expense'];
+  // 過払いの調整（マイナス）の行（追補 2026-11-24）。前の月に多く払った分を、この請求書で差し引く。
+  //   単価は正の数で持ち、行の金額はマイナス（lineAmount が −単価 を返す）。数量は 1 固定・品目と理由が必須。
+  //   報酬（税抜小計）から引くので、消費税・源泉はマイナスを引いたあとの小計で計算される。
+  const ADJUSTMENT_COST_TYPE = 'adjustment';
   const CR_COST_TYPES = ['base_fee', 'script_fee', 'ai_fee', 'other_fee', 'director_fee', 'producer_fee'];
   // 二重請求の対象になる請求書の状態（差し戻し・下書き・削除は数えない）
   const BILLED_STATUSES = ['submitted', 'approved'];
@@ -309,14 +314,17 @@
   function isFixedLine(item) { return !!(item && !item.creative_id && FIXED_COST_TYPES.includes(item.cost_type)); }
   /** エディタの「＋ 立替経費」で足した行か（品目と金額を本人が入れる・数量は 1 固定・理由は不要） */
   function isManualExpenseLine(item) { return !!(item && !item.creative_id && item.cost_type === MANUAL_EXPENSE_COST_TYPE); }
-  /** HFS外の行か（品目・単価・数量・理由を本人が入れる）。立替経費の行は含めない */
-  function isManualLine(item) { return !!(item && !item.creative_id && !FIXED_COST_TYPES.includes(item.cost_type) && !isManualExpenseLine(item)); }
+  /** 過払いの調整（マイナス）の行か */
+  function isAdjustmentLine(item) { return !!(item && !item.creative_id && item.cost_type === ADJUSTMENT_COST_TYPE); }
+  /** HFS外の行か（品目・単価・数量・理由を本人が入れる）。立替経費・過払いの調整の行は含めない */
+  function isManualLine(item) { return !!(item && !item.creative_id && !FIXED_COST_TYPES.includes(item.cost_type) && !isManualExpenseLine(item) && !isAdjustmentLine(item)); }
   /** 立替経費（実費）の行か（手で足した行・作業時間報告の行の両方） */
   function isExpenseLine(item) { return !!(item && !item.creative_id && EXPENSE_COST_TYPES.includes(item.cost_type)); }
   /** エディタでの行の種類。cr / fixed（金額固定）/ expense（手で足した立替経費）/ manual（HFS外） */
   function lineKind(item) {
     if (isCrLine(item)) return 'cr';
     if (isFixedLine(item)) return 'fixed';
+    if (isAdjustmentLine(item)) return 'adjustment';
     return isManualExpenseLine(item) ? 'expense' : 'manual';
   }
 
@@ -328,6 +336,7 @@
       const q = Math.trunc(Number(item.quantity));
       return up * (Number.isFinite(q) ? q : 0);
     }
+    if (isAdjustmentLine(item)) return up === 0 ? 0 : -Math.abs(up); // 過払いの調整はマイナス
     return up;
   }
 
@@ -459,6 +468,10 @@
       if (!String(item.label || '').trim()) out.push({ code: 'LABEL_MISSING', message: '立替経費の内容を入力してください（例: 10/25 撮影 タクシー代）' });
       // 日付・支払先・領収書（追補 2026-11-23）。列がまだ無い環境（opts.requireReceipt=false）では見ない
       if (!(opts && opts.requireReceipt === false)) out.push(...expenseReceiptIssues(item));
+    } else if (isAdjustmentLine(item)) {
+      if (!String(item.label || '').trim()) out.push({ code: 'LABEL_MISSING', message: '調整の内容を入力してください（例: 10月分 過払い調整（カット稿））' });
+      if (!String(item.manual_reason || '').trim()) out.push({ code: 'ADJUSTMENT_NO_REASON', message: '過払いの調整は理由が必要です（例: 10月分で同じ作業を二重に受け取ったため）' });
+      if (Number(item.unit_price) === 0) out.push({ code: 'ADJUSTMENT_ZERO', message: '差し引く金額を入力してください' });
     } else if (isManualLine(item)) {
       if (!String(item.manual_reason || '').trim()) out.push({ code: 'MANUAL_NO_REASON', message: 'HFS外の行は理由が必要です' });
       if (!String(item.label || '').trim()) out.push({ code: 'LABEL_MISSING', message: '品目を入力してください' });
@@ -509,6 +522,10 @@
     });
 
     const totals = computeTotals(items, { withholding_enabled: !!p.withholdingEnabled });
+    // 過払いの調整を引いた結果、報酬がマイナスになる請求書は出せない（残りは翌月以降の請求で差し引く）
+    if (totals.subtotal < 0) {
+      push(null, -1, 'NEGATIVE_SUBTOTAL', `過払いの調整を引くと報酬（税抜）がマイナスになります（${totals.subtotal.toLocaleString('ja-JP')}円）。引ききれない分は翌月以降の請求で差し引いてください`);
+    }
     const et = Number(p.expectedTotal), ep = Number(p.expectedPayout);
     // 画面の「ご請求金額」は立替経費込み（grand_total）
     if (!Number.isFinite(et) || !Number.isFinite(ep) || et !== totals.grand_total || ep !== totals.payout) {
@@ -581,14 +598,14 @@
   return {
     TAX_NUM, TAX_DEN, WH_NUM, WH_DEN, WITHHOLDING_WARN_THRESHOLD, LOOKBACK_MONTHS, DEFAULT_EXCLUSIVE_FROM,
     REASON_MAX, LABEL_MAX, MAX_PRICE, MAX_QUANTITY, MAX_ITEMS,
-    COST_TYPE_LABELS, FIXED_COST_TYPES, CR_COST_TYPES, EXPENSE_COST_TYPES, MANUAL_EXPENSE_COST_TYPE, BILLED_STATUSES, NON_BILLABLE_ASSIGNMENT_ROLES,
+    COST_TYPE_LABELS, FIXED_COST_TYPES, CR_COST_TYPES, EXPENSE_COST_TYPES, MANUAL_EXPENSE_COST_TYPE, ADJUSTMENT_COST_TYPE, BILLED_STATUSES, NON_BILLABLE_ASSIGNMENT_ROLES,
     RECEIPT_ATTACHED, RECEIPT_MISSING, RECEIPT_STATUSES, PAYEE_MAX,
     parseExpenseDate, normalizeReceiptStatus, expenseReceiptIssues, receiptNoteOf,
     ymOf, addMonthsYm, jstDateOfIso, dateOnly, jstMonthRangeIso, paymentDueDate, invoiceDate,
     parseExclusiveFrom, isExclusiveYm,
     billingTimingOf, isBillableCreative, billingDateOf, lookbackStartYm, previousStartYm, classifyCandidate,
     issuerCostRoles, issuerRankApplied, billedKey,
-    parseMoney, isCrLine, isFixedLine, isManualLine, isExpenseLine, isManualExpenseLine, lineKind,
+    parseMoney, isCrLine, isFixedLine, isManualLine, isExpenseLine, isManualExpenseLine, isAdjustmentLine, lineKind,
     lineAmount, computeTotals, expenseOfInvoice, defaultWithholding,
     lineIssues, checkInvoiceForSubmit, crItemLabel, expenseItemLabel,
     searchNorm, matchesSearch, SORT_MODES, sortRows,

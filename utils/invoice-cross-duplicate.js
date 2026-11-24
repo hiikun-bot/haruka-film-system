@@ -18,7 +18,7 @@
 // DB 非依存。jest: tests/utils/invoice-cross-duplicate.test.js
 'use strict';
 
-const EXCLUDED_COST_TYPES = ['expense', 'hourly_expense', 'hourly_fee', 'installment_fee'];
+const EXCLUDED_COST_TYPES = ['expense', 'hourly_expense', 'hourly_fee', 'installment_fee', 'adjustment'];
 const LEVEL_ORDER = { high: 0, medium: 1, low: 2 };
 const MIN_CR_LABEL_LEN = 4;   // これより短い CR 名は品目名の部分一致に使わない（誤検知が多い）
 const MIN_NAME_LEN = 2;
