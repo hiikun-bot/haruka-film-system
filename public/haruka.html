@@ -18312,7 +18312,7 @@ function openStatusModal(id) {
   if (reasonEl) reasonEl.value = '';
   onQuickStatusSelectChange();
   // 非admin が納品済みを開いたとき: 戻し方の案内（実際に戻せるかは詳細画面でサーバーが判定する）
-  if (!isAdmin && c.status === '納品') {
+  if (!isAdmin && (['納品', '完納', '納品済'].includes(c.status) || c.force_delivered === true)) {
     const hintEl = document.getElementById('status-quick-hint');
     if (hintEl) {
       hintEl.textContent = '間違えて納品完了にした場合は、この制作の担当ディレクター・プロデューサーが詳細画面の「↩️ 納品を取り消す」から戻せます（ボタンが無ければ担当D/Pに依頼してください）';
@@ -58232,7 +58232,7 @@ async function refreshCreativeEditHistory(creativeId) {
     .sort((a, b) => new Date(b.edited_at) - new Date(a.edited_at))
     .map(g => {
       const dt = new Date(g.edited_at);
-      const dtStr = dt.toLocaleString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+      const dtStr = dt.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
       const avatar = g.editor ? avatarHtml(g.editor, 22) : '';
       const changesHtml = g.changes.map(c => {
         const label = FIELD_LABEL[c.field_name] || c.field_name;

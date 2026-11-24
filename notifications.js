@@ -1547,11 +1547,20 @@ async function notifyProjectDeliveryLedger({ projectId, creativeIds, actorUserId
 // @param {string} p.reason
 // @param {string[]} [p.assigneeIds] 制作担当（editor / designer 等）の user_id
 // @param {Array<{issuer_id, invoice_number}>} [p.draftInvoices] 明細を外した下書き請求書
-async function notifyDeliveryReverted({ projectId, creativeId, fileName, ym, actorUserId, fromStatus, toStatus, reason, assigneeIds = [], draftInvoices = [] }) {
+// 利用者が書いた文字（理由・ファイル名）をチャンネル投稿に載せる前に無害化する。
+// Chatwork の [To:] [/info]・Slack の <!channel> などの記法と、突合が読む [HFS-LEDGER] タグの偽装を防ぐ。
+function _neutralizeChatText(s) {
+  return String(s ?? '')
+    .replace(/HFS-LEDGER/gi, 'HFS_LEDGER')
+    .replace(/\[/g, '［').replace(/\]/g, '］')
+    .replace(/</g, '＜').replace(/>/g, '＞');
+}
+
+async function notifyDeliveryReverted({ projectId, creativeId, fileName, ym, actorUserId, actorName: actorNameIn = null, fromStatus, toStatus, reason, assigneeIds = [], draftInvoices = [] }) {
   const result = { ledger: null, notified: 0 };
   try {
     const actor = await loadUser(actorUserId);
-    const actorName = actor?.full_name || actor?.nickname || '不明';
+    const actorName = actorNameIn || actor?.full_name || '不明';
     let project = null;
     if (projectId) {
       const { data, error } = await supabase
@@ -1577,7 +1586,7 @@ async function notifyDeliveryReverted({ projectId, creativeId, fileName, ym, act
         const channelUrl = project.slack_channel_url || client?.slack_channel_url || null;
         const roomId = project.chatwork_room_id || client?.chatwork_room_id || null;
         const SEP = '━━━━━━━━━━━━━━━';
-        const head = `案件: ${projectLabel}\nファイル: ${fileName || '(ファイル名なし)'}\nステータス: ${fromStatus} → ${toStatus}\n戻した人: ${actorName}\n理由: ${reason}`;
+        const head = `案件: ${projectLabel}\nファイル: ${_neutralizeChatText(fileName || '(ファイル名なし)')}\nステータス: ${fromStatus} → ${toStatus}\n戻した人: ${actorName}\n理由: ${_neutralizeChatText(reason)}`;
         let slackPost = null;
         let cwPost = null;
         if (channelUrl) {

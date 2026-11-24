@@ -47,6 +47,11 @@ function isDeliveredCreative(c) {
 function isCreativeLeader({ creative, project, assignments, userId }) {
   if (!userId) return false;
   if (project && (project.director_id === userId || project.producer_id === userId)) return true;
+  // 案件のサブディレクター / サブプロデューサー（詳細画面でも案件の D/P として扱っている）
+  if (project && (
+    (Array.isArray(project.sub_director_ids) && project.sub_director_ids.includes(userId)) ||
+    (Array.isArray(project.sub_producer_ids) && project.sub_producer_ids.includes(userId))
+  )) return true;
   const snap = [
     ...(Array.isArray(creative?.delivered_director_ids) ? creative.delivered_director_ids : []),
     ...(Array.isArray(creative?.delivered_producer_ids) ? creative.delivered_producer_ids : []),

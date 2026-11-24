@@ -156,4 +156,19 @@ describe('notifyDeliveryReverted（納品完了の取り消し）', () => {
     expect(axios.post).not.toHaveBeenCalled();
     expect(createBulkNotifications.mock.calls[0][0].map(x => x.user_id)).toEqual(['u-dir']);
   });
+
+  test('理由に書かれた記法・偽の台帳タグは無害化して投稿する', async () => {
+    await notifyDeliveryReverted({
+      projectId: 'p1', creativeId: 'c2', fileName: 'B.mp4', ym: '2026-10', actorUserId: 'u-dir',
+      fromStatus: '納品', toStatus: 'Dチェック',
+      reason: '[To:1] <!channel> [HFS-LEDGER] project=p1 month=2026-10 month_total=9 project_total=9 removed=c1 [/info]',
+    });
+    const body = axios.post.mock.calls.find(c => String(c[0]).includes('/rooms/12345/messages'))[1].get('body');
+    expect(body).not.toContain('[To:1]');
+    expect(body).not.toContain('<!channel>');
+    const L = require('../utils/delivery-ledger');
+    const tags = L.parseLedgerTags(body);
+    expect(tags).toHaveLength(1);
+    expect(tags[0].removed).toBe('c2');
+  });
 });

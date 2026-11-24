@@ -6,6 +6,11 @@ describe('isCreativeLeader（ロールではなく担当で判定）', () => {
     expect(DR.isCreativeLeader({ creative: {}, project: { director_id: 'u1' }, assignments: [], userId: 'u1' })).toBe(true);
     expect(DR.isCreativeLeader({ creative: {}, project: { producer_id: 'u1' }, assignments: [], userId: 'u1' })).toBe(true);
   });
+  test('案件のサブディレクター / サブプロデューサー', () => {
+    expect(DR.isCreativeLeader({ creative: {}, project: { sub_director_ids: ['u1'] }, assignments: [], userId: 'u1' })).toBe(true);
+    expect(DR.isCreativeLeader({ creative: {}, project: { sub_producer_ids: ['u1'] }, assignments: [], userId: 'u1' })).toBe(true);
+    expect(DR.isCreativeLeader({ creative: {}, project: { sub_director_ids: ['u2'], sub_producer_ids: null }, assignments: [], userId: 'u1' })).toBe(false);
+  });
   test('納品時スナップショットの D/P 本人', () => {
     expect(DR.isCreativeLeader({ creative, project: null, assignments: [], userId: 'snapD' })).toBe(true);
     expect(DR.isCreativeLeader({ creative, project: null, assignments: [], userId: 'snapP' })).toBe(true);

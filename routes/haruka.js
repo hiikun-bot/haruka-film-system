@@ -13665,13 +13665,27 @@ router.post('/creatives/:id/share-client-review', requireAuth, requirePermission
 
 // 下書き請求書の明細を外し、その請求書の合計を計算し直す（admin-status と delivery-revert で共用）。
 // 下書きは集計・振込に出ないので外してよいが、合計を直さないと請求書の金額と明細がずれる。
-async function removeDraftInvoiceItems(itemIds, invoiceIds) {
-  if (!itemIds || itemIds.length === 0) return { ok: true };
-  await supabase.from('invoice_item_details').delete().in('invoice_item_id', itemIds);
-  const { error: delErr } = await supabase.from('invoice_items').delete().in('id', itemIds);
+// editableStatuses: 外してよい請求書の状態。消す直前に読み直し、その間に提出された請求書の明細は残す
+// （提出済みの請求書の明細・合計を書き換えない）。戻り値の skippedInvoiceIds が残した分。
+async function removeDraftInvoiceItems(itemIds, invoiceIds, { editableStatuses = ['draft'] } = {}) {
+  if (!itemIds || itemIds.length === 0) return { ok: true, skippedInvoiceIds: [] };
+  const wanted = [...new Set((invoiceIds || []).filter(Boolean))];
+  const { data: invNow, error: invErr } = await supabase
+    .from('invoices').select('id, status').in('id', wanted);
+  if (invErr) return { ok: false, error: invErr.message };
+  const allowed = (invNow || []).filter(r => editableStatuses.includes(r.status)).map(r => r.id);
+  const skippedInvoiceIds = wanted.filter(id => !allowed.includes(id));
+  if (allowed.length === 0) return { ok: true, skippedInvoiceIds };
+  const { data: targetItems, error: tiErr } = await supabase
+    .from('invoice_items').select('id').in('id', itemIds).in('invoice_id', allowed);
+  if (tiErr) return { ok: false, error: tiErr.message };
+  const targetIds = (targetItems || []).map(r => r.id);
+  if (targetIds.length === 0) return { ok: true, skippedInvoiceIds };
+  await supabase.from('invoice_item_details').delete().in('invoice_item_id', targetIds);
+  const { error: delErr } = await supabase.from('invoice_items').delete().in('id', targetIds);
   if (delErr) return { ok: false, error: delErr.message };
 
-  for (const invId of (invoiceIds || [])) {
+  for (const invId of allowed) {
     const [{ data: rem }, { data: invRow }] = await Promise.all([
       supabase.from('invoice_items').select('creative_id, cost_type, unit_price, quantity, total_amount').eq('invoice_id', invId),
       supabase.from('invoices').select('tax_mode, withholding_enabled').eq('id', invId).maybeSingle(),
@@ -13688,9 +13702,9 @@ async function removeDraftInvoiceItems(itemIds, invoiceIds) {
     } else {
       patch.total_amount = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
     }
-    await supabase.from('invoices').update(patch).eq('id', invId);
+    await supabase.from('invoices').update(patch).eq('id', invId).in('status', editableStatuses);
   }
-  return { ok: true };
+  return { ok: true, skippedInvoiceIds, removedItemIds: targetIds };
 }
 
 // 管理者によるステータス強制変更（戻し含む）
@@ -13915,7 +13929,7 @@ const DR = require('../utils/delivery-revert');
 async function loadDeliveryRevertContext(req, creativeId) {
   const { data: c, error } = await supabase
     .from('creatives')
-    .select('id, file_name, status, is_payable, force_delivered, force_delivered_reason, force_delivered_at, force_delivered_by, delivered_at, delivered_snapshot_at, updated_at, project_id, delivered_director_ids, delivered_producer_ids, director_comment, client_comment, editor_comment, projects:project_id(id, director_id, producer_id, primary_category_id)')
+    .select('id, file_name, status, is_payable, force_delivered, force_delivered_reason, force_delivered_at, force_delivered_by, delivered_at, delivered_snapshot_at, updated_at, project_id, delivered_director_ids, delivered_producer_ids, director_comment, client_comment, editor_comment, projects:project_id(id, director_id, producer_id, sub_director_ids, sub_producer_ids, primary_category_id)')
     .eq('id', creativeId)
     .maybeSingle();
   if (error) return { error: { status: 500, message: error.message } };
@@ -14074,12 +14088,19 @@ router.post('/creatives/:id/delivery-revert', requireAuth, async (req, res) => {
     const affectedInvoiceIds = [...new Set(draftItems.map(i => i.invoice_id))];
     const warnings = [];
     let draftRemoved = false;
+    let skippedInv = [];
     if (deletedItemIds.length) {
-      const rm = await removeDraftInvoiceItems(deletedItemIds, affectedInvoiceIds);
+      const rm = await removeDraftInvoiceItems(deletedItemIds, affectedInvoiceIds, { editableStatuses: DR.EDITABLE_INVOICE_STATUSES });
       draftRemoved = rm.ok;
+      skippedInv = rm.skippedInvoiceIds || [];
       if (!rm.ok) {
         console.warn('[delivery-revert] draft invoice cleanup failed:', rm.error);
         warnings.push('下書きの請求書から明細を外せませんでした。請求書の持ち主に手で外してもらってください');
+      } else if (rm.skippedInvoiceIds && rm.skippedInvoiceIds.length) {
+        // 読み直しから削除までの一瞬に提出された請求書。明細・合計は書き換えずに残し、管理者の確認に回す
+        const nums = [...new Set(draftItems.filter(i => rm.skippedInvoiceIds.includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
+        console.warn('[delivery-revert] invoice submitted during cleanup:', creativeId, nums);
+        warnings.push(`取り消しの途中で提出された請求書（${nums.join('、')}）にこの制作が残っています。管理者に確認してください`);
       }
     }
     const draftWarning = warnings.length ? warnings.join('\n') : null;
@@ -14141,7 +14162,9 @@ router.post('/creatives/:id/delivery-revert', requireAuth, async (req, res) => {
       ? new Date(creative.delivered_at).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7)
       : null;
     const assigneeIds = [...new Set((ctx.assignments || []).map(a => a.user_id).filter(Boolean))];
-    const draftInvoices = [...new Map(draftItems.map(i => [i.invoice.id, { issuer_id: i.invoice.issuer_id, invoice_number: i.invoice.invoice_number }])).values()];
+    const draftInvoices = [...new Map(draftItems
+      .filter(i => !skippedInv.includes(i.invoice_id))
+      .map(i => [i.invoice.id, { issuer_id: i.invoice.issuer_id, invoice_number: i.invoice.invoice_number }])).values()];
     try {
       require('../notifications').notifyDeliveryReverted({
         projectId: creative.project_id || null,
@@ -14149,6 +14172,7 @@ router.post('/creatives/:id/delivery-revert', requireAuth, async (req, res) => {
         fileName: creative.file_name || null,
         ym: creative.status === '納品' ? ym : null,
         actorUserId: req.user?.id || null,
+        actorName,
         fromStatus: creative.status,
         toStatus,
         reason,
