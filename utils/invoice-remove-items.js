@@ -10,6 +10,7 @@
 const REMOVE_FN = 'invoice_remove_items_recalc';
 const DELETE_FN = 'invoice_delete_editable';
 const MAX_ATTEMPTS = 3;
+const TRANSIENT_DB_CODES = ['40P01', '40001', '55P03']; // デッドロック・直列化失敗・ロック待ちの打ち切り（取り消し済み）
 const ITEM_COLS = 'id, creative_id, cost_type, unit_price, quantity, total_amount';
 
 function intOrNull(v) {
@@ -99,28 +100,26 @@ async function removeItemsFromEditableInvoices(supabase, IE, {
 
   for (let attempt = 0; attempt < maxAttempts && pending.length; attempt++) {
     if (attempt > 0) await sleep(50 * attempt + Math.floor(Math.random() * 50));
-    const [{ data: invs, error: invErr }, { data: items, error: itErr }] = await Promise.all([
+    // 明細は請求書ごとに読む（まとめて読むと PostgREST の行数上限で切れ、指紋が永遠に合わなくなる。1 件は MAX_ITEMS=500 行まで）
+    const [{ data: invs, error: invErr }, itemReads] = await Promise.all([
       supabase.from('invoices').select('id, status, tax_mode, withholding_enabled').in('id', pending),
-      supabase.from('invoice_items').select(`invoice_id, ${ITEM_COLS}`).in('invoice_id', pending),
+      Promise.all(pending.map(id => supabase.from('invoice_items').select(`invoice_id, ${ITEM_COLS}`).eq('invoice_id', id))),
     ]);
+    const itErr = itemReads.map(x => x.error).find(Boolean);
     if (invErr || itErr) {
       const msg = (invErr || itErr).message;
       if (attempt === 0 && allOrNothing) return { ...out, ok: false, error: msg, failedInvoiceIds: pending };
       return fail(pending, msg);
     }
     const invById = new Map((invs || []).map(r => [String(r.id), r]));
-    const itemsByInv = new Map();
-    for (const it of (items || [])) {
-      const k = String(it.invoice_id);
-      if (!itemsByInv.has(k)) itemsByInv.set(k, []);
-      itemsByInv.get(k).push(it);
-    }
+    const itemsByInv = new Map(pending.map((id, i) => [id, itemReads[i].data || []]));
+    const notEditableNow = pending.filter(id => invById.has(id) && !editableStatuses.includes(invById.get(id).status));
+    if (allOrNothing && notEditableNow.length) return { ...out, ok: false, code: 'NOT_EDITABLE', skippedInvoiceIds: notEditableNow };
     const requests = [];
     for (const invId of pending) {
       const inv = invById.get(invId);
       if (!inv) continue; // その間に請求書ごと消された
       if (!editableStatuses.includes(inv.status)) {
-        if (allOrNothing) return { ...out, ok: false, code: 'NOT_EDITABLE', skippedInvoiceIds: [invId] };
         out.skippedInvoiceIds.push(invId);
         continue;
       }
@@ -142,9 +141,16 @@ async function removeItemsFromEditableInvoices(supabase, IE, {
       p_requests: requests, p_editable_statuses: editableStatuses, p_all_or_nothing: !!allOrNothing,
     });
     if (error) {
-      return fail(requests.map(r => r.invoice_id), isMissingFunctionError(error, REMOVE_FN)
-        ? 'DB の更新（2026-11-24b_invoice_remove_items_and_delete_fn.sql）が未適用です'
-        : error.message);
+      // デッドロック・直列化失敗・ロック待ちの打ち切りは取り消し済みなので、読み直してやり直す
+      if (TRANSIENT_DB_CODES.includes(String(error.code || '')) && attempt + 1 < maxAttempts) {
+        pending = requests.map(r => r.invoice_id);
+        continue;
+      }
+      if (isMissingFunctionError(error, REMOVE_FN)) {
+        out.missingFunction = true;
+        return fail(requests.map(r => r.invoice_id), 'DB の更新（2026-11-24b_invoice_remove_items_and_delete_fn.sql）が未適用です');
+      }
+      return fail(requests.map(r => r.invoice_id), error.message);
     }
     const res = rpcResult(data);
     if (!res || !Array.isArray(res.results)) return fail(requests.map(r => r.invoice_id), '関数の結果を読めませんでした');

@@ -13843,6 +13843,9 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
       const nums = [...new Set(draftItems.filter(i => (rm.skippedInvoiceIds || []).includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
       return res.status(409).json({ error: `変更の途中で請求書が提出されたため、ステータスを変更しませんでした（${nums.join('、')}）。先に請求書を差し戻してください` });
     }
+    if (!rm.ok && rm.missingFunction) {
+      return res.status(503).json({ error: '請求書の明細を外す仕組みを更新中のため、ステータスを変更しませんでした（管理者: DB の更新が必要です）', code: 'ATOMIC_REMOVE_NOT_READY' });
+    }
     if (!rm.ok) {
       return res.status(500).json({ error: `下書きの請求書から明細を外せなかったため、ステータスを変更しませんでした。もう一度お試しください（${rm.error || '不明なエラー'}）` });
     }
@@ -14184,7 +14187,9 @@ router.post('/creatives/:id/delivery-revert', requireAuth, async (req, res) => {
       if (rm.ok && rm.failedInvoiceIds && rm.failedInvoiceIds.length) {
         // 読めなかった・混み合ってやり直しても合わなかった請求書。明細・合計はどちらも変えていない
         const nums = [...new Set(draftItems.filter(i => rm.failedInvoiceIds.includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
-        warnings.push(`下書きの請求書（${nums.join('、')}）から明細を外せませんでした。請求書の持ち主に手で外してもらってください`);
+        warnings.push(rm.missingFunction
+          ? `下書きの請求書（${nums.join('、')}）から明細を外せませんでした（仕組みの更新中）。管理者に連絡してください`
+          : `下書きの請求書（${nums.join('、')}）から明細を外せませんでした。請求書の持ち主に手で外してもらってください`);
       }
     }
     const draftWarning = warnings.length ? warnings.join('\n') : null;

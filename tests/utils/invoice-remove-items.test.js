@@ -158,10 +158,21 @@ describe('removeItemsFromEditableInvoices', () => {
     expect(db.tables.invoice_items).toHaveLength(3);
   });
 
+  test('デッドロック（40P01）は取り消し済みなのでやり直す', async () => {
+    const db = makeDb(seed());
+    let n = 0;
+    const orig = db.client.rpc;
+    db.client.rpc = async (name, args) => (++n === 1 ? { data: null, error: { code: '40P01', message: 'deadlock detected' } } : orig(name, args));
+    const r = await R.removeItemsFromEditableInvoices(db.client, IE, { itemIds: ['a'], invoiceIds: ['inv1'], editableStatuses: ['draft'], sleep: async () => {} });
+    expect(r.removedItemIds).toEqual(['a']);
+    expect(n).toBe(2);
+  });
+
   test('関数が未適用なら failed（明細は消さない）', async () => {
     const db = makeDb(seed());
     db.fake.missing = true;
     const r = await R.removeItemsFromEditableInvoices(db.client, IE, { itemIds: ['a'], invoiceIds: ['inv1'], editableStatuses: ['draft'] });
+    expect(r.missingFunction).toBe(true);
     expect(r.failedInvoiceIds).toEqual(['inv1']);
     expect(r.errors[0]).toMatch(/未適用/);
     expect(db.tables.invoice_items).toHaveLength(3);
