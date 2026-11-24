@@ -102,6 +102,7 @@
 /* 立替経費（実費）＝オレンジ（入力欄の黄・前月バッジと見分けがつく色） */
 .ie-row-expense:not(.ie-row-ng) td { background: #FFF7ED; }
 .ie-tag-exp { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: #FFEDD5; color: #9A3412; white-space: nowrap; }
+.ie-tag-adj { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: #FDECEA; color: #B03A2E; white-space: nowrap; }
 .ie-exp-note { margin-top: 3px; color: #9A3412; font-size: 11px; }
 
 /* 立替経費の枠（日付・支払先・領収書。ADR 046 追補 2026-11-23） */

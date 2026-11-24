@@ -35,7 +35,7 @@ const GRAY_BG = '#fafafa';
 
 function fmtYen(n) {
   const v = Math.round(Number(n) || 0);
-  return `¥${v.toLocaleString('ja-JP')}`;
+  return v < 0 ? `-¥${Math.abs(v).toLocaleString('ja-JP')}` : `¥${v.toLocaleString('ja-JP')}`;
 }
 
 // 'YYYY/MM/DD'（JST）。無効値は ''。
@@ -475,6 +475,8 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
     } else if (kind === 'expense') {
       // 「＋ 立替経費」の行は領収書の有無を小さく添える（写真そのものは PDF に入れない・追補 2026-11-23）
       label = IE.expenseItemLabel(it) + IE.receiptNoteOf(it);
+    } else if (kind === 'adjustment') {
+      label = IE.adjustmentItemLabel(it);
     } else {
       label = it.label || '明細';
     }
@@ -484,7 +486,8 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
       kind,
       date: kind === 'cr' ? slashShortDate(IE.billingDateOf(cr, cp)) : '',
       label,
-      unit_price: hasPrice ? Math.trunc(Number(it.unit_price) || 0) : null,
+      // 過払いの調整はマイナスで見せる（単価・金額とも）
+      unit_price: hasPrice ? (kind === 'adjustment' ? IE.lineAmount(it) : Math.trunc(Number(it.unit_price) || 0)) : null,
       quantity: kind === 'manual' ? (Math.trunc(Number(it.quantity)) || 0) : 1,
       amount: IE.lineAmount(it),
     };

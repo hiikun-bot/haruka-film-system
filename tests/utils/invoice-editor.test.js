@@ -536,3 +536,45 @@ describe('並び替え（sortRows）', () => {
     expect(rows[0].creative_id).toBe('a');
   });
 });
+
+describe('過払いの調整（マイナス）の行（追補 2026-11-24）', () => {
+  const IEA = require('../../utils/invoice-editor');
+  const adj = (o = {}) => ({ creative_id: null, cost_type: 'adjustment', label: '10月分 過払い調整（カット稿）', manual_reason: '二重に受け取ったため', unit_price: 4000, quantity: 1, ...o });
+  const cr = (price) => ({ creative_id: 'c1', cost_type: 'base_fee', unit_price: price, quantity: 1 });
+
+  test('種類と金額（マイナス）', () => {
+    expect(IEA.lineKind(adj())).toBe('adjustment');
+    expect(IEA.isManualLine(adj())).toBe(false);
+    expect(IEA.lineAmount(adj())).toBe(-4000);
+    expect(IEA.lineAmount(adj({ quantity: 5 }))).toBe(-4000); // 数量は見ない
+  });
+
+  test('報酬から引いてから消費税・源泉を計算する（10月の過払い 4,000 をちょうど打ち消す）', () => {
+    const t = IEA.computeTotals([cr(100000), adj()], { withholding_enabled: true });
+    expect(t.subtotal).toBe(96000);
+    expect(t.tax).toBe(9600);
+    expect(t.withholding).toBe(Math.floor(96000 * 1021 / 10000));
+    // 調整なしとの差 ≒ 税込 4,400 − 源泉 408 = 3,992（10 月に多く振り込んだ額）。源泉の切り捨て位置で ±1 円ずれうる
+    const base = IEA.computeTotals([cr(100000)], { withholding_enabled: true });
+    expect(Math.abs((base.payout - t.payout) - 3992)).toBeLessThanOrEqual(1);
+  });
+
+  test('品目・理由・金額が無いと注意が出る', () => {
+    const codes = (it) => IEA.lineIssues(it, null).map(x => x.code);
+    expect(codes(adj())).toEqual([]);
+    expect(codes(adj({ manual_reason: '' }))).toContain('ADJUSTMENT_NO_REASON');
+    expect(codes(adj({ label: '' }))).toContain('LABEL_MISSING');
+    expect(codes(adj({ unit_price: 0 }))).toContain('ADJUSTMENT_ZERO');
+    expect(codes(adj({ unit_price: null }))).toContain('PRICE_MISSING');
+  });
+
+  test('報酬がマイナスになる請求書は提出できない', () => {
+    const items = [{ ...cr(1000), id: 'a' }, { ...adj(), id: 'b' }];
+    const totals = IEA.computeTotals(items, { withholding_enabled: true });
+    const r = IEA.checkInvoiceForSubmit({
+      items, issuerId: 'u1', creativesById: new Map(), billedKeys: new Set(),
+      withholdingEnabled: true, expectedTotal: totals.grand_total, expectedPayout: totals.payout,
+    });
+    expect(r.problems.map(p => p.code)).toContain('NEGATIVE_SUBTOTAL');
+  });
+});
