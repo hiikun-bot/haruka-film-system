@@ -30,10 +30,30 @@ function formatRevisionBadge(breakdown) {
   return parts.length ? parts.join(' · ') : null;
 }
 
+// 遷移ログが欠けている（ログ導入前の修正・手で直した回数など）と、内訳の合計が従来の
+// creatives.revision_count を下回る。そのまま出すと回数が少なく見えたりバッジが消えたりするので、
+// 合計が足りないときは内訳を使わない（null を返す → 画面は従来の「修正 N回」を出す・#1312 レビュー対応）。
+function reconcileRevisionBreakdown(breakdown, revisionCount) {
+  if (!breakdown || typeof breakdown.internal !== 'number' || typeof breakdown.client !== 'number') return null;
+  const legacy = Number(revisionCount) || 0;
+  if (breakdown.internal + breakdown.client < legacy) return null;
+  return breakdown;
+}
+
+// 詳細画面のバッジ文言（内訳が使えないときは従来の「修正 N回」）。どちらも 0 なら null（バッジを出さない）
+function revisionBadgeText(breakdown, revisionCount) {
+  const bd = reconcileRevisionBreakdown(breakdown, revisionCount);
+  if (bd) return formatRevisionBadge(bd);
+  const legacy = Number(revisionCount) || 0;
+  return legacy > 0 ? `修正 ${legacy}回` : null;
+}
+
 module.exports = {
   INTERNAL_REVISION_STATUSES,
   CLIENT_REVISION_STATUSES,
   REVISION_BREAKDOWN_STATUSES,
   countRevisionBreakdown,
   formatRevisionBadge,
+  reconcileRevisionBreakdown,
+  revisionBadgeText,
 };

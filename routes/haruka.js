@@ -711,9 +711,11 @@ router.patch('/clients/:id/status', requireAuth, requirePermission('project.crea
 // クライアント削除（admin / secretary のみ）
 // 監査ログ (client_deletion_logs) に必ず INSERT してから clients を削除する。
 // 削除理由は必須（5文字以上推奨／空欄は400）。
-// 案件・売上・契約文書・素材広場フォルダが1件でもあれば 409（client_has_data）で止め、取引終了（非表示）へ誘導する。
+// 案件・売上・契約文書・素材広場フォルダ・営業の連絡先が1件でもあれば 409（client_has_data）で止め、取引終了（非表示）へ誘導する。
+// 件数の確認に失敗したら 503（client_check_failed）で止める（0 件扱いで削除に進まない）。
 // 中身が空のクライアントだけ削除でき、client_teams / client_configs 等は既存FKのカスケードで消える。
 // 注意: 本実装は requireRole('admin','secretary') でハードコード判定（要件: 秘書まで限定）。
+const { checkClientLinkedData } = require('../utils/client-delete-guard');
 router.delete('/clients/:id', requireAuth, requireRole('admin','secretary'), async (req, res) => {
   const clientId = req.params.id;
   const reason = (req.body?.reason ?? '').toString().trim();
@@ -734,44 +736,31 @@ router.delete('/clients/:id', requireAuth, requireRole('admin','secretary'), asy
   // 削除せず「取引終了（非表示）」にする。消せるのは誤登録で中身が空のクライアントだけ）。
   //   - projects.client_id は ON DELETE 指定なし（NO ACTION）なので、案件があると DELETE 自体が FK エラーになる。
   //     以前はその前に監査ログだけ INSERT され「削除していないのに削除ログが残る」状態だった。
-  //   - 売上（project_revenue_entries）・契約文書（contract_documents の client_pledge）は SET NULL で
-  //     黙って紐づきが外れるため、これも実データとして止める。テーブル未作成の環境ではスキップ。
-  const countBy = async (table) => {
-    const { count, error } = await supabase
-      .from(table)
-      .select('id', { count: 'exact', head: true })
-      .eq('client_id', clientId);
-    if (error) {
-      if (/does not exist|schema cache/i.test(error.message || '')) return 0;
-      throw new Error(`${table}: ${error.message}`);
-    }
-    return count || 0;
-  };
-  //   - 素材広場のフォルダ（material_square_folders）は CASCADE で行ごと消えるため、これも止める。
-  let relCount = 0, revenueCount = 0, contractDocCount = 0, msFolderCount = 0;
-  try {
-    [relCount, revenueCount, contractDocCount, msFolderCount] = await Promise.all([
-      countBy('projects'),
-      countBy('project_revenue_entries'),
-      countBy('contract_documents'),
-      countBy('material_square_folders'),
-    ]);
-  } catch (e) {
-    return res.status(500).json({ error: e.message });
-  }
-  if (relCount > 0 || revenueCount > 0 || contractDocCount > 0 || msFolderCount > 0) {
-    const parts = [];
-    if (relCount) parts.push(`案件 ${relCount} 件`);
-    if (revenueCount) parts.push(`売上 ${revenueCount} 件`);
-    if (contractDocCount) parts.push(`契約文書 ${contractDocCount} 件`);
-    if (msFolderCount) parts.push(`素材広場のフォルダ ${msFolderCount} 件`);
+  //   - 売上（project_revenue_entries）・契約文書（contract_documents の client_pledge）・営業の連絡先
+  //     （sales_contacts・ADR 056）は SET NULL で黙って紐づきが外れ、素材広場のフォルダ（material_square_folders）は
+  //     CASCADE で行ごと消えるため、これも実データとして止める。一覧は utils/client-delete-guard.js。
+  //   - 件数の確認が 1 つでも失敗したら削除しない（テーブル・列が無い場合も「確認できていない」扱い）。
+  const linked = await checkClientLinkedData((table) => supabase
+    .from(table)
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId));
+  if (linked.hasData) {
     return res.status(409).json({
       code: 'client_has_data',
       error: 'このクライアントには案件などのデータがあるため削除できません。「取引終了」にすると一覧から隠せます',
-      summary: `${parts.join('・')}が紐づいています。`,
-      counts: { projects: relCount, revenue_entries: revenueCount, contract_documents: contractDocCount, material_square_folders: msFolderCount },
+      summary: linked.summary,
+      counts: linked.counts,
     });
   }
+  if (!linked.ok) {
+    console.error('[clients/delete] 紐づくデータの確認に失敗したため削除を中止:', clientId, JSON.stringify(linked.failed));
+    return res.status(503).json({
+      code: 'client_check_failed',
+      error: '紐づくデータの確認ができなかったため、削除を中止しました。時間をおいてもう一度試すか、「取引終了」にして一覧から隠してください',
+      failed_tables: linked.failed.map(f => f.table),
+    });
+  }
+  const relCount = linked.counts.projects || 0;
 
   // 監査ログ INSERT （削除前に記録）
   const { error: logErr } = await supabase
@@ -10768,7 +10757,7 @@ router.get('/creatives/counts', async (req, res) => {
 //     DB→Node 間の転送量が 1 リクエストあたり数十〜数百KB 減る。
 //   - wcheck 判定の直列 RTT 除去: resolveWcheckEligibility の直列 2 クエリを廃止し、
 //     既存 embed に列を足して手元で同一判定を計算（判定結果・レスポンス形状は完全一致）。
-const { REVISION_BREAKDOWN_STATUSES, countRevisionBreakdown } = require('../utils/revision-breakdown');
+const { REVISION_BREAKDOWN_STATUSES, countRevisionBreakdown, reconcileRevisionBreakdown } = require('../utils/revision-breakdown');
 router.get('/creatives/:id', async (req, res) => {
   const creativeId = req.params.id;
   // avatar 参照 Map（userId -> 配信URL）を本体クエリと並走してウォーム/取得しておく。
@@ -11033,7 +11022,8 @@ router.get('/creatives/:id', async (req, res) => {
   const [catRes, ownTeam, subDP, clientTeams, teamsRaw, wcheckCatFetched, avatarMap, revisionBreakdown] = await Promise.all([
     taskCategory, taskOwnTeam, taskSubDP, taskClientTeams, taskBallHolder, taskWcheckCategory, avatarMapPromise, taskRevisionBreakdown,
   ]);
-  data.revision_breakdown = revisionBreakdown;
+  // 遷移ログが欠けて内訳の合計が revision_count を下回るときは null（画面は従来の「修正 N回」）
+  data.revision_breakdown = reconcileRevisionBreakdown(revisionBreakdown, data.revision_count);
 
   // select から外した avatar_url を参照キャッシュから注入（値は従来の res.json パッチ通過後と同一形）。
   // ball_holder（getBallHolder が返す holder_user / holder_users）や wcheck.assignees は
@@ -29402,27 +29392,23 @@ const CREATIVE_ZIP_MAX_CREATIVES = 200;
 const CREATIVE_ZIP_MAX_BYTES = 1024 * 1024 * 1024; // 1GB（5 分以内に流し切れる目安）
 
 // creative id 群 → 各クリエイティブの最新版原本（creative_files の version 最大 → uploaded_at 新しい順）
+const { fetchAllRows: zipFetchAllRows, pickLatestFileByCreative, summarizeZipTargets } = require('../utils/creative-zip-targets');
 async function loadCreativeZipTargets(creativeIds) {
   const files = [];
-  // .in() の URL 長超過を避けるため 100 件ずつ
+  // .in() の URL 長超過を避けるため 100 件ずつ。各チャンクは PostgREST の既定上限（1000 行）で切れないよう
+  // range でページを分けて最後まで取る（修正履歴の多い案件で旧版を最新版と取り違えない・#1318 レビュー対応）
   for (let i = 0; i < creativeIds.length; i += 100) {
     const chunk = creativeIds.slice(i, i + 100);
-    const { data, error } = await supabase
+    const rows = await zipFetchAllRows((from, to) => supabase
       .from('creative_files')
       .select('id, creative_id, drive_file_id, generated_name, original_name, mime_type, file_size, version, uploaded_at')
       .in('creative_id', chunk)
-      .not('drive_file_id', 'is', null);
-    if (error) throw new Error(error.message);
-    files.push(...(data || []));
+      .not('drive_file_id', 'is', null)
+      .order('id', { ascending: true })
+      .range(from, to));
+    files.push(...rows);
   }
-  const latest = new Map();
-  for (const f of files) {
-    const cur = latest.get(f.creative_id);
-    const newer = !cur
-      || (Number(f.version) || 0) > (Number(cur.version) || 0)
-      || ((Number(f.version) || 0) === (Number(cur.version) || 0) && String(f.uploaded_at || '') > String(cur.uploaded_at || ''));
-    if (newer) latest.set(f.creative_id, f);
-  }
+  const latest = pickLatestFileByCreative(files);
   const withFile = [...latest.keys()];
   const creatives = [];
   for (let i = 0; i < withFile.length; i += 100) {
@@ -29459,7 +29445,7 @@ async function loadCreativeZipTargets(creativeIds) {
           if (n > 0) t.file_size = n;
           else t.size_unknown = true;
         } catch (_) {
-          t.size_unknown = true; // 削除済み等。ZIP では「取得失敗」メモになる
+          t.size_unknown = true; // 削除済み・権限なし等。容量が確かめられないので ZIP は作らない（summarizeZipTargets）
         }
       }));
     }
@@ -29483,19 +29469,20 @@ router.get('/creatives-download-zip', requireAuth, async (req, res) => {
       return res.status(400).json({ error: `一度にまとめてダウンロードできるのは ${CREATIVE_ZIP_MAX_CREATIVES} 件までです。期間やステータスで絞り込んでから押してください` });
     }
     const targets = await loadCreativeZipTargets(ids);
-    const totalBytes = targets.reduce((s, t) => s + (Number(t.file_size) || 0), 0);
-    const tooLarge = totalBytes > CREATIVE_ZIP_MAX_BYTES;
-    const summary = {
-      creatives: ids.length,
-      files: targets.length,
-      without_file: ids.length - targets.length,
-      total_bytes: totalBytes,
-      max_bytes: CREATIVE_ZIP_MAX_BYTES,
-      too_large: tooLarge,
-      unreadable: targets.filter(t => t.size_unknown).length, // Drive で開けなかった（削除済み等）
-    };
+    const summary = summarizeZipTargets(targets, { creatives: ids.length, maxBytes: CREATIVE_ZIP_MAX_BYTES });
+    const totalBytes = summary.total_bytes;
+    const tooLarge = summary.too_large;
     if (String(req.query.check || '') === '1') return res.json(summary);
     if (!targets.length) return res.status(404).json({ error: 'ダウンロードできるファイルがありません（まだアップロードされていません）' });
+    if (summary.blocked) {
+      // 容量が分からないファイルを 0 と数えると 1GB の上限を守れないので、ここで止めて案内する
+      return res.status(400).json({
+        code: 'size_unknown',
+        error: `容量を確かめられないファイルが ${summary.unreadable} 件あるため、まとめてダウンロードできません（Drive で削除・移動された可能性があります）。`
+          + `該当のクリエイティブを外すか、詳細画面から個別にダウンロードしてください: ${summary.unreadable_names.join('、')}`,
+        unreadable_names: summary.unreadable_names,
+      });
+    }
     if (tooLarge) {
       const gb = (totalBytes / 1024 / 1024 / 1024).toFixed(1);
       return res.status(400).json({ error: `合計が ${gb}GB あります。1GB 以下になるよう絞り込んで分けてダウンロードしてください` });
