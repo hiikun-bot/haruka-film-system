@@ -10460,7 +10460,7 @@ router.get('/creatives', async (req, res) => {
     internal_code, help_flag, talent_flag, special_payable_by, memo,
     appeal_type_id, frameio_url, delivered_at,
     creative_type, team_id, project_id, created_at, updated_at${includeOptional ? ',\n    ' + OPTIONAL_COLS.join(', ') : ''},
-    ${projectsRel}(id, name, client_id, producer_id, director_id, sheet_url, regulation_url, clients(id, name, status)),
+    ${projectsRel}(id, name, client_id, producer_id, director_id, sub_director_ids, sub_producer_ids, sheet_url, regulation_url, clients(id, name, status)),
     project_cycles(id, year, month),
     creative_files(id, version, uploaded_at),
     creative_assignments(
@@ -10521,7 +10521,16 @@ router.get('/creatives', async (req, res) => {
   //    .then(r => r) で即時に実行を開始して本体クエリと並走させる
   const teamsPromise = lightMode
     ? Promise.resolve({ data: [] }) // light モードは teams 不要（ball_holder を計算しない）
-    : supabase.from('teams').select('id, team_code, team_name, director_id, director:director_id(id, full_name, nickname), team_members(user_id)').then(r => r);
+    : supabase.from('teams').select('id, team_code, team_name, director_id, producer_id, director:director_id(id, full_name, nickname), team_members(user_id)').then(r => r);
+  // 行ごとの画面出し分け（perm）に使う実効ロールの権限（PUT / DELETE の判定と同じ。X-View-As 尊重）
+  const listPermPromise = lightMode ? Promise.resolve(null) : (async () => {
+    const codes = await getEffectiveRoleCodes(req);
+    const [canManageAll, canDeleteAll] = await Promise.all([
+      roleCodesHavePermission(codes, 'project.create_edit'),
+      roleCodesHavePermission(codes, 'project.delete'),
+    ]);
+    return { canManageAll, canDeleteAll };
+  })().catch(e => { console.warn('[creatives] perm 判定の権限取得失敗 → 出し分けは出さない側:', e.message); return null; });
   // avatar 参照 Map（userId -> 配信URL）も本体クエリと並走してウォーム/取得しておく。
   // 失敗時は空 Map にフォールバック（avatar_url が null になりフロントはイニシャル表示。
   // 一覧自体を 500 にしない）。light モードは avatar_url を返さないので不要。
@@ -10575,6 +10584,7 @@ router.get('/creatives', async (req, res) => {
   const directorUserByTeamId = new Map();
   const directorUserByUserId = new Map();
   const teamById            = new Map();
+  const teamLeadersById     = new Map(); // 画面出し分け（perm）のチームのリーダー判定用
   (teamsRaw || []).forEach(t => {
     const name = t.director?.full_name || '';
     if (t.director_id) {
@@ -10590,7 +10600,9 @@ router.get('/creatives', async (req, res) => {
       }
     });
     teamById.set(t.id, { id: t.id, team_code: t.team_code, team_name: t.team_name });
+    teamLeadersById.set(t.id, { director_id: t.director_id || null, producer_id: t.producer_id || null });
   });
+  const listPerm = await listPermPromise;
 
   // 案件専用ディレクター/プロデューサー解決用に projects.director_id / producer_id 集合を一括取得
   // ボール表示のアバター画像で使うため nickname も含める（avatar_url はキャッシュから注入）
@@ -10626,6 +10638,14 @@ router.get('/creatives', async (req, res) => {
       ...c,
       appeal_name: c.appeal_type_id ? (appealNameById.get(c.appeal_type_id) || null) : null,
       teams: c.team_id ? (teamById.get(c.team_id) || null) : null,
+      // 画面の出し分け（担当者の欄・まとめて削除）。PUT / DELETE の判定と同じ条件。権限が読めなければすべて false
+      perm: listPerm ? CREATIVE_PERM.creativeUiPermissions({
+        canManageAll: listPerm.canManageAll, canDeleteAll: listPerm.canDeleteAll, userId: req.user?.id || null,
+        project: c.projects || null,
+        team: c.team_id ? (teamLeadersById.get(c.team_id) || null) : null,
+        myRoles: (c.creative_assignments || []).filter(a => CREATIVE_PERM.sameId(a.users?.id, req.user?.id)).map(a => a.role),
+        creative: { id: c.id, file_name: c.file_name, status: c.status, delivered_at: c.delivered_at, force_delivered: c.force_delivered },
+      }) : { can_edit: false, can_edit_assignees: false, can_delete: false },
       ball_holder: getBallHolder(
         c.status, c.creative_assignments,
         directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
@@ -11161,8 +11181,29 @@ router.get('/creatives/:id', async (req, res) => {
     data.wcheck = { is_image: false, required: false, project_default: false, creative_override: null, project_id: data.project_id || null, assignee: null, assignees: [], assignee_ids: [], requested_by: null, requested_at: null, comment: null };
   }
 
+  // 画面の出し分け（担当者の欄・素材フォルダURL の保存・削除）。PUT / DELETE の判定と同じ条件（utils/creative-permissions.js）。
+  // 読めなかったときは出さない側に倒す（押してもサーバーが止めるが、押せないボタンを見せない）
+  data.perm = await creativeUiPermissionsFor(req, data);
+
   res.json(data);
 });
+
+// 1 件のクリエイティブの画面出し分け（{ can_edit, can_edit_assignees, can_delete }）。
+// loadCreativePermContext（PUT の判定と同じ読み出し）を使う。失敗時はすべて false
+async function creativeUiPermissionsFor(req, creative) {
+  try {
+    const ctx = await loadCreativePermContext(req, creative.id);
+    if (!ctx.ok) return { can_edit: false, can_edit_assignees: false, can_delete: false };
+    return CREATIVE_PERM.creativeUiPermissions({
+      canManageAll: ctx.canManageAll, canDeleteAll: ctx.canDeleteAll, userId: ctx.userId,
+      project: ctx.project, team: ctx.team, myRoles: ctx.myRoles,
+      creative: { id: creative.id, file_name: creative.file_name, status: creative.status, delivered_at: creative.delivered_at, force_delivered: creative.force_delivered },
+    });
+  } catch (e) {
+    console.warn('[creatives/:id] permissions 判定失敗:', e.message);
+    return { can_edit: false, can_edit_assignees: false, can_delete: false };
+  }
+}
 
 // ADR 008 Phase 4 / ADR 038: 案件の連番起点 / 桁数を読み出すヘルパ。
 //   桁数: projects.serial_digits → filename_templates.serial_digits → 3（utils/serial-sheet.js）
@@ -12308,9 +12349,10 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   // 担当の保存に失敗したら、最後に 500 で知らせる（本体の更新は済んでいるので、ここでは止めずに後続の処理は続ける）
   const asnSyncResults = [];
 
-  // 担当者（assignee_id が送られてきた場合）… role='editor' を 1 人に合わせる
+  // 担当者（assignee_id が送られてきた場合）… 制作担当（editor / designer / director_as_editor）を 1 人に合わせる。
+  // デザイナーの作品で同じ人が送られても editor 行を足さない（同じ人の制作担当が 2 行にならない）
   if (assignee_id !== undefined) {
-    asnSyncResults.push(await syncCreativeRoleAssignments(req.params.id, 'editor', assignee_id ? [assignee_id] : []));
+    asnSyncResults.push(await syncWorkerAssignee(req.params.id, assignee_id));
   }
 
   // Dチェック担当者（director_user_ids（複数）または director_user_id（単数互換））
@@ -14382,6 +14424,49 @@ async function syncCreativeRoleAssignments(creativeId, role, desiredIds) {
   return { ok: true, changed: true };
 }
 
+// 制作担当（editor / designer / director_as_editor）を 1 人（assigneeId）に合わせる。空なら制作担当を外す。
+// 計画は utils/creative-permissions.js#planWorkerAssigneeSync（jest）。足す → 成功してから消す（syncCreativeRoleAssignments と同じ）
+async function syncWorkerAssignee(creativeId, assigneeId) {
+  const tag = '[creative_assignments][worker]';
+  const { data: existing, error: selErr } = await supabase
+    .from('creative_assignments')
+    .select('id, user_id, role')
+    .eq('creative_id', creativeId)
+    .in('role', [...CREATIVE_PERM.WORKER_ROLES]);
+  if (selErr) {
+    console.warn(`${tag} select failed:`, selErr.message);
+    return { ok: false, step: 'select' };
+  }
+  const plan = CREATIVE_PERM.planWorkerAssigneeSync(existing || [], assigneeId);
+  if (!plan.changed) return { ok: true, changed: false };
+  if (plan.insert) {
+    const { data: u, error: uErr } = await supabase
+      .from('users').select('id, rank').eq('id', plan.insert.user_id).maybeSingle();
+    if (uErr) {
+      console.warn(`${tag} rank lookup failed:`, uErr.message);
+      return { ok: false, step: 'rank' };
+    }
+    const { error: iErr } = await supabase.from('creative_assignments').insert({
+      creative_id: creativeId,
+      user_id: plan.insert.user_id,
+      role: plan.insert.role,
+      rank_applied: (u && u.rank) || null,
+    });
+    if (iErr) {
+      console.warn(`${tag} insert failed（外す予定の担当は残す）:`, iErr.message);
+      return { ok: false, step: 'insert' };
+    }
+  }
+  if (plan.deleteRowIds.length > 0) {
+    const { error: dErr } = await supabase.from('creative_assignments').delete().in('id', plan.deleteRowIds);
+    if (dErr) {
+      console.warn(`${tag} delete failed:`, dErr.message);
+      return { ok: false, step: 'delete' };
+    }
+  }
+  return { ok: true, changed: true };
+}
+
 // 1 件のクリエイティブについて、権限判定に使う情報（案件の D/P・チームのリーダー・自分の担当行・実効ロール）を読む。
 // 担当者の変更・素材フォルダURL の変更の判定（utils/creative-permissions.js）で共用する。
 // 判定は roleCodesHavePermission（実効ロールの集合判定・X-View-As 尊重）。req.user.role は見ない。
@@ -15773,10 +15858,12 @@ router.post('/creatives/:id/assignments', async (req, res) => {
   // 従来はログインしていれば誰でも自分を担当に足せた（→ 担当者として削除できてしまう）。
   const _asnDeny = await checkCreativeAssignmentChange(req, req.params.id, user_id === req.user?.id ? [role] : []);
   if (_asnDeny) return res.status(_asnDeny.status).json({ error: _asnDeny.error });
-  // 同じ人・同じ役割の行が既にあれば足さない（二重の担当行は本数・報酬の集計を狂わせる）
+  // 同じ人・同じ役割の行が既にあれば足さない（二重の担当行は本数・報酬の集計を狂わせる）。
+  // 制作担当（editor / designer / director_as_editor）は役割が違っても同じ人なら 1 行だけ（designer＋editor の二重を作らない）
+  const _sameRoles = CREATIVE_PERM.WORKER_ROLES.has(role) ? [...CREATIVE_PERM.WORKER_ROLES] : [role];
   const { data: dup, error: dupErr } = await supabase
     .from('creative_assignments').select('id')
-    .eq('creative_id', req.params.id).eq('user_id', user_id).eq('role', role).limit(1);
+    .eq('creative_id', req.params.id).eq('user_id', user_id).in('role', _sameRoles).limit(1);
   if (dupErr) return res.status(500).json({ error: dupErr.message });
   if ((dup || []).length > 0) return res.status(409).json({ error: 'この人はすでにこの役割で担当に入っています' });
   // ランクは画面の値を使わず、メンバーの今のランクを控える（PUT /creatives/:id の担当者登録と同じ）

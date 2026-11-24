@@ -144,6 +144,73 @@ describe('diffAssignmentInput（PUT の担当者入力を今の担当行と比�
   test('送られていない項目（undefined）は比べない', () => {
     expect(P.diffAssignmentInput({}, current, 'me')).toEqual({ changed: [], selfAdds: [] });
   });
+  test('担当者の欄はデザイナー（designer 行）も制作担当として比べる（同じ人なら変更なし）', () => {
+    const designerCur = { team_id: null, assignments: [{ user_id: 'des', role: 'designer' }] };
+    expect(P.diffAssignmentInput({ assignee_id: 'des' }, designerCur, 'des')).toEqual({ changed: [], selfAdds: [] });
+    expect(P.diffAssignmentInput({ assignee_id: 'x' }, designerCur, 'x')).toEqual({ changed: ['editor'], selfAdds: ['editor'] });
+    expect(P.diffAssignmentInput({ assignee_id: '' }, designerCur, 'des')).toEqual({ changed: ['editor'], selfAdds: [] });
+  });
+});
+
+describe('planWorkerAssigneeSync（担当者の欄＝制作担当 1 人）', () => {
+  test('同じ人がすでに制作担当（designer）なら何もしない', () => {
+    expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'designer' }], 'a'))
+      .toEqual({ insert: null, deleteRowIds: [], changed: false });
+  });
+  test('別の人に替えると、今の役割（designer）を引き継いで足し、前の行を消す', () => {
+    expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'designer' }], 'b'))
+      .toEqual({ insert: { user_id: 'b', role: 'designer' }, deleteRowIds: ['r1'], changed: true });
+  });
+  test('director_as_editor を別の人に替えるときは editor。担当がいなければ editor で足す', () => {
+    expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'director_as_editor' }], 'b').insert)
+      .toEqual({ user_id: 'b', role: 'editor' });
+    expect(P.planWorkerAssigneeSync([], 'b')).toEqual({ insert: { user_id: 'b', role: 'editor' }, deleteRowIds: [], changed: true });
+  });
+  test('同じ人の重複行（designer＋editor）は最初の 1 行に寄せる', () => {
+    expect(P.planWorkerAssigneeSync([
+      { id: 'r1', user_id: 'a', role: 'designer' }, { id: 'r2', user_id: 'a', role: 'editor' },
+    ], 'a')).toEqual({ insert: null, deleteRowIds: ['r2'], changed: true });
+  });
+  test('空は制作担当を全員外す。制作以外の行（director 等）は見ない', () => {
+    expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'editor' }, { id: 'd1', user_id: 'd', role: 'director' }], null))
+      .toEqual({ insert: null, deleteRowIds: ['r1'], changed: true });
+    expect(P.planWorkerAssigneeSync([{ id: 'd1', user_id: 'd', role: 'director' }], '')).toEqual({ insert: null, deleteRowIds: [], changed: false });
+  });
+  test('大文字・空白の違う同じ ID は同じ人', () => {
+    expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'abc', role: 'editor' }], ' ABC ').changed).toBe(false);
+  });
+});
+
+describe('creativeUiPermissions（画面の出し分け・judge* と同じ条件）', () => {
+  const cr = { id: 'c1', file_name: 'C1', status: '制作中' };
+  const delivered = { id: 'c2', file_name: 'C2', status: '納品', delivered_at: '2026-11-01T00:00:00Z' };
+  test('admin（案件編集＋削除の権限）: 全部 true', () => {
+    expect(P.creativeUiPermissions({ canManageAll: true, canDeleteAll: true, userId: 'adm', project, team: null, myRoles: [], creative: delivered }))
+      .toEqual({ can_edit: true, can_edit_assignees: true, can_delete: true });
+  });
+  test('案件の担当 D: 全部 true（納品済みも削除できる）', () => {
+    expect(P.creativeUiPermissions({ canManageAll: false, canDeleteAll: false, userId: 'dir', project, team: null, myRoles: [], creative: delivered }))
+      .toEqual({ can_edit: true, can_edit_assignees: true, can_delete: true });
+  });
+  test('担当の編集者: 編集・担当者は true、削除は納品前だけ', () => {
+    const base = { canManageAll: false, canDeleteAll: false, userId: 'ed', project, team: null, myRoles: ['editor'] };
+    expect(P.creativeUiPermissions({ ...base, creative: cr })).toEqual({ can_edit: true, can_edit_assignees: true, can_delete: true });
+    expect(P.creativeUiPermissions({ ...base, creative: delivered })).toEqual({ can_edit: true, can_edit_assignees: true, can_delete: false });
+  });
+  test('チームのリーダー（担当外）: 編集・担当者は true、削除は false', () => {
+    expect(P.creativeUiPermissions({ canManageAll: false, canDeleteAll: false, userId: 'tl', project, team: { director_id: 'tl' }, myRoles: [], creative: cr }))
+      .toEqual({ can_edit: true, can_edit_assignees: true, can_delete: false });
+  });
+  test('担当外: 全部 false。ログインしていなければ全部 false', () => {
+    expect(P.creativeUiPermissions({ canManageAll: false, canDeleteAll: false, userId: 'x', project, team: null, myRoles: [], creative: cr }))
+      .toEqual({ can_edit: false, can_edit_assignees: false, can_delete: false });
+    expect(P.creativeUiPermissions({ canManageAll: false, canDeleteAll: false, userId: null, project, team: null, myRoles: [], creative: cr }))
+      .toEqual({ can_edit: false, can_edit_assignees: false, can_delete: false });
+  });
+  test('案件編集の権限はあるが削除の権限が無い（project.create_edit のみ）: 削除は false', () => {
+    expect(P.creativeUiPermissions({ canManageAll: true, canDeleteAll: false, userId: 'sec', project, team: null, myRoles: [], creative: cr }))
+      .toEqual({ can_edit: true, can_edit_assignees: true, can_delete: false });
+  });
 });
 
 describe('normId / sameId（本人判定の ID 正規化）', () => {

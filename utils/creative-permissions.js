@@ -182,11 +182,11 @@ function diffAssignmentInput(input, current, userId) {
   const changed = [];
   const selfAdds = [];
   if (input.assignee_id !== undefined) {
-    const want = input.assignee_id ? [input.assignee_id] : [];
-    const have = usersOf('editor');
-    if (!sameUserSet(want, have)) {
+    // 制作担当（editor / designer / director_as_editor）の欄として比べる（planWorkerAssigneeSync と同じ意味）
+    const plan = planWorkerAssigneeSync(workerRowsOf(asn), input.assignee_id);
+    if (plan.changed) {
       changed.push('editor');
-      if (me && has(want, me) && !has(have, me)) selfAdds.push('editor');
+      if (me && plan.insert && sameId(plan.insert.user_id, me)) selfAdds.push('editor');
     }
   }
   for (const [key, role] of [['director_ids', 'director'], ['producer_ids', 'producer'], ['wcheck_ids', 'wcheck']]) {
@@ -229,7 +229,66 @@ function planAssignmentSync(existingRows, desiredIds) {
   return { insertUserIds, deleteRowIds, changed: insertUserIds.length > 0 || deleteRowIds.length > 0 };
 }
 
+// ── 担当者（assignee_id）＝「制作担当」1 人の欄 ──
+// 画面の「担当者」欄は editor / designer / director_as_editor のどれか（最初の 1 行）を表示し、選び直すと assignee_id を送る。
+// 以前のサーバーは role='editor' の行だけを見ていたので、デザイナー（designer 行）の作品で同じ人がそのまま送られると
+// editor 行が増え、同じ人が同じ作品に designer＋editor の 2 行（制作担当の二重）になっていた（2026-11-24 修正）。
+// 今は制作担当の行全体を 1 人に合わせる（納品後の担当者付け替え PATCH /creatives/:id/edit と同じ考え方）。
+//   workerRows … 今の制作担当の行 [{ id, user_id, role }]（WORKER_ROLES のもの）
+//   assigneeId … 選ばれた人（null / 空は「制作担当を外す」）
+// 返り値: { insert: null | { user_id, role }, deleteRowIds, changed }
+//   ・選ばれた人がすでに制作担当の行を持っていれば、その行（最初の 1 行）を役割ごと残す（designer は designer のまま）
+//   ・別の人に替えるときは、今の制作担当が editor か designer のどちらか 1 種類ならその役割を引き継ぐ（それ以外は editor）
+//   ・呼び出し側は「足す → 成功したら消す」の順で書く
+function workerRowsOf(assignments) {
+  return (assignments || []).filter(a => a && WORKER_ROLES.has(a.role));
+}
+
+function planWorkerAssigneeSync(workerRows, assigneeId) {
+  const rows = (workerRows || []).filter(r => r && WORKER_ROLES.has(r.role));
+  const want = normId(assigneeId);
+  // changed は「消す行があるか」で決める（権限判定では id を読まない行を渡すことがあるため、id の有無で決めない）
+  if (!want) {
+    return { insert: null, deleteRowIds: rows.map(r => r.id).filter(Boolean), changed: rows.length > 0 };
+  }
+  const keep = rows.find(r => sameId(r.user_id, want)) || null;
+  const drop = rows.filter(r => r !== keep);
+  const deleteRowIds = drop.map(r => r.id).filter(Boolean);
+  if (keep) return { insert: null, deleteRowIds, changed: drop.length > 0 };
+  const roles = new Set(rows.map(r => r.role));
+  const inherit = roles.size === 1 && (roles.has('editor') || roles.has('designer')) ? [...roles][0] : 'editor';
+  return { insert: { user_id: want, role: inherit }, deleteRowIds, changed: true };
+}
+
+// 画面の出し分け用（GET /creatives・GET /creatives/:id が返す）。サーバーの判定（judge*）と同じ条件で、
+// 「このボタン・欄を押して通るか」を返す。最終判断はいつもサーバー（PUT・DELETE 側の判定）。
+//   canManageAll … project.create_edit（担当者・中身の編集）
+//   canDeleteAll … project.delete（削除）
+//   creative     … { id, file_name, status, delivered_at, force_delivered }（削除の「納品前だけ」判定に使う）
+// 返り値: { can_edit, can_edit_assignees, can_delete }
+//   can_edit_assignees は「担当者の欄を出すか」。自分を新しく D/P に入れられるかなど、役割ごとの細かい可否は
+//   保存時にサーバーが判定する（ここでは自分を足さない変更が通るか＝selfAdds なしで判定）
+function creativeUiPermissions({ canManageAll, canDeleteAll, userId, project, team, myRoles, creative }) {
+  const base = { canManageAll: !!canManageAll, userId, project, team, myRoles };
+  const can_edit = judgeCreativeEdit(base).allowed;
+  const can_edit_assignees = judgeAssignmentChange({ ...base, canDeleteAll: !!canDeleteAll, myRoleCodes: [], selfAdds: [] }).allowed;
+  let can_delete = false;
+  if (creative && creative.id) {
+    const j = judgeCreativeDelete({
+      canManageAll: !!canDeleteAll, userId, ids: [creative.id],
+      creatives: [{ ...creative, projects: project || null }],
+      myRolesByCreative: new Map([[creative.id, Array.isArray(myRoles) ? myRoles : []]]),
+    });
+    can_delete = j.allowed;
+  }
+  return { can_edit, can_edit_assignees, can_delete };
+}
+
 module.exports = {
+  workerRowsOf,
+  planWorkerAssigneeSync,
+  creativeUiPermissions,
+  WORKER_ROLES,
   normId,
   sameId,
   planAssignmentSync,
