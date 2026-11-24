@@ -45,7 +45,11 @@ function mockBuilder(table) {
   });
   return b;
 }
-jest.mock('../supabase', () => ({ from: (t) => mockBuilder(t), rpc: async () => ({ data: null, error: null }), storage: { from: () => ({}) } }));
+// 保存・提出は DB の関数（ADR 046 追補 2026-11-24（3））。偽 DB の上で同じ意味に動かす
+const mockRpcFake = require('./helpers/invoice-editor-rpc-fake').createInvoiceEditorRpcFake({
+  rows: (t) => (mockDb[t] || (mockDb[t] = [])), setRows: (t, arr) => { mockDb[t] = arr; },
+});
+jest.mock('../supabase', () => ({ from: (t) => mockBuilder(t), rpc: async (n, a) => mockRpcFake(n, a) || ({ data: null, error: null }), storage: { from: () => ({}) } }));
 jest.mock('../auth', () => {
   const pass = (req, res, next) => { req.user = { id: 'u1', role: 'director' }; next(); };
   return {

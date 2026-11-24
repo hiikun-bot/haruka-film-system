@@ -20460,6 +20460,7 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
 const IE = require('../utils/invoice-editor');
 // 立替経費の日付・支払先・領収書（ADR 046 追補 2026-11-23）。列は migrations/2026-11-23_invoice_items_expense_receipt.sql
 const RCPT = require('../utils/invoice-receipt');
+const IEA = require('../utils/invoice-editor-atomic');
 
 // 領収書の列が本番にあるか（migration の適用前でも落ちないように、無ければ従来の列だけで読み書きする）。
 // 「無い」と分かったら 5 分は従来の列だけで動き、その後もう一度確かめる（適用後に再起動なしで有効になる）
@@ -21159,8 +21160,9 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
       if (li.receipt_missing_reason !== undefined) row.receipt_missing_reason = str(li.receipt_missing_reason, IE.REASON_MAX) || null;
       return { row };
     };
-    const trashReceiptIds = []; // 「領収書なし」に切り替えた行・消した行の古い領収書（DB を書いたあとでゴミ箱へ）
-    const receiptWrites = [];   // { id, rc, guardFileId, trashFileId } 領収書の状態・理由（ファイルが変わっていないときだけ書く）
+    // 領収書の状態・理由（ファイルが変わっていないときだけ書く＝DB の関数が receipt_file_id を条件に書く）。
+    // 「領収書なし」に切り替えた行・消した行の古い写真は、関数が返すファイル ID を DB を書いたあとでゴミ箱へ
+    const receiptWrites = [];   // { id, rc, guardFileId }
     const receiptConflicts = []; // 画面が見ていた領収書と DB が食い違った行（別の画面で付け替えられた）
 
     const next = [];       // 保存後の全行（計算用）
@@ -21202,7 +21204,7 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
                 // 「領収書なし」に切り替えたら添付していた写真は外す（Drive ではゴミ箱へ。DB を書けたときだけ）
                 if (d.clearFile) Object.assign(rc, { receipt_file_id: null, receipt_file_name: null, receipt_mime_type: null, receipt_uploaded_at: null });
                 if (Object.keys(rc).length) {
-                  receiptWrites.push({ id: prev.id, rc, guardFileId: prev.receipt_file_id || null, trashFileId: d.clearFile ? prev.receipt_file_id : null });
+                  receiptWrites.push({ id: prev.id, rc, guardFileId: prev.receipt_file_id || null });
                   rcForMerge = rc;
                 }
               }
@@ -21266,83 +21268,61 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
     }
     const deletedRows = existing.filter(it => !keep.has(it.id));
     const toDelete = deletedRows.map(it => it.id);
-    for (const it of deletedRows) if (it.receipt_file_id) trashReceiptIds.push(it.receipt_file_id);
 
     const withholdingEnabled = typeof req.body.withholding_enabled === 'boolean' ? req.body.withholding_enabled : inv.withholding_enabled !== false;
     const totals = IE.computeTotals(next, { withholding_enabled: withholdingEnabled });
-    const newUpdatedAt = new Date().toISOString();
 
-    // 1) 楽観ロックを取る（updated_at が変わっていない時だけ更新できる）
-    const invPatch = {
-      withholding_enabled: withholdingEnabled,
-      subtotal_amount: totals.subtotal,
-      tax_amount: totals.tax,
-      total_amount: totals.total,
-      withholding_amount: totals.withholding,
-      payout_amount: totals.payout,
-      updated_at: newUpdatedAt,
-    };
-    if (req.body.notes !== undefined) invPatch.notes = str(req.body.notes, 2000) || null;
-    const { data: locked, error: lockErr } = await supabase.from('invoices').update(invPatch)
-      .eq('id', inv.id).eq('updated_at', inv.updated_at).in('status', ['draft', 'rejected'])
-      .select('id, updated_at');
-    if (lockErr) return res.status(500).json({ error: lockErr.message });
-    if (!locked || !locked.length) {
-      return res.status(409).json({ error: '別の画面でこの請求書が更新されています。再読み込みしてください', code: 'CONFLICT' });
+    // 請求書行のロック・状態・楽観ロックの確認と、明細の削除・更新・追加・領収書の状態・合計を DB の関数で 1 トランザクションに
+    // （ADR 046 追補 2026-11-24（3）。提出と重なっても、提出後に明細が書き換わらない）
+    inserts.forEach((x, k) => { if (!x.client_key) x.client_key = `__row${k}`; });
+    const notes = req.body.notes !== undefined ? (str(req.body.notes, 2000) || null) : undefined;
+    const { data: saved, error: rpcErr } = await supabase.rpc(IEA.SAVE_FN, {
+      p_invoice_id: inv.id,
+      p_expected_updated_at: inv.updated_at,
+      p_invoice: IEA.invoiceArg(totals, { withholdingEnabled, notes }),
+      p_delete_ids: toDelete,
+      p_updates: updates.map(({ id, row }) => IEA.updateArg(id, row)),
+      p_inserts: inserts.map(x => IEA.insertArg(x.client_key, x.row)),
+      p_receipt_writes: receiptWrites.map(IEA.receiptWriteArg),
+    });
+    if (rpcErr) {
+      const h = IEA.rpcErrorToHttp(rpcErr);
+      if (h.status === 500) console.error('[invoice-editor][put] rpc', rpcErr);
+      return res.status(h.status).json(h.body);
+    }
+    if (!saved || saved.ok !== true) {
+      const h = IEA.saveFailureToHttp(saved);
+      return res.status(h.status).json(h.body);
     }
 
-    // 2) 明細の書き込み（削除 → 一括 insert → 並列 update）
-    if (toDelete.length) {
-      await supabase.from('invoice_item_details').delete().in('invoice_item_id', toDelete);
-      const { error: delErr } = await supabase.from('invoice_items').delete().in('id', toDelete);
-      if (delErr) return res.status(500).json({ error: delErr.message });
-    }
+    const rawIdMap = saved.id_map || {};
     const idMap = {};
-    if (inserts.length) {
-      const { data: ins, error: insErr } = await supabase.from('invoice_items').insert(inserts.map(x => x.row)).select('id, sort_order');
-      if (insErr) return res.status(500).json({ error: insErr.message });
-      const bySort = new Map((ins || []).map(r => [r.sort_order, r.id]));
-      for (const x of inserts) {
-        const id = bySort.get(x.row.sort_order);
-        x.row.id = id;
-        if (x.client_key && id) idMap[x.client_key] = id;
-      }
+    for (const x of inserts) {
+      const id = rawIdMap[x.client_key];
+      x.row.id = id;
+      if (id && !x.client_key.startsWith('__row')) idMap[x.client_key] = id;
     }
-    if (updates.length) {
-      const errs = await Promise.all(updates.map(async ({ id, row }) => {
-        const { error } = await supabase.from('invoice_items').update(row).eq('id', id);
-        return error;
-      }));
-      const firstErr = errs.find(Boolean);
-      if (firstErr) return res.status(500).json({ error: firstErr.message });
-    }
-    // 領収書の状態・理由: 読み出してからここまでのあいだに別の画面で写真が付け替えられていたら書かない
-    // （receipt_file_id が読んだときと同じ行だけ更新する条件付き更新。0 件なら食い違いとして知らせる）
-    if (receiptWrites.length) {
-      const results = await Promise.all(receiptWrites.map(async (w) => {
-        let q = supabase.from('invoice_items').update(w.rc).eq('id', w.id).eq('invoice_id', inv.id);
-        q = w.guardFileId ? q.eq('receipt_file_id', w.guardFileId) : q.is('receipt_file_id', null);
-        const { data, error } = await q.select('id');
-        return { w, error, ok: !error && Array.isArray(data) && data.length > 0 };
-      }));
-      const firstErr = results.find(r => r.error);
-      if (firstErr) return res.status(500).json({ error: firstErr.error.message });
-      for (const r of results) {
-        if (!r.ok) { receiptConflicts.push(r.w.id); continue; }
-        if (r.w.trashFileId) trashReceiptIds.push(r.w.trashFileId);
-      }
+    // 読み出してからロックまでのあいだに別の画面で写真が付け替えられていた行は、領収書欄を書いていない（関数が条件付きで書く）
+    const conflictIds = new Set(saved.receipt_conflicts || []);
+    for (const id of conflictIds) {
+      receiptConflicts.push(id);
+      const prev = existingById.get(id);
+      const row = next.find(x => x.id === id);
+      if (prev && row) for (const k of RCPT.RECEIPT_COLUMNS) if (k.startsWith('receipt_')) row[k] = prev[k]; // 注意の計算は DB にある内容で（日付・支払先は書いている）
     }
 
-    // 消した行・「領収書なし」にした行の領収書をゴミ箱へ（DB を書き終えてから。失敗しても保存は成功のまま）
+    // 消した行・「領収書なし」にした行の領収書をゴミ箱へ（関数が「書き込んだ時点で行に入っていた」ファイルを返す。
+    // DB を書き終えてから。失敗しても保存は成功のまま）
+    const trashReceiptIds = (saved.deleted_receipt_file_ids || []).filter(Boolean);
     if (trashReceiptIds.length) await ieTrashReceiptFiles(trashReceiptIds, 'put');
 
-    // 3) 注意（保存は止めない）。参考単価は下書き作成時の控え（original_unit_price）で判定し、提出時に再計算する
+    // 注意（保存は止めない）。参考単価は下書き作成時の控え（original_unit_price）で判定し、提出時に再計算する
     const issues = next.map(it => ({
       id: it.id,
       issues: IE.lineIssues(it, IE.isCrLine(it) ? (it.original_unit_price ?? null) : null, { requireReceipt: receiptOn }),
     })).filter(x => x.issues.length);
     res.json({
-      ok: true, updated_at: locked[0].updated_at, totals, id_map: idMap, issues, saved_at: newUpdatedAt,
+      ok: true, updated_at: saved.updated_at, totals, id_map: idMap, issues, saved_at: saved.updated_at,
       // 別の画面で領収書が付け替えられていた行（その行の領収書欄は書いていない）。画面は知らせて読み直す
       ...(receiptConflicts.length ? {
         receipt_conflicts: [...new Set(receiptConflicts)],
@@ -21380,19 +21360,28 @@ router.post('/invoice-editor/:id/items', requireAuth, async (req, res) => {
       return res.status(409).json({ error: '選んだクリエイティブに足せないものがあります', code: 'INVOICE_CHECK_FAILED', problems });
     }
 
-    // 単価は空欄（0 円扱い）なので合計は変わらないが、updated_at を進めて楽観ロックを取る
+    // 単価は空欄（0 円扱い）なので合計は変わらないが、updated_at を進めて楽観ロックを取る。
+    // 状態・楽観ロックの確認と行の追加は DB の関数で 1 トランザクション（提出と重なっても提出済みの請求書に行が増えない）
     const totals = IE.computeTotals(existing.concat(rows), { withholding_enabled: inv.withholding_enabled !== false });
-    const newUpdatedAt = new Date().toISOString();
-    const { data: locked, error: lockErr } = await supabase.from('invoices').update({
-      subtotal_amount: totals.subtotal, tax_amount: totals.tax, total_amount: totals.total,
-      withholding_amount: totals.withholding, payout_amount: totals.payout, updated_at: newUpdatedAt,
-    }).eq('id', inv.id).eq('updated_at', inv.updated_at).in('status', ['draft', 'rejected']).select('id, updated_at');
-    if (lockErr) return res.status(500).json({ error: lockErr.message });
-    if (!locked || !locked.length) return res.status(409).json({ error: '別の画面でこの請求書が更新されています。再読み込みしてください', code: 'CONFLICT' });
-
-    const { error: insErr } = await supabase.from('invoice_items').insert(rows.map(row => ({ ...row, invoice_id: inv.id })));
-    if (insErr) return res.status(500).json({ error: insErr.message });
-    res.json({ ok: true, added: rows.length, updated_at: locked[0].updated_at });
+    const { data: saved, error: rpcErr } = await supabase.rpc(IEA.SAVE_FN, {
+      p_invoice_id: inv.id,
+      p_expected_updated_at: inv.updated_at,
+      p_invoice: IEA.invoiceArg(totals),
+      p_delete_ids: [],
+      p_updates: [],
+      p_inserts: rows.map((row, k) => IEA.insertArg(`cr${k}`, row)),
+      p_receipt_writes: [],
+    });
+    if (rpcErr) {
+      const h = IEA.rpcErrorToHttp(rpcErr);
+      if (h.status === 500) console.error('[invoice-editor][add-items] rpc', rpcErr);
+      return res.status(h.status).json(h.body);
+    }
+    if (!saved || saved.ok !== true) {
+      const h = IEA.saveFailureToHttp(saved);
+      return res.status(h.status).json(h.body);
+    }
+    res.json({ ok: true, added: rows.length, updated_at: saved.updated_at });
   } catch (e) {
     console.error('[invoice-editor][add-items]', e);
     res.status(500).json({ error: e.message });
@@ -21413,6 +21402,12 @@ router.post('/invoice-editor/:id/submit', requireAuth, async (req, res) => {
       return res.status(409).json({ error: '別の画面でこの請求書が更新されています。再読み込みしてください', code: 'CONFLICT' });
     }
     const items = await ieLoadItems(inv.id);
+    // 画面に出ている明細（id・単価・数量）と保存済みの明細が同じか（保存が間に合っていない・入力が不正なら止める）
+    const shown = IEA.compareDisplayedItems(req.body ? req.body.items : undefined, items, {
+      parseMoney: IE.parseMoney, maxQuantity: IE.MAX_QUANTITY, isManualLine: IE.isManualLine, isFixedLine: IE.isFixedLine,
+    });
+    if (shown.error) return res.status(shown.error.status).json(shown.error.body);
+    if (shown.stale) return res.status(409).json(IEA.STALE_BODY);
     const creativeIds = items.map(i => i.creative_id).filter(Boolean);
     const creativesById = await ieFetchCreativesByIds(creativeIds);
     const [billedKeys, { refPrices, designationsByCreative }] = await Promise.all([
@@ -21433,33 +21428,26 @@ router.post('/invoice-editor/:id/submit', requireAuth, async (req, res) => {
       return res.status(409).json({ error: '提出できません。赤い行を直してください', code: 'INVOICE_CHECK_FAILED', problems, totals });
     }
 
-    // 参考単価を提出時点の値で控え直す（original_unit_price）。変わった行だけ並列 update
-    const refUpdates = items.filter(it => IE.isCrLine(it)).map(it => {
-      const ref = refPrices.get(IE.billedKey(it.creative_id, it.cost_type)) ?? 0;
-      return (it.original_unit_price === ref) ? null : { id: it.id, ref };
-    }).filter(Boolean);
-    if (refUpdates.length) {
-      const errs = await Promise.all(refUpdates.map(async u => {
-        const { error } = await supabase.from('invoice_items').update({ original_unit_price: u.ref }).eq('id', u.id);
-        return error;
-      }));
-      const firstErr = errs.find(Boolean);
-      if (firstErr) return res.status(500).json({ error: firstErr.message });
+    // 確定は DB の関数で 1 トランザクション（ADR 046 追補 2026-11-24（3））:
+    //   発行者ごとに 1 本ずつ → 請求書行をロック → 状態・楽観ロック → 明細が上で検証したものと同じか（指紋）→
+    //   二重請求（請求済み記録＋提出済みの明細）→ 参考単価の控え直し → 請求済み記録 → status='submitted'・金額列
+    const { data: result, error: rpcErr } = await supabase.rpc(IEA.SUBMIT_FN, {
+      p_invoice_id: inv.id,
+      p_expected_updated_at: inv.updated_at,
+      p_items: IEA.submitFingerprint(items),
+      p_ref_updates: IEA.refUpdatesArg(items, it => refPrices.get(IE.billedKey(it.creative_id, it.cost_type)) ?? 0),
+      p_totals: IEA.totalsArg(totals),
+    });
+    if (rpcErr) {
+      const h = IEA.rpcErrorToHttp(rpcErr);
+      if (h.status === 500) console.error('[invoice-editor][submit] rpc', rpcErr);
+      return res.status(h.status).json(h.body);
     }
-
-    const nowIso = new Date().toISOString();
-    const { data: updated, error: upErr } = await supabase.from('invoices').update({
-      status: 'submitted',
-      submitted_at: nowIso,
-      updated_at: nowIso,
-      subtotal_amount: totals.subtotal,
-      tax_amount: totals.tax,
-      total_amount: totals.total,
-      withholding_amount: totals.withholding,
-      payout_amount: totals.payout,
-    }).eq('id', inv.id).eq('updated_at', inv.updated_at).in('status', ['draft', 'rejected']).select().maybeSingle();
-    if (upErr) return res.status(500).json({ error: upErr.message });
-    if (!updated) return res.status(409).json({ error: '別の画面でこの請求書が更新されています。再読み込みしてください', code: 'CONFLICT' });
+    if (!result || result.ok !== true) {
+      const h = IEA.submitFailureToHttp(result, { itemsById: new Map(items.map(it => [it.id, it])) });
+      return res.status(h.status).json(h.status === 409 && h.body.code === 'INVOICE_CHECK_FAILED' ? { ...h.body, totals } : h.body);
+    }
+    const updated = result.invoice || {};
 
     // ADR 047: 提出時点の内容で Drive の PDF を保存（失敗しても提出は成立・既存と同じ扱い）
     const driveSync = await tryAutoSyncInvoicePdf(inv.id, req.user.id, 'editor-submit');
