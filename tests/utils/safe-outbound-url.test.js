@@ -103,7 +103,13 @@ describe('pinnedFetch / safeFetch（実際の接続）', () => {
   const http = require('http');
   const zlib = require('zlib');
   const { createSafeLookup, pinnedFetch } = require('../../utils/safe-outbound-url');
-  let server; let port; let hits = 0;
+  let server; let port; let hits = 0; let closedSockets = 0;
+  const { discardBody } = require('../../utils/safe-outbound-url');
+  const waitFor = async (cond, ms = 2000) => {
+    const end = Date.now() + ms;
+    while (!cond() && Date.now() < end) await new Promise(r => setTimeout(r, 20));
+    return cond();
+  };
   beforeAll(async () => {
     server = http.createServer((req, res) => {
       hits += 1;
@@ -113,13 +119,29 @@ describe('pinnedFetch / safeFetch（実際の接続）', () => {
         return;
       }
       if (req.url === '/redirect') { res.writeHead(302, { location: '/plain' }); res.end(); return; }
+      if (req.url === '/empty-gz') { res.writeHead(200, { 'content-type': 'text/html', 'content-encoding': 'gzip' }); res.end(); return; }
+      if (req.url === '/endless-gz') {
+        // 延々と続く gzip 本文（読む側が途中でやめたらソケットが閉じるか）
+        res.writeHead(200, { 'content-type': 'text/html', 'content-encoding': 'gzip' });
+        const gz = zlib.createGzip({ flush: zlib.constants.Z_SYNC_FLUSH });
+        gz.pipe(res);
+        const timer = setInterval(() => gz.write('x'.repeat(1024)), 5);
+        req.socket.on('close', () => { clearInterval(timer); closedSockets += 1; });
+        return;
+      }
+      if (req.url === '/endless-404') {
+        res.writeHead(404, { 'content-type': 'text/html' });
+        const timer = setInterval(() => res.write('x'), 5);
+        req.socket.on('close', () => { clearInterval(timer); closedSockets += 1; });
+        return;
+      }
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end('<title>ok</title>');
     });
     await new Promise(r => server.listen(0, '127.0.0.1', r));
     port = server.address().port;
   });
-  afterAll(() => new Promise(r => server.close(r)));
+  afterAll(() => new Promise((r) => { server.closeAllConnections?.(); server.close(r); }));
   // テストでは 127.0.0.1 のローカルサーバーへ繋ぐため、許可する lookup を渡す
   const allowLocal = (host, opts, cb) => (opts && opts.all ? cb(null, [{ address: '127.0.0.1', family: 4 }]) : cb(null, '127.0.0.1', 4));
 
@@ -139,6 +161,34 @@ describe('pinnedFetch / safeFetch（実際の接続）', () => {
     const lookup = createSafeLookup(async () => [{ address: '127.0.0.1', family: 4 }]);
     await expect(pinnedFetch(`http://site.test:${port}/plain`, {}, { lookup })).rejects.toMatchObject({ code: 'blocked_url' });
     expect(hits).toBe(before);
+  });
+  test('空の gzip 本文でもエラーにしない', async () => {
+    const r = await pinnedFetch(`http://site.test:${port}/empty-gz`, {}, { lookup: allowLocal });
+    expect(await r.text()).toBe('');
+  });
+  test('圧縮本文を途中で cancel したらソケットを閉じる', async () => {
+    const before = closedSockets;
+    const r = await pinnedFetch(`http://site.test:${port}/endless-gz`, {}, { lookup: allowLocal });
+    const reader = r.body.getReader();
+    await reader.read();
+    await reader.cancel();
+    expect(await waitFor(() => closedSockets > before)).toBe(true);
+  });
+  test('読まずに捨てた応答（404）も discardBody でソケットを閉じる', async () => {
+    const before = closedSockets;
+    const r = await pinnedFetch(`http://site.test:${port}/endless-404`, {}, { lookup: allowLocal });
+    expect(r.status).toBe(404);
+    discardBody(r);
+    expect(await waitFor(() => closedSockets > before)).toBe(true);
+  });
+  test('読まれないまま放っておかれても寿命タイマーで閉じる', async () => {
+    const before = closedSockets;
+    const r = await pinnedFetch(`http://site.test:${port}/endless-404`, {}, { lookup: allowLocal, maxLifetimeMs: 100 });
+    expect(r.status).toBe(404);
+    expect(await waitFor(() => closedSockets > before)).toBe(true);
+  });
+  test('GET 以外は送らない', async () => {
+    await expect(pinnedFetch(`http://site.test:${port}/plain`, { method: 'POST', body: 'x' }, { lookup: allowLocal })).rejects.toThrow('GET');
   });
   test('safeFetch: 事前判定は外部でも、接続時に内部へ変わったら断る（DNS rebinding）', async () => {
     const precheck = async () => [{ address: '93.184.216.34', family: 4 }];

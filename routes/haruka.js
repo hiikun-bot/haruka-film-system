@@ -27868,7 +27868,7 @@ router.get('/portfolio', requireAuth, async (req, res) => {
 // AI 提案は lib/portfolio-external-ai.js（ENABLE_PORTFOLIO_AI_SUGGEST と月次予算でガード）。
 
 const extUtil = require('../utils/portfolio-external');
-const { safeFetch: extSafeFetch } = require('../utils/safe-outbound-url');
+const { safeFetch: extSafeFetch, discardBody: extDiscardBody } = require('../utils/safe-outbound-url');
 const extShare = require('../utils/portfolio-external-share');
 
 // inspect の結果（サーバーが確かめた source と AI の費用）を短時間覚えておき、登録はこの値を使う
@@ -27986,8 +27986,9 @@ async function extFetchHtml(url) {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HARUKA-FILM-SYSTEM/1.0; +portfolio)', 'Accept': 'text/html,*/*;q=0.5' },
     });
     const ct = String(res.headers.get('content-type') || '').toLowerCase();
-    if (!res.ok) return { html: null, contentType: ct, status: res.status };
-    if (!ct.includes('text/html') && !ct.includes('application/xhtml')) return { html: null, contentType: ct, status: res.status };
+    // 読まない本文は閉じる（ソケットを残さない）
+    if (!res.ok) { extDiscardBody(res); return { html: null, contentType: ct, status: res.status }; }
+    if (!ct.includes('text/html') && !ct.includes('application/xhtml')) { extDiscardBody(res); return { html: null, contentType: ct, status: res.status }; }
     const reader = res.body?.getReader?.();
     if (!reader) return { html: await res.text(), contentType: ct, status: res.status };
     const chunks = []; let total = 0;
@@ -28529,30 +28530,42 @@ router.post('/portfolio/external-works/media-size', requireAuth, async (req, res
 });
 
 // DELETE /api/haruka/portfolio/external-works/:id — 論理削除（本人 or admin）。Drive のファイルは消さない
-//   HFS の Drive に直送したファイル（upload）は、登録時に HFS が付けた公開権限を先に外す（#1198 レビュー対応）。
-//   外せなかったときは削除もしない（作品だけ消えて共有が残る状態を作らない・もう一度押せば再試行）。
-//   同じファイルを使う別の外部作品が残っているときは外さない。
+//   HFS の Drive に直送したファイル（upload）は、登録時に HFS が付けた公開権限を外す（#1198 レビュー対応）。
+//   順番: 先に論理削除 → 同じファイルを使う外部作品（種別を問わず）がもう残っていなければ外す。
+//     同時に 2 件消しても、どちらかが必ず「残り 0 件」を見て外す（外すのは何度やっても同じ結果）。
+//   外せなかったときは論理削除を戻して 502（作品だけ消えて共有が残る状態を作らない・もう一度押せば再試行）。
 router.delete('/portfolio/external-works/:id', requireAuth, async (req, res) => {
   try {
     const work = await extLoadWorkOr404(req.params.id, res);
     if (!work) return;
     const roleCodes = await getEffectiveRoleCodes(req);
     if (!extUtil.canEditExternalWork({ roleCodes, userId: req.user?.id, work })) return res.status(403).json({ error: 'この作品を削除できるのは本人か管理者だけです' });
-    if (work.source_type === 'upload' && work.drive_file_id) {
+    const needsRevoke = work.source_type === 'upload' && !!work.drive_file_id;
+    if (needsRevoke && !process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive の共有を外せないため削除を中止しました（Drive未設定）' });
+    const { error } = await supabase.from('portfolio_external_works').update({ deleted_at: new Date().toISOString() }).eq('id', work.id);
+    if (error) return res.status(500).json({ error: error.message });
+    if (needsRevoke) {
+      const undo = async () => {
+        const { error: undoErr } = await supabase.from('portfolio_external_works').update({ deleted_at: null }).eq('id', work.id);
+        if (undoErr) console.error('[portfolio/external/delete] 論理削除の取り消しに失敗:', work.id, undoErr.message);
+      };
       const { data: others, error: othersErr } = await supabase.from('portfolio_external_works')
-        .select('id').eq('drive_file_id', work.drive_file_id).eq('source_type', 'upload').neq('id', work.id).is('deleted_at', null).limit(1);
-      if (othersErr) return res.status(500).json({ error: othersErr.message });
+        .select('id').eq('drive_file_id', work.drive_file_id).is('deleted_at', null).limit(1);
+      if (othersErr) {
+        await undo();
+        return res.status(500).json({ error: '削除を中止しました（同じファイルを使う作品の確認に失敗）: ' + othersErr.message });
+      }
       if (!(others || []).length) {
-        if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive の共有を外せないため削除を中止しました（Drive未設定）' });
-        const r = await extShare.revokePublicRead(await getDriveService(), work.drive_file_id);
+        let r;
+        try { r = await extShare.revokePublicRead(await getDriveService(), work.drive_file_id); }
+        catch (e) { r = { ok: false, error: e?.message || String(e) }; }
         if (!r.ok) {
           console.warn('[portfolio/external/delete] 公開権限の解除に失敗:', work.id, r.error);
+          await undo();
           return res.status(502).json({ error: 'Drive の共有を外せなかったため、削除を中止しました。少し待ってからもう一度削除してください' });
         }
       }
     }
-    const { error } = await supabase.from('portfolio_external_works').update({ deleted_at: new Date().toISOString() }).eq('id', work.id);
-    if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
   } catch (e) {
     console.error('[portfolio/external/delete] failed:', e.message);

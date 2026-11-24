@@ -162,25 +162,38 @@ function createSafeLookup(resolveAll) {
 }
 
 const NULL_BODY_STATUS = new Set([101, 204, 205, 304]);
+// 1 回の取得にかける最大時間。読まれずに放っておかれた応答・延々と続く応答のソケットもここで必ず閉じる
+const PINNED_FETCH_MAX_LIFETIME_MS = 20 * 1000;
 
 /**
  * 名前解決を safeLookup に固定した http(s) リクエストで GET し、fetch の Response 形で返す（リダイレクトは追わない）。
  * gzip / deflate / br は展開する（グローバル fetch と同じ使い勝手にする）。
+ * 本文を読み切らずに cancel したとき・読まずに捨てたときもソケットを閉じる（cancel で res を壊す＋寿命タイマー）。
  */
-function pinnedFetch(url, init = {}, { lookup } = {}) {
+function pinnedFetch(url, init = {}, { lookup, maxLifetimeMs = PINNED_FETCH_MAX_LIFETIME_MS } = {}) {
   const http = require('http');
   const https = require('https');
   const zlib = require('zlib');
   const { Readable } = require('stream');
+  const method = String(init.method || 'GET').toUpperCase();
+  if (method !== 'GET' || init.body != null) return Promise.reject(new Error('safeFetch は GET だけに対応しています'));
   const u = new URL(url);
   const mod = u.protocol === 'https:' ? https : http;
   const headers = {};
   const src = init.headers || {};
   if (typeof src.forEach === 'function' && !Array.isArray(src)) src.forEach((v, k) => { headers[k] = v; });
   else Object.entries(src).forEach(([k, v]) => { headers[k] = v; });
-  if (!Object.keys(headers).some(k => k.toLowerCase() === 'accept-encoding')) headers['Accept-Encoding'] = 'gzip, deflate, br';
+  if (!Object.keys(headers).some(k => k.toLowerCase() === 'accept-encoding')) headers['Accept-Encoding'] = 'gzip, br';
   return new Promise((resolve, reject) => {
-    const req = mod.request(u, {
+    let req = null;
+    let resRef = null;
+    const lifetime = setTimeout(() => {
+      const e = new Error('応答に時間がかかりすぎたため打ち切りました');
+      try { resRef?.destroy(e); } catch (_) {}
+      try { req?.destroy(e); } catch (_) {}
+    }, maxLifetimeMs);
+    if (typeof lifetime.unref === 'function') lifetime.unref();
+    req = mod.request(u, {
       method: 'GET',
       headers,
       lookup: lookup || createSafeLookup(),
@@ -188,6 +201,8 @@ function pinnedFetch(url, init = {}, { lookup } = {}) {
       // keep-alive の共有ソケットを使い回さない（毎回この lookup で接続し直す）
       agent: false,
     }, (res) => {
+      resRef = res;
+      res.on('close', () => clearTimeout(lifetime));
       const status = Number(res.statusCode) || 0;
       const h = new Headers();
       for (const [k, v] of Object.entries(res.headers || {})) {
@@ -197,27 +212,42 @@ function pinnedFetch(url, init = {}, { lookup } = {}) {
           else if (v !== undefined) h.set(k, String(v));
         } catch (_) { /* skip */ }
       }
-      let body = res;
-      const enc = String(res.headers['content-encoding'] || '').toLowerCase().trim();
-      const decoder = enc === 'gzip' || enc === 'x-gzip' ? zlib.createGunzip()
-        : enc === 'deflate' ? zlib.createInflate()
-          : enc === 'br' ? zlib.createBrotliDecompress() : null;
-      if (decoder) {
-        body = res.pipe(decoder);
-        res.on('error', (e) => decoder.destroy(e));
-        h.delete('content-encoding');
-        h.delete('content-length');
-      }
       if (NULL_BODY_STATUS.has(status) || status < 200 || status > 599) {
-        res.resume();
+        res.destroy();
         resolve(new Response(null, { status: (status >= 200 && status <= 599) ? status : 502, headers: h }));
         return;
       }
+      let body = res;
+      const enc = String(res.headers['content-encoding'] || '').toLowerCase().trim();
+      const emptyBody = String(res.headers['content-length'] || '') === '0';
+      // 途中で切れた・空の圧縮本文でもエラーにしない（undici と同じく SYNC_FLUSH で終える）
+      const flush = { flush: zlib.constants.Z_SYNC_FLUSH, finishFlush: zlib.constants.Z_SYNC_FLUSH };
+      const decoder = emptyBody ? null
+        : (enc === 'gzip' || enc === 'x-gzip') ? zlib.createGunzip(flush)
+          : enc === 'deflate' ? zlib.createUnzip(flush)
+            : enc === 'br' ? zlib.createBrotliDecompress({ flush: zlib.constants.BROTLI_OPERATION_FLUSH, finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH })
+              : null;
+      if (decoder) {
+        body = res.pipe(decoder);
+        res.on('error', (e) => decoder.destroy(e));
+        // 読む側が cancel したら（decoder が壊されたら）元のソケットも閉じる
+        decoder.on('close', () => { if (!res.destroyed) res.destroy(); });
+        h.delete('content-encoding');
+        h.delete('content-length');
+      }
       resolve(new Response(Readable.toWeb(body), { status, headers: h }));
     });
-    req.on('error', reject);
+    req.on('error', (e) => { clearTimeout(lifetime); reject(e); });
     req.end();
   });
+}
+
+/** 読まずに捨てる応答の本文を閉じる（ソケットを残さない）。失敗しても投げない */
+function discardBody(res) {
+  try {
+    const p = res?.body?.cancel?.();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch (_) { /* ignore */ }
 }
 
 /**
@@ -240,7 +270,7 @@ async function safeFetch(url, init = {}, { maxRedirects = 3, lookup, connectLook
     if (status >= 300 && status < 400) {
       const loc = res.headers?.get?.('location');
       if (!loc) return res;
-      try { res.body?.cancel?.(); } catch (_) {}
+      discardBody(res);
       current = new URL(loc, u).toString();
       continue;
     }
@@ -255,5 +285,6 @@ module.exports = {
   assertPublicUrl,
   createSafeLookup,
   pinnedFetch,
+  discardBody,
   safeFetch,
 };
