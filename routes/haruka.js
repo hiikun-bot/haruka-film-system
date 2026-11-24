@@ -32,6 +32,10 @@ const SAFE_IMAGE = require('../utils/safe-image');
 const JOIN_REQ = require('../utils/project-join-request');
 // クリエイティブの削除・担当者の変更・編集の権限判定（純関数・jest）
 const CREATIVE_PERM = require('../utils/creative-permissions');
+// 請求書番号の採番（JST の年月・番号の重複は取り直し）。メンバー請求書・クライアント請求書で共用
+const INVOICE_NO = require('../utils/invoice-number');
+// クライアント請求書の明細・金額のサーバー計算と照合
+const CLIENT_INV = require('../utils/client-invoice');
 const {
   getUserRoleCodes,
   invalidateUserRolesCache,
@@ -10117,16 +10121,9 @@ async function aggregateBillingRecon({ year, month }) {
 
     const lineId = resolveCreativeLineForPricing(c, pricingCtx, monthEndStr);
     const line = lineId ? (pricingCtx.lineById.get(lineId) || pricingCtx.baseLineById.get(lineId)) : null;
-    let amount = 0, priceSource = 'unknown';
-    if (line && Number(line.client_unit_price) > 0) {
-      amount = Number(line.client_unit_price) || 0;
-      priceSource = 'line';
-    } else if (Number(c.client_fee) > 0) {
-      amount = Number(c.client_fee) || 0;
-      priceSource = 'client_fee';
-    } else {
-      priceUnknownCount++;
-    }
+    // クライアント請求書の作成（/client-invoice/*）と同じ決め方（utils/client-invoice.js）
+    const { amount, source: priceSource } = CLIENT_INV.clientPriceOf(c, line);
+    if (priceSource === 'unknown') priceUnknownCount++;
     actualTotal += amount;
     const key = clientId || '__unknown__';
     if (!actualByClient.has(key)) actualByClient.set(key, { client_id: clientId, name: clientName, amount: 0, count: 0 });
@@ -19913,105 +19910,183 @@ router.delete('/tweets/:id/comments/:commentId', requireAuth, async (req, res) =
 // 納品済みクリエイティブ一覧（クライアント向け請求書作成用）
 // クライアント請求書の作成は、画面の管理者セクション（invoice.all_view）にだけ出ている。API も同じ権限で絞る
 // （以前は確認が無く、誰でもクライアントへの請求額の一覧を読み、クライアント請求書を作れた・2026-11-24）
-router.get('/client-invoice/items', requireAuth, async (req, res) => {
-  if (!(await canListOthersInvoices(req))) return res.status(403).json({ error: 'アクセス権限がありません' });
-  const { client_id, year, month } = req.query;
-  if (!client_id) return res.status(400).json({ error: 'client_id is required' });
+// 対象（クライアント × 年月）のクライアント請求書の候補をサーバーで作る。一覧（GET items）と作成（POST generate）で共用。
+//   ・月は納品完了日（delivered_at）の JST 月（ADR 026。以前は updated_at のサーバー時刻の月で、編集しただけで月が動いた）
+//   ・金額は請求突合チェッカーと同じ決め方（成果物グループのクライアント単価 → 無ければ creatives.client_fee）
+//   ・別のクライアント請求書に入っている制作は billed_invoice_number を付ける（作成時は 409）
+// このクライアントの、対象月に納品された制作のうち、クライアント請求書に入っているもの（請求書の状態・月は問わない）。
+//   exceptInvoiceId … この請求書は数えない（作成直後の再確認用）
+// 返り値: { ok:true, billed: Map<creative_id, invoice_number> } / { ok:false, error }
+async function loadClientBilledCreatives(clientId, jst, exceptInvoiceId = null) {
+  let q = supabase
+    .from('invoice_items')
+    .select('creative_id, invoice_id, invoice:invoices!inner(id, invoice_number, invoice_type), creative:creatives!inner(id, delivered_at, projects!inner(client_id))')
+    .eq('invoice.invoice_type', 'client')
+    .eq('creative.projects.client_id', clientId)
+    .gte('creative.delivered_at', jst.startIso)
+    .lt('creative.delivered_at', jst.endIso);
+  if (exceptInvoiceId) q = q.neq('invoice_id', exceptInvoiceId);
+  const { data, error } = await q;
+  if (error) return { ok: false, error: error.message };
+  const billed = new Map();
+  for (const row of (data || [])) {
+    if (row.creative_id && !billed.has(row.creative_id)) billed.set(row.creative_id, row.invoice?.invoice_number || '(番号なし)');
+  }
+  return { ok: true, billed };
+}
 
-  const { data: projects } = await supabase.from('projects').select('id').eq('client_id', client_id);
-  if (!projects?.length) return res.json([]);
+// 返り値: { ok:true, candidates } / { ok:false, status, error }
+async function buildClientInvoiceCandidates(clientId, year, month) {
+  const { data: projects, error: pErr } = await supabase.from('projects').select('id').eq('client_id', clientId);
+  if (pErr) return { ok: false, status: 500, error: pErr.message };
+  if (!projects?.length) return { ok: true, candidates: [] };
   const projectIds = projects.map(p => p.id);
-
-  let query = supabase.from('creatives')
-    .select(`id, file_name, status, client_fee, project_id, updated_at,
+  const jst = jstMonthRangeIso(year, month);
+  const { data: creatives, error } = await supabase.from('creatives')
+    .select(`id, file_name, status, client_fee, project_id, line_id, category_id, creative_type, delivered_at,
       projects(id, name, clients(id, name, client_code)),
-      creative_assignments(users(id, full_name))`)
+      creative_assignments(role, rank_applied, users(id, full_name))`)
     .in('project_id', projectIds)
     .eq('status', '納品')
-    .order('updated_at', { ascending: false });
+    .gte('delivered_at', jst.startIso)
+    .lt('delivered_at', jst.endIso)
+    .order('delivered_at', { ascending: false });
+  if (error) return { ok: false, status: 500, error: error.message };
+  const list = creatives || [];
+  if (!list.length) return { ok: true, candidates: [] };
 
-  if (year && month) {
-    const y = parseInt(year), m = parseInt(month);
-    query = query
-      .gte('updated_at', new Date(y, m-1, 1).toISOString())
-      .lt('updated_at', new Date(y, m, 1).toISOString());
-  }
+  const pricingCtx = await buildLinePricingContext(list, 'client-invoice');
+  const monthEndStr = jstMonthEndStr(year, month);
 
-  const { data: creatives, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
+  // 別のクライアント請求書に入っている制作（請求月を問わない。対象月に納品された制作だけを embed inner で絞る）
+  // （案件 id の一覧を URL に並べない＝案件の多いクライアントで URL が長すぎて落ちないよう、クライアントで絞る）
+  const billedQ = await loadClientBilledCreatives(clientId, jst);
+  if (!billedQ.ok) return { ok: false, status: 500, error: `請求済みの確認に失敗しました: ${billedQ.error}` };
+  const billed = billedQ.billed;
 
-  res.json((creatives||[]).map(c => ({
-    id: c.id,
-    file_name: c.file_name,
-    client_fee: c.client_fee || 0,
-    project_name: c.projects?.name || '-',
-    client_name: c.projects?.clients?.name || '-',
-    assignees: [...new Set((c.creative_assignments||[]).map(a => a.users?.full_name).filter(Boolean))].join('、') || '-',
-  })));
+  const candidates = list.map(c => {
+    const lineId = resolveCreativeLineForPricing(c, pricingCtx, monthEndStr);
+    const line = lineId ? (pricingCtx.lineById.get(lineId) || pricingCtx.baseLineById.get(lineId)) : null;
+    const price = CLIENT_INV.clientPriceOf(c, line);
+    return {
+      id: c.id,
+      file_name: c.file_name,
+      amount: price.amount,
+      price_source: price.source,
+      delivered_at: c.delivered_at || null,
+      project_name: c.projects?.name || '-',
+      client_name: c.projects?.clients?.name || '-',
+      assignees: [...new Set((c.creative_assignments || []).map(a => a.users?.full_name).filter(Boolean))].join('、') || '-',
+      billed_invoice_number: billed.get(c.id) || null,
+    };
+  });
+  return { ok: true, candidates };
+}
+
+function parseClientInvoiceYm(year, month) {
+  const y = parseInt(year, 10), m = parseInt(month, 10);
+  if (!Number.isInteger(y) || y < 2000 || y > 2100 || !Number.isInteger(m) || m < 1 || m > 12) return null;
+  return { year: y, month: m };
+}
+
+router.get('/client-invoice/items', requireAuth, async (req, res) => {
+  if (!(await canListOthersInvoices(req))) return res.status(403).json({ error: 'アクセス権限がありません' });
+  const { client_id } = req.query;
+  if (!client_id) return res.status(400).json({ error: 'client_id is required' });
+  const ym = parseClientInvoiceYm(req.query.year, req.query.month);
+  if (!ym) return res.status(400).json({ error: '年・月を指定してください' });
+
+  const built = await buildClientInvoiceCandidates(client_id, ym.year, ym.month);
+  if (!built.ok) return res.status(built.status).json({ error: built.error });
+  // client_fee は画面の互換のため（＝サーバーが決めた請求額 amount と同じ値）
+  res.json(built.candidates.map(c => ({ ...c, client_fee: c.amount })));
 });
 
 // クライアント請求書生成
 router.post('/client-invoice/generate', requireAuth, async (req, res) => {
   if (!(await canListOthersInvoices(req))) return res.status(403).json({ error: 'アクセス権限がありません' });
-  const { client_id, year, month, items, notes } = req.body;
-  if (!client_id || !items?.length) return res.status(400).json({ error: 'client_id と items は必須です' });
+  const { client_id, items, notes } = req.body;
+  if (!client_id || !Array.isArray(items) || !items.length) return res.status(400).json({ error: 'client_id と items は必須です' });
+  const ym = parseClientInvoiceYm(req.body.year, req.body.month);
+  if (!ym) return res.status(400).json({ error: '年・月を指定してください' });
 
-  const now = new Date();
-  const ym = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
-  const { count } = await supabase.from('invoices').select('*', {count:'exact',head:true}).like('invoice_number', `INV-${ym}-%`);
-  const invoiceNumber = `INV-${ym}-${String((count||0)+1).padStart(3,'0')}`;
-  const totalAmount = items.reduce((s, i) => s + (i.client_fee || 0), 0);
+  // 明細と金額はサーバーで作り直す。画面から送られた金額（items[].client_fee・expected_total）は照合だけに使う
+  const built = await buildClientInvoiceCandidates(client_id, ym.year, ym.month);
+  if (!built.ok) return res.status(built.status).json({ error: built.error });
+  const checked = CLIENT_INV.checkClientInvoiceSelection({
+    candidates: built.candidates, items, expectedTotal: req.body.expected_total,
+  });
+  if (!checked.ok) return res.status(checked.status).json({ error: checked.error, code: 'CLIENT_INVOICE_MISMATCH', problems: checked.problems });
+  const rows = checked.rows;
+  const totalAmount = checked.total;
 
   const { data: projects } = await supabase.from('projects').select('id').eq('client_id', client_id).limit(1);
   const project_id = projects?.[0]?.id || null;
 
-  const { data: invoice, error: invErr } = await supabase.from('invoices').insert({
-    invoice_number: invoiceNumber,
+  const { data: invoice, error: invErr } = await INVOICE_NO.insertInvoiceWithNumber(supabase, () => ({
     issuer_id: req.user.id,
     project_id,
     total_amount: totalAmount,
     status: 'draft',
-    year: year || now.getFullYear(),
-    month: month || (now.getMonth()+1),
+    year: ym.year,
+    month: ym.month,
     invoice_type: 'client',
     recipient_client_id: client_id,
-    notes: notes || null,
-  }).select().single();
+    notes: typeof notes === 'string' && notes.trim() ? notes.slice(0, 2000) : null,
+  }));
   if (invErr) return res.status(500).json({ error: invErr.message });
 
   // invoice_items を一括保存
   const { data: invItems, error: itemsErr } = await supabase
     .from('invoice_items')
-    .insert(items.map((item, idx) => ({
+    .insert(rows.map((r, idx) => ({
       invoice_id: invoice.id,
-      creative_id: item.creative_id,
-      creative_label: item.file_name || item.label || null,
+      creative_id: r.creative_id,
+      creative_label: r.file_name || null,
       cost_type: 'base_fee',
-      total_amount: item.client_fee,
+      total_amount: r.amount,
       is_special: false,
-      label: item.file_name || item.label || '明細',
+      label: r.file_name || '明細',
       quantity: 1,
       unit: '本',
-      unit_price: item.client_fee || 0,
+      unit_price: r.amount,
       sort_order: idx,
     })))
     .select('id, creative_id');
-  if (itemsErr) return res.status(500).json({ error: itemsErr.message });
+  if (itemsErr) {
+    // 明細が入らなかった請求書は残さない（0 円の請求書が一覧に残るのを防ぐ）
+    await supabase.from('invoices').delete().eq('id', invoice.id);
+    return res.status(500).json({ error: itemsErr.message });
+  }
 
-  // invoice_item_details を一括保存
+  // 同時に作られた別のクライアント請求書と同じ制作が重なっていないか、入れたあとにもう一度確かめる。
+  // 重なっていたら（または確かめられなければ）この請求書を消して 409／500（両方が同時に消えることはあっても、二重には残らない）
+  {
+    const re = await loadClientBilledCreatives(client_id, jstMonthRangeIso(ym.year, ym.month), invoice.id);
+    const mine = new Set(rows.map(r => String(r.creative_id)));
+    const clash = re.ok ? [...re.billed.entries()].filter(([cid]) => mine.has(String(cid))) : [];
+    if (!re.ok || clash.length > 0) {
+      await supabase.from('invoices').delete().eq('id', invoice.id);
+      if (!re.ok) return res.status(500).json({ error: `請求済みの確認に失敗しました: ${re.error}` });
+      const nums = [...new Set(clash.map(([, n]) => n))].join('、');
+      return res.status(409).json({ error: `同じ制作が別のクライアント請求書（${nums}）に入りました。画面を開き直してください`, code: 'CLIENT_INVOICE_MISMATCH' });
+    }
+  }
+
+  // invoice_item_details（後方互換）
+  const amountByCreative = new Map(rows.map(r => [String(r.creative_id), r.amount]));
   const details = (invItems || []).map(invItem => ({
     invoice_item_id: invItem.id,
     cost_type: 'base_fee',
-    unit_price: items.find(i => i.creative_id === invItem.creative_id)?.client_fee,
-    amount:     items.find(i => i.creative_id === invItem.creative_id)?.client_fee,
+    unit_price: amountByCreative.get(String(invItem.creative_id)) || 0,
+    amount:     amountByCreative.get(String(invItem.creative_id)) || 0,
   }));
-  if (details.length) await supabase.from('invoice_item_details').insert(details);
+  if (details.length) {
+    const { error: detErr } = await supabase.from('invoice_item_details').insert(details);
+    if (detErr) console.warn('[client-invoice/generate] invoice_item_details の保存に失敗（請求書は作成済みのため続行）:', detErr.message);
+  }
 
-  // creatives.client_fee を並列更新
-  await Promise.all(items.map(item =>
-    supabase.from('creatives').update({ client_fee: item.client_fee }).eq('id', item.creative_id)
-  ));
-
+  // 以前はここで画面の金額を creatives.client_fee に書き戻していた。金額はサーバーが決めるので書き戻さない
   res.json(invoice);
 });
 
@@ -20531,14 +20606,9 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     });
   }
 
-  // 請求書番号を自動採番（承認待ちチェックの後。count は副作用なしだが無駄なクエリを避ける）
-  const now = new Date();
-  const ym = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}`;
-  const { count } = await supabase
-    .from('invoices')
-    .select('*', { count: 'exact', head: true })
-    .like('invoice_number', `INV-${ym}-%`);
-  const invoiceNumber = `INV-${ym}-${String((count||0)+1).padStart(3,'0')}`;
+  // 請求書番号は保存の直前に JST の年月で採番する（utils/invoice-number.js・番号の重複は取り直し）。
+  // 対象年月の既定（画面が送らなかったとき）も JST の今月
+  const nowJstYm = INVOICE_NO.jstYearMonth();
 
   // ADR 028 Stage 2: 時間制（作業時間報告）明細。
   // 金額は work_hour_entries から再計算（preview-items と同じ whBuildInvoiceItems を共有）し、
@@ -20612,20 +20682,15 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   if (!itemRows.length) return res.status(400).json({ error: '該当するアサインが見つかりません' });
 
   // 請求書を保存
-  const { data: invoice, error: iErr } = await supabase
-    .from('invoices')
-    .insert({
-      invoice_number: invoiceNumber,
-      issuer_id, project_id, cycle_id,
-      total_amount: totalAmount,
-      status: 'draft',
-      year: req.body.year || now.getFullYear(),
-      month: req.body.month || (now.getMonth() + 1),
-      recipient_id: req.body.recipient_id || null,
-      notes: req.body.notes || null,
-    })
-    .select()
-    .single();
+  const { data: invoice, error: iErr, invoiceNumber } = await INVOICE_NO.insertInvoiceWithNumber(supabase, () => ({
+    issuer_id, project_id, cycle_id,
+    total_amount: totalAmount,
+    status: 'draft',
+    year: req.body.year || nowJstYm.year,
+    month: req.body.month || nowJstYm.month,
+    recipient_id: req.body.recipient_id || null,
+    notes: req.body.notes || null,
+  }));
   if (iErr) return res.status(isInvoiceProjectIdNotNullError(iErr) ? 400 : 500).json({ error: invoiceInsertErrorMessage(iErr) });
 
   // 明細（コスト種別ごと）を一括保存
@@ -21342,17 +21407,13 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
     const withholdingEnabled = IE.defaultWithholding(issuerR.data ? issuerR.data.business_type : null);
     const totals = IE.computeTotals(rows, { withholding_enabled: withholdingEnabled });
 
-    // 採番（既存 /invoices/generate と同じ INV-YYYYMM-NNN。年月は JST の今日）
-    const todayYm = IE.jstDateOfIso(new Date().toISOString()).slice(0, 7).replace('-', '');
-    const { count } = await supabase.from('invoices').select('*', { count: 'exact', head: true }).like('invoice_number', `INV-${todayYm}-%`);
-    const invoiceNumber = `INV-${todayYm}-${String((count || 0) + 1).padStart(3, '0')}`;
+    // 採番は保存の直前に（INV-YYYYMM-NNN・年月は JST の今日・番号の重複は取り直し。utils/invoice-number.js）
     const firstCreative = rows.find(r => r.creative_id);
     // 案件の無い時間報酬・立替経費だけなら NULL（migrations/2026-10-29_invoices_project_id_nullable.sql）
     const projectId = (firstCreative ? (creativesById.get(firstCreative.creative_id) || {}).project_id : null) || fallbackProjectId || null;
     const nowIso = new Date().toISOString();
 
-    const { data: invoice, error: iErr } = await supabase.from('invoices').insert({
-      invoice_number: invoiceNumber,
+    const { data: invoice, error: iErr } = await INVOICE_NO.insertInvoiceWithNumber(supabase, () => ({
       issuer_id: issuerId,
       project_id: projectId,
       status: 'draft',
@@ -21366,7 +21427,7 @@ router.post('/invoice-editor/drafts', requireAuth, async (req, res) => {
       withholding_amount: totals.withholding,
       payout_amount: totals.payout,
       updated_at: nowIso,
-    }).select('id, invoice_number').single();
+    }), { select: 'id, invoice_number' });
     if (iErr) return res.status(isInvoiceProjectIdNotNullError(iErr) ? 400 : 500).json({ error: invoiceInsertErrorMessage(iErr) });
 
     const { error: itErr } = await supabase.from('invoice_items').insert(rows.map(r => ({ ...r, invoice_id: invoice.id })));

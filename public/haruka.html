@@ -39489,16 +39489,22 @@ async function loadClientInvoiceItems() {
         <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">案件</th>
         <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">ファイル名</th>
         <th style="padding:8px 10px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted)">担当者</th>
-        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:160px">報酬（税込・円）</th>
+        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:160px">請求額（円）</th>
       </tr>
     </thead>
     <tbody>
       ${clientInvoiceItems.map((item, i) => {
+        // 金額はサーバーが決める（成果物グループのクライアント単価 → 無ければクリエイティブの請求額）。ここでは直さない
         const hasFee = item.client_fee > 0;
+        const billed = !!item.billed_invoice_number;
+        const selectable = hasFee && !billed;
         const rowBg = i % 2 === 0 ? '' : 'background:#FAFEFE';
-        return `<tr style="${rowBg};border-bottom:0.5px solid var(--border)">
+        const note = billed
+          ? `<div style="font-size:10px;color:var(--text-muted)">請求済み（${esc(item.billed_invoice_number)}）</div>`
+          : (!hasFee ? '<div style="font-size:10px;color:#E24B4A" title="案件編集の「成果物グループ」でクライアント単価を入れると請求できます">単価が未設定（案件の成果物グループで設定）</div>' : '');
+        return `<tr style="${rowBg};border-bottom:0.5px solid var(--border)${selectable ? '' : ';opacity:0.55'}">
           <td style="padding:8px 10px;text-align:center">
-            <input type="checkbox" class="ci-item-check" data-id="${item.id}" data-idx="${i}" ${hasFee?'checked':''} onchange="updateClientInvoiceTotal()" style="cursor:pointer;width:15px;height:15px">
+            <input type="checkbox" class="ci-item-check" data-id="${item.id}" data-idx="${i}" ${selectable?'checked':'disabled'} onchange="updateClientInvoiceTotal()" style="cursor:pointer;width:15px;height:15px">
           </td>
           <td style="padding:8px 10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
             <div style="font-size:11px;color:var(--text-muted)">${esc(item.client_name)}</div>
@@ -39507,12 +39513,8 @@ async function loadClientInvoiceItems() {
           <td style="padding:8px 10px;font-family:monospace;font-size:10px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(item.file_name)}">${esc(item.file_name)}</td>
           <td style="padding:8px 10px;text-align:center;font-size:11px;color:var(--text-muted)">${esc(item.assignees||'-')}</td>
           <td style="padding:8px 10px;text-align:right">
-            <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px">
-              <span style="font-size:12px;color:var(--text-muted)">¥</span>
-              <input type="number" id="ci-fee-${i}" value="${item.client_fee||''}" placeholder="0" min="0" step="1000"
-                style="width:110px;text-align:right;font-size:13px;font-weight:600;padding:5px 8px;border:1px solid var(--border);border-radius:6px;color:var(--em-dark)"
-                onchange="updateClientInvoiceTotal()" oninput="updateClientInvoiceTotal()">
-            </div>
+            <div style="font-size:13px;font-weight:600;color:var(--em-dark)">${hasFee ? '¥' + Number(item.client_fee).toLocaleString() : '―'}</div>
+            ${note}
           </td>
         </tr>`;
       }).join('')}
@@ -39522,16 +39524,19 @@ async function loadClientInvoiceItems() {
 }
 
 function toggleAllClientItems(checked) {
-  document.querySelectorAll('.ci-item-check').forEach(cb => { cb.checked = checked; });
+  document.querySelectorAll('.ci-item-check').forEach(cb => { if (!cb.disabled) cb.checked = checked; });
   updateClientInvoiceTotal();
+}
+
+function _ciFeeOf(idx) {
+  return Math.round(Number((clientInvoiceItems[idx] || {}).client_fee) || 0);
 }
 
 function updateClientInvoiceTotal() {
   let total = 0, count = 0;
   document.querySelectorAll('.ci-item-check:checked').forEach(cb => {
     const idx = parseInt(cb.dataset.idx);
-    const fee = parseInt(document.getElementById('ci-fee-'+idx)?.value||'0')||0;
-    total += fee; count++;
+    total += _ciFeeOf(idx); count++;
   });
   document.getElementById('ci-total').textContent = '¥'+total.toLocaleString();
   document.getElementById('ci-count').textContent = `（${count}件）`;
@@ -39546,20 +39551,27 @@ async function generateClientInvoice() {
   const month = parseInt(document.getElementById('ci-month').value);
   const notes = document.getElementById('ci-notes').value.trim()||null;
   const items = [];
+  let expectedTotal = 0;
   document.querySelectorAll('.ci-item-check:checked').forEach(cb => {
     const idx = parseInt(cb.dataset.idx);
-    const fee = parseInt(document.getElementById('ci-fee-'+idx)?.value||'0')||0;
-    if (fee > 0) items.push({ creative_id: cb.dataset.id, client_fee: fee });
+    const fee = _ciFeeOf(idx);
+    if (fee > 0) { items.push({ creative_id: cb.dataset.id, client_fee: fee }); expectedTotal += fee; }
   });
-  if (!items.length) { showToast('報酬を入力し、請求対象を選択してください', 'warn'); return; }
+  if (!items.length) { showToast('請求対象を選択してください', 'warn'); return; }
   const btn = document.getElementById('ci-submit-btn');
   btn.textContent = '発行中...'; btn.disabled = true;
+  // 金額はサーバーが計算し直す。画面の金額・合計は「見ていたものと同じか」の照合用（違えば 409）
   const res = await apiFetch(`${API}/client-invoice/generate`, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ client_id: clientId, year, month, items, notes })
+    body: JSON.stringify({ client_id: clientId, year, month, items, notes, expected_total: expectedTotal })
   });
   btn.textContent = '請求書を発行する'; btn.disabled = false;
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 409) {
+    showToast(data.error || '金額が変わっています。最新の内容を読み込みました', 'warn');
+    await loadClientInvoiceItems();
+    return;
+  }
   if (!res.ok) { showToast(data.error||'発行に失敗しました', 'error'); return; }
   closeModal('modal-client-invoice-gen');
   showToast(`クライアント請求書 ${data.invoice_number} を発行しました（¥${(data.total_amount||0).toLocaleString()}）`, 'success');
