@@ -98,9 +98,12 @@ related_adrs: []
   （新セッションは未変更のため Set-Cookie されない）、そのままログイン状態に戻る。また `/auth/logout` は保存先エラーでも `{ok:true}` を返していた。
 - **決定**:
   - `destroy` は行を消さず、`sess = { __hfs_revoked: true }`・寿命 `ttlMs`（7 日）の「失効の印」に置き換える。`get` は印の行を無い扱いにする。
-  - `set` は「印の無い既存行だけ UPDATE → 0 件なら INSERT ... ON CONFLICT DO NOTHING」。印の行には書けない（別コンテナの書込みも DB 側で止まる）。
+  - `set` は「印が無く寿命の残る既存行だけ UPDATE → 0 件なら INSERT ... ON CONFLICT DO NOTHING → 衝突したらもう一度だけ UPDATE」
+    （同じ新しい sid の保存が並んだ場合の取りこぼし防止）。印の行には書けない（別コンテナの書込みも DB 側で止まる）。
     書けなかった保存はエラーにせず捨てる（そのリクエストを 500 にしない）。`touch` も印の無い行だけ UPDATE。
   - 新規ログインは passport 0.7 の `req.login` が必ず `regenerate` で新しい sid を発行するので、印の付いた sid は再利用されない前提で扱う。
   - `destroy` が失敗したら passport の logout も失敗になり、`/auth/logout` は 500 を返す（画面はログイン画面へ遷移せずエラー表示）。
-    絶対寿命切れの自動ログアウト（ADR 054 Stage E）も失敗時は `next(err)`。
+    印の書込みは失敗時に 1 回だけやり直す。絶対寿命切れの自動ログアウト（ADR 054 Stage E）は失敗しても
+    そのリクエストは未ログインとして進む（passport が req.user を先に消す・次のリクエストで再度失効を試みる）。
+  - 印の行はログインのたびに 1 件（regenerate で消すログイン前の sid）とログアウトのたびに 1 件増え、7 日で消える。件数は小さいので許容。
 - migration 不要（列追加なし。印は `sess` JSON の中）。印の行は寿命が来たら既存の 15 分スイープで消える。

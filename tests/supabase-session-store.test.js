@@ -14,6 +14,7 @@ function makeSupabaseMock() {
       eq(col, val) { rec.filters.push(['eq', col, val]); return api; },
       lt(col, val) { rec.filters.push(['lt', col, val]); return api; },
       is(col, val) { rec.filters.push(['is', col, val]); return api; },
+      gt(col, val) { rec.filters.push(['gt', col, val]); return api; },
       select() { rec.returning = true; return api; },
       maybeSingle() { return api._exec(true); },
       then(onOk, onErr) { return api._exec(false).then(onOk, onErr); },
@@ -40,7 +41,7 @@ function makeSupabaseMock() {
           const ok = row && rec.filters.filter(f => f[0] === 'is').every(([, col, val]) => {
             const m = /^sess->>(.+)$/.exec(col);
             return m && val === null ? row.sess == null || row.sess[m[1]] == null : true;
-          });
+          }) && rec.filters.filter(f => f[0] === 'gt').every(([, col, val]) => row[col] > val);
           if (ok) Object.assign(row, JSON.parse(JSON.stringify(payload)));
           return ret(ok ? [{ sid: sidFilter[2] }] : []);
         }
@@ -203,11 +204,49 @@ describe('SupabaseSessionStore', () => {
     expect(mock.state.rows.get('new').sess.v).toBe(2);
   });
 
-  test('destroy が DB エラーならエラーを返す（logout を成功扱いにしない）', async () => {
+  test('destroy が DB エラーなら 1 回やり直し、それでも駄目ならエラーを返す（logout を成功扱いにしない）', async () => {
     await p(cb => store.set('s1', sessWithMaxAge(60000, { passport: { user: 'u1' } }), cb));
-    mock.state.failNext = { message: 'boom' };
+    mock.state.failOn = (rec) => rec.op === 'upsert';
     await expect(p(cb => store.destroy('s1', cb))).rejects.toThrow(/destroy failed: boom/);
+    expect(mock.calls.filter(c => c.op === 'upsert' && c.payload.sess[REVOKED_KEY]).length).toBe(2);
     expect(store._cache.has('s1')).toBe(false);
+  });
+
+  test('destroy の一時的な失敗はやり直しで印が付く', async () => {
+    await p(cb => store.set('s1', sessWithMaxAge(60000, { passport: { user: 'u1' } }), cb));
+    mock.state.failNext = { message: 'blip' };
+    await p(cb => store.destroy('s1', cb));
+    expect(mock.state.rows.get('s1').sess[REVOKED_KEY]).toBe(true);
+  });
+
+  test('同じ新しい sid の保存が並んで INSERT が衝突しても、生きた行なら UPDATE し直して取りこぼさない', async () => {
+    // 1 回目の UPDATE の直後に、別の保存が先に INSERT した状況を作る
+    const orig = mock.client.from;
+    let injected = false;
+    mock.client.from = (t) => {
+      const api = orig.call(mock.client, t);
+      const upsert = api.upsert;
+      api.upsert = (payload, opts) => {
+        if (!injected && opts && opts.ignoreDuplicates) {
+          injected = true;
+          mock.state.rows.set(payload.sid, { sess: { cookie: {}, v: 'other' }, expired_at: new Date(Date.now() + 100000).toISOString() });
+        }
+        return upsert(payload, opts);
+      };
+      return api;
+    };
+    await p(cb => store.set('n1', sessWithMaxAge(60000, { v: 'mine' }), cb));
+    expect(mock.state.rows.get('n1').sess.v).toBe('mine');
+    expect(store._neg.has('n1')).toBe(false);
+    expect((await p(cb => store.get('n1', cb))).v).toBe('mine');
+  });
+
+  test('寿命切れでスイープ待ちの行は set / touch で伸ばさない', async () => {
+    const past = new Date(Date.now() - 1000).toISOString();
+    mock.state.rows.set('old', { sess: { cookie: {}, passport: { user: 'u1' } }, expired_at: past });
+    await p(cb => store.set('old', sessWithMaxAge(60000, { passport: { user: 'u1' } }), cb));
+    await p(cb => store.touch('old', sessWithMaxAge(60000), cb));
+    expect(mock.state.rows.get('old').expired_at).toBe(past);
   });
 
   test('Supabase エラーは callback の err に載る', async () => {

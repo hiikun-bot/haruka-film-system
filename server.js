@@ -206,11 +206,10 @@ app.use((req, res, next) => {
   if (Date.now() - Number(s.login_at) <= maxAge) return next();
   console.log(`[auth] session expired (absolute lifetime ${Math.round(maxAge / 3600000)}h): user=${req.user?.id}`);
   req.logout(err => {
-    // 失効に失敗したまま次へ進めると、保存先にはログイン状態が残ったままになる。成功扱いにせずエラーで返す
-    if (err) {
-      console.warn('[auth] logout on session expiry failed:', err.message);
-      return next(err);
-    }
+    // 失敗しても req.user は passport が既に null にしているので、このリクエストは未ログインとして進む
+    // （requireAuth が API は 401・画面はログイン画面へ）。保存先にログイン状態が残っていても、
+    // login_at は古いままなので次のリクエストでもここで弾かれ、再度失効を試みる
+    if (err) console.warn('[auth] logout on session expiry failed:', err.message);
     next();
   });
 });
@@ -772,14 +771,14 @@ app.get('/auth/google/callback', async (req, res) => {
 
 // ログアウト
 app.post('/auth/logout', (req, res) => {
-  // 自動ログイン抑止（1時間）。再度ログイン画面で手動ログインすると無効化される
-  res.setHeader('Set-Cookie', `auto_login_off=1; Max-Age=3600; Path=/; HttpOnly; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
   // 保存先（http_sessions）で失効に失敗したら成功を返さない（画面側はログイン画面へ遷移せずエラー表示）
   req.logout((err) => {
     if (err) {
       console.error('[auth/logout] logout failed:', err.message);
       return res.status(500).json({ error: 'ログアウトに失敗しました。時間をおいてもう一度お試しください' });
     }
+    // 自動ログイン抑止（1時間）。再度ログイン画面で手動ログインすると無効化される（ログアウトできたときだけ付ける）
+    res.append('Set-Cookie', `auto_login_off=1; Max-Age=3600; Path=/; HttpOnly; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
     res.json({ ok: true });
   });
 });
