@@ -10699,6 +10699,7 @@ router.get('/creatives/counts', async (req, res) => {
 //     DB→Node 間の転送量が 1 リクエストあたり数十〜数百KB 減る。
 //   - wcheck 判定の直列 RTT 除去: resolveWcheckEligibility の直列 2 クエリを廃止し、
 //     既存 embed に列を足して手元で同一判定を計算（判定結果・レスポンス形状は完全一致）。
+const { REVISION_BREAKDOWN_STATUSES, countRevisionBreakdown } = require('../utils/revision-breakdown');
 router.get('/creatives/:id', async (req, res) => {
   const creativeId = req.params.id;
   // avatar 参照 Map（userId -> 配信URL）を本体クエリと並走してウォーム/取得しておく。
@@ -10941,10 +10942,29 @@ router.get('/creatives/:id', async (req, res) => {
     }
   })();
 
+  // (G) 修正回数の内訳（社内 / クライアント）。旧 PR #547 の作り直し（DB 列は増やさない）。
+  //   creative_status_transitions（全遷移の audit log）から「*後修正」への遷移を数える。
+  //   取得失敗時は null（フロントは従来の「修正 N回」= creatives.revision_count にフォールバック）。
+  const taskRevisionBreakdown = (async () => {
+    try {
+      const { data: trRows, error: trErr } = await supabase
+        .from('creative_status_transitions')
+        .select('to_status')
+        .eq('creative_id', creativeId)
+        .in('to_status', REVISION_BREAKDOWN_STATUSES);
+      if (trErr) return null;
+      return countRevisionBreakdown(trRows || []);
+    } catch (e) {
+      console.warn('[creatives/:id] 修正回数内訳の取得失敗:', e?.message || e);
+      return null;
+    }
+  })();
+
   // ─── 並列実行 → 結果をマージ ─────────────────────────────────
-  const [catRes, ownTeam, subDP, clientTeams, teamsRaw, wcheckCatFetched, avatarMap] = await Promise.all([
-    taskCategory, taskOwnTeam, taskSubDP, taskClientTeams, taskBallHolder, taskWcheckCategory, avatarMapPromise,
+  const [catRes, ownTeam, subDP, clientTeams, teamsRaw, wcheckCatFetched, avatarMap, revisionBreakdown] = await Promise.all([
+    taskCategory, taskOwnTeam, taskSubDP, taskClientTeams, taskBallHolder, taskWcheckCategory, avatarMapPromise, taskRevisionBreakdown,
   ]);
+  data.revision_breakdown = revisionBreakdown;
 
   // select から外した avatar_url を参照キャッシュから注入（値は従来の res.json パッチ通過後と同一形）。
   // ball_holder（getBallHolder が返す holder_user / holder_users）や wcheck.assignees は

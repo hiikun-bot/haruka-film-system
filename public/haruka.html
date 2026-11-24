@@ -47984,9 +47984,23 @@ async function openCreativeDetail(id) {
   // 修正回数バッジ
   const revBadge = document.getElementById('cd-revision-count-badge');
   if (revBadge) {
-    const cnt = c.revision_count || 0;
-    if (cnt > 0) { revBadge.textContent = `修正 ${cnt}回`; revBadge.style.display = ''; }
-    else revBadge.style.display = 'none';
+    // 社内（W/D/P後修正）と CL（クライアントチェック後修正）に分けて表示（旧 PR #547 の作り直し）。
+    // 内訳はサーバーが遷移ログから数えて revision_breakdown で返す。取れなかったときは従来の合計表示。
+    const bd = c.revision_breakdown;
+    if (bd && typeof bd.internal === 'number' && typeof bd.client === 'number') {
+      const parts = [];
+      if (bd.internal > 0) parts.push(`社内 ${bd.internal}回`);
+      if (bd.client > 0) parts.push(`CL ${bd.client}回`);
+      if (parts.length) {
+        revBadge.textContent = parts.join(' · ');
+        revBadge.title = '社内＝W/D/Pチェック後の修正、CL＝クライアントチェック後の修正';
+        revBadge.style.display = '';
+      } else revBadge.style.display = 'none';
+    } else {
+      const cnt = c.revision_count || 0;
+      if (cnt > 0) { revBadge.textContent = `修正 ${cnt}回`; revBadge.style.display = ''; }
+      else revBadge.style.display = 'none';
+    }
   }
 
   // 納期バー（一目で見落とさないよう「小ラベル上・大きな日付下」の2段構成でメリハリを付ける。
