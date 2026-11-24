@@ -443,7 +443,10 @@ router.get('/items/:fileId/thumb', async (req, res) => {
     // 中継元の Content-Type は使わず、中身から判定した PNG/JPEG/WebP/GIF だけを返す
     const buf = Buffer.from(await upstream.arrayBuffer());
     const mime = SAFE_IMAGE.sniffImageMime(buf);
-    if (!mime) return res.status(404).end();
+    if (!mime) {
+      _thumbLinks.delete(fileId);
+      return res.status(404).end();
+    }
     SAFE_IMAGE.setSafeImageHeaders(res, mime);
     res.setHeader('Cache-Control', 'private, max-age=86400');
     res.end(buf);

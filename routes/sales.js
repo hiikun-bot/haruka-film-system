@@ -24,6 +24,7 @@ const oauthLib = require('../lib/google-oauth');
 const gmailSend = require('../lib/gmail-send');
 const salesAi = require('../lib/sales-ai');
 const S = require('../utils/sales');
+const SAFE_IMAGE = require('../utils/safe-image');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -183,10 +184,14 @@ router.get('/contacts', wrap('contacts.list', async (req, res) => {
 
 async function saveCardImage(contactId, cardImage, aiResult) {
   const parsed = S.parseImageDataUrl(cardImage);
-  if (!parsed) throw httpError(400, '名刺画像は JPEG / PNG / WebP・6MB までです', 'invalid_image');
+  // 申告の mime だけでなく中身（先頭バイト）でも画像か確かめ、判定した種類で組み立て直して保存する
+  const safeImg = parsed && SAFE_IMAGE.parseImageDataUrl(cardImage);
+  if (!parsed || !safeImg || safeImg.mime === 'image/gif') {
+    throw httpError(400, '名刺画像は JPEG / PNG / WebP・6MB までです', 'invalid_image');
+  }
   ok(await supabase.from('sales_contact_cards').upsert({
     contact_id: contactId,
-    image_data: String(cardImage),
+    image_data: safeImg.dataUrl,
     ai_result: aiResult && typeof aiResult === 'object' ? aiResult : null,
   }, { onConflict: 'contact_id' }), 'card');
   ok(await supabase.from('sales_contacts').update({ has_card_image: true }).eq('id', contactId), 'card.flag');

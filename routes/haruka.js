@@ -15289,6 +15289,13 @@ router.get('/files/:fileId/stream', async (req, res) => {
       }
     }
     if (!mimeType) mimeType = 'video/mp4';
+    // mime_type が application/octet-stream 等で保存されている旧行（.mov/.mkv など）は拡張子から推定する
+    //（推定表は動画・画像だけなので、ここで HTML 等にはならない）
+    if (!SAFE_IMAGE.isInlineSafeProxyMime(mimeType)) {
+      mimeType = DRIVE_ACCESS.guessMimeFromName(cf.generated_name)
+        || DRIVE_ACCESS.guessMimeFromName(cf.original_name)
+        || mimeType;
+    }
     // メンバーが上げたファイルを HFS のオリジンで返すので、動画・音声・画像・PDF 以外は
     // application/octet-stream（ダウンロード扱い）にし、nosniff / CSP sandbox を付ける
     mimeType = SAFE_IMAGE.applyProxySafetyHeaders(res, mimeType);

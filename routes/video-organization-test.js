@@ -266,7 +266,10 @@ router.get('/preview/:fileId', async (req, res) => {
     }
     // メンバーが上げたファイルを HFS のオリジンで返すので、動画・音声・画像・PDF 以外は
     // application/octet-stream（ダウンロード扱い）にし、nosniff / CSP sandbox を付ける
-    res.setHeader('Content-Type', SAFE_IMAGE.applyProxySafetyHeaders(res, res.getHeader('Content-Type')));
+    // 304 など本文の無い応答は種類を付けない（キャッシュ済みの種類を書き換えない）
+    if (status !== 304) {
+      res.setHeader('Content-Type', SAFE_IMAGE.applyProxySafetyHeaders(res, res.getHeader('Content-Type')));
+    }
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'private, max-age=60');
     // Drive 側のステータスをそのまま転送（206 / 200 / 304 など）
