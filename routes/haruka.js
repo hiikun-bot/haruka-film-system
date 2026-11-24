@@ -13847,7 +13847,7 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
 
   // 下書き明細の削除 + invoice 合計の再計算
   const draftItems = (items || []).filter(i => i.invoice && i.invoice.status === 'draft');
-  const deletedItemIds = draftItems.map(i => i.id);
+  let deletedItemIds = draftItems.map(i => i.id);
   const affectedInvoiceIds = Array.from(new Set(draftItems.map(i => i.invoice_id)));
   const adminStatusWarnings = [];
   if (deletedItemIds.length > 0) {
@@ -13858,8 +13858,11 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
       return res.status(409).json({ error: `変更の途中で請求書が提出されたため、ステータスを変更しませんでした（${nums.join('、')}）。先に請求書を差し戻してください` });
     }
     if (!rm.ok) return res.status(500).json({ error: rm.error });
+    // 応答・監査には実際に消した分だけを載せる（その間に別の画面で消された明細は数えない）
+    deletedItemIds = rm.removedItemIds || [];
     if (rm.recalcFailedInvoiceIds && rm.recalcFailedInvoiceIds.length) {
-      adminStatusWarnings.push('下書きの請求書から明細を外しましたが、合計を計算し直せませんでした。請求書を開いて保存し直してください');
+      const nums = [...new Set(draftItems.filter(i => rm.recalcFailedInvoiceIds.includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
+      adminStatusWarnings.push(`下書きの請求書（${nums.join('、')}）から明細を外しましたが、合計を計算し直せませんでした。請求書の合計を確認してください`);
     }
   }
 
@@ -14193,7 +14196,8 @@ router.post('/creatives/:id/delivery-revert', requireAuth, async (req, res) => {
         warnings.push(`取り消しの途中で提出された請求書（${nums.join('、')}）にこの制作が残っています。管理者に確認してください`);
       }
       if (rm.ok && rm.recalcFailedInvoiceIds && rm.recalcFailedInvoiceIds.length) {
-        warnings.push('下書きの請求書から明細を外しましたが、合計を計算し直せませんでした。請求書を開いて保存し直してください');
+        const nums = [...new Set(draftItems.filter(i => rm.recalcFailedInvoiceIds.includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
+        warnings.push(`下書きの請求書（${nums.join('、')}）から明細を外しましたが、合計を計算し直せませんでした。管理者に確認してください`);
       }
     }
     const draftWarning = warnings.length ? warnings.join('\n') : null;
@@ -20630,11 +20634,14 @@ function ieMarkReceiptCols(ok) { ieReceiptCols.ok = !!ok; ieReceiptCols.checkedA
 /** 直近の読み出しで領収書の列があったか（提出時の必須チェック・画面の入力欄の出し分けに使う） */
 function ieReceiptSupported() { return ieReceiptCols.ok === true; }
 
-// DB（SQLSTATE 5 文字）か PostgREST（PGRSTnnn）が返したエラーか。これらはトランザクションが取り消されたあとに返るので
-// 「書かれていない」と分かる。コードの無いエラー（fetch failed・タイムアウト・ゲートウェイの HTML 応答など）は結果不明
+// 「書かれていない」と言い切れる DB / PostgREST のエラーか。処理の途中で取り消される種類だけを数える:
+//   22（データの誤り）・23（制約違反）・40（取り消し・直列化失敗）・42（構文・権限）・P0（関数の RAISE）・57014（タイムアウトで中止）・
+//   PGRST1xx / PGRST2xx（リクエスト・スキーマの誤りで実行前に断られた）
+// 接続断（08xxx）・サーバー停止（57P01 など）・コードの無いエラー（fetch failed・ゲートウェイの応答）は、
+// 確定（COMMIT）のあとに返ることがあるので「結果不明」として扱う
 function ieIsDefiniteDbError(err) {
   const code = String((err && err.code) || '');
-  return /^[0-9A-Z]{5}$/.test(code) || /^PGRST\d+$/.test(code);
+  return /^(22|23|40|42|P0)[0-9A-Z]{3}$/.test(code) || code === '57014' || /^PGRST[12]\d\d$/.test(code);
 }
 
 // 関数がまだ本番 DB に無い（migration 未適用 / スキーマキャッシュ未更新）ことによるエラーか
