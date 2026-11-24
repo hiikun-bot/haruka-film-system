@@ -21274,7 +21274,8 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
 
     // 請求書行のロック・状態・楽観ロックの確認と、明細の削除・更新・追加・領収書の状態・合計を DB の関数で 1 トランザクションに
     // （ADR 046 追補 2026-11-24（3）。提出と重なっても、提出後に明細が書き換わらない）
-    inserts.forEach((x, k) => { if (!x.client_key) x.client_key = `__row${k}`; });
+    // 関数の id_map の鍵: 画面の client_key は「c:」、無い行はサーバーが「s:<番号>」（名前がぶつからないように）
+    inserts.forEach((x, k) => { x.fn_key = x.client_key ? `c:${x.client_key}` : `s:${k}`; });
     const notes = req.body.notes !== undefined ? (str(req.body.notes, 2000) || null) : undefined;
     const { data: saved, error: rpcErr } = await supabase.rpc(IEA.SAVE_FN, {
       p_invoice_id: inv.id,
@@ -21282,12 +21283,12 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
       p_invoice: IEA.invoiceArg(totals, { withholdingEnabled, notes }),
       p_delete_ids: toDelete,
       p_updates: updates.map(({ id, row }) => IEA.updateArg(id, row)),
-      p_inserts: inserts.map(x => IEA.insertArg(x.client_key, x.row)),
+      p_inserts: inserts.map(x => IEA.insertArg(x.fn_key, x.row)),
       p_receipt_writes: receiptWrites.map(IEA.receiptWriteArg),
     });
     if (rpcErr) {
-      const h = IEA.rpcErrorToHttp(rpcErr);
-      if (h.status === 500) console.error('[invoice-editor][put] rpc', rpcErr);
+      const h = IEA.rpcErrorToHttp(rpcErr, IEA.SAVE_FN);
+      console.error('[invoice-editor][put] rpc', rpcErr);
       return res.status(h.status).json(h.body);
     }
     if (!saved || saved.ok !== true) {
@@ -21298,17 +21299,22 @@ router.put('/invoice-editor/:id', requireAuth, async (req, res) => {
     const rawIdMap = saved.id_map || {};
     const idMap = {};
     for (const x of inserts) {
-      const id = rawIdMap[x.client_key];
+      const id = rawIdMap[x.fn_key];
       x.row.id = id;
-      if (id && !x.client_key.startsWith('__row')) idMap[x.client_key] = id;
+      if (id && x.client_key) idMap[x.client_key] = id;
     }
-    // 読み出してからロックまでのあいだに別の画面で写真が付け替えられていた行は、領収書欄を書いていない（関数が条件付きで書く）
-    const conflictIds = new Set(saved.receipt_conflicts || []);
-    for (const id of conflictIds) {
-      receiptConflicts.push(id);
-      const prev = existingById.get(id);
-      const row = next.find(x => x.id === id);
-      if (prev && row) for (const k of RCPT.RECEIPT_COLUMNS) if (k.startsWith('receipt_')) row[k] = prev[k]; // 注意の計算は DB にある内容で（日付・支払先は書いている）
+    // 読み出してからロックまでのあいだに別の画面で写真が付け替えられていた行は、領収書欄を書いていない（関数が条件付きで書く）。
+    // 注意の計算は DB の今の内容で（読み直す。日付・支払先は書いている）
+    const conflictIds = [...new Set(saved.receipt_conflicts || [])];
+    if (conflictIds.length) {
+      receiptConflicts.push(...conflictIds);
+      const { data: nowRows, error: reErr } = await supabase.from('invoice_items')
+        .select(`id, ${RCPT.RECEIPT_SELECT}`).eq('invoice_id', inv.id).in('id', conflictIds);
+      if (reErr) console.warn('[invoice-editor][put] 領収書の読み直しに失敗:', reErr.message);
+      for (const cur of (nowRows || [])) {
+        const row = next.find(x => x.id === cur.id);
+        if (row) for (const k of RCPT.RECEIPT_COLUMNS) if (k.startsWith('receipt_')) row[k] = cur[k];
+      }
     }
 
     // 消した行・「領収書なし」にした行の領収書をゴミ箱へ（関数が「書き込んだ時点で行に入っていた」ファイルを返す。
@@ -21373,8 +21379,8 @@ router.post('/invoice-editor/:id/items', requireAuth, async (req, res) => {
       p_receipt_writes: [],
     });
     if (rpcErr) {
-      const h = IEA.rpcErrorToHttp(rpcErr);
-      if (h.status === 500) console.error('[invoice-editor][add-items] rpc', rpcErr);
+      const h = IEA.rpcErrorToHttp(rpcErr, IEA.SAVE_FN);
+      console.error('[invoice-editor][add-items] rpc', rpcErr);
       return res.status(h.status).json(h.body);
     }
     if (!saved || saved.ok !== true) {
@@ -21439,8 +21445,8 @@ router.post('/invoice-editor/:id/submit', requireAuth, async (req, res) => {
       p_totals: IEA.totalsArg(totals),
     });
     if (rpcErr) {
-      const h = IEA.rpcErrorToHttp(rpcErr);
-      if (h.status === 500) console.error('[invoice-editor][submit] rpc', rpcErr);
+      const h = IEA.rpcErrorToHttp(rpcErr, IEA.SUBMIT_FN);
+      console.error('[invoice-editor][submit] rpc', rpcErr);
       return res.status(h.status).json(h.body);
     }
     if (!result || result.ok !== true) {

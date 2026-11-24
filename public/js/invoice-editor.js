@@ -400,7 +400,7 @@
       <div class="ie-panel">
         <div class="ie-head">
           <div class="ie-title">請求書 ${h(inv.invoice_number)}<span class="ie-status" id="ie-status">（${statusText()}）</span></div>
-          <button type="button" class="ie-close" onclick="HFSInvoiceEditor.close()" title="閉じる（入力中の内容は保存されます）">×</button>
+          <button type="button" class="ie-close" onclick="HFSInvoiceEditor.close()" title="閉じる（入力中の内容は保存してから閉じます）">×</button>
         </div>
         ${ed.conflict ? `<div class="ie-banner">別の画面でこの請求書が更新されました。上書きしないよう保存を止めています。 <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.reload()">再読み込み</button></div>` : ''}
         ${returnedBannerHtml(inv)}

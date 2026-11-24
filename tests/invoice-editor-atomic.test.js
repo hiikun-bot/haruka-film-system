@@ -66,12 +66,16 @@ jest.mock('../auth', () => {
 describe('utils/invoice-editor-atomic', () => {
   test('関数が無いエラー（PGRST202 / 42883）を見分ける', () => {
     expect(IEA.isMissingFunctionError({ code: 'PGRST202', message: 'Could not find the function public.invoice_editor_submit' })).toBe(true);
-    expect(IEA.isMissingFunctionError({ code: '42883', message: 'function invoice_editor_submit(uuid) does not exist' })).toBe(true);
+    expect(IEA.isMissingFunctionError({ code: '42883', message: 'function invoice_editor_submit(uuid) does not exist' }, IEA.SUBMIT_FN)).toBe(true);
+    // 関数の中で別の関数・演算子が見つからない 42883 は「準備中」にしない（本当の不具合を隠さない）
+    expect(IEA.isMissingFunctionError({ code: '42883', message: 'operator does not exist: uuid = text' }, IEA.SUBMIT_FN)).toBe(false);
+    expect(IEA.rpcErrorToHttp({ code: '42883', message: 'function hashtextextended(text) does not exist' }, IEA.SUBMIT_FN).status).toBe(500);
     expect(IEA.isMissingFunctionError({ code: '23505', message: 'duplicate key' })).toBe(false);
     expect(IEA.isMissingFunctionError(null)).toBe(false);
     expect(IEA.rpcErrorToHttp({ code: 'PGRST202' })).toEqual(IEA.NOT_READY);
     expect(IEA.rpcErrorToHttp({ code: 'P0002', message: 'item not found (0 of 1)' }).status).toBe(409);
-    expect(IEA.rpcErrorToHttp({ code: '23505', message: 'duplicate key value violates unique constraint "invoice_billing_claims_pkey"' }).body.code).toBe('INVOICE_CHECK_FAILED');
+    expect(IEA.rpcErrorToHttp({ code: '23505', message: 'duplicate key value violates unique constraint "invoice_billing_claims_pkey"' }, IEA.SUBMIT_FN).body.code).toBe('INVOICE_CHECK_FAILED');
+    expect(IEA.rpcErrorToHttp({ code: '23505', message: 'duplicate key' }, IEA.SAVE_FN).status).toBe(500);
     expect(IEA.rpcErrorToHttp({ code: 'XX000', message: 'boom' })).toEqual({ status: 500, body: { error: 'boom' } });
   });
 
@@ -191,6 +195,17 @@ describe('PUT /invoice-editor/:id（自動保存）', () => {
     const r2 = await call('PUT', '/invoice-editor/inv1', { updated_at: r.body.updated_at, items: [keepRow] });
     expect(r2.status).toBe(200);
     expect(itemsOf()).toHaveLength(1);
+  });
+
+  test('画面の client_key とサーバーが振る鍵がぶつからない（どの行にも正しい id が返る）', async () => {
+    const r = await put([keepRow,
+      { client_key: 's:1', label: 'A', unit_price: 1, quantity: 1, manual_reason: 'x' },
+      { label: 'B（鍵なし）', unit_price: 2, quantity: 1, manual_reason: 'x' },
+      { client_key: '__row0', label: 'C', unit_price: 3, quantity: 1, manual_reason: 'x' }]);
+    expect(r.status).toBe(200);
+    const byLabel = Object.fromEntries(itemsOf().map(it => [it.label, it.id]));
+    expect(r.body.id_map).toEqual({ 's:1': byLabel.A, __row0: byLabel.C });
+    expect(new Set(itemsOf().map(it => it.id)).size).toBe(4);
   });
 
   test('読んだあと・ロックの直前に提出されていたら書かない（400 NOT_EDITABLE・明細はそのまま）', async () => {

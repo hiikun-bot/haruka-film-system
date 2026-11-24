@@ -18,12 +18,17 @@ const NOT_READY = {
 };
 const CONFLICT_MESSAGE = '別の画面でこの請求書が更新されています。再読み込みしてください';
 
-/** 関数が本番にまだ無い（migration 未適用）ときの PostgREST / Postgres のエラーか */
-function isMissingFunctionError(error) {
+/**
+ * 関数が本番にまだ無い（migration 未適用・古い引数の版だけある）ときの PostgREST / Postgres のエラーか。
+ * 関数の中で別の関数・演算子が見つからない 42883 まで「準備中」にしないよう、42883 は呼んだ関数の名前が出ているときだけ
+ */
+function isMissingFunctionError(error, fnName) {
   if (!error) return false;
   const code = String(error.code || '');
-  if (code === 'PGRST202' || code === '42883') return true;
-  return /Could not find the function|function .* does not exist/i.test(String(error.message || ''));
+  const msg = String(error.message || '');
+  if (code === 'PGRST202') return true;
+  if (code === '42883') return !!fnName && msg.includes(fnName);
+  return /Could not find the function/i.test(msg);
 }
 
 // 更新の行（p_updates）に入れてよい列。関数の側でも行の種類ごとに絞る（ここは余計なものを送らないため）
@@ -166,16 +171,16 @@ function saveFailureToHttp(result) {
   return { status: 500, body: { error: '保存できませんでした' } };
 }
 
-/** 関数呼び出しのエラー（{ error }）を HTTP に。null なら呼び出し元で 500 扱いにしない（＝エラーではない） */
-function rpcErrorToHttp(error) {
+/** 関数呼び出しのエラー（{ error }）を HTTP に。fnName は呼んだ関数（SAVE_FN / SUBMIT_FN）。エラーでなければ null */
+function rpcErrorToHttp(error, fnName) {
   if (!error) return null;
-  if (isMissingFunctionError(error)) return NOT_READY;
+  if (isMissingFunctionError(error, fnName)) return NOT_READY;
   // 更新しようとした明細が無い（別の画面で消された）→ 読み直してもらう
   if (String(error.code || '') === 'P0002' || /ITEM_NOT_FOUND|item not found/i.test(`${error.hint || ''} ${error.message || ''}`)) {
     return { status: 409, body: { error: '明細が見つかりません（別の画面で消された可能性があります）。再読み込みしてください', code: 'CONFLICT' } };
   }
-  // 請求済み記録の主キー違反（ロックの中の確認をすり抜けた二重請求。通常は起きない）
-  if (String(error.code || '') === '23505') {
+  // 請求済み記録の主キー違反（ロックの中の確認をすり抜けた二重請求。通常は起きない）。提出のときだけこの意味
+  if (fnName === SUBMIT_FN && String(error.code || '') === '23505') {
     return { status: 409, body: { error: '提出できません。すでに提出済みの請求書に入っている明細があります', code: 'INVOICE_CHECK_FAILED', problems: [] } };
   }
   return { status: 500, body: { error: error.message || 'DB エラー' } };
