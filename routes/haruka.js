@@ -20033,7 +20033,14 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
   }
   if (itemsErr) return res.status(500).json({ error: itemsErr.message });
 
-  // 後方互換: invoice_item_details にも対応行を入れる（旧クエリで参照する画面が混在しても破綻しないように）
+  // 後方互換: invoice_item_details にも対応行を入れる（旧クエリで参照する画面が混在しても破綻しないように）。
+  // この表は invoice_items.label が空の旧データでしかフロントから読まれないため、
+  // ここでの失敗で請求書生成そのものを 500 にはしない（invoice / invoice_items は既に保存済み）。
+  // 本番DBの CHECK 制約 invoice_item_details_cost_type_check が古い種別しか許さず、
+  // producer_fee / hourly_fee / hourly_expense / installment_fee などで違反していた。
+  // 制約は migrations/2026-11-24_invoice_item_details_drop_cost_type_check.sql で撤去するが、
+  // 未適用の環境でも請求書を作れるようにフォールバックも残す。
+  const LEGACY_DETAIL_COST_TYPES = new Set(['base_fee', 'script_fee', 'ai_fee', 'other_fee', 'director_fee']);
   const allDetails = (invItems || []).map(ii => ({
     invoice_item_id: ii.id,
     cost_type:  ii.cost_type || 'other_fee',
@@ -20041,8 +20048,17 @@ router.post('/invoices/generate', requireAuth, async (req, res) => {
     amount:     ii.unit_price || 0,
   }));
   if (allDetails.length) {
-    const { error: detErr } = await supabase.from('invoice_item_details').insert(allDetails);
-    if (detErr) return res.status(500).json({ error: detErr.message });
+    let { error: detErr } = await supabase.from('invoice_item_details').insert(allDetails);
+    if (detErr && /cost_type_check/.test(detErr.message || '')) {
+      // 旧 CHECK 制約が残っている環境向け: 許容外の種別を other_fee に丸めて再試行
+      console.warn('[invoices/generate] invoice_item_details の cost_type 制約に抵触 → other_fee に丸めて再試行:', detErr.message);
+      ({ error: detErr } = await supabase.from('invoice_item_details').insert(
+        allDetails.map(d => ({ ...d, cost_type: LEGACY_DETAIL_COST_TYPES.has(d.cost_type) ? d.cost_type : 'other_fee' }))
+      ));
+    }
+    if (detErr) {
+      console.warn('[invoices/generate] 後方互換 invoice_item_details の保存に失敗（請求書は作成済みのため続行）:', detErr.message);
+    }
   }
 
   // ADR 047: Drive への PDF 自動保存は「提出時」に行う（下書きを請求書フォルダに置くと
