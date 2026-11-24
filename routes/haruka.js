@@ -19957,7 +19957,10 @@ router.delete('/tweets/:id/comments/:commentId', requireAuth, async (req, res) =
 // ==================== クライアント請求書 ====================
 
 // 納品済みクリエイティブ一覧（クライアント向け請求書作成用）
+// クライアント請求書の作成は、画面の管理者セクション（invoice.all_view）にだけ出ている。API も同じ権限で絞る
+// （以前は確認が無く、誰でもクライアントへの請求額の一覧を読み、クライアント請求書を作れた・2026-11-24）
 router.get('/client-invoice/items', requireAuth, async (req, res) => {
+  if (!(await canListOthersInvoices(req))) return res.status(403).json({ error: 'アクセス権限がありません' });
   const { client_id, year, month } = req.query;
   if (!client_id) return res.status(400).json({ error: 'client_id is required' });
 
@@ -19995,6 +19998,7 @@ router.get('/client-invoice/items', requireAuth, async (req, res) => {
 
 // クライアント請求書生成
 router.post('/client-invoice/generate', requireAuth, async (req, res) => {
+  if (!(await canListOthersInvoices(req))) return res.status(403).json({ error: 'アクセス権限がありません' });
   const { client_id, year, month, items, notes } = req.body;
   if (!client_id || !items?.length) return res.status(400).json({ error: 'client_id と items は必須です' });
 
@@ -21948,6 +21952,11 @@ router.post('/invoices/:id/submit', requireAuth, async (req, res) => {
     return res.status(500).json({ error: `取得失敗: ${fetchErr.message}` });
   }
   if (!existing) return res.status(404).json({ error: '請求書が見つかりません' });
+  // 提出できるのは請求書の持ち主（発行者）と、請求書を管理する admin / 秘書だけ（PATCH・削除・PDF 保存と同じ判定）。
+  // 以前は確認が無く、ログインしていれば他人の請求書も提出済みにできた（2026-11-24 外部レビューの指摘）
+  if (existing.issuer_id !== req.user?.id && !(await isStaffRequester(req))) {
+    return res.status(403).json({ error: 'アクセス権限がありません' });
+  }
   if (existing.status !== 'draft' && existing.status !== 'rejected') {
     return res.status(400).json({ error: `この状態では提出できません（現在: ${existing.status}）` });
   }
@@ -21955,17 +21964,19 @@ router.post('/invoices/:id/submit', requireAuth, async (req, res) => {
   if ((await fetchInvoiceTaxMode(id)) === 'exclusive') {
     return res.status(409).json({ error: 'この請求書は新方式です。請求書エディタの「提出する」から提出してください', code: 'USE_INVOICE_EDITOR' });
   }
+  // 下書き・差し戻し中のときだけ（条件付き更新）。確認のあとに別の画面で提出・承認された請求書を上書きしない
   const { data, error } = await supabase
     .from('invoices')
     .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id)
+    .in('status', ['draft', 'rejected'])
     .select()
     .maybeSingle();
   if (error) {
     console.error('[invoices/submit] update error:', error);
     return res.status(500).json({ error: `更新失敗: ${error.message}` });
   }
-  if (!data) return res.status(500).json({ error: '更新後の取得に失敗しました' });
+  if (!data) return res.status(409).json({ error: 'この請求書は別の画面で更新されました。再読み込みしてください', code: 'CONFLICT' });
   // ADR 047: 提出時点の内容で Drive の PDF を上書き（下書き中の明細修正を反映）
   const driveSync = await tryAutoSyncInvoicePdf(id, req.user?.id, 'submit');
   res.json({ ...data, ...driveSync });

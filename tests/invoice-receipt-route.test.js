@@ -621,6 +621,47 @@ describe('請求書の削除', () => {
   });
 });
 
+describe('旧 API の権限（2026-11-24 外部レビューの指摘）', () => {
+  const legacy = () => {
+    mockDb.tables.invoices.push({ id: 'old1', invoice_number: 'INV-202609-001', issuer_id: 'u1', status: 'draft', year: 2026, month: 9, tax_mode: 'inclusive', total_amount: 1000 });
+    return mockDb.tables.invoices.find(i => i.id === 'old1');
+  };
+  test('旧方式の提出: 他人は 403（状態は変わらない）・本人と管理者は提出できる', async () => {
+    const old = legacy();
+    const ng = await json('POST', '/invoices/old1/submit', {}, 'u2');
+    expect(ng.status).toBe(403);
+    expect(old.status).toBe('draft');
+    const ok = await json('POST', '/invoices/old1/submit', {}, 'u1');
+    expect(ok.status).toBe(200);
+    expect(old.status).toBe('submitted');
+    old.status = 'rejected';
+    const byAdmin = await json('POST', '/invoices/old1/submit', {}, 'admin1');
+    expect(byAdmin.status).toBe(200);
+  });
+  test('新方式の請求書は旧 API では提出できない（他人には 403 が先）', async () => {
+    expect((await json('POST', '/invoices/inv1/submit', {}, 'u2')).status).toBe(403);
+    expect((await json('POST', '/invoices/inv1/submit', {}, 'u1')).body.code).toBe('USE_INVOICE_EDITOR');
+  });
+  test('廃止した POST /invoices/:id/issue は使えない（状態は変わらない）', async () => {
+    const old = legacy();
+    const r = await json('POST', '/invoices/old1/issue', {}, 'u2');
+    expect(r.status).toBe(404);
+    expect(old.status).toBe('draft');
+  });
+  test('クライアント請求書: invoice.all_view の無い人は 403（作れない・請求額を読めない）', async () => {
+    expect((await json('GET', '/client-invoice/items?client_id=c1', undefined, 'u1')).status).toBe(403);
+    expect((await json('POST', '/client-invoice/generate', { client_id: 'c1', items: [{ creative_id: 'x' }] }, 'u1')).status).toBe(403);
+    expect(mockDb.tables.invoices.filter(i => i.invoice_type === 'client')).toHaveLength(0);
+  });
+  test('他人の請求書の PATCH・削除・PDF 保存も 403', async () => {
+    legacy();
+    expect((await json('PATCH', '/invoices/old1', { notes: 'x' }, 'u2')).status).toBe(403);
+    expect((await json('DELETE', '/invoices/old1', undefined, 'u2')).status).toBe(403);
+    expect((await json('POST', '/invoices/old1/drive-pdf', {}, 'u2')).status).toBe(403);
+    expect(mockDb.tables.invoices.find(i => i.id === 'old1')).toBeTruthy();
+  });
+});
+
 // 列が無い環境の再現は最後に置く（列の有無はプロセス内で 5 分覚えるため、後のテストに影響しないように）
 describe('列が無い環境（migration 未適用）', () => {
   const putItems = (extra) => json('PUT', '/invoice-editor/inv1', {
