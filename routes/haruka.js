@@ -687,10 +687,31 @@ router.put('/clients/:id', requireAuth, requirePermission('project.create_edit')
   res.json({ ...data, team_ids });
 });
 
+// クライアントの取引ステータスだけを変える（「取引終了（非表示）」⇔「進行中」の切替用）。
+// PUT /clients/:id は全項目を body から組み立てるため、部分更新に使うと名前等が消える。専用の軽い口を用意する。
+// 取引終了にしても過去の案件・請求・分析はそのまま（隠すのは新しく選ぶ場面のプルダウンだけ・フロント側）。
+const CLIENT_STATUSES = ['提案中', '進行中', 'クライアント取引終了'];
+router.patch('/clients/:id/status', requireAuth, requirePermission('project.create_edit'), async (req, res) => {
+  const status = (req.body?.status ?? '').toString();
+  if (!CLIENT_STATUSES.includes(status)) {
+    return res.status(400).json({ error: 'ステータスが不正です' });
+  }
+  const { data, error } = await supabase
+    .from('clients')
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+    .select('id, name, status')
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'クライアントが見つかりません' });
+  res.json(data);
+});
+
 // クライアント削除（admin / secretary のみ）
 // 監査ログ (client_deletion_logs) に必ず INSERT してから clients を削除する。
 // 削除理由は必須（5文字以上推奨／空欄は400）。
-// 関連レコード (projects / client_teams 等) は既存FKに従いカスケード or NULL化される。
+// 案件・売上・契約文書・素材広場フォルダが1件でもあれば 409（client_has_data）で止め、取引終了（非表示）へ誘導する。
+// 中身が空のクライアントだけ削除でき、client_teams / client_configs 等は既存FKのカスケードで消える。
 // 注意: 本実装は requireRole('admin','secretary') でハードコード判定（要件: 秘書まで限定）。
 router.delete('/clients/:id', requireAuth, requireRole('admin','secretary'), async (req, res) => {
   const clientId = req.params.id;
@@ -708,12 +729,48 @@ router.delete('/clients/:id', requireAuth, requireRole('admin','secretary'), asy
   if (cliErr) return res.status(500).json({ error: cliErr.message });
   if (!client) return res.status(404).json({ error: 'クライアントが見つかりません' });
 
-  // 関連案件件数（監査ログ用に取得）
-  const { count: relCount, error: cntErr } = await supabase
-    .from('projects')
-    .select('id', { count: 'exact', head: true })
-    .eq('client_id', clientId);
-  if (cntErr) return res.status(500).json({ error: cntErr.message });
+  // 実データの有無を確認（2026-11-24 さとるさん決定: 請求・実績を守るため、実データがあるクライアントは
+  // 削除せず「取引終了（非表示）」にする。消せるのは誤登録で中身が空のクライアントだけ）。
+  //   - projects.client_id は ON DELETE 指定なし（NO ACTION）なので、案件があると DELETE 自体が FK エラーになる。
+  //     以前はその前に監査ログだけ INSERT され「削除していないのに削除ログが残る」状態だった。
+  //   - 売上（project_revenue_entries）・契約文書（contract_documents の client_pledge）は SET NULL で
+  //     黙って紐づきが外れるため、これも実データとして止める。テーブル未作成の環境ではスキップ。
+  const countBy = async (table) => {
+    const { count, error } = await supabase
+      .from(table)
+      .select('id', { count: 'exact', head: true })
+      .eq('client_id', clientId);
+    if (error) {
+      if (/does not exist|schema cache/i.test(error.message || '')) return 0;
+      throw new Error(`${table}: ${error.message}`);
+    }
+    return count || 0;
+  };
+  //   - 素材広場のフォルダ（material_square_folders）は CASCADE で行ごと消えるため、これも止める。
+  let relCount = 0, revenueCount = 0, contractDocCount = 0, msFolderCount = 0;
+  try {
+    [relCount, revenueCount, contractDocCount, msFolderCount] = await Promise.all([
+      countBy('projects'),
+      countBy('project_revenue_entries'),
+      countBy('contract_documents'),
+      countBy('material_square_folders'),
+    ]);
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+  if (relCount > 0 || revenueCount > 0 || contractDocCount > 0 || msFolderCount > 0) {
+    const parts = [];
+    if (relCount) parts.push(`案件 ${relCount} 件`);
+    if (revenueCount) parts.push(`売上 ${revenueCount} 件`);
+    if (contractDocCount) parts.push(`契約文書 ${contractDocCount} 件`);
+    if (msFolderCount) parts.push(`素材広場のフォルダ ${msFolderCount} 件`);
+    return res.status(409).json({
+      code: 'client_has_data',
+      error: 'このクライアントには案件などのデータがあるため削除できません。「取引終了」にすると一覧から隠せます',
+      summary: `${parts.join('・')}が紐づいています。`,
+      counts: { projects: relCount, revenue_entries: revenueCount, contract_documents: contractDocCount, material_square_folders: msFolderCount },
+    });
+  }
 
   // 監査ログ INSERT （削除前に記録）
   const { error: logErr } = await supabase

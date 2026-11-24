@@ -6140,6 +6140,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
                   <option value="進行中">進行中</option>
                   <option value="クライアント取引終了">取引終了</option>
                 </select>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.5">取引終了にすると一覧やプルダウンから隠れます。過去の案件・請求・分析はそのまま残ります（戻すときは「進行中」に）</div>
               </div>
             </div>
             <div class="form-group" style="margin-bottom:0">
@@ -6389,8 +6390,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       <div style="font-size:22px;line-height:1">⚠️</div>
       <div style="flex:1">
         <div id="cl-del-title" style="font-size:15px;font-weight:700;color:#A32D2D;margin-bottom:4px">クライアントを削除しますか？</div>
-        <div style="font-size:12px;color:var(--text);line-height:1.7">
-          関連する案件・クリエイティブ・請求情報も全て削除されます。<br>
+        <div id="cl-del-lead" style="font-size:12px;color:var(--text);line-height:1.7">
+          案件が1件もない（誤って登録した）クライアントだけ削除できます。<br>
           <b style="color:#A32D2D">この操作は取り消せません。</b>
         </div>
       </div>
@@ -6399,7 +6400,12 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
       style="font-size:12px;color:var(--text-muted);background:#FFF7F2;border:1px solid #F2D9CC;border-radius:8px;padding:8px 12px;margin-bottom:14px">
       関連案件件数を取得中...
     </div>
-    <div style="margin-bottom:6px">
+    <!-- 実データ（案件など）があるクライアントは削除不可 → 取引終了（非表示）へ誘導 -->
+    <div id="cl-del-blocked" style="display:none;font-size:12px;line-height:1.7;background:#F2F7F6;border:1px solid #CFE3DF;border-radius:8px;padding:10px 12px;margin-bottom:6px">
+      請求・実績を守るため、このクライアントは削除できません。<br>
+      代わりに<b>「取引終了」</b>にすると、一覧や新規案件のプルダウンから隠れます。過去の案件・請求・分析はそのまま残り、あとから「進行中」に戻せます。
+    </div>
+    <div id="cl-del-reason-wrap" style="margin-bottom:6px">
       <label class="form-label" style="display:block;margin-bottom:6px">削除理由 <span style="color:#A32D2D">*</span></label>
       <textarea class="form-input" id="cl-del-reason" rows="3"
         placeholder="例: テストデータのため / 誤って作成したため / 取引終了のため"
@@ -6408,6 +6414,8 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
       <button class="btn" onclick="closeModal('modal-client-delete-confirm')">キャンセル</button>
+      <button class="btn-primary" id="cl-del-end-btn" onclick="endClientTradeFromDelete()"
+        style="display:none">取引終了にして隠す</button>
       <button class="btn-primary" id="cl-del-execute-btn" disabled onclick="executeClientDelete()"
         style="background:#A32D2D;border-color:#A32D2D">削除する</button>
     </div>
@@ -11996,6 +12004,35 @@ function clientStatusClass(s) {
   return map[s] || 's-teal';
 }
 
+// ===== クライアントの「取引終了（非表示）」 =====
+// 取引が終わったクライアントは削除せず status='クライアント取引終了' にして隠す（請求・実績を守るため）。
+// 隠すのは「新しく選ぶ場面」（新規案件・クリエイティブ追加・素材アップロード等のプルダウン）だけ。
+// 過去の案件・請求・分析・集計は従来どおり表示する（データは消えない）。
+const CLIENT_ENDED_STATUS = 'クライアント取引終了';
+function isClientEnded(clientOrId) {
+  if (!clientOrId) return false;
+  const c = typeof clientOrId === 'object'
+    ? clientOrId
+    : (allClients || []).find(x => x.id === clientOrId);
+  return !!c && c.status === CLIENT_ENDED_STATUS;
+}
+// クライアント <option> 群を作る。
+//   includeEnded=false: 取引終了は出さない（ただし keepId だけは「（取引終了）」付きで残す＝編集中の値を壊さない）
+//   includeEnded=true : 取引中を先に並べ、取引終了は末尾の「取引終了」グループに入れる（過去分の閲覧・請求用）
+function clientOptionsHtml(clients, { includeEnded = false, keepId = '' } = {}) {
+  const list = Array.isArray(clients) ? clients : [];
+  const opt = (c, ended) => `<option value="${esc(c.id)}">${esc(c.name || '(名称未設定)')}${ended ? '（取引終了）' : ''}</option>`;
+  const active = list.filter(c => !isClientEnded(c));
+  const ended = list.filter(c => isClientEnded(c) && (includeEnded || (keepId && c.id === keepId)));
+  let html = active.map(c => opt(c, false)).join('');
+  if (ended.length) {
+    html += includeEnded
+      ? `<optgroup label="取引終了（非表示中）">${ended.map(c => opt(c, true)).join('')}</optgroup>`
+      : ended.map(c => opt(c, true)).join('');
+  }
+  return html;
+}
+
 function statusClass(s) {
   const map = {'未着手':'s-gray','台本制作':'s-pink','素材・ナレ作成':'s-orange','編集':'s-teal','Wチェック':'s-indigo','Wチェック後修正':'s-pink','Dチェック':'s-blue','Dチェック後修正':'s-pink','Pチェック':'s-purple','Pチェック後修正':'s-pink','クライアントチェック中':'s-orange','クライアントチェック後修正':'s-coral','納品':'s-green','進行中':'s-teal','確認待ち':'s-orange','完了':'s-green','保留':'s-gray'};
   return map[s] || 's-gray';
@@ -12327,6 +12364,8 @@ function dedupVisibleProjects(projects) {
   const seen = new Map();
   for (const p of (projects || [])) {
     if (!p || p.is_hidden || p.status === '完了') continue;
+    // 取引終了（非表示）クライアントの案件も新規クリエイティブの登録先にしない
+    if (isClientEnded(p.clients?.status ? p.clients : p.client_id)) continue;
     if (!seen.has(p.id)) seen.set(p.id, p);
   }
   return Array.from(seen.values());
@@ -13653,22 +13692,66 @@ function openClientDeleteConfirm() {
     return;
   }
 
-  document.getElementById('cl-del-title').textContent = `クライアント「${name || '(無題)'}」を削除しますか？`;
-
   // 関連案件件数（allProjects から算出）。allProjects 未ロードでもエラーにしない。
+  // 最終判定はサーバー（案件・売上・契約文書の件数）で行い、409 なら取引終了の案内に切り替える。
   const relCount = Array.isArray(allProjects)
     ? allProjects.filter(p => p?.client_id === id).length
     : 0;
-  document.getElementById('cl-del-related-count').textContent =
-    `現在 ${relCount} 件の案件が紐づいています。これらも併せて削除されます。`;
+  setClientDeleteBlocked(relCount > 0, name, relCount > 0
+    ? `現在 ${relCount} 件の案件が紐づいています。`
+    : '紐づいている案件はありません。');
 
   const reasonEl = document.getElementById('cl-del-reason');
   reasonEl.value = '';
   document.getElementById('cl-del-reason-warn').textContent = '';
   document.getElementById('cl-del-execute-btn').disabled = true;
   openModal('modal-client-delete-confirm');
-  // フォーカスを理由欄へ
-  setTimeout(() => reasonEl.focus(), 50);
+  // フォーカスを理由欄へ（削除できるときだけ）
+  if (relCount === 0) setTimeout(() => reasonEl.focus(), 50);
+}
+
+// 削除確認モーダルを「削除できる（誤登録）」/「削除できない → 取引終了へ」で切り替える
+function setClientDeleteBlocked(blocked, name, countText) {
+  document.getElementById('cl-del-title').textContent = blocked
+    ? `クライアント「${name || '(無題)'}」は削除できません`
+    : `クライアント「${name || '(無題)'}」を削除しますか？`;
+  document.getElementById('cl-del-lead').style.display = blocked ? 'none' : '';
+  document.getElementById('cl-del-related-count').textContent = countText;
+  document.getElementById('cl-del-blocked').style.display = blocked ? '' : 'none';
+  document.getElementById('cl-del-reason-wrap').style.display = blocked ? 'none' : '';
+  document.getElementById('cl-del-execute-btn').style.display = blocked ? 'none' : '';
+  // すでに取引終了のクライアントなら「隠す」ボタンは不要（もう隠れている）
+  const cur = (allClients || []).find(c => c.id === document.getElementById('cl-id').value);
+  document.getElementById('cl-del-end-btn').style.display = (blocked && !isClientEnded(cur)) ? '' : 'none';
+}
+
+// 削除の代わりに「取引終了（非表示）」にする。戻すときはクライアント編集のステータスを「進行中」に。
+async function endClientTradeFromDelete() {
+  const id   = document.getElementById('cl-id').value;
+  const name = (document.getElementById('cl-name').value || '').trim();
+  if (!id) return;
+  const btn = document.getElementById('cl-del-end-btn');
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/clients/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: CLIENT_ENDED_STATUS }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      showToast('取引終了にできませんでした: ' + translateError(e?.error || `HTTP ${res.status}`), 'error');
+      return;
+    }
+    closeModal('modal-client-delete-confirm');
+    closeModal('modal-client');
+    await loadProjects();  // submitClient と同じ再取得（クライアント一覧・案件タブの両方に反映）
+    showToast(`「${name}」を取引終了にしました（一覧から隠れます・過去の案件と請求は残ります）`, 'success');
+  } catch (err) {
+    showToast('取引終了にできませんでした: ' + (err?.message || err), 'error');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // 理由 textarea の入力検証（リアルタイム）
@@ -13720,6 +13803,11 @@ async function executeClientDelete() {
       showToast(`クライアント「${name}」を削除しました`, 'success');
     } else {
       const e = await res.json().catch(() => ({}));
+      if (res.status === 409 && e?.code === 'client_has_data') {
+        // 画面の件数では 0 でも、サーバーで案件・売上・契約文書が見つかった → 取引終了へ誘導
+        setClientDeleteBlocked(true, name, e.summary || '案件などのデータが紐づいています。');
+        return;
+      }
       showToast('削除に失敗: ' + translateError(e?.error || `HTTP ${res.status}`), 'error');
     }
   } catch (err) {
@@ -21740,8 +21828,10 @@ function openProjectModal(preClientId) {
   document.getElementById('p-submit-btn').textContent = '追加する';
 
   const cSel = document.getElementById('p-client-id');
+  // 取引終了（非表示）のクライアントは新規案件の選択肢に出さない。
+  // ただしクライアント詳細から「＋案件」で開いた場合（preClientId）はその1件だけ残す。
   cSel.innerHTML = '<option value="">クライアントを選択</option>' +
-    allClients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    clientOptionsHtml(allClients, { keepId: preClientId || '' });
   if (preClientId) cSel.value = preClientId;
 
   // ADR 014: P/D 選択を共通 MemberPicker に統一（初回のみバインド）
@@ -21953,8 +22043,9 @@ function openEditProject(p) {
   document.getElementById('p-submit-btn').textContent = '保存する';
 
   const cSel = document.getElementById('p-client-id');
+  // 取引終了（非表示）のクライアントは選択肢から外す。既存案件の現在値だけは残す（保存で外れないように）
   cSel.innerHTML = '<option value="">クライアントを選択</option>' +
-    allClients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    clientOptionsHtml(allClients, { keepId: p.client_id || '' });
   cSel.value = p.client_id;
 
   // ADR 014: P/D 選択を共通 MemberPicker に統一（初回のみバインド）
@@ -26945,7 +27036,7 @@ async function pfFillClientOptions() {
   }
   const cur = sel.value;
   sel.innerHTML = '<option value="">クライアント：すべて</option>'
-    + (allClients || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+    + clientOptionsHtml(allClients, { includeEnded: true });  // 過去の作品も探せるよう取引終了は末尾グループで残す
   sel.value = cur;
 }
 
@@ -38623,8 +38714,9 @@ let clientInvoiceItems = [];
 
 function openClientInvoiceModal() {
   const sel = document.getElementById('ci-client');
+  // 取引終了後の最終請求・過去月の請求も作れるよう、取引終了は末尾グループで残す
   sel.innerHTML = '<option value="">▼ クライアントを選択</option>' +
-    allClients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    clientOptionsHtml(allClients, { includeEnded: true });
   const now = new Date();
   const yearSel = document.getElementById('ci-year');
   yearSel.innerHTML = '';
@@ -52848,9 +52940,9 @@ function initAnalyticsPage() {
   const sel = document.getElementById('an-client');
   if (sel && sel.options.length <= 1 && Array.isArray(allClients)) {
     const fillClientSelect = () => {
+      // 分析は過去の実績も見るため、取引終了は末尾グループで残す（以前は選べなかった）
       sel.innerHTML = '<option value="">すべて</option>' +
-        allClients.filter(c => c.status !== 'クライアント取引終了')
-          .map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+        clientOptionsHtml(allClients, { includeEnded: true });
     };
     fillClientSelect();
     // 初回ロードの先行ペイントで allClients 未到着のままここに来た場合は、
@@ -62278,7 +62370,7 @@ function msPopulateClientSelect() {
     projects.filter(p => !p.is_hidden && p.client_id).map(p => p.client_id)
   );
   const clients = (allClients || [])
-    .filter(c => clientIdsWithProjects.has(c.id))
+    .filter(c => clientIdsWithProjects.has(c.id) && !isClientEnded(c))  // 取引終了（非表示）は新規アップロード先に出さない
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
   if (clients.length === 0) {
     sel.innerHTML = '<option value="">（案件のあるクライアントがありません）</option>';
