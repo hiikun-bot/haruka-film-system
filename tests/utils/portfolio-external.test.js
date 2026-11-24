@@ -155,3 +155,105 @@ describe('YouTube URL helpers / parseOpenGraph', () => {
     expect(ext.parseOpenGraph('').title).toBe(null);
   });
 });
+
+// ===== ADR 045 追補 2026-11-24（安全ガード・メンバー欄 URL との橋渡し） =====
+describe('parseOpenGraph の数値参照', () => {
+  test('範囲外のコードポイントでも落ちない', () => {
+    const r = ext.parseOpenGraph('<meta property="og:title" content="A&#99999999;B&#65;">');
+    expect(r.title).toBe('A&#99999999;BA');
+  });
+});
+
+describe('isOwnPortfolioUpload（直送ファイルが本人の置き場・本人の印か）', () => {
+  const meta = { parents: ['folderA'], appProperties: { hfs_kind: 'portfolio_external', hfs_owner_id: 'u1' } };
+  test('置き場と印が本人なら true', () => {
+    expect(ext.isOwnPortfolioUpload(meta, { folderId: 'folderA', userId: 'u1' })).toBe(true);
+  });
+  test('別のフォルダ（HFS の他のファイル）なら false', () => {
+    expect(ext.isOwnPortfolioUpload({ ...meta, parents: ['invoices'] }, { folderId: 'folderA', userId: 'u1' })).toBe(false);
+  });
+  test('同じ置き場でも他人の印なら false（同じニックネームの人のファイル）', () => {
+    expect(ext.isOwnPortfolioUpload(meta, { folderId: 'folderA', userId: 'u2' })).toBe(false);
+  });
+  test('印が無いファイル（手で置かれたもの）は false', () => {
+    expect(ext.isOwnPortfolioUpload({ parents: ['folderA'] }, { folderId: 'folderA', userId: 'u1' })).toBe(false);
+  });
+  test('置き場が分からないときは false', () => {
+    expect(ext.isOwnPortfolioUpload(meta, { folderId: null, userId: 'u1' })).toBe(false);
+    expect(ext.isOwnPortfolioUpload(null, { folderId: 'folderA', userId: 'u1' })).toBe(false);
+  });
+});
+
+describe('isHfsInternalDriveFile（HFS 自身の Drive のファイルか）', () => {
+  test('HFS の共有ドライブに入っていれば true', () => {
+    expect(ext.isHfsInternalDriveFile({ driveId: 'D1', ownedByMe: false }, 'D1')).toBe(true);
+  });
+  test('サービスアカウントが持ち主（マイドライブ運用）なら true', () => {
+    expect(ext.isHfsInternalDriveFile({ driveId: null, ownedByMe: true }, null)).toBe(true);
+  });
+  test('外部の人が共有してくれたファイルは false', () => {
+    expect(ext.isHfsInternalDriveFile({ driveId: null, ownedByMe: false }, 'D1')).toBe(false);
+    expect(ext.isHfsInternalDriveFile({ driveId: 'OTHER', ownedByMe: false }, 'D1')).toBe(false);
+  });
+});
+
+describe('comparableUrl（同じ作品の URL か）', () => {
+  test('YouTube は watch / youtu.be / shorts を同じとみなす', () => {
+    const a = ext.comparableUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3');
+    expect(a).toBe('yt:dQw4w9WgXcQ');
+    expect(ext.comparableUrl('https://youtu.be/dQw4w9WgXcQ')).toBe(a);
+    expect(ext.comparableUrl('https://www.youtube.com/shorts/dQw4w9WgXcQ')).toBe(a);
+  });
+  test('Drive はファイル ID で比べる', () => {
+    const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+    expect(ext.comparableUrl(`https://drive.google.com/file/d/${id}/view?usp=sharing`)).toBe(`drive:${id}`);
+    expect(ext.comparableUrl(`https://drive.google.com/open?id=${id}`)).toBe(`drive:${id}`);
+  });
+  test('その他は www・末尾スラッシュ・# を無視する', () => {
+    expect(ext.comparableUrl('https://www.Example.com/lp/')).toBe(ext.comparableUrl('https://example.com/lp#top'));
+    expect(ext.comparableUrl('https://example.com/lp?a=1')).not.toBe(ext.comparableUrl('https://example.com/lp'));
+  });
+  test('URL でなければ null', () => {
+    expect(ext.comparableUrl('javascript:alert(1)')).toBe(null);
+    expect(ext.comparableUrl('')).toBe(null);
+  });
+});
+
+describe('createInspectTokenStore（読み取り結果をサーバーが覚える）', () => {
+  const mk = (t0 = 1000) => {
+    let now = t0, n = 0;
+    const store = ext.createInspectTokenStore({ ttlMs: 100, max: 3, now: () => now, randomToken: () => `tok${++n}` });
+    return { store, tick: (ms) => { now += ms; } };
+  };
+  test('本人なら取り出せる・他人や token 違いは null', () => {
+    const { store } = mk();
+    const tok = store.put('u1', { source: { source_type: 'youtube' } });
+    expect(store.get(tok, 'u1')).toEqual({ source: { source_type: 'youtube' } });
+    expect(store.get(tok, 'u2')).toBe(null);
+    expect(store.get('nope', 'u1')).toBe(null);
+    expect(store.get(tok, null)).toBe(null);
+  });
+  test('期限が切れたら null', () => {
+    const { store, tick } = mk();
+    const tok = store.put('u1', { a: 1 });
+    tick(101);
+    expect(store.get(tok, 'u1')).toBe(null);
+  });
+  test('remove で消える（二重登録しない）', () => {
+    const { store } = mk();
+    const tok = store.put('u1', { a: 1 });
+    store.remove(tok);
+    expect(store.get(tok, 'u1')).toBe(null);
+  });
+  test('上限を超えたら古いものから捨てる', () => {
+    const { store } = mk();
+    const t1 = store.put('u1', 1); store.put('u1', 2); store.put('u1', 3); const t4 = store.put('u1', 4);
+    expect(store.size()).toBeLessThanOrEqual(3);
+    expect(store.get(t1, 'u1')).toBe(null);
+    expect(store.get(t4, 'u1')).toBe(4);
+  });
+  test('既定の token は推測しにくい 32 桁', () => {
+    const store = ext.createInspectTokenStore();
+    expect(store.put('u1', {})).toMatch(/^[0-9a-f]{32}$/);
+  });
+});

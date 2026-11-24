@@ -27732,6 +27732,29 @@ router.get('/portfolio', requireAuth, async (req, res) => {
 // AI 提案は lib/portfolio-external-ai.js（ENABLE_PORTFOLIO_AI_SUGGEST と月次予算でガード）。
 
 const extUtil = require('../utils/portfolio-external');
+const { safeFetch: extSafeFetch } = require('../utils/safe-outbound-url');
+
+// inspect の結果（サーバーが確かめた source と AI の費用）を短時間覚えておき、登録はこの値を使う
+// （ADR 045 追補 2026-11-24: クライアントが送ってきた drive_file_id や AI の費用を信じない）
+const _extInspectStore = extUtil.createInspectTokenStore();
+
+// HFS の Drive ルートフォルダが入っている共有ドライブの ID（マイドライブ運用なら null）。プロセス内で 1 回だけ引く
+let _extHfsDriveIdPromise = null;
+function extHfsDriveId(drive) {
+  if (!_extHfsDriveIdPromise) {
+    _extHfsDriveIdPromise = (async () => {
+      const rootId = await getDriveRootFolderId();
+      if (!rootId) return null;
+      const r = await drive.files.get({ fileId: rootId, fields: 'id, driveId', supportsAllDrives: true });
+      return r.data?.driveId || null;
+    })().catch((e) => {
+      _extHfsDriveIdPromise = null;   // 次回また引き直す
+      console.warn('[portfolio/external] ルートフォルダの driveId 取得失敗:', e.message);
+      return null;
+    });
+  }
+  return _extHfsDriveIdPromise;
+}
 
 const EXT_INSPECT_RATE_MAX = 40;                 // 1 人 1 時間あたりの inspect 上限（AI 課金の暴走防止）
 const EXT_INSPECT_RATE_WINDOW_MS = 60 * 60 * 1000;
@@ -27766,13 +27789,17 @@ function extServiceAccountEmail() {
 async function extFetchDriveMeta(drive, fileId) {
   const meta = await drive.files.get({
     fileId,
-    fields: 'id, name, mimeType, size, thumbnailLink, webViewLink, videoMediaMetadata(width,height,durationMillis), imageMediaMetadata(width,height)',
+    fields: 'id, name, mimeType, size, thumbnailLink, webViewLink, parents, driveId, ownedByMe, trashed, appProperties, videoMediaMetadata(width,height,durationMillis), imageMediaMetadata(width,height)',
     supportsAllDrives: true,
   });
   const d = meta.data || {};
   const dim = d.videoMediaMetadata || d.imageMediaMetadata || {};
   return {
     id: d.id, name: d.name || '', mimeType: d.mimeType || null, size: Number(d.size) || null,
+    // 持ち主・置き場の確認用（ADR 045 追補: 本人の置き場か／HFS 自身の Drive か）
+    parents: Array.isArray(d.parents) ? d.parents : [], driveId: d.driveId || null,
+    ownedByMe: d.ownedByMe === true, trashed: d.trashed === true,
+    appProperties: (d.appProperties && typeof d.appProperties === 'object') ? d.appProperties : {},
     thumbnailLink: d.thumbnailLink ? String(d.thumbnailLink).replace(/=s\d+$/, '') : null,
     webViewLink: d.webViewLink || null,
     width: Number(dim.width) || null, height: Number(dim.height) || null,
@@ -27794,8 +27821,10 @@ async function extFetchHtml(url) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const res = await fetch(url, {
-      signal: ctrl.signal, redirect: 'follow',
+    // 社内向けアドレス（Railway の内部・ループバック・メタデータ）へは取りに行かない（SSRF 対策・ADR 045 追補）。
+    // リダイレクトは safeFetch が行き先を確かめながら追う
+    const res = await extSafeFetch(url, {
+      signal: ctrl.signal,
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HARUKA-FILM-SYSTEM/1.0; +portfolio)', 'Accept': 'text/html,*/*;q=0.5' },
     });
     const ct = String(res.headers.get('content-type') || '').toLowerCase();
@@ -27812,7 +27841,7 @@ async function extFetchHtml(url) {
     try { await reader.cancel(); } catch (_) {}
     return { html: Buffer.concat(chunks).toString('utf8'), contentType: ct, status: res.status };
   } catch (e) {
-    return { html: null, error: e?.message || String(e) };
+    return { html: null, error: e?.message || String(e), blocked: e?.code === 'blocked_url' };
   } finally {
     clearTimeout(timer);
   }
@@ -27946,14 +27975,21 @@ router.post('/portfolio/external-works/inspect', requireAuth, async (req, res) =
       if (!fileId) return res.status(400).json({ error: 'drive_file_id が必要です' });
       if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
       const drive = await getDriveService();
+      let dm = null;
+      try { dm = await extFetchDriveMeta(drive, fileId); } catch (e) { console.warn('[portfolio/external] Drive メタ取得失敗:', e.message); }
+      // 本人の置き場（🌐 みんなのポートフォリオ/<メンバー名>）に今アップロードしたファイルだけを受け付ける。
+      // drive_file_id を差し替えて HFS の Drive の別ファイル（請求書・契約書など）を公開・登録させない（ADR 045 追補）
+      const { data: meUp } = await supabase.from('users').select('id, full_name, nickname').eq('id', userId).maybeSingle();
+      const ownFolderId = await extResolveUploadFolder(drive, meUp || { id: userId });
+      if (!dm || dm.trashed || !extUtil.isOwnPortfolioUpload(dm, { folderId: ownFolderId, userId })) {
+        return res.status(400).json({ error: 'アップロードしたファイルが見つかりません。もう一度ファイルを選んでください' });
+      }
       // 再生用に anyone-reader を付ける（クリエイティブの complete と同じ。失敗しても登録は続ける）
       try {
         await drive.permissions.create({ fileId, supportsAllDrives: true, requestBody: { role: 'reader', type: 'anyone' } });
       } catch (permErr) {
         console.warn('[portfolio/external] 公開権限付与失敗（閲覧には stream で対応）:', permErr.message);
       }
-      let dm = null;
-      try { dm = await extFetchDriveMeta(drive, fileId); } catch (e) { console.warn('[portfolio/external] Drive メタ取得失敗:', e.message); }
       source.source_type = 'upload';
       source.drive_file_id = fileId;
       source.mime_type = dm?.mimeType || String(body.mime_type || '') || null;
@@ -28007,6 +28043,17 @@ router.post('/portfolio/external-works/inspect', requireAuth, async (req, res) =
           });
         }
         if (dm.mimeType === 'application/vnd.google-apps.folder') return res.status(400).json({ error: 'Drive のフォルダは登録できません。ファイル 1 件の共有リンクを貼ってください' });
+        // HFS 自身の Drive のファイルは外部作品にしない（HFS の作品は 🏆 作品ページに納品作品として並ぶ。
+        // 社内ファイルを全員に見せてしまう事故も防ぐ・ADR 045 追補 2026-11-24）
+        if (extUtil.isHfsInternalDriveFile(dm, await extHfsDriveId(drive))) {
+          return res.status(400).json({
+            error: 'HFS の Google ドライブの中にあるファイルは、ここでは登録できません。HFS の案件の作品は 🏆 作品ページに納品作品として並びます。'
+              + 'HFS の外で作った自分の作品なら、ファイルを「アップロード」から追加してください',
+          });
+        }
+        if (!extUtil.mediaKindFromMime(dm.mimeType)) {
+          return res.status(400).json({ error: '動画か画像のファイルの共有リンクを貼ってください（PDF・ドキュメント・スライドは今は登録できません）' });
+        }
         source.mime_type = dm.mimeType;
         meta.filename = dm.name || null;
         meta.title = meta.filename ? meta.filename.replace(/\.[a-z0-9]{2,5}$/i, '') : null;
@@ -28018,6 +28065,7 @@ router.post('/portfolio/external-works/inspect', requireAuth, async (req, res) =
       } else {
         source.source_type = 'link';
         const page = await extFetchHtml(det.url);
+        if (page.blocked) return res.status(400).json({ error: `この URL は読み取れません（${page.error}）` });
         const og = page.html ? extUtil.parseOpenGraph(page.html) : { title: null, description: null, image: null, site_name: null };
         meta.title = og.title || null;
         meta.description = og.description || null;
@@ -28058,11 +28106,23 @@ router.post('/portfolio/external-works/inspect', requireAuth, async (req, res) =
       tags:        sug?.tags || [],
     };
 
+    // 登録時に使う値はサーバーが覚えておく（source・サムネ URL・AI の費用）。画面は token だけを返す
+    const storedThumb = (source.source_type === 'youtube' || source.source_type === 'link') ? thumbUrl : null;
+    const inspectToken = _extInspectStore.put(userId, {
+      source: { ...source },
+      thumb_url: storedThumb,
+      ai: ai.used ? {
+        model: ai.model || null, cost_jpy: ai.cost_jpy ?? null, usage: ai.usage || null,
+        raw: ai.raw || null, prompt_version: ai.prompt_version || null, fields: aiFields,
+      } : null,
+    });
+
     res.json({
+      inspect_token: inspectToken,
       source,
       meta,
       preview_url: previewUrl,
-      thumb_url: (source.source_type === 'youtube' || source.source_type === 'link') ? thumbUrl : null,
+      thumb_url: storedThumb,
       defaults,
       orientation,
       ai: {
@@ -28115,7 +28175,12 @@ router.post('/portfolio/external-works/upload-session/init', requireAuth, async 
         'X-Upload-Content-Length': String(fileSize),
         'Origin': browserOrigin,
       },
-      body: JSON.stringify({ name: filename, parents: [folderId] }),
+      // 持ち主の印（ADR 045 追補）: inspect で「本人がここで上げたファイルか」を確かめる。
+      //   セッション URL のメタデータはサーバーが決めるので、ブラウザ側からは書き換えられない
+      body: JSON.stringify({
+        name: filename, parents: [folderId],
+        appProperties: { hfs_kind: 'portfolio_external', hfs_owner_id: String(req.user.id) },
+      }),
     });
     if (!initResp.ok) {
       const text = await initResp.text().catch(() => '');
@@ -28131,17 +28196,55 @@ router.post('/portfolio/external-works/upload-session/init', requireAuth, async 
   }
 });
 
+// GET /api/haruka/portfolio/external-works/my-urls — 「＋ 作品を追加」の候補チップ用。
+//   メンバー欄に登録済みの自分の 🌐 ポートフォリオ URL（users.portfolio_urls・#1244）を返す。
+//   両者は合流させない（ADR 045 追補 2026-11-24）ので、ここは「URL 欄に入れる候補」を出すだけ。
+//   本人の分だけ（req.user.id 固定・VIEW AS の影響を受けない）。すでに外部作品にした URL には registered:true。
+router.get('/portfolio/external-works/my-urls', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data: me, error } = await supabase.from('users').select('id, portfolio_urls').eq('id', userId).maybeSingle();
+    if (error) {
+      console.warn('[portfolio/external/my-urls] portfolio_urls 取得失敗（migration 未適用?）:', error.message);
+      return res.json({ items: [] });
+    }
+    const items = toPortfolioArray(me?.portfolio_urls).map(it => ({ url: it.url, title: it.title || '' }));
+    if (!items.length) return res.json({ items: [] });
+    const { data: works } = await supabase.from('portfolio_external_works')
+      .select('source_url').eq('owner_user_id', userId).is('deleted_at', null);
+    const done = new Set((works || []).map(w => extUtil.comparableUrl(w.source_url)).filter(Boolean));
+    res.json({ items: items.map(it => ({ ...it, registered: done.has(extUtil.comparableUrl(it.url)) })) });
+  } catch (e) {
+    console.warn('[portfolio/external/my-urls] failed:', e.message);
+    res.json({ items: [] });
+  }
+});
+
+// 系統コードを実在するものだけに絞る（未知の code は未設定扱い）。登録と編集で共用
+function extFilterCodes(data, genreInfo) {
+  const out = { ...data };
+  if (out.portfolio_genre_code && !genreInfo.map.has(out.portfolio_genre_code)) out.portfolio_genre_code = null;
+  if (out.portfolio_style_code && !PORTFOLIO_STYLES.some(s => s.code === out.portfolio_style_code)) out.portfolio_style_code = null;
+  return out;
+}
+
 // POST /api/haruka/portfolio/external-works — 登録（inspect の結果を人が微修正したもの）
-// body: { source:{source_type, source_url, youtube_id, drive_file_id, mime_type}, thumb_url, title, description, client_name,
-//         media_kind, genre_code, style_code, produced_at, aspect_w, aspect_h, ai:{model, cost_jpy, usage, raw, prompt_version, fields} }
+// body: { inspect_token, title, description, client_name, media_kind, genre_code, style_code, produced_at, aspect_w, aspect_h }
+//   作品の出どころ（source_type / youtube_id / drive_file_id / URL / サムネ）と AI の費用は、inspect でサーバーが
+//   確かめて覚えた値を使う（クライアントが送ってきた値は使わない・ADR 045 追補 2026-11-24）。
 router.post('/portfolio/external-works', requireAuth, async (req, res) => {
   try {
     const body = req.body || {};
-    const src = body.source || {};
+    const userId = req.user.id;
+    const stored = _extInspectStore.get(body.inspect_token, userId);
+    if (!stored) return res.status(400).json({ error: '読み取りの有効期限が切れました。お手数ですが、もう一度 URL を貼るかファイルを選んで読み取ってください', code: 'inspect_expired' });
+    const src = stored.source || {};
     const sourceType = String(src.source_type || '').trim();
     if (!extUtil.EXTERNAL_SOURCE_TYPES.includes(sourceType)) return res.status(400).json({ error: 'source_type が不正です' });
+    const genreInfo = await getPortfolioGenreMap();
     const norm = extUtil.normalizeExternalWorkInput(body);
     if (!norm.ok) return res.status(400).json({ error: norm.error });
+    const fields = extFilterCodes(norm.data, genreInfo);
 
     const youtubeId = sourceType === 'youtube' ? String(src.youtube_id || '').trim() : null;
     const driveFileId = (sourceType === 'drive' || sourceType === 'upload') ? String(src.drive_file_id || '').trim() : null;
@@ -28150,18 +28253,18 @@ router.post('/portfolio/external-works', requireAuth, async (req, res) => {
     const sourceUrl = (() => {
       const s = String(src.source_url || '').trim();
       if (!s) return sourceType === 'youtube' ? extUtil.youtubeWatchUrl(youtubeId, null) : null;
-      try { const u = new URL(s); return (u.protocol === 'http:' || u.protocol === 'https:') ? u.toString() : null; } catch (_) { return null; }
+      try { const u = new URL(s); return (u.protocol === 'http:' || u.protocol === 'https:') ? u.toString().slice(0, 2000) : null; } catch (_) { return null; }
     })();
     if (sourceType === 'link' && !sourceUrl) return res.status(400).json({ error: 'リンクの URL が不正です' });
     const thumbUrl = (() => {
       if (sourceType === 'youtube') return extUtil.youtubeThumbUrl(youtubeId);
       if (sourceType !== 'link') return null;
-      const s = String(body.thumb_url || '').trim();
+      const s = String(stored.thumb_url || '').trim();
       try { const u = new URL(s); return (u.protocol === 'http:' || u.protocol === 'https:') ? u.toString().slice(0, 2000) : null; } catch (_) { return null; }
     })();
 
-    // AI 提案の記録（費用は月次予算の集計対象）。クライアントが inspect の応答をそのまま返す
-    const ai = (body.ai && typeof body.ai === 'object' && body.ai.model) ? body.ai : null;
+    // AI 提案の記録（費用は月次予算の集計対象）。inspect のときにサーバーが覚えた値だけを使う
+    const ai = (stored.ai && stored.ai.model) ? stored.ai : null;
     const aiCost = ai && Number.isFinite(Number(ai.cost_jpy)) ? Math.max(0, Number(ai.cost_jpy)) : null;
 
     const insert = {
@@ -28173,7 +28276,7 @@ router.post('/portfolio/external-works', requireAuth, async (req, res) => {
       drive_file_id: driveFileId || null,
       mime_type: String(src.mime_type || '').trim().slice(0, 100) || null,
       thumb_url: thumbUrl,
-      ...norm.data,
+      ...fields,
       ai_model: ai ? String(ai.model).slice(0, 100) : null,
       ai_cost_jpy: aiCost,
       ai_meta: ai ? { prompt_version: ai.prompt_version || null, usage: ai.usage || null, raw: ai.raw || null, fields: ai.fields || [] } : null,
@@ -28181,11 +28284,11 @@ router.post('/portfolio/external-works', requireAuth, async (req, res) => {
     const { data, error } = await supabase.from('portfolio_external_works').insert(insert).select(EXT_SELECT_COLS).single();
     if (error) {
       if (/portfolio_external_works/.test(error.message || '') && /does not exist|schema cache/i.test(error.message || '')) {
-        return res.status(503).json({ error: '外部作品のテーブルがまだ作られていません（migration 2026-09-25 を適用してください）' });
+        return res.status(503).json({ error: '外部作品のテーブルがまだ作られていません（migration 2026-11-24_portfolio_external_works.sql を適用してください）' });
       }
       return res.status(500).json({ error: error.message });
     }
-    const genreInfo = await getPortfolioGenreMap();
+    _extInspectStore.remove(body.inspect_token);   // 同じ読み取りで二重登録しない
     const roleCodes = await getEffectiveRoleCodes(req);
     const { data: me } = await supabase.from('users').select('id, full_name, nickname').eq('id', req.user.id).maybeSingle();
     res.status(201).json({ ok: true, work: data, item: extToPortfolioItem(data, { ownerUser: me, genreInfo, roleCodes, userId: req.user.id }) });
@@ -28205,9 +28308,10 @@ router.patch('/portfolio/external-works/:id', requireAuth, async (req, res) => {
     const norm = extUtil.normalizeExternalWorkInput(req.body, { partial: true });
     if (!norm.ok) return res.status(400).json({ error: norm.error });
     if (!Object.keys(norm.data).length) return res.status(400).json({ error: '更新する項目がありません' });
+    const patch = extFilterCodes(norm.data, await getPortfolioGenreMap());
     const { data, error } = await supabase
       .from('portfolio_external_works')
-      .update({ ...norm.data, updated_at: new Date().toISOString() })
+      .update({ ...patch, updated_at: new Date().toISOString() })
       .eq('id', work.id).select(EXT_SELECT_COLS).single();
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true, work: data });

@@ -9056,6 +9056,13 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
   .pf-ext-x { margin-left: 8px; border: 0; background: #F3F4F6; border-radius: 999px; width: 30px; height: 30px; cursor: pointer; font-size: 14px; }
   .pf-ext-url { width: 100%; font-size: 14px; padding: 12px 14px; border-radius: 10px; border: 1.5px solid #D1D5DB; outline: none; }
   .pf-ext-url:focus { border-color: #2BB8B4; box-shadow: 0 0 0 3px rgba(43,184,180,.18); }
+  .pf-ext-mine { margin-top: 12px; }
+  .pf-ext-mine-head { font-size: 12px; font-weight: 700; color: #374151; margin-bottom: 6px; }
+  .pf-ext-mine-head span { font-weight: 400; color: #9CA3AF; }
+  .pf-ext-mine-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pf-ext-mychip { border: 1px solid #D1D5DB; background: #fff; color: #374151; border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pf-ext-mychip:hover { border-color: #2BB8B4; background: #F0FBFA; }
+  .pf-ext-mychip.done { color: #9CA3AF; background: #F9FAFB; }
   .pf-ext-or { display: flex; align-items: center; gap: 10px; color: #9CA3AF; font-size: 12px; margin: 14px 0; }
   .pf-ext-or::before, .pf-ext-or::after { content: ''; flex: 1; height: 1px; background: #E5E7EB; }
   .pf-ext-drop {
@@ -12057,6 +12064,14 @@ async function applyDeepLinkOnLoad() {
       stripQueryParam('portfolio');
       try { if (typeof pfOpenByCreativeId === 'function') pfOpenByCreativeId(pfCreativeId); }
       catch (e) { console.warn('[deepLink portfolio]', e); }
+      return;
+    }
+    // 🌐 外部作品（ADR 045）の「🔗 リンクをコピー」から来たとき
+    const pfExternalId = params.get('portfolio_ext');
+    if (pfExternalId) {
+      stripQueryParam('portfolio_ext');
+      try { if (typeof pfOpenByExternalId === 'function') pfOpenByExternalId(pfExternalId); }
+      catch (e) { console.warn('[deepLink portfolio_ext]', e); }
       return;
     }
 
@@ -27365,6 +27380,7 @@ async function pfReload() {
     pfRenderGallery();
     pfMeasureMissingAspects();
     pfConsumePendingOpen();   // 通知のリンク（?portfolio=<creative_id>）から来たときは該当作品を開く
+    if (typeof pfConsumePendingOpenExternal === 'function') pfConsumePendingOpenExternal();   // 🌐 外部作品のリンク（?portfolio_ext=<id>・ADR 045）
   } catch (e) {
     if (seq !== pfLoadSeq) return;
     if (summary) summary.textContent = '';
@@ -27441,7 +27457,8 @@ function pfRenderGallery() {
     const clientPart = g.client_name ? `${esc(g.client_name)} ／ ` : '';
     // 🌐 外部作品のグループは持ち主単位（ADR 045）。見出しは「🌐 みんなのポートフォリオ ／ 名前」、日付は制作時期
     if (g.external) {
-      const who = g.owner ? ((window.NameDisplay && NameDisplay.short(g.owner)) || g.owner.nickname || g.owner.full_name || '') : '';
+      // 名前は全画面共通の「ニックネーム（名前）」（NameDisplay・PR #502 標準）
+      const who = g.owner ? ((window.NameDisplay && NameDisplay.full(g.owner)) || g.owner.nickname || g.owner.full_name || '') : '';
       return `
       <div class="pf-group">
         <div class="pf-group-head pf-group-ext">
@@ -28631,6 +28648,7 @@ function pfRenderLightboxCard() {
     </div>
     <div class="pf-lb-actions">
       ${href ? `<a class="pf-lb-action primary" href="${esc(href)}" target="_blank" rel="noopener" style="text-decoration:none">↗ 元のページを開く</a>` : ''}
+      <button type="button" class="pf-lb-action" onclick="pfExtCopyLink(${pfLightboxIdx})" title="HFS にログインしているメンバーが開ける、この作品のリンクです（社外の人は開けません）">🔗 リンクをコピー</button>
       ${item.can_edit_external ? `<button type="button" class="pf-lb-action" onclick="pfExtOpen(pfItems[${pfLightboxIdx}])">✏️ 編集</button>` : ''}
       ${item.can_edit_external ? `<button type="button" class="pf-lb-action" style="color:#B91C1C;border-color:#FECACA" onclick="pfExtDelete(${pfLightboxIdx})">🗑 削除</button>` : ''}
     </div>`;
@@ -28846,6 +28864,70 @@ function pfExtSourceLabel(item) {
   if (t === 'link')    return '🔗 リンク';
   return '🌐 外部';
 }
+// 🔗 リンクをコピー（HFS 内の共有用・ADR 045 追補 2026-11-24）。?portfolio_ext=<id> はログインしたメンバーだけが開ける。
+// 社外に見せる紹介ページ（ADR 056 の /pv/<token>）への載せ込みは次段階
+function pfExtShareUrl(item) {
+  return `${location.origin}${location.pathname}?portfolio_ext=${encodeURIComponent(item.external_id)}`;
+}
+async function pfExtCopyLink(idx) {
+  const item = pfItems[idx];
+  if (!item?.external_id) return;
+  const url = pfExtShareUrl(item);
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('作品のリンクをコピーしました（HFS のメンバーが開けます）', 'success');
+  } catch (e) {
+    try { window.prompt('この URL をコピーして共有してください', url); } catch (_) {}
+    showToast('クリップボード API が使えないため URL を表示しました', 'info');
+  }
+}
+
+// ディープリンク ?portfolio_ext=<id> から呼ばれる。作品タブを開いて該当の外部作品のライトボックスを開く。
+// 今の絞り込み（自分の作品など）に無ければ「全員・全件」に広げて一度だけ探し直す（pfOpenByCreativeId と同じ流儀）
+let pfPendingOpenExternal = null;
+let pfPendingOpenExternalRetried = false;
+function pfOpenByExternalId(externalId) {
+  if (!externalId) return;
+  pfPendingOpenExternal = String(externalId);
+  pfPendingOpenExternalRetried = false;
+  if (document.getElementById('page-portfolio')?.classList.contains('active') && pfInitialized && Array.isArray(pfItems)) {
+    pfConsumePendingOpenExternal();
+    return;
+  }
+  const navBtn = document.querySelector('.nav-btn[data-page="portfolio"]');
+  showPage('portfolio', navBtn || null);   // → loadPortfolioPage() → pfReload() → pfConsumePendingOpen() → ここ
+}
+window.pfOpenByExternalId = pfOpenByExternalId;
+function pfConsumePendingOpenExternal() {
+  if (!pfPendingOpenExternal) return;
+  const id = pfPendingOpenExternal;
+  const idx = pfItems.findIndex(it => it.external && it.external_id === id);
+  if (idx >= 0) {
+    pfPendingOpenExternal = null;
+    const card = document.querySelector(`.pf-card[data-idx="${idx}"]`);
+    if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    pfOpenLightbox(idx);
+    return;
+  }
+  if (!pfPendingOpenExternalRetried) {
+    pfPendingOpenExternalRetried = true;
+    pfAssigneeIds = new Set();
+    pfBestMode = 'all';
+    pfGenreSel = new Set(); pfStyleSel = new Set();
+    // 外部作品はクライアントで絞ると出ない・制作時期が期間外のこともあるので、両方外して探す
+    ['pf-client', 'pf-from', 'pf-to'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    if (pfTab !== 'all') {
+      pfTab = 'all';
+      ['all', 'video', 'design'].forEach(t => document.getElementById(`pf-tab-${t}`)?.classList.toggle('active', t === 'all'));
+    }
+    pfRefreshAssigneeLabel();
+    pfReload();
+    return;
+  }
+  pfPendingOpenExternal = null;
+  showToast('その作品は見つかりませんでした（削除された可能性があります）', 'error');
+}
+
 function pfExtOpenSourceUrl(item) {
   if (!item) return null;
   if (item.source_type === 'youtube' && item.youtube_id) return item.source_url || `https://www.youtube.com/watch?v=${item.youtube_id}`;
@@ -28872,6 +28954,45 @@ async function pfExtOpen(item) {
   document.addEventListener('keydown', pfExtKey);
   pfLoadGenreOptions();   // 系統の選択肢を温める
   pfExtRender();
+  if (!item) pfExtLoadMyUrls(pfExt);
+}
+
+// メンバー欄に登録済みの自分の 🌐 ポートフォリオ URL（#1244）を、URL 欄に入れる候補チップとして出す。
+// 取り込みは人が 1 件ずつ選んで読み取る（自動で作品にはしない・ADR 045 追補 2026-11-24）
+async function pfExtLoadMyUrls(state) {
+  try {
+    const res = await apiFetch(`${API}/portfolio/external-works/my-urls`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || pfExt !== state) return;   // 閉じた／開き直したモーダルには描かない
+    state.myUrls = Array.isArray(json.items) ? json.items : [];
+    if (state.step === 'input' && state.myUrls.length) {
+      const typed = document.getElementById('pf-ext-url')?.value || '';
+      pfExtRender();
+      const input = document.getElementById('pf-ext-url');
+      if (input && typed) input.value = typed;
+    }
+  } catch (_) { /* 候補が出ないだけ */ }
+}
+function pfExtMyUrlsHtml() {
+  const list = (pfExt && pfExt.myUrls) || [];
+  if (!list.length) return '';
+  const MPU = window.MemberPortfolioUrls;
+  const chips = list.slice(0, 20).map((it, i) => {
+    const label = (MPU && MPU.portfolioLinkLabel) ? MPU.portfolioLinkLabel(it) : (it.title || it.url);
+    const icon = (MPU && MPU.portfolioLinkKind) ? (MPU.portfolioLinkKind(it.url)?.icon || '🔗') : '🔗';
+    return `<button type="button" class="pf-ext-mychip${it.registered ? ' done' : ''}" onclick="pfExtPickMyUrl(${i})" title="${esc(it.url)}${it.registered ? '（作品ページに追加済み）' : ''}">${esc(icon)} ${esc(String(label).slice(0, 30))}${it.registered ? ' ✓' : ''}</button>`;
+  }).join('');
+  return `<div class="pf-ext-mine">
+      <div class="pf-ext-mine-head">メンバー欄に登録してある URL から選ぶ <span>（押すと読み取ります。✓ は追加済み）</span></div>
+      <div class="pf-ext-mine-chips">${chips}</div>
+    </div>`;
+}
+function pfExtPickMyUrl(i) {
+  const it = pfExt?.myUrls?.[i];
+  if (!it) return;
+  const input = document.getElementById('pf-ext-url');
+  if (input) input.value = it.url;
+  pfExtInspectUrl();
 }
 function pfExtClose() {
   const box = document.getElementById('pf-ext-modal');
@@ -28917,6 +29038,7 @@ function pfExtInputHtml() {
       📂 <strong>Google ドライブ</strong>は「リンクを知っている全員」に共有されたファイルのリンク（フォルダは不可）。
       🔗 それ以外の URL は OGP（タイトル・画像）を読み取ってリンク付きカードになります。
     </div>
+    ${pfExtMyUrlsHtml()}
     <div class="pf-ext-or">または</div>
     <div class="pf-ext-drop" id="pf-ext-drop" onclick="document.getElementById('pf-ext-file').click()"
          ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')"
@@ -29159,15 +29281,23 @@ async function pfExtSubmit() {
     const ins = pfExt.inspect || {};
     const res = await apiFetch(`${API}/portfolio/external-works`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      // 出どころ（URL・Drive のファイル・サムネ）と AI の記録は、読み取りのときにサーバーが覚えている。
+      // ここでは inspect_token と、人が直せる項目だけを送る（ADR 045 追補 2026-11-24）
       body: JSON.stringify({
-        source: pfExt.source, thumb_url: f.thumb_url || null,
+        inspect_token: ins.inspect_token || null,
         title: f.title, description: f.description, client_name: f.client_name, media_kind: f.media_kind || 'video',
         genre_code: f.genre_code || null, style_code: f.style_code || null, produced_at: f.produced_at || '',
         aspect_w: f.aspect_w || null, aspect_h: f.aspect_h || null,
-        ai: ins.ai?.used ? { model: ins.ai.model, cost_jpy: ins.ai.cost_jpy, usage: ins.ai.usage, raw: ins.ai.raw, prompt_version: ins.ai.prompt_version, fields: ins.ai.fields } : null,
       }),
     });
     const json = await res.json().catch(() => ({}));
+    if (!res.ok && json.code === 'inspect_expired' && pfExt) {
+      // 読み取りから時間が経った／サーバーが再起動した → 最初の画面に戻して読み取り直してもらう
+      pfExt.step = 'input'; pfExt.inspect = null; pfExt.source = null; pfExt.form = null;
+      pfExt.error = json.error;
+      pfExtRender();
+      return;
+    }
     if (!res.ok) throw new Error(json.error || '登録に失敗しました');
     const newId = json.work?.id || json.item?.external_id || null;
     pfExtClose();

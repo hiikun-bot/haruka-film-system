@@ -267,7 +267,95 @@ function decodeEntities(s) {
   return String(s)
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
+    .replace(/&#(\d+);/g, (m, n) => {
+      const cp = Number(n);
+      // 範囲外のコードポイントは fromCodePoint が RangeError を投げるので、そのまま残す
+      return (Number.isInteger(cp) && cp > 0 && cp <= 0x10FFFF) ? String.fromCodePoint(cp) : m;
+    });
+}
+
+/**
+ * 「同じ作品の URL か」を比べるための形（メンバー欄の URL がもう外部作品になっているかの判定用）。
+ *   YouTube → yt:<動画ID>（watch / shorts / youtu.be の違いを吸収）
+ *   Drive   → drive:<ファイルID>
+ *   その他  → ホスト（www. を外して小文字）＋パス（末尾の / を外す）＋クエリ。# 以降は無視
+ */
+function comparableUrl(input) {
+  const det = detectExternalSource(input);
+  if (!det.type) return null;
+  if (det.type === 'youtube') return `yt:${det.youtube_id}`;
+  if (det.type === 'drive') return `drive:${det.drive_file_id}`;
+  const u = safeUrl(det.url);
+  const host = u.hostname.toLowerCase().replace(/^www\./, '');
+  const path = u.pathname.replace(/\/+$/, '');
+  return `${host}${path}${u.search}`;
+}
+
+/**
+ * Drive 共有 URL で貼られたファイルが「HFS 自身の Drive のファイル」か（ADR 045 追補 2026-11-24）。
+ * HFS の作品は 🏆 作品ページに納品作品として出るので外部作品にはしない。社内ファイル（請求書・契約書など）を
+ * 全員に見せてしまう事故も防ぐ。
+ *   - HFS の共有ドライブ（ルートフォルダと同じ driveId）に入っている
+ *   - サービスアカウントが持ち主（ownedByMe）＝ HFS がマイドライブで運用しているファイル
+ * @param {{ driveId?:string|null, ownedByMe?:boolean }} meta files.get の結果
+ * @param {string|null} hfsDriveId ルートフォルダの driveId（マイドライブ運用なら null）
+ */
+function isHfsInternalDriveFile(meta, hfsDriveId) {
+  if (!meta) return false;
+  if (meta.ownedByMe === true) return true;
+  return !!(hfsDriveId && meta.driveId && meta.driveId === hfsDriveId);
+}
+
+/**
+ * 直送アップロードのファイルが「本人がこの機能で上げたファイル」か。
+ *   - 本人の置き場（🌐 みんなのポートフォリオ/<メンバー名>）に入っている
+ *   - アップロードのセッション発行時にサーバーが付けた印 appProperties.hfs_owner_id が本人
+ * drive_file_id を差し替えて HFS の Drive の別ファイル（請求書・契約書など）を公開・登録させないための確認。
+ * 同じニックネームの人が置き場を共有してしまっても、印で他人のファイルは弾ける。
+ * @param {{ parents?:string[], appProperties?:object }} meta
+ * @param {{ folderId:string|null, userId:string }} who
+ */
+function isOwnPortfolioUpload(meta, { folderId, userId } = {}) {
+  if (!meta || !folderId || !userId) return false;
+  const parents = Array.isArray(meta.parents) ? meta.parents : [];
+  if (!parents.includes(folderId)) return false;
+  const props = (meta.appProperties && typeof meta.appProperties === 'object') ? meta.appProperties : {};
+  return props.hfs_kind === 'portfolio_external' && String(props.hfs_owner_id || '') === String(userId);
+}
+
+/**
+ * inspect（読み取り）の結果をサーバーが短時間だけ覚えておく入れ物（ADR 045 追補 2026-11-24）。
+ * 登録（POST）はクライアントが送ってきた source・AI の費用を信じず、ここに覚えた値を使う。
+ *   put(userId, value) → token（推測できない 32 桁の英数字）
+ *   get(token, userId) → value | null（他人の token・期限切れは null）
+ *   remove(token)
+ * プロセス内の Map なので再起動で消える（そのときは「もう一度読み取ってください」）。
+ */
+function createInspectTokenStore({ ttlMs = 2 * 60 * 60 * 1000, max = 2000, now = () => Date.now(), randomToken } = {}) {
+  const map = new Map();
+  const gen = randomToken || (() => require('crypto').randomBytes(16).toString('hex'));
+  function sweep() {
+    const t = now();
+    for (const [k, v] of map) { if (v.expiresAt <= t) map.delete(k); }
+    while (map.size >= max) map.delete(map.keys().next().value);   // 古い順に捨てる
+  }
+  return {
+    put(userId, value) {
+      sweep();
+      const token = gen();
+      map.set(token, { userId: String(userId || ''), value, expiresAt: now() + ttlMs });
+      return token;
+    },
+    get(token, userId) {
+      const e = map.get(String(token || ''));
+      if (!e) return null;
+      if (e.expiresAt <= now()) { map.delete(String(token)); return null; }
+      if (!userId || e.userId !== String(userId)) return null;
+      return e.value;
+    },
+    remove(token) { map.delete(String(token || '')); },
+    size() { return map.size; },
+  };
 }
 
 module.exports = {
@@ -290,4 +378,8 @@ module.exports = {
   youtubeThumbUrl,
   youtubeWatchUrl,
   parseOpenGraph,
+  comparableUrl,
+  isHfsInternalDriveFile,
+  isOwnPortfolioUpload,
+  createInspectTokenStore,
 };
