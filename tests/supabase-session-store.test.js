@@ -128,10 +128,11 @@ describe('SupabaseSessionStore', () => {
     expect(mock.calls.filter(c => c.op === 'update').length).toBe(updatesBefore + 1);
   });
 
-  test('touch はキャッシュに無い sid でも DB に書く', async () => {
+  test('touch はキャッシュに無い sid でも DB に書く（キャッシュは作らない）', async () => {
     mock.state.rows.set('s2', { sess: { cookie: {} }, expired_at: new Date(Date.now() + 1000).toISOString() });
     await p(cb => store.touch('s2', sessWithMaxAge(60000), cb));
     expect(mock.calls.filter(c => c.op === 'update').length).toBe(1);
+    expect(store._cache.has('s2')).toBe(false);
   });
 
   test('destroy で DB とキャッシュから消える（ログアウト後に古いセッションが返らない）', async () => {
@@ -189,9 +190,44 @@ describe('SupabaseSessionStore', () => {
     await p(cb => store.destroy('s1', cb));        // その間に logout
     mock.state.selectGate = null;
     open();
-    await pending;
+    const staleSess = await pending;
+    expect(store._cache.has('s1')).toBe(false);
+    // そのリクエストの終わりに express-session が呼ぶ touch でも、古いセッションをキャッシュに戻さない
+    await p(cb => store.touch('s1', staleSess, cb));
     expect(store._cache.has('s1')).toBe(false);
     expect(await p(cb => store.get('s1', cb))).toBeNull();
+  });
+
+  test('キャッシュ済みのセッションを destroy した後の touch でも復活しない（別タブの logout）', async () => {
+    const sess = sessWithMaxAge(60000, { passport: { user: 'u1' } });
+    await p(cb => store.set('s1', sess, cb));
+    const loaded = await p(cb => store.get('s1', cb)); // タブ A のリクエストが読み込み済み
+    await p(cb => store.destroy('s1', cb));            // タブ B で logout
+    store._cache.clear();
+    await p(cb => store.touch('s1', loaded, cb));      // タブ A のリクエスト終わり
+    expect(store._cache.has('s1')).toBe(false);
+    expect(await p(cb => store.get('s1', cb))).toBeNull();
+  });
+
+  test('否定キャッシュ中の sid には touch で書かない', async () => {
+    expect(await p(cb => store.get('ghost', cb))).toBeNull();
+    await p(cb => store.touch('ghost', sessWithMaxAge(60000), cb));
+    expect(mock.calls.filter(c => c.op === 'update').length).toBe(0);
+    expect(store._cache.has('ghost')).toBe(false);
+  });
+
+  test('否定キャッシュは本体キャッシュの枠を使わない', async () => {
+    store.maxCacheEntries = 1;
+    await p(cb => store.set('live', sessWithMaxAge(60000), cb));
+    for (const sid of ['x1', 'x2', 'x3']) await p(cb => store.get(sid, cb));
+    expect(store._cache.has('live')).toBe(true);
+  });
+
+  test('set が失敗したらキャッシュを消してエラーを返す', async () => {
+    await p(cb => store.set('s1', sessWithMaxAge(60000, { v: 1 }), cb));
+    mock.state.failNext = { message: 'boom' };
+    await expect(p(cb => store.set('s1', sessWithMaxAge(60000, { v: 2 }), cb))).rejects.toThrow(/set failed: boom/);
+    expect(store._cache.has('s1')).toBe(false);
   });
 
   test('get の select 待ちの間に set されたら、set の内容を古い読み取りで上書きしない（再認証直後の競合）', async () => {
