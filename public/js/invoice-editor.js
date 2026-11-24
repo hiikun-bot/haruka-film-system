@@ -295,6 +295,13 @@
     pickOpen: false, pickTimer: null,
   };
 
+  // 保存できていない変更があるままタブを閉じる・再読み込みするときはブラウザの確認を出す（ADR 046 追補 2026-11-24（3））
+  window.addEventListener('beforeunload', (e) => {
+    if (!ed.id || !(ed.dirty || ed.saving)) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+
   function overlay() {
     let el = document.getElementById('ie-overlay');
     if (!el) {
@@ -393,7 +400,7 @@
       <div class="ie-panel">
         <div class="ie-head">
           <div class="ie-title">請求書 ${h(inv.invoice_number)}<span class="ie-status" id="ie-status">（${statusText()}）</span></div>
-          <button type="button" class="ie-close" onclick="HFSInvoiceEditor.close()" title="閉じる（入力中の内容は保存されます）">×</button>
+          <button type="button" class="ie-close" onclick="HFSInvoiceEditor.close()" title="閉じる（入力中の内容は保存してから閉じます）">×</button>
         </div>
         ${ed.conflict ? `<div class="ie-banner">別の画面でこの請求書が更新されました。上書きしないよう保存を止めています。 <button type="button" class="btn btn-sm" onclick="HFSInvoiceEditor.reload()">再読み込み</button></div>` : ''}
         ${returnedBannerHtml(inv)}
@@ -1187,8 +1194,19 @@
   }
 
   async function close() {
-    if (ed.dirty && editable()) await save();
-    else if (ed.saving) await ed.saving;
+    if (ed.dirty && editable()) {
+      // 閉じる前に保存をやり直す。だめなら「破棄して閉じる」か「編集に戻る」を選んでもらう（入力を黙って捨てない）
+      const ok = await save();
+      if (ok === false && !ed.conflict && ed.dirty) {
+        const msg = '保存できていない変更があります。破棄して閉じますか？（「キャンセル」で編集に戻ります）';
+        const discard = typeof window.showConfirmDialog === 'function'
+          ? await window.showConfirmDialog({ title: '保存できていません', message: msg, okLabel: '破棄して閉じる', cancelLabel: '編集に戻る' })
+          : window.confirm(msg);
+        if (!discard) return;
+        clearTimeout(ed.timer);
+        ed.dirty = false;
+      }
+    } else if (ed.saving) await ed.saving;
     const el = document.getElementById('ie-overlay');
     if (el) { el.style.display = 'none'; el.innerHTML = ''; }
     document.body.style.overflow = '';
@@ -1207,6 +1225,14 @@
       if (first) first.scrollIntoView({ block: 'center' });
       return;
     }
+    // 単価・数量の欄に使えない文字が残っている（画面の表示と保存される値が違う）なら提出しない
+    const badInput = overlay().querySelector('input.ie-in-bad');
+    if (badInput) {
+      showToast('単価・数量に使えない文字が入っている欄があります（赤い枠）。直してから提出してください', 'warn', 6000);
+      badInput.scrollIntoView({ block: 'center' });
+      badInput.focus();
+      return;
+    }
     const t = totals();
     const ok = typeof window.showConfirmDialog === 'function'
       ? await window.showConfirmDialog({ title: '請求書を提出', message: `ご請求金額（税込）${yen(t.grand_total)}円${t.expense ? `（うち立替経費 ${yen(t.expense)}円）` : ''} / 差引お振込額 ${yen(t.payout)}円 で提出します。提出後は管理者の承認が必要です。`, okLabel: '提出する' })
@@ -1219,11 +1245,16 @@
       if (saved === false || ed.conflict) return;
       const res = await apiFetch(`${API}/invoice-editor/${encodeURIComponent(ed.id)}/submit`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expected_total: t.grand_total, expected_payout: t.payout, updated_at: ed.updatedAt }),
+        // 画面に出ている明細（id・単価・数量）も送る。サーバーは保存済みの明細と違えば 409 STALE_ITEMS で止める
+        body: JSON.stringify({
+          expected_total: t.grand_total, expected_payout: t.payout, updated_at: ed.updatedAt,
+          items: ed.rows.map(r => ({ id: r.id || null, unit_price: r.unit_price, quantity: r.quantity })),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (data.code === 'CONFLICT') { ed.conflict = true; render(); return; }
+        if (data.code === 'STALE_ITEMS') { showToast(data.error, 'warn', 8000); ed.dirty = true; await save(); return; }
         if (data.code === 'INVOICE_CHECK_FAILED' && Array.isArray(data.problems)) {
           ed.problems = new Map();
           const general = [];

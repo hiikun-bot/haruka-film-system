@@ -67,7 +67,13 @@ function mockBuilder(table) {
 // DB の関数 attach_invoice_item_receipt（migrations/2026-11-23b_...）の偽物。状態の確認と行の書き込みを一度に行う。
 //   mockDb.onRpc … 関数が走る直前に呼ぶ（「確認の直前に提出された」を再現する）
 //   mockDb.rpcMissing … 関数がまだ無い環境（PGRST202）
+// 保存・提出は DB の関数（ADR 046 追補 2026-11-24（3））。偽 DB の上で同じ意味に動かす
+const mockRpcFake = require('./helpers/invoice-editor-rpc-fake').createInvoiceEditorRpcFake({
+  rows: (t) => (mockDb.tables[t] || (mockDb.tables[t] = [])), setRows: (t, arr) => { mockDb.tables[t] = arr; },
+});
 async function mockRpc(name, args) {
+  const viaFake = mockRpcFake(name, args);
+  if (viaFake) return viaFake;
   if (name !== 'attach_invoice_item_receipt') return { data: null, error: null };
   mockDb.rpcCalls = (mockDb.rpcCalls || 0) + 1;
   if (mockDb.rpcMissing) return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.attach_invoice_item_receipt' } };
@@ -476,12 +482,9 @@ describe('保存（PUT）と提出', () => {
 
   test('読んだあとに写真が付け替えられていたら（条件付き更新が 0 件）書かずに知らせる', async () => {
     const up = await upload('ex1', JPEG);
-    // 保存の途中（明細の通常の更新のとき）に、別の端末が写真を差し替えた状況を再現する
-    mockDb.onUpdate = (table, payload) => {
-      if (table === 'invoice_items' && 'sort_order' in payload && !('receipt_status' in payload)) {
-        item('ex1').receipt_file_id = 'drv-other';
-        mockDb.onUpdate = null;
-      }
+    // 読み出したあと、保存の関数がロックを取る直前に、別の端末が写真を差し替えた状況を再現する
+    mockRpcFake.before = (name) => {
+      if (name === 'invoice_editor_save_draft') { item('ex1').receipt_file_id = 'drv-other'; mockRpcFake.before = null; }
     };
     const r = await putItems({ receipt_file_id: up.body.receipt_file_id, receipt_status: 'missing', receipt_missing_reason: 'x' });
     expect(r.status).toBe(200);
