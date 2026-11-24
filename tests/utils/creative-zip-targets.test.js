@@ -84,3 +84,32 @@ describe('lookupDriveSize', () => {
     expect(await lookupDriveSize(async () => ({ data: {} }), { sleep })).toEqual({ known: true, size: 0 });
   });
 });
+
+describe('createByteLimiter（実際の転送量で打ち切る）', () => {
+  const { createByteLimiter } = require('../../utils/creative-zip-targets');
+  const { Readable } = require('stream');
+  const drain = (src, lim) => new Promise((resolve) => {
+    const out = [];
+    lim.on('data', (c) => out.push(c));
+    lim.on('end', () => resolve(Buffer.concat(out)));
+    src.pipe(lim);
+  });
+  test('上限以内ならそのまま流し、ファイルをまたいで合計を数える', async () => {
+    const counter = { total: 0, exceeded: false };
+    const onExceed = jest.fn();
+    const a = await drain(Readable.from([Buffer.alloc(3), Buffer.alloc(2)]), createByteLimiter(counter, 10, onExceed));
+    const b = await drain(Readable.from([Buffer.alloc(5)]), createByteLimiter(counter, 10, onExceed));
+    expect(a.length + b.length).toBe(10);
+    expect(counter.total).toBe(10);
+    expect(onExceed).not.toHaveBeenCalled();
+  });
+  test('合計が上限を超えたら 1 回だけ知らせ、超えた分は流さない', async () => {
+    const counter = { total: 0, exceeded: false };
+    const onExceed = jest.fn();
+    const out = await drain(Readable.from([Buffer.alloc(6), Buffer.alloc(6), Buffer.alloc(6)]), createByteLimiter(counter, 10, onExceed));
+    expect(out.length).toBe(6);
+    expect(onExceed).toHaveBeenCalledTimes(1);
+    expect(onExceed).toHaveBeenCalledWith(12);
+    expect(counter.exceeded).toBe(true);
+  });
+});

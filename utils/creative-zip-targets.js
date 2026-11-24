@@ -110,4 +110,29 @@ async function lookupDriveSize(getMeta, { retries = 2, waitMs = 500, sleep = (ms
   }
 }
 
-module.exports = { PAGE_SIZE, fetchAllRows, pickLatestFileByCreative, summarizeZipTargets, isSizeKnown, isTransientDriveError, lookupDriveSize };
+/**
+ * ZIP に流す実際のバイト数を数える素通しストリーム。
+ * 事前の容量チェック（creative_files.file_size / Drive の size）は古い・不正確なことがあるので、
+ * 実際に流した合計が上限を超えた時点で onExceed を 1 回だけ呼ぶ（呼び出し側で転送を打ち切る）。
+ * 超えた分のデータは流さない。counter は全ファイルで共有する（{ total }）。
+ * @param {{ total: number }} counter
+ * @param {number} maxBytes
+ * @param {(total: number) => void} onExceed
+ */
+function createByteLimiter(counter, maxBytes, onExceed) {
+  const { Transform } = require('stream');
+  return new Transform({
+    transform(chunk, _enc, cb) {
+      if (counter.exceeded) return cb();
+      counter.total += chunk.length;
+      if (Number.isFinite(maxBytes) && counter.total > maxBytes) {
+        counter.exceeded = true;
+        try { onExceed(counter.total); } catch (_) {}
+        return cb();
+      }
+      cb(null, chunk);
+    },
+  });
+}
+
+module.exports = { PAGE_SIZE, fetchAllRows, pickLatestFileByCreative, summarizeZipTargets, isSizeKnown, isTransientDriveError, lookupDriveSize, createByteLimiter };

@@ -87,4 +87,37 @@ async function revokePublicRead(drive, fileId) {
   }
 }
 
-module.exports = { PERM_PROP, grantPublicRead, revokePublicRead };
+/**
+ * 登録確定時の共有付与。付けたあとで「その作品（同じファイルを使う外部作品）がまだ残っているか」を確かめ、
+ * 残っていなければ（付与と並んで削除された）付けた共有を外す。
+ *   削除（DELETE）は「論理削除 → 残り 0 件なら共有を外す」の順なので、付与がそのあとに終わると
+ *   削除後に共有だけが付いたまま残る。付与側でも後から確かめることで、どちらの順で終わっても共有は残らない。
+ * isStillUsed … async () => boolean。確認に失敗したら（throw）安全側で「残っていない」とみなして外す
+ *   （外れても閲覧はサムネ代理配信で続く）。
+ * @returns {Promise<{ ok: boolean, granted: boolean, revoked?: boolean, error?: string }>}
+ */
+async function grantPublicReadIfStillUsed(drive, fileId, isStillUsed, { retries = 2, waitMs = 300, sleep = (ms) => new Promise(r => setTimeout(r, ms)) } = {}) {
+  const g = await grantPublicRead(drive, fileId);
+  if (!g.ok) return { ok: false, granted: false, error: g.error };
+  // 一時的な失敗で生きている作品の共有を外さないよう、確認は数回やり直す。それでも分からなければ安全側で外す
+  let used = null;
+  for (let attempt = 0; attempt <= retries && used === null; attempt += 1) {
+    try { used = !!(await isStillUsed()); } catch (e) {
+      if (attempt < retries) { await sleep(waitMs * (attempt + 1)); continue; }
+      console.warn('[portfolio/external/share] 作品の残りの確認に失敗（共有を外す）:', fileId, e?.message || e);
+      used = false;
+    }
+  }
+  if (used) return { ok: true, granted: true, revoked: false };
+  // 外すのも一時的な失敗ならやり直す（外せないと削除済みの作品のファイルが公開のまま残る）
+  let r;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    r = await revokePublicRead(drive, fileId);
+    if (r.ok) break;
+    if (attempt < retries) await sleep(waitMs * (attempt + 1));
+  }
+  if (!r.ok) return { ok: false, granted: true, revoked: false, error: r.error };
+  return { ok: true, granted: true, revoked: true };
+}
+
+module.exports = { PERM_PROP, grantPublicRead, revokePublicRead, grantPublicReadIfStillUsed };

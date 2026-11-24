@@ -145,3 +145,41 @@ describe('diffAssignmentInput（PUT の担当者入力を今の担当行と比�
     expect(P.diffAssignmentInput({}, current, 'me')).toEqual({ changed: [], selfAdds: [] });
   });
 });
+
+describe('normId / sameId（本人判定の ID 正規化）', () => {
+  test('文字列化して前後の空白を落とす。空は null', () => {
+    expect(P.normId(' u1 ')).toBe('u1');
+    expect(P.normId(12)).toBe('12');
+    expect(P.normId('  ')).toBeNull();
+    expect(P.normId(null)).toBeNull();
+    expect(P.sameId(' u1', 'u1 ')).toBe(true);
+    expect(P.sameId(null, null)).toBe(false);
+  });
+  test('案件の D/P・チームのリーダー・差分判定も正規化して比べる', () => {
+    expect(P.isProjectLeader({ director_id: 'dir ' }, ' dir')).toBe(true);
+    expect(P.isProjectLeader({ sub_director_ids: [' subd'] }, 'subd')).toBe(true);
+    expect(P.isTeamLeader({ producer_id: 'p1' }, ' p1 ')).toBe(true);
+    const d = P.diffAssignmentInput({ assignee_id: ' ed ', director_ids: ['dir '] },
+      { assignments: [{ user_id: 'ed', role: 'editor' }, { user_id: 'dir', role: 'director' }] }, 'ed');
+    expect(d).toEqual({ changed: [], selfAdds: [] });
+    const d2 = P.diffAssignmentInput({ director_ids: [' me '] }, { assignments: [] }, 'me');
+    expect(d2.selfAdds).toEqual(['director']);
+  });
+});
+
+describe('planAssignmentSync（担当行の差分だけ書く）', () => {
+  const rows = [{ id: 'r1', user_id: 'a' }, { id: 'r2', user_id: 'b' }];
+  test('顔ぶれが同じなら何も書かない（順番・重複・空白は無視）', () => {
+    expect(P.planAssignmentSync(rows, ['b ', 'a', 'a', ''])).toEqual({ insertUserIds: [], deleteRowIds: [], changed: false });
+  });
+  test('足す人・外す人だけ', () => {
+    expect(P.planAssignmentSync(rows, ['a', 'c'])).toEqual({ insertUserIds: ['c'], deleteRowIds: ['r2'], changed: true });
+  });
+  test('空なら全員外す', () => {
+    expect(P.planAssignmentSync(rows, [])).toEqual({ insertUserIds: [], deleteRowIds: ['r1', 'r2'], changed: true });
+  });
+  test('同じ人の重複行は 1 行に寄せる（最初の行を残す）', () => {
+    expect(P.planAssignmentSync([{ id: 'r1', user_id: 'a' }, { id: 'r9', user_id: 'a' }], ['a']))
+      .toEqual({ insertUserIds: [], deleteRowIds: ['r9'], changed: true });
+  });
+});
