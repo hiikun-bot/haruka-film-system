@@ -28015,16 +28015,29 @@ async function streamDriveFilesAsZip(res, targets, zipName, logTag) {
   const archiver = require('archiver');
   // store（無圧縮）: 動画・画像は既に圧縮済みなので CPU を使っても縮まない
   const archive = archiver('zip', { zlib: { level: 0 }, store: true });
+  // 途中でやめる条件: ダウンロードが中断された（タブを閉じた等）/ ZIP 自体が壊れた。
+  // これを見ずにループを続けると、読まれない Drive ストリームの end を永遠に待って固まる。
+  let stopped = false;
+  let current = null; // 取り出し中の Drive ストリーム
+  const stop = (why) => {
+    if (stopped) return;
+    stopped = true;
+    console.warn(`[${logTag}] 中断: ${why}`);
+    try { current?.destroy(new Error(why)); } catch (_) {}
+  };
   archive.on('warning', err => console.warn(`[${logTag}] warning:`, err.message));
   archive.on('error', err => {
     console.error(`[${logTag}] archive error:`, err.message);
+    stop('archive error');
     res.destroy();
   });
+  res.on('close', () => { if (!res.writableFinished) stop('client closed'); });
   archive.pipe(res);
 
   const drive = await getDriveService();
   const used = new Set();
   for (const t of targets) {
+    if (stopped) break;
     // 同名衝突は連番で回避（同じ作品の別バージョン等）
     let entry = `${t.folder}/${t.downloadName}`;
     if (used.has(entry)) {
@@ -28033,24 +28046,43 @@ async function streamDriveFilesAsZip(res, targets, zipName, logTag) {
       while (used.has(entry)) { entry = `${t.folder}/${m[1]}_${i}${m[2] || ''}`; i += 1; }
     }
     used.add(entry);
+    // Drive の応答（ヘッダー）を受けてから ZIP に足す。開けなかったファイル（削除済み等）は
+    // 中身の代わりに「取得失敗」のメモを入れて次へ進む（ここまでは ZIP は壊れない）。
+    let stream;
     try {
-      const stream = await drive.files.get(
+      stream = await drive.files.get(
         { fileId: t.drive_file_id, alt: 'media', supportsAllDrives: true },
         { responseType: 'stream' }
       );
-      archive.append(stream.data, { name: entry });
+    } catch (e) {
+      if (stopped) break;
+      console.warn(`[${logTag}] 取得失敗（スキップ）:`, t.drive_file_id, e.message);
+      archive.append(`このファイルは取得できませんでした: ${t.downloadName}\n${e.message}\n`,
+        { name: `${t.folder}/_取得失敗_${portfolioSafePath(t.downloadName)}.txt` });
+      continue;
+    }
+    if (stopped) { try { stream.data.destroy(); } catch (_) {} break; }
+    current = stream.data;
+    archive.append(stream.data, { name: entry });
+    try {
       // 1件ずつ流し終えてから次へ（同時に何本も Drive から引かない）
       await new Promise((resolve, reject) => {
         stream.data.on('end', resolve);
         stream.data.on('error', reject);
+        stream.data.on('close', resolve); // 中断で destroy されたとき end が来ないため
       });
     } catch (e) {
-      console.warn(`[${logTag}] 取得失敗（スキップ）:`, t.drive_file_id, e.message);
-      archive.append(`このファイルは取得できませんでした: ${t.downloadName}\n${e.message}\n`,
-        { name: `${t.folder}/_取得失敗_${portfolioSafePath(t.downloadName)}.txt` });
+      // 流している途中で切れたファイルは ZIP の中で壊れているので、ここで打ち切る
+      console.warn(`[${logTag}] 転送途中で失敗（打ち切り）:`, t.drive_file_id, e.message);
+      stop('drive stream error');
+      res.destroy();
+      break;
+    } finally {
+      current = null;
     }
   }
-  await archive.finalize();
+  if (!stopped) await archive.finalize();
+  else { try { archive.abort(); } catch (_) {} }
 }
 
 // ==================== クリエイティブ一覧: 案件ごとにまとめてダウンロード（#854 置き換え） ====================
@@ -28110,9 +28142,29 @@ async function loadCreativeZipTargets(creativeIds) {
       folder: portfolioSafePath([c.projects?.clients?.name, c.projects?.name].filter(Boolean).join('_') || 'クリエイティブ'),
     });
   }
+  // creative_files.file_size はキャッシュで、古い行は NULL のことが多い。NULL を 0 と数えると
+  // 1GB 上限が素通りになるので、足りない分だけ Drive にサイズを聞く（10 件ずつ並列）。
+  const missing = targets.filter(t => !(Number(t.file_size) > 0));
+  if (missing.length > 0) {
+    const drive = await getDriveService();
+    for (let i = 0; i < missing.length; i += 10) {
+      await Promise.all(missing.slice(i, i + 10).map(async (t) => {
+        try {
+          const meta = await drive.files.get({ fileId: t.drive_file_id, fields: 'size', supportsAllDrives: true });
+          const n = Number(meta.data.size);
+          if (n > 0) t.file_size = n;
+          else t.size_unknown = true;
+        } catch (_) {
+          t.size_unknown = true; // 削除済み等。ZIP では「取得失敗」メモになる
+        }
+      }));
+    }
+  }
   targets.sort((a, b) => a.folder.localeCompare(b.folder, 'ja') || a.downloadName.localeCompare(b.downloadName, 'ja'));
   return targets;
 }
+
+const CREATIVE_ZIP_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // GET /api/haruka/creatives-download-zip?ids=<creative_id>,...[&check=1][&name=<ZIP名>]
 //   check=1 → ダウンロード前の確認用 JSON（件数・合計容量・上限超過か）。画面は apiFetch でこれを叩いてから遷移する
@@ -28121,7 +28173,7 @@ async function loadCreativeZipTargets(creativeIds) {
 router.get('/creatives-download-zip', requireAuth, async (req, res) => {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
   try {
-    const ids = [...new Set(String(req.query.ids || '').split(',').map(s => s.trim()).filter(Boolean))];
+    const ids = [...new Set(String(req.query.ids || '').split(',').map(s => s.trim()).filter(s => CREATIVE_ZIP_UUID_RE.test(s)))];
     if (!ids.length) return res.status(400).json({ error: 'ダウンロードするクリエイティブがありません' });
     if (ids.length > CREATIVE_ZIP_MAX_CREATIVES) {
       return res.status(400).json({ error: `一度にまとめてダウンロードできるのは ${CREATIVE_ZIP_MAX_CREATIVES} 件までです。期間やステータスで絞り込んでから押してください` });
@@ -28136,6 +28188,7 @@ router.get('/creatives-download-zip', requireAuth, async (req, res) => {
       total_bytes: totalBytes,
       max_bytes: CREATIVE_ZIP_MAX_BYTES,
       too_large: tooLarge,
+      unreadable: targets.filter(t => t.size_unknown).length, // Drive で開けなかった（削除済み等）
     };
     if (String(req.query.check || '') === '1') return res.json(summary);
     if (!targets.length) return res.status(404).json({ error: 'ダウンロードできるファイルがありません（まだアップロードされていません）' });

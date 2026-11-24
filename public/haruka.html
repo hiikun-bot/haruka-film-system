@@ -16337,7 +16337,10 @@ function renderCreatives() {
     tbody.innerHTML = ordered.map(g => {
       // 案件別のときだけ「⬇ まとめてDL」（案件の表示中クリエイティブの最新版を ZIP で）
       const zipBtn = !['assignee', 'client', 'team'].includes(currentCreativeGroup)
-        ? cvGroupZipButtonHtml(g.items.map(c => c?.id), String(g.label || '').replace(/\s*\/\s*/, '_'), 'cv-list-zip-btn')
+        ? cvGroupZipButtonHtml(
+            g.items.map(c => c?.id),
+            [g.items[0]?.projects?.clients?.name, g.items[0]?.projects?.name].filter(Boolean).join('_'),
+            'cv-list-zip-btn')
         : '';
       const head = `<tr class="cv-list-group-head"><td colspan="${GROUP_COLSPAN}" style="background:var(--em-pale,#f6f0ff);padding:8px 12px;font-size:12px;font-weight:700;color:var(--em-dark,#5E35B1);border-top:0.5px solid var(--border);border-bottom:0.5px solid var(--border);letter-spacing:.04em">${esc(g.label)} <span style="color:var(--text-muted);font-weight:500;margin-left:6px">(${g.items.length}件)</span>${zipBtn}</td></tr>`;
       // ヘッダー列フィルターの昇順/降順はグループ内で適用（グループ見出しの並びは名称順のまま）
@@ -27384,6 +27387,30 @@ function cvGroupZipButtonHtml(ids, label, cls) {
     title="表示中の ${list.length} 件の最新版をまとめて ZIP でダウンロードします（絞り込みはそのまま反映）">⬇ まとめてDL</button>`;
 }
 
+// ZIP 本体は隠し iframe に読み込ませてダウンロードする。
+// ページ遷移（location.href）だと、万一サーバーがエラー（JSON）を返したときに画面ごと JSON に置き換わり、
+// 絞り込み等の状態が消えるため。ダウンロードはブラウザのダウンロードに直接流れる（メモリに載せない）。
+// エラー時だけ iframe に JSON が表示される → load で読み取ってトーストに出す（同一オリジンなので読める）。
+function cvStartZipDownload(url) {
+  let frame = document.getElementById('cv-zip-dl-frame');
+  if (!frame) {
+    frame = document.createElement('iframe');
+    frame.id = 'cv-zip-dl-frame';
+    frame.style.display = 'none';
+    frame.addEventListener('load', () => {
+      try {
+        const text = frame.contentDocument?.body?.innerText || '';
+        if (!text) return;
+        let msg = text;
+        try { msg = JSON.parse(text)?.error || text; } catch (_) {}
+        showToast('まとめてダウンロードできませんでした: ' + translateError(String(msg).slice(0, 200)), 'error');
+      } catch (_) {}
+    });
+    document.body.appendChild(frame);
+  }
+  frame.src = url;
+}
+
 async function cvDownloadGroupZip(btn) {
   const ids = String(btn?.dataset?.ids || '').split(',').filter(Boolean);
   if (!ids.length) return;
@@ -27403,11 +27430,11 @@ async function cvDownloadGroupZip(btn) {
       alert(`まとめてダウンロードできません\n\n合計 ${sizeText} あり、上限（1GB）を超えています。\n期間やステータスで絞り込んで、分けてダウンロードしてください。\n（大きい動画は詳細画面の「📁 フォルダ」や個別のダウンロードを使ってください）`);
       return;
     }
-    const skip = j.without_file > 0 ? `\n※ ファイル未アップロードの ${j.without_file} 件は含まれません` : '';
+    let skip = j.without_file > 0 ? `\n※ ファイル未アップロードの ${j.without_file} 件は含まれません` : '';
+    if (j.unreadable > 0) skip += `\n※ Drive で開けなかった ${j.unreadable} 件は「取得失敗」のメモになります`;
     if (!confirm(`${j.files} 件（合計 約${sizeText}）を ZIP でダウンロードします。\n各クリエイティブの最新版の原本が入ります。${skip}`)) return;
     showToast('ダウンロードを開始しました（ZIP の作成に少し時間がかかります）', 'success');
-    // ブラウザのナビゲーションで直接ディスクへ流す（fetch→blob だと大きいファイルがメモリに載る）
-    window.location.href = `${API}/creatives-download-zip?${qs}`;
+    cvStartZipDownload(`${API}/creatives-download-zip?${qs}`);
   } catch (e) {
     showToast('ダウンロードの準備に失敗しました: ' + (e?.message || e), 'error');
   } finally {
