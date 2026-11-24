@@ -30239,6 +30239,112 @@ router.get('/admin/payouts/default-month', requireAuth, requirePermission('payou
   }
 });
 
+// GET /api/haruka/admin/payouts/cross-duplicates?year=2026&month=10
+// 人をまたいだ二重請求の疑い（utils/invoice-cross-duplicate.js）。知らせるだけで提出・振込は止めない。
+// 対象月の提出済み・承認済みの HFS 請求書と、相手として直近 3 か月前までの請求書を見る（Drive に PDF だけ置いた請求は対象外）。
+const CROSS_DUP_LOOKBACK_MONTHS = 3;
+router.get('/admin/payouts/cross-duplicates', requireAuth, requirePermission('payout.page'), async (req, res) => {
+  try {
+    const ym = payoutParseYearMonth(req.query.year, req.query.month);
+    if (!ym) return res.status(400).json({ error: 'year / month を正しく指定してください' });
+    const XD = require('../utils/invoice-cross-duplicate');
+    const IE = require('../utils/invoice-editor');
+    const months = XD.lookbackMonths(ym.year, ym.month, CROSS_DUP_LOOKBACK_MONTHS);
+    // PostgREST の 1 回 1000 行上限で黙って切れないよう、全件をページングで読む
+    const PAGE = 1000;
+    const fetchAll = async (build) => {
+      const out = [];
+      for (let offset = 0; ; offset += PAGE) {
+        const { data, error } = await build().range(offset, offset + PAGE - 1);
+        if (error) throw new Error(error.message);
+        out.push(...(data || []));
+        if (!data || data.length < PAGE) return out;
+      }
+    };
+
+    // メンバー請求書だけ（クライアント宛ての請求書は同じ CR・base_fee の行を持つので混ぜない）。月ごとに絞って読む
+    const invs = [];
+    for (const m of months) {
+      invs.push(...await fetchAll(() => onlyMemberInvoices(supabase
+        .from('invoices')
+        .select('id, invoice_number, issuer_id, year, month, status, invoice_type')
+        .in('status', IE.BILLED_STATUSES)
+        .eq('year', m.year).eq('month', m.month))
+        .order('id')));
+    }
+    const invById = new Map(invs.filter(v => v.issuer_id).map(v => [v.id, v]));
+
+    // 明細は請求書 ID を 100 件ずつ（URL 長対策）＋各かたまりもページング
+    const invIds = Array.from(invById.keys());
+    const rawItems = [];
+    for (let k = 0; k < invIds.length; k += 100) {
+      const ids = invIds.slice(k, k + 100);
+      rawItems.push(...await fetchAll(() => supabase
+        .from('invoice_items')
+        .select('id, invoice_id, creative_id, cost_type, label, creative_label, manual_reason, unit_price, quantity, total_amount')
+        .in('invoice_id', ids)
+        .order('id')));
+    }
+
+    // CR 名（請求書の行に名前が無い古い行の補完・HFS外の行との照合に使う）
+    const crIds = Array.from(new Set(rawItems.map(it => it.creative_id).filter(Boolean)));
+    const crName = new Map();
+    for (let k = 0; k < crIds.length; k += 100) {
+      const { data, error } = await supabase.from('creatives').select('id, file_name').in('id', crIds.slice(k, k + 100));
+      if (error) throw new Error(error.message);
+      for (const c of (data || [])) crName.set(c.id, c.file_name || '');
+    }
+
+    const { data: users, error: uErr } = await supabase.from('users').select('id, full_name, nickname');
+    if (uErr) throw new Error(uErr.message);
+    const usersById = new Map((users || []).map(u => [u.id, u]));
+
+    const items = rawItems.map(it => {
+      const inv = invById.get(it.invoice_id);
+      return {
+        ...it,
+        invoice_number: inv.invoice_number,
+        issuer_id: inv.issuer_id,
+        year: inv.year,
+        month: inv.month,
+        creative_name: it.creative_id ? (crName.get(it.creative_id) || it.creative_label || '') : '',
+      };
+    });
+    const findings = XD.findCrossMemberDuplicates({ items, year: ym.year, month: ym.month, usersById });
+
+    const view = (it) => it && ({
+      item_id: it.id,
+      invoice_id: it.invoice_id,
+      invoice_number: it.invoice_number,
+      issuer_id: it.issuer_id,
+      issuer_label: formatUserLabel(usersById.get(it.issuer_id)),
+      year: it.year,
+      month: it.month,
+      label: it.creative_id ? (it.creative_name || it.creative_label || it.label || '') : (it.label || it.creative_label || ''),
+      role_label: it.creative_id ? (XD.COST_TYPE_LABELS[it.cost_type] || '') : 'HFS外',
+      manual_reason: it.creative_id ? null : (it.manual_reason || null),
+      amount: XD.itemAmount(it),
+    });
+    res.json({
+      year: ym.year,
+      month: ym.month,
+      lookback_months: CROSS_DUP_LOOKBACK_MONTHS,
+      invoice_count: invById.size,
+      findings: findings.map(f => ({
+        level: f.level,
+        reason: f.reason,
+        a: view(f.a),
+        b: view(f.b),
+        b_issuer_id: f.b_issuer_id,
+        b_issuer_label: formatUserLabel(usersById.get(f.b_issuer_id)),
+      })),
+    });
+  } catch (e) {
+    console.error('[payouts][GET cross-duplicates]', e);
+    res.status(500).json({ error: e.message || '二重請求の確認に失敗しました' });
+  }
+});
+
 // POST /api/haruka/admin/payouts/scan { year, month } — Drive スキャンを実行して最新一覧を返す
 // （画面はまず scan=0 で即描画し、このエンドポイントをバックグラウンドで叩いて差分反映する）
 router.post('/admin/payouts/scan', requireAuth, requirePermission('payout.page'), async (req, res) => {
