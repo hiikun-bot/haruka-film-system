@@ -70,3 +70,79 @@ describe('safeFetch', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 });
+
+// DNS rebinding 対策（#1198 レビュー対応）: 事前判定のあとに DNS の答えが内部アドレスへ変わっても、
+// 実際の接続に使う名前解決（lookup）で止まること
+describe('createSafeLookup（接続時の名前解決）', () => {
+  const { createSafeLookup } = require('../../utils/safe-outbound-url');
+  const call = (lookup, host, opts) => new Promise((resolve) => {
+    lookup(host, opts, (err, address, family) => resolve({ err, address, family }));
+  });
+  test('外部アドレスだけなら通す（all:true / 1 件の両方）', async () => {
+    const lookup = createSafeLookup(async () => [{ address: '93.184.216.34', family: 4 }, { address: '2606:2800:220:1::1', family: 6 }]);
+    const all = await call(lookup, 'example.com', { all: true });
+    expect(all.err).toBeNull();
+    expect(all.address).toEqual([{ address: '93.184.216.34', family: 4 }, { address: '2606:2800:220:1::1', family: 6 }]);
+    const one = await call(lookup, 'example.com', {});
+    expect(one).toMatchObject({ err: null, address: '93.184.216.34', family: 4 });
+    const v6 = await call(lookup, 'example.com', 6);
+    expect(v6).toMatchObject({ err: null, address: '2606:2800:220:1::1', family: 6 });
+  });
+  test.each(['10.0.0.5', '127.0.0.1', '169.254.169.254', '::1', '::ffff:10.0.0.1'])('接続先が %s なら断る', async (ip) => {
+    const lookup = createSafeLookup(async () => [{ address: '93.184.216.34', family: 4 }, { address: ip, family: ip.includes(':') ? 6 : 4 }]);
+    const r = await call(lookup, 'rebind.example.com', { all: true });
+    expect(r.err).toMatchObject({ code: 'blocked_url' });
+  });
+  test('名前解決できなければ断る', async () => {
+    const lookup = createSafeLookup(async () => { throw new Error('ENOTFOUND'); });
+    expect((await call(lookup, 'nope.example.com', {})).err).toMatchObject({ code: 'blocked_url' });
+  });
+});
+
+describe('pinnedFetch / safeFetch（実際の接続）', () => {
+  const http = require('http');
+  const zlib = require('zlib');
+  const { createSafeLookup, pinnedFetch } = require('../../utils/safe-outbound-url');
+  let server; let port; let hits = 0;
+  beforeAll(async () => {
+    server = http.createServer((req, res) => {
+      hits += 1;
+      if (req.url === '/gz') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-encoding': 'gzip' });
+        res.end(zlib.gzipSync('<title>圧縮</title>'));
+        return;
+      }
+      if (req.url === '/redirect') { res.writeHead(302, { location: '/plain' }); res.end(); return; }
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<title>ok</title>');
+    });
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    port = server.address().port;
+  });
+  afterAll(() => new Promise(r => server.close(r)));
+  // テストでは 127.0.0.1 のローカルサーバーへ繋ぐため、許可する lookup を渡す
+  const allowLocal = (host, opts, cb) => (opts && opts.all ? cb(null, [{ address: '127.0.0.1', family: 4 }]) : cb(null, '127.0.0.1', 4));
+
+  test('Response 形で返し、本文を読める（gzip も展開する）', async () => {
+    const r = await pinnedFetch(`http://site.test:${port}/gz`, { headers: { 'User-Agent': 'jest' } }, { lookup: allowLocal });
+    expect(r.ok).toBe(true);
+    expect(r.headers.get('content-type')).toContain('text/html');
+    expect(await r.text()).toBe('<title>圧縮</title>');
+  });
+  test('リダイレクトは追わずにそのまま返す（safeFetch が行き先を確かめて追う）', async () => {
+    const r = await pinnedFetch(`http://site.test:${port}/redirect`, {}, { lookup: allowLocal });
+    expect(r.status).toBe(302);
+    expect(r.headers.get('location')).toBe('/plain');
+  });
+  test('接続時の名前解決が内部アドレスなら、リクエストを送らずに断る', async () => {
+    const before = hits;
+    const lookup = createSafeLookup(async () => [{ address: '127.0.0.1', family: 4 }]);
+    await expect(pinnedFetch(`http://site.test:${port}/plain`, {}, { lookup })).rejects.toMatchObject({ code: 'blocked_url' });
+    expect(hits).toBe(before);
+  });
+  test('safeFetch: 事前判定は外部でも、接続時に内部へ変わったら断る（DNS rebinding）', async () => {
+    const precheck = async () => [{ address: '93.184.216.34', family: 4 }];
+    const connectLookup = createSafeLookup(async () => [{ address: '10.0.0.5', family: 4 }]);
+    await expect(safeFetch('https://rebind.example.com/', {}, { lookup: precheck, connectLookup })).rejects.toMatchObject({ code: 'blocked_url' });
+  });
+});
