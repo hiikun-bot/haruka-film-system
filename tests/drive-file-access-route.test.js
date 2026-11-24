@@ -32,7 +32,18 @@ function mockBuilder(table) {
     if (st.limit != null) rows = rows.slice(0, st.limit);
     return { data: rows, error: null, count: rows.length };
   };
-  const likeRe = (pat) => new RegExp('^' + pat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.') + '$');
+  // Postgres の LIKE（既定エスケープ \）: \x は文字そのもの、% は任意列、_ は任意 1 文字
+  const likeRe = (pat) => {
+    let re = '';
+    for (let i = 0; i < pat.length; i += 1) {
+      const c = pat[i];
+      if (c === '\\' && i + 1 < pat.length) { i += 1; re += pat[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+      else if (c === '%') re += '.*';
+      else if (c === '_') re += '.';
+      else re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp(`^${re}$`);
+  };
   const b = new Proxy({}, {
     get(_t, prop) {
       if (prop === 'then') return (res, rej) => Promise.resolve(run()).then(res, rej);
@@ -89,7 +100,10 @@ const mockDrive = {
         const f = mockDrive.files.get(fileId);
         if (!f) { const e = new Error('File not found'); e.code = 404; throw e; }
         if (alt === 'media') return { data: require('stream').Readable.from([f.bytes || Buffer.from('x')]) };
-        return { data: { id: f.id, parents: f.parents || [], mimeType: f.mimeType, size: '1', webViewLink: `https://drive.google.com/file/d/${f.id}/view` } };
+        return { data: {
+          id: f.id, parents: f.parents || [], mimeType: f.mimeType, size: '1', appProperties: f.appProperties,
+          createdTime: f.createdTime || new Date().toISOString(), webViewLink: `https://drive.google.com/file/d/${f.id}/view`,
+        } };
       },
     },
     permissions: {
@@ -136,6 +150,7 @@ beforeEach(() => {
     ['f-invoices', { id: 'f-invoices', name: '請求書', parents: ['root'], mimeType: 'application/vnd.google-apps.folder' }],
     [INVOICE_ID, { id: INVOICE_ID, name: 'invoice.pdf', parents: ['f-invoices'], mimeType: 'application/pdf' }],
     [VIDEO_ID, { id: VIDEO_ID, name: 'a.mp4', parents: ['f-type'], mimeType: 'video/mp4' }],
+    [PDF_CR_ID, { id: PDF_CR_ID, name: 'c.pdf', parents: ['f-type'], mimeType: 'application/pdf' }],
   ]);
   mockDb.tables = {
     system_settings: [{ key: 'drive_root_folder_id', value: 'root' }],
@@ -199,10 +214,29 @@ describe('GET /files/:fileId/direct-url', () => {
   });
 
   test('クリエイティブが存在しない（消えた）ファイル行は 404', async () => {
-    mockDb.tables.creatives = [];
-    const r = await fetch(`${base}/files/${VIDEO_ID}/direct-url`);
+    mockDb.tables.creative_files.push({ id: 'cf9', creative_id: 'gone', drive_file_id: 'orphanRow0123456789', generated_name: 'z.mp4', mime_type: 'video/mp4' });
+    const r = await fetch(`${base}/files/orphanRow0123456789/direct-url`);
     expect(r.status).toBe(404);
     expect(mockDrive.granted).toEqual([]);
+  });
+
+  test('mime_type が application/octet-stream でも拡張子が動画なら返す', async () => {
+    mockDb.tables.creative_files.push({ id: 'cf10', creative_id: 'cr1', drive_file_id: 'mkvFile012345678901', generated_name: 's_v2.mkv', mime_type: 'application/octet-stream' });
+    const r = await fetch(`${base}/files/mkvFile012345678901/direct-url`);
+    expect(r.status).toBe(200);
+  });
+
+  test('拡張子でも DB でも分からなければ Drive の種類で判定し、Drive に無ければ 404', async () => {
+    mockDb.tables.creative_files.push({ id: 'cf11', creative_id: 'cr1', drive_file_id: 'noExtFile0123456789', generated_name: 'noext', mime_type: null });
+    const r = await fetch(`${base}/files/noExtFile0123456789/direct-url`);
+    expect(r.status).toBe(404);
+    expect(mockDrive.granted).toEqual([]);
+  });
+
+  test('旧行の drive_url 検索で _ をワイルドカード扱いしない（別 ID の旧行に当たらない）', async () => {
+    mockDb.tables.creative_files.push({ id: 'cf12', creative_id: 'cr1', drive_file_id: null, drive_url: 'https://drive.google.com/file/d/abXcdefghij012/view', generated_name: 'w.mp4' });
+    const r = await fetch(`${base}/files/ab_cdefghij012/direct-url`);
+    expect(r.status).toBe(404);
   });
 
   test('ID の形が不正なら 404', async () => {
@@ -220,6 +254,10 @@ describe('GET /files/:fileId/stream', () => {
     const r = await fetch(`${base}/files/${INVOICE_ID}/stream`);
     expect(r.status).toBe(404);
   });
+  test('画質変換（transcode）もクリエイティブのファイルでない ID は 404', async () => {
+    const r = await fetch(`${base}/files/${INVOICE_ID}/stream/transcode?height=720`);
+    expect([404, 503]).toContain(r.status); // ffmpeg が無い環境は 503（その場合も中身は返さない）
+  });
 });
 
 describe('POST /creatives/:id/upload-session/complete', () => {
@@ -227,7 +265,33 @@ describe('POST /creatives/:id/upload-session/complete', () => {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
 
-  test('案件フォルダ配下にアップロードしたファイルは登録・公開設定される', async () => {
+  test('init でこのクリエイティブ用の目印が付いたファイルは登録・公開設定される（案件名が変わっていても）', async () => {
+    mockDrive.files.set('taggedUpload0123456', { id: 'taggedUpload0123456', name: 'v.mp4', parents: ['somewhere-else'], mimeType: 'video/mp4', appProperties: { hfs_creative_id: 'cr1' } });
+    const r = await post({ driveFileId: 'taggedUpload0123456', version: 9, generated_name: 'cr1_v9.mp4', mimeType: 'video/mp4' });
+    expect(r.status).toBe(200);
+    expect(mockDrive.granted.map(g => g.fileId)).toEqual(['taggedUpload0123456']);
+  });
+
+  test('別のクリエイティブ用の目印のファイルは 403', async () => {
+    mockDrive.files.set('otherTagged01234567', { id: 'otherTagged01234567', name: 'v.mp4', parents: ['f-type'], mimeType: 'video/mp4', appProperties: { hfs_creative_id: 'cr2' } });
+    const r = await post({ driveFileId: 'otherTagged01234567', version: 9, generated_name: 'x.mp4' });
+    expect(r.status).toBe(403);
+    expect(mockDrive.granted).toEqual([]);
+  });
+
+  test('目印なしで案件フォルダ配下でも、既に登録済み（他のクリエイティブのファイル）なら 403', async () => {
+    const r = await post({ driveFileId: VIDEO_ID, version: 9, generated_name: 'x.mp4' });
+    expect(r.status).toBe(403);
+    expect(mockDrive.granted).toEqual([]);
+  });
+
+  test('目印なしで案件フォルダ配下でも、24 時間より前に作られたファイルは 403', async () => {
+    mockDrive.files.set('oldUntagged01234567', { id: 'oldUntagged01234567', name: 'v.mp4', parents: ['f-type'], mimeType: 'video/mp4', createdTime: '2020-01-01T00:00:00Z' });
+    const r = await post({ driveFileId: 'oldUntagged01234567', version: 9, generated_name: 'x.mp4' });
+    expect(r.status).toBe(403);
+  });
+
+  test('目印なし（変更前に始まったアップロード）でも案件フォルダ配下の新しいファイルは登録される', async () => {
     const r = await post({ driveFileId: 'uploadedVideo0123456', version: 9, generated_name: 'cr1_v9.mp4', mimeType: 'video/mp4' });
     expect(r.status).toBe(200);
     expect(mockDrive.granted.map(g => g.fileId)).toEqual(['uploadedVideo0123456']);

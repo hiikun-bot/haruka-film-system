@@ -6,11 +6,17 @@
 //   受け取った ID が本当にクリエイティブのファイルかを確かめてから処理するための部品。
 //   Drive / DB に触る部分は呼び出し側（routes/haruka.js）が持ち、ここは判定だけ。
 
-// Drive のファイル ID として受け付ける形（英数字・_・-）。LIKE や URL に混ぜても安全な文字だけ。
+// Drive のファイル ID として受け付ける形（英数字・_・-）。URL に混ぜても安全な文字だけ。
+// ※ _ は LIKE の 1 文字ワイルドカードなので、LIKE に使うときは escapeLikePattern を通す。
 const DRIVE_FILE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
 
 function isValidDriveFileId(id) {
   return typeof id === 'string' && DRIVE_FILE_ID_RE.test(id);
+}
+
+// LIKE パターン用のエスケープ（\ % _ を文字として扱う。Postgres の既定エスケープ文字は \）
+function escapeLikePattern(s) {
+  return String(s).replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
 const EXT_MIME = {
@@ -60,6 +66,7 @@ async function isDriveFileUnderFolder(drive, fileId, ancestorId, maxDepth = 6) {
 
 module.exports = {
   isValidDriveFileId,
+  escapeLikePattern,
   guessMimeFromName,
   isPlayableMime,
   driveUrlHasFileId,
