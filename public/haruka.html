@@ -47868,6 +47868,8 @@ async function openCreativeDetail(id) {
     const pn = document.getElementById('cd-project-name'); if (pn) pn.textContent = '';
     const as = document.getElementById('cd-assignee');     if (as) as.textContent = '';
     const bh = document.getElementById('cd-ball-holder');  if (bh) { bh.style.display = 'none'; bh.innerHTML = ''; }
+    // 🗑 削除ボタンは前回開いた CR の判定が残らないよう、開いた直後に一旦隠す（再表示は refreshCreativeDeleteButton）
+    const db = document.getElementById('cd-delete-btn');   if (db) db.style.display = 'none';
   } catch (_) {}
 
   // 1.5) extras（files / rounds / custom-fields値）の fetch を payload と同時に発射する。
