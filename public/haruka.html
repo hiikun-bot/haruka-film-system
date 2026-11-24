@@ -2742,6 +2742,7 @@ input::placeholder,textarea::placeholder{color:#bfc8cc}
 <!-- リアクションの定義（基本 5 種 👍 ❤️ 👏 😊 😳 ＋ つぶやき用の拡張パレット 🤣 🔥 🎉 …。utils/reactions.js を server.js が配信）。つぶやき・作品ギャラリーで共通。インラインJSが参照するため defer なし -->
 <script src="/js/reactions.js"></script>
 <script src="/js/member-portfolio-urls.js"></script>
+<script src="/js/drive-folder-url.js"></script>
 <!-- 🧾 請求書の「提出後に直すためのロック解除」（utils/invoice-unlock.js を server.js が配信・ADR 046 追補 2026-11-22）。ロック解除／差し戻しの見分けと理由の検証をサーバーと共有。インラインJSが参照するため defer なし -->
 <script src="/js/invoice-unlock.js"></script>
 </head>
@@ -5231,6 +5232,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
               </div>
             </div>
             <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">📁 素材フォルダURL（任意）</label>
+              <input class="form-input" id="c-material-folder-url" type="url" inputmode="url" autocomplete="off" placeholder="https://drive.google.com/drive/folders/...">
+              <div style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.5">素材が入っている Google ドライブのフォルダURL。メモに書いていた「▶素材」リンクの代わりにここへ。</div>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
               <label class="form-label">メモ（任意）</label>
               <textarea class="form-input" id="c-memo" rows="3" style="resize:vertical" placeholder="クライアント要望、参考リンク、撮影メモなど"></textarea>
             </div>
@@ -5358,6 +5364,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
             </select>
           </div>
         </div>
+      </div>
+      <div class="form-group" style="margin-top:14px;margin-bottom:0">
+        <label class="form-label">📁 素材フォルダURL <span style="font-size:11px;color:var(--text-muted);font-weight:400">（任意・全件共通）</span></label>
+        <input class="form-input" id="bulk-material-folder-url" type="url" inputmode="url" autocomplete="off" placeholder="https://drive.google.com/drive/folders/...">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.5">入力すると、一括登録するすべてのクリエイティブに同じURLが入ります（あとから1本ずつ詳細で変えられます）。</div>
       </div>
       <div id="bulk-preview" style="font-size:14px;color:var(--em-dark);font-weight:500;padding:10px 0 4px">10 本を一括登録します</div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;padding-top:14px;border-top:0.5px solid var(--border)">
@@ -10336,6 +10347,17 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <div style="display:flex;gap:5px">
             <input class="form-input" id="cd-script-url" placeholder="https://..." style="min-width:0;flex:1">
             <button class="btn" onclick="openLink('cd-script-url')" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+          </div>
+        </div>
+        <!-- 素材フォルダURL（creatives.material_folder_url・Google ドライブのみ）。
+             列がまだ無い環境（詳細レスポンスにキー自体が無い）では cdRenderMaterialFolder() が欄ごと隠す。
+             保存は cdSaveMaterialFolderUrl() でこの 1 項目だけ PUT する（ステータス保存とは独立）。 -->
+        <div class="form-group" id="cd-material-folder-group" style="display:none;margin-bottom:0">
+          <label class="form-label">📁 素材フォルダURL</label>
+          <div style="display:flex;gap:5px">
+            <input class="form-input" id="cd-material-folder-url" type="url" inputmode="url" autocomplete="off" placeholder="https://drive.google.com/drive/folders/..." style="min-width:0;flex:1" oninput="cdUpdateMaterialFolderButtons()">
+            <button class="btn" id="cd-material-folder-open" type="button" onclick="cdOpenMaterialFolder()" style="white-space:nowrap;padding:8px 10px;flex-shrink:0">開く</button>
+            <button class="btn" id="cd-material-folder-save" type="button" onclick="cdSaveMaterialFolderUrl()" style="white-space:nowrap;padding:8px 10px;flex-shrink:0;display:none">保存</button>
           </div>
         </div>
       </div>
@@ -18481,6 +18503,16 @@ async function createCreative() {
   // talent_flag は動画/静止画系のみ意味を持つ。LP/HP/LINE は常に false。
   const talent_flag = isVideoOrDesign ? (document.getElementById('c-talent-flag')?.checked || false) : false;
   const memo = document.getElementById('c-memo')?.value?.trim() || null;
+  // 素材フォルダURL（任意）: Google ドライブの URL だけ（サーバーと同じ検証 /js/drive-folder-url.js）
+  const _matCheck = window.DriveFolderUrl
+    ? window.DriveFolderUrl.normalizeDriveFolderUrl(document.getElementById('c-material-folder-url')?.value || '')
+    : { ok: true, value: (document.getElementById('c-material-folder-url')?.value || '').trim() || null };
+  if (!_matCheck.ok) {
+    showToast(_matCheck.error, 'warn');
+    document.getElementById('c-material-folder-url')?.focus();
+    return;
+  }
+  const material_folder_url = _matCheck.value;
   // appeal_type_id は動画/静止画系のみ送信
   const send_appeal_type_id = isVideoOrDesign ? (appeal_type_id || null) : null;
 
@@ -18506,6 +18538,8 @@ async function createCreative() {
       production_date,
       talent_flag,
       memo,
+      // 未入力のときは送らない（列の有無に関係なく登録できるように）
+      ...(material_folder_url ? { material_folder_url } : {}),
     })
   });
 
@@ -18565,6 +18599,8 @@ function _resetCreativeFormForContinuous(cat, isLpOrHp) {
   if (appealEl) appealEl.value = '';
   const cMemoEl = document.getElementById('c-memo');
   if (cMemoEl) cMemoEl.value = '';
+  const cMatEl = document.getElementById('c-material-folder-url');
+  if (cMatEl) cMatEl.value = '';
   // LP/HP の場合は連番が増えるので再生成
   if (isLpOrHp && typeof generateLpHpFilename === 'function') {
     generateLpHpFilename(cat);
@@ -40944,11 +40980,24 @@ async function bulkPreviewCreative() {
     ? Number(_serialStartRaw)
     : undefined;
 
+  // 素材フォルダURL（任意・全件共通）: Google ドライブの URL だけ（サーバーと同じ検証）
+  const _bulkMatRaw = document.getElementById('bulk-material-folder-url')?.value || '';
+  const _bulkMatCheck = window.DriveFolderUrl
+    ? window.DriveFolderUrl.normalizeDriveFolderUrl(_bulkMatRaw)
+    : { ok: true, value: _bulkMatRaw.trim() || null };
+  if (!_bulkMatCheck.ok) {
+    showToast(_bulkMatCheck.error, 'warn');
+    document.getElementById('bulk-material-folder-url')?.focus();
+    return;
+  }
+
   _bulkPayload = { project_id, creative_type, appeal_type_id, count,
     draft_deadline: draft_deadline || null, final_deadline: final_deadline || null,
     product_id, product_code, media_code, creative_fmt, creative_size,
     assignee_id, team_id, talent_flag,
     serial_start,
+    // 未入力のときは送らない（列の有無に関係なく登録できるように）
+    material_folder_url: _bulkMatCheck.value || undefined,
     title: (document.getElementById('bulk-title')?.value || '').trim() || undefined };
 
   const btn = document.querySelector('#tab-bulk .btn-primary');
@@ -48073,6 +48122,7 @@ async function openCreativeDetail(id) {
 
   // URL
   document.getElementById('cd-script-url').value = c.script_url  || '';
+  try { cdRenderMaterialFolder(c); } catch (e) { console.warn('[cd] material folder render failed:', e); }
   document.getElementById('cd-frameio-url').value = c.frameio_url || '';
   const _cdClientReviewUrlEl = document.getElementById('cd-client-review-url');
   if (_cdClientReviewUrlEl) _cdClientReviewUrlEl.value = c.client_review_url || '';
@@ -59180,6 +59230,81 @@ function openLink(inputId) {
   const url = document.getElementById(inputId).value.trim();
   if (url) window.open(url, '_blank', 'noopener');
   else showToast('URLが入力されていません', 'warn');
+}
+
+// ===== 素材フォルダURL（creatives.material_folder_url・Google ドライブのみ） =====
+// 検証は utils/drive-folder-url.js（/js/drive-folder-url.js）をサーバーと共用。
+// javascript: や他ドメインは「開く」でも開かない（保存済みの古い値・手入力の値も含めて）。
+let _cdMaterialFolderSaved = null; // 詳細を開いた時点の保存値（保存ボタンの出し分け用）
+function _cdMatCheck(raw) {
+  if (window.DriveFolderUrl) return window.DriveFolderUrl.normalizeDriveFolderUrl(raw);
+  // 配信スクリプトが読めなかったときは開かない・保存はサーバーの検証に任せる
+  const v = String(raw || '').trim();
+  return { ok: true, value: v || null, unchecked: true };
+}
+function cdRenderMaterialFolder(c) {
+  const group = document.getElementById('cd-material-folder-group');
+  const input = document.getElementById('cd-material-folder-url');
+  if (!group || !input) return;
+  // 列がまだ本番 DB に無い（migration 未適用）とレスポンスにキー自体が無い → 欄を出さない
+  if (!c || !Object.prototype.hasOwnProperty.call(c, 'material_folder_url')) {
+    group.style.display = 'none';
+    _cdMaterialFolderSaved = null;
+    return;
+  }
+  group.style.display = '';
+  _cdMaterialFolderSaved = c.material_folder_url || '';
+  input.value = _cdMaterialFolderSaved;
+  cdUpdateMaterialFolderButtons();
+}
+function cdUpdateMaterialFolderButtons() {
+  const input = document.getElementById('cd-material-folder-url');
+  const openBtn = document.getElementById('cd-material-folder-open');
+  const saveBtn = document.getElementById('cd-material-folder-save');
+  if (!input) return;
+  const cur = input.value.trim();
+  if (saveBtn) saveBtn.style.display = (cur !== (_cdMaterialFolderSaved || '')) ? '' : 'none';
+  if (openBtn) {
+    const r = _cdMatCheck(cur);
+    openBtn.disabled = !(r.ok && r.value && !r.unchecked);
+  }
+}
+function cdOpenMaterialFolder() {
+  const input = document.getElementById('cd-material-folder-url');
+  const raw = input ? input.value : '';
+  if (!raw.trim()) { showToast('URLが入力されていません', 'warn'); return; }
+  const href = window.DriveFolderUrl ? window.DriveFolderUrl.safeDriveFolderHref(raw) : null;
+  if (!href) { showToast(window.DriveFolderUrl ? window.DriveFolderUrl.ERROR_MESSAGE : 'このURLは開けません', 'warn'); return; }
+  window.open(href, '_blank', 'noopener,noreferrer');
+}
+async function cdSaveMaterialFolderUrl() {
+  if (!currentCreativeDetail) return;
+  const input = document.getElementById('cd-material-folder-url');
+  const saveBtn = document.getElementById('cd-material-folder-save');
+  if (!input) return;
+  const r = _cdMatCheck(input.value);
+  if (!r.ok) { showToast(r.error, 'warn'); input.focus(); return; }
+  const id = currentCreativeDetail.id;
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/creatives/${id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ material_folder_url: r.value }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('保存エラー: ' + (typeof translateError === 'function' ? translateError(body?.error) : (body?.error || '不明なエラー')), 'error');
+      return;
+    }
+    _cdMaterialFolderSaved = body?.material_folder_url || '';
+    input.value = _cdMaterialFolderSaved;
+    if (currentCreativeDetail && currentCreativeDetail.id === id) currentCreativeDetail.material_folder_url = body?.material_folder_url || null;
+    try { _cdInvalidateCache(id); } catch (_) {}
+    cdUpdateMaterialFolderButtons();
+    showToast(r.value ? '素材フォルダURLを保存しました' : '素材フォルダURLを消しました', 'success');
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
 }
 
 // ===== ADR 008 Phase 1: クリエイティブ管理シート同期 =====

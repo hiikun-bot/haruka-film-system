@@ -441,6 +441,9 @@ app.use('/js/reactions.js', express.static(path.join(__dirname, 'utils/reactions
 // メンバーのポートフォリオ URL の解析・表示（utils/member-portfolio-urls.js・UMD形式）。
 // メンバー編集モーダルの入力解析とサーバーの保存時検証で同じロジックを使う
 app.use('/js/member-portfolio-urls.js', express.static(path.join(__dirname, 'utils/member-portfolio-urls.js')));
+// クリエイティブの素材フォルダURL（Google ドライブのみ）の検証・安全なリンク化（utils/drive-folder-url.js・UMD形式）。
+// 入力欄の事前チェック・詳細モーダルのリンク表示とサーバーの保存時検証で同じロジックを使う
+app.use('/js/drive-folder-url.js', express.static(path.join(__dirname, 'utils/drive-folder-url.js')));
 // 🧾 請求書の「提出後に直すためのロック解除」（utils/invoice-unlock.js・UMD形式・ADR 046 追補 2026-11-22）。
 // ロック解除／差し戻しの見分け（rejection_reason の先頭の固定文言）と理由の検証を画面とサーバーで共有する
 app.use('/js/invoice-unlock.js', express.static(path.join(__dirname, 'utils/invoice-unlock.js')));
