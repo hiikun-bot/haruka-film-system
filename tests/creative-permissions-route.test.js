@@ -411,6 +411,13 @@ describe('制作担当（担当者の欄）は同じ人を 2 行にしない（d
 });
 
 describe('GET /creatives/:id の perm（画面の出し分け・サーバーの判定と同じ条件）', () => {
+  // 偽 DB は embed を再現しないので、詳細の creative_assignments を creatives 行に載せておく（本番は PostgREST の embed）
+  beforeEach(() => {
+    for (const c of mockDb.tables.creatives) {
+      c.creative_assignments = mockDb.tables.creative_assignments
+        .filter(a => a.creative_id === c.id).map(a => ({ id: a.id, user_id: a.user_id, role: a.role, users: { id: a.user_id } }));
+    }
+  });
   const permOf = async (h, id = 'cr1') => {
     const r = await call('GET', `/creatives/${id}`, h);
     expect(r.status).toBe(200);

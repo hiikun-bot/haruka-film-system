@@ -16753,19 +16753,10 @@ function cvEditEditor(ev, cell, id) {
     if ((nv || '') === (curId || '')) { renderCreatives(); return; }
     const ok = await _cvPutField(id, { assignee_id: nv });
     if (ok && c) {
-      // サーバーと同挙動: 制作担当の行を差し替え（今の制作担当が editor / designer ならその役割を引き継ぐ・rank はメンバーの rank をスナップ）
-      const _workerRoles = ['editor', 'designer', 'director_as_editor'];
-      const _prevRoles = [...new Set((c.creative_assignments || []).filter(a => _workerRoles.includes(a.role)).map(a => a.role))];
-      const _newRole = (_prevRoles.length === 1 && ['editor', 'designer'].includes(_prevRoles[0])) ? _prevRoles[0] : 'editor';
-      c.creative_assignments = (c.creative_assignments || []).filter(a => !_workerRoles.includes(a.role));
-      if (nv) {
-        const m = members.find(x => x.id === nv);
-        c.creative_assignments.push({
-          role: _newRole, rank_applied: m?.rank || null,
-          users: m ? { id: m.id, full_name: m.full_name, nickname: m.nickname, role: m.role, rank: m.rank, team_id: m.team_id, avatar_url: m.avatar_url } : null,
-        });
-      }
+      // 担当の行（役割・ランク）はサーバーが決める（デザイナーの作品は designer のまま等）ので、この 1 件だけ取り直して表示する
       showToast('担当編集者を保存しました', 'success');
+      await refreshCreativeInList(id);
+      return;
     }
     renderCreatives();
   };
@@ -50121,6 +50112,10 @@ async function advanceCreativeStatus() {
   if (currentCreativeDetail.status === '未着手') {
     const assigneeId = document.getElementById('cd-assignee-id')?.value;
     if (!assigneeId) {
+      if (!crCanEditAssignees(currentCreativeDetail)) {
+        showToast('担当者が決まっていないため制作中に進められません。案件の担当ディレクター・プロデューサーか管理者に担当者の設定を依頼してください。', 'warn');
+        return;
+      }
       showToast('担当者を設定してください。担当者なしで制作中には進めません。', 'warn');
       document.getElementById('cd-assignee-id')?.focus();
       return;

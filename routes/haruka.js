@@ -10638,14 +10638,15 @@ router.get('/creatives', async (req, res) => {
       ...c,
       appeal_name: c.appeal_type_id ? (appealNameById.get(c.appeal_type_id) || null) : null,
       teams: c.team_id ? (teamById.get(c.team_id) || null) : null,
-      // 画面の出し分け（担当者の欄・まとめて削除）。PUT / DELETE の判定と同じ条件。権限が読めなければすべて false
+      // 画面の出し分け（担当者の欄・まとめて削除）。PUT / DELETE の判定と同じ条件。
+      // 権限が読めなければ perm を付けない（画面は今までどおり出し、押したときにサーバーが判定する）
       perm: listPerm ? CREATIVE_PERM.creativeUiPermissions({
         canManageAll: listPerm.canManageAll, canDeleteAll: listPerm.canDeleteAll, userId: req.user?.id || null,
         project: c.projects || null,
         team: c.team_id ? (teamLeadersById.get(c.team_id) || null) : null,
         myRoles: (c.creative_assignments || []).filter(a => CREATIVE_PERM.sameId(a.users?.id, req.user?.id)).map(a => a.role),
         creative: { id: c.id, file_name: c.file_name, status: c.status, delivered_at: c.delivered_at, force_delivered: c.force_delivered },
-      }) : { can_edit: false, can_edit_assignees: false, can_delete: false },
+      }) : undefined,
       ball_holder: getBallHolder(
         c.status, c.creative_assignments,
         directorByTeamId, directorByUserId, directorIdByTeamId, directorIdByUserId,
@@ -10799,14 +10800,14 @@ router.get('/creatives/:id', async (req, res) => {
   const buildDetailSelect = (withProjWcheck) => `
       *,
       projects(
-        id, name, producer_id, director_id, regulation_url, primary_category_id${withProjWcheck ? ', wcheck_required, billing_timing' : ''},
+        id, name, producer_id, director_id, sub_director_ids, sub_producer_ids, regulation_url, primary_category_id${withProjWcheck ? ', wcheck_required, billing_timing' : ''},
         director:director_id(id, full_name, nickname, role, rank, team_id, is_active),
         producer:producer_id(id, full_name, nickname, role, rank, team_id, is_active),
         clients(id, name, client_code, status)
       ),
       project_cycles(id, year, month),
       creative_assignments(
-        id, role, rank_applied,
+        id, user_id, role, rank_applied,
         users(id, full_name, nickname, role, team_id)
       )
     `;
@@ -11189,19 +11190,33 @@ router.get('/creatives/:id', async (req, res) => {
 });
 
 // 1 件のクリエイティブの画面出し分け（{ can_edit, can_edit_assignees, can_delete }）。
-// loadCreativePermContext（PUT の判定と同じ読み出し）を使う。失敗時はすべて false
+// 詳細で読み済みの案件（D/P・サブ D/P）と担当行を使い、足りない分（実効ロールの権限・チームのリーダー）だけ読む。
+// 判定の材料は loadCreativePermContext（PUT の判定）と同じ。読めなかったときは undefined（画面は今までどおり出し、押したときにサーバーが判定する）
 async function creativeUiPermissionsFor(req, creative) {
   try {
-    const ctx = await loadCreativePermContext(req, creative.id);
-    if (!ctx.ok) return { can_edit: false, can_edit_assignees: false, can_delete: false };
+    const userId = req.user?.id || null;
+    const codes = await getEffectiveRoleCodes(req);
+    const [canManageAll, canDeleteAll] = await Promise.all([
+      roleCodesHavePermission(codes, 'project.create_edit'),
+      roleCodesHavePermission(codes, 'project.delete'),
+    ]);
+    let team = null;
+    if (!canManageAll && userId && creative.team_id) {
+      const { data: t, error: tErr } = await supabase
+        .from('teams').select('id, director_id, producer_id').eq('id', creative.team_id).maybeSingle();
+      if (tErr) throw new Error(tErr.message);
+      team = t || null;
+    }
+    const myRoles = userId
+      ? (creative.creative_assignments || []).filter(a => CREATIVE_PERM.sameId(a.user_id ?? a.users?.id, userId)).map(a => a.role)
+      : [];
     return CREATIVE_PERM.creativeUiPermissions({
-      canManageAll: ctx.canManageAll, canDeleteAll: ctx.canDeleteAll, userId: ctx.userId,
-      project: ctx.project, team: ctx.team, myRoles: ctx.myRoles,
+      canManageAll, canDeleteAll, userId, project: creative.projects || null, team, myRoles,
       creative: { id: creative.id, file_name: creative.file_name, status: creative.status, delivered_at: creative.delivered_at, force_delivered: creative.force_delivered },
     });
   } catch (e) {
-    console.warn('[creatives/:id] permissions 判定失敗:', e.message);
-    return { can_edit: false, can_edit_assignees: false, can_delete: false };
+    console.warn('[creatives/:id] perm 判定失敗 → perm を付けない:', e.message);
+    return undefined;
   }
 }
 
@@ -15865,7 +15880,11 @@ router.post('/creatives/:id/assignments', async (req, res) => {
     .from('creative_assignments').select('id')
     .eq('creative_id', req.params.id).eq('user_id', user_id).in('role', _sameRoles).limit(1);
   if (dupErr) return res.status(500).json({ error: dupErr.message });
-  if ((dup || []).length > 0) return res.status(409).json({ error: 'この人はすでにこの役割で担当に入っています' });
+  if ((dup || []).length > 0) {
+    return res.status(409).json({ error: _sameRoles.length > 1
+      ? 'この人はすでに制作担当（編集者・デザイナー等）として入っています。役割を変えるときは、今の担当行を外してから足してください'
+      : 'この人はすでにこの役割で担当に入っています' });
+  }
   // ランクは画面の値を使わず、メンバーの今のランクを控える（PUT /creatives/:id の担当者登録と同じ）
   const { data: asnUser, error: uErr } = await supabase.from('users').select('rank').eq('id', user_id).maybeSingle();
   if (uErr) return res.status(500).json({ error: uErr.message });

@@ -233,12 +233,15 @@ function planAssignmentSync(existingRows, desiredIds) {
 // 画面の「担当者」欄は editor / designer / director_as_editor のどれか（最初の 1 行）を表示し、選び直すと assignee_id を送る。
 // 以前のサーバーは role='editor' の行だけを見ていたので、デザイナー（designer 行）の作品で同じ人がそのまま送られると
 // editor 行が増え、同じ人が同じ作品に designer＋editor の 2 行（制作担当の二重）になっていた（2026-11-24 修正）。
-// 今は制作担当の行全体を 1 人に合わせる（納品後の担当者付け替え PATCH /creatives/:id/edit と同じ考え方）。
+// 今は「選ばれた人がすでに制作担当（どの役割でも）なら editor 行を足さない」。ほかの役割の行は従来どおり触らない
+// （画面は担当者を変えていない保存でも assignee_id を送るため、従来より多く消すと別の担当者が黙って外れる）。
 //   workerRows … 今の制作担当の行 [{ id, user_id, role }]（WORKER_ROLES のもの）
-//   assigneeId … 選ばれた人（null / 空は「制作担当を外す」）
+//   assigneeId … 選ばれた人（null / 空は従来どおり「editor 行を外す」。designer・director_as_editor の行は残す）
 // 返り値: { insert: null | { user_id, role }, deleteRowIds, changed }
-//   ・選ばれた人がすでに制作担当の行を持っていれば、その行（最初の 1 行）を役割ごと残す（designer は designer のまま）
-//   ・別の人に替えるときは、今の制作担当が editor か designer のどちらか 1 種類ならその役割を引き継ぐ（それ以外は editor）
+//   ・選ばれた人がすでに制作担当の行を持つ → その行（最初の 1 行）を役割ごと残す。ほかの人の editor 行と、
+//     その人自身の重複行（designer＋editor 等）だけ消す（従来の「editor は選ばれた 1 人」と同じ結果から重複を除いたもの）
+//   ・選ばれた人が制作担当でない → 従来どおり editor 行を入れ替える。ただし editor 行が無く、制作担当が
+//     designer 1 行だけのとき（デザイナーの作品の付け替え）は designer として入れ替える（designer＋editor の 2 人にしない）
 //   ・呼び出し側は「足す → 成功したら消す」の順で書く
 function workerRowsOf(assignments) {
   return (assignments || []).filter(a => a && WORKER_ROLES.has(a.role));
@@ -247,17 +250,18 @@ function workerRowsOf(assignments) {
 function planWorkerAssigneeSync(workerRows, assigneeId) {
   const rows = (workerRows || []).filter(r => r && WORKER_ROLES.has(r.role));
   const want = normId(assigneeId);
+  const editorRows = rows.filter(r => r.role === 'editor');
   // changed は「消す行があるか」で決める（権限判定では id を読まない行を渡すことがあるため、id の有無で決めない）
-  if (!want) {
-    return { insert: null, deleteRowIds: rows.map(r => r.id).filter(Boolean), changed: rows.length > 0 };
-  }
+  const result = (insert, drop) => ({ insert, deleteRowIds: drop.map(r => r.id).filter(Boolean), changed: !!insert || drop.length > 0 });
+  if (!want) return result(null, editorRows);
   const keep = rows.find(r => sameId(r.user_id, want)) || null;
-  const drop = rows.filter(r => r !== keep);
-  const deleteRowIds = drop.map(r => r.id).filter(Boolean);
-  if (keep) return { insert: null, deleteRowIds, changed: drop.length > 0 };
-  const roles = new Set(rows.map(r => r.role));
-  const inherit = roles.size === 1 && (roles.has('editor') || roles.has('designer')) ? [...roles][0] : 'editor';
-  return { insert: { user_id: want, role: inherit }, deleteRowIds, changed: true };
+  if (keep) {
+    return result(null, rows.filter(r => r !== keep && (r.role === 'editor' || sameId(r.user_id, want))));
+  }
+  if (editorRows.length === 0 && rows.length === 1 && rows[0].role === 'designer') {
+    return result({ user_id: want, role: 'designer' }, rows);
+  }
+  return result({ user_id: want, role: 'editor' }, editorRows);
 }
 
 // 画面の出し分け用（GET /creatives・GET /creatives/:id が返す）。サーバーの判定（judge*）と同じ条件で、

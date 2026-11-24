@@ -148,7 +148,8 @@ describe('diffAssignmentInput（PUT の担当者入力を今の担当行と比�
     const designerCur = { team_id: null, assignments: [{ user_id: 'des', role: 'designer' }] };
     expect(P.diffAssignmentInput({ assignee_id: 'des' }, designerCur, 'des')).toEqual({ changed: [], selfAdds: [] });
     expect(P.diffAssignmentInput({ assignee_id: 'x' }, designerCur, 'x')).toEqual({ changed: ['editor'], selfAdds: ['editor'] });
-    expect(P.diffAssignmentInput({ assignee_id: '' }, designerCur, 'des')).toEqual({ changed: ['editor'], selfAdds: [] });
+    // 空は従来どおり editor 行だけを外す（designer 行は残る＝変更なし）
+    expect(P.diffAssignmentInput({ assignee_id: '' }, designerCur, 'des')).toEqual({ changed: [], selfAdds: [] });
   });
 });
 
@@ -157,23 +158,32 @@ describe('planWorkerAssigneeSync（担当者の欄＝制作担当 1 人）', () 
     expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'designer' }], 'a'))
       .toEqual({ insert: null, deleteRowIds: [], changed: false });
   });
-  test('別の人に替えると、今の役割（designer）を引き継いで足し、前の行を消す', () => {
+  test('デザイナー 1 人の作品を別の人に替えると designer として入れ替える（designer＋editor の 2 人にしない）', () => {
     expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'designer' }], 'b'))
       .toEqual({ insert: { user_id: 'b', role: 'designer' }, deleteRowIds: ['r1'], changed: true });
   });
-  test('director_as_editor を別の人に替えるときは editor。担当がいなければ editor で足す', () => {
-    expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'director_as_editor' }], 'b').insert)
-      .toEqual({ user_id: 'b', role: 'editor' });
+  test('それ以外は従来どおり editor 行を入れ替える（director_as_editor・担当なし）', () => {
+    expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'director_as_editor' }], 'b'))
+      .toEqual({ insert: { user_id: 'b', role: 'editor' }, deleteRowIds: [], changed: true });
+    expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'editor' }], 'b'))
+      .toEqual({ insert: { user_id: 'b', role: 'editor' }, deleteRowIds: ['r1'], changed: true });
     expect(P.planWorkerAssigneeSync([], 'b')).toEqual({ insert: { user_id: 'b', role: 'editor' }, deleteRowIds: [], changed: true });
+  });
+  test('editor と designer が別の人: 担当者を変えない保存（editor の人を送る）では designer の人を消さない', () => {
+    const rows = [{ id: 'e1', user_id: 'e', role: 'editor' }, { id: 'g1', user_id: 'g', role: 'designer' }];
+    expect(P.planWorkerAssigneeSync(rows, 'e')).toEqual({ insert: null, deleteRowIds: [], changed: false });
+    // designer の人を選ぶと、editor 行（ほかの人）だけ外れて designer 行は残る（従来の「editor は選ばれた 1 人」から重複を除いた結果）
+    expect(P.planWorkerAssigneeSync(rows, 'g')).toEqual({ insert: null, deleteRowIds: ['e1'], changed: true });
   });
   test('同じ人の重複行（designer＋editor）は最初の 1 行に寄せる', () => {
     expect(P.planWorkerAssigneeSync([
       { id: 'r1', user_id: 'a', role: 'designer' }, { id: 'r2', user_id: 'a', role: 'editor' },
     ], 'a')).toEqual({ insert: null, deleteRowIds: ['r2'], changed: true });
   });
-  test('空は制作担当を全員外す。制作以外の行（director 等）は見ない', () => {
+  test('空は従来どおり editor 行だけを外す（designer・director_as_editor・制作以外の行は残す）', () => {
     expect(P.planWorkerAssigneeSync([{ id: 'r1', user_id: 'a', role: 'editor' }, { id: 'd1', user_id: 'd', role: 'director' }], null))
       .toEqual({ insert: null, deleteRowIds: ['r1'], changed: true });
+    expect(P.planWorkerAssigneeSync([{ id: 'g1', user_id: 'g', role: 'designer' }], null)).toEqual({ insert: null, deleteRowIds: [], changed: false });
     expect(P.planWorkerAssigneeSync([{ id: 'd1', user_id: 'd', role: 'director' }], '')).toEqual({ insert: null, deleteRowIds: [], changed: false });
   });
   test('大文字・空白の違う同じ ID は同じ人', () => {
