@@ -346,21 +346,25 @@ describe('領収書のアップロード', () => {
     expect(mockDrive.trashed).toEqual([file.id]);
   });
 
-  test('記録の応答がエラーでも、行が今置いたファイルを指していればゴミ箱へ送らない／指していなければ送る', async () => {
+  test('記録の結果が分からない（応答がエラー）ときは、置いたファイルをゴミ箱へ送らずに残す', async () => {
+    // DB では記録が済んだが応答が届かなかった
     mockDb.rpcErrorAfterWrite = true;
     const r = await upload('ex1', JPEG);
     expect(r.status).toBe(500);
+    expect(r.body.code).toBe('RECEIPT_RESULT_UNKNOWN');
     const file = mockDrive.created.find(c => c.mimeType === 'image/jpeg');
     expect(item('ex1').receipt_file_id).toBe(file.id);
     expect(mockDrive.trashed).toEqual([]);
-    // 記録される前に失敗した場合（行は変わっていない）はゴミ箱へ戻す
     mockDb.rpcErrorAfterWrite = false;
+    // 応答がエラーで、読み直した時点では行が変わっていない（DB の確定がこのあとに来るかもしれない）→ それでも残す
     mockDb.rpcFailBefore = true;
     const r2 = await upload('ex1', PDF, { name: 'b.pdf', type: 'application/pdf' });
     expect(r2.status).toBe(500);
+    expect(r2.body.code).toBe('RECEIPT_RESULT_UNKNOWN');
     const file2 = mockDrive.created.find(c => c.mimeType === 'application/pdf');
+    expect(file2).toBeTruthy();
     expect(item('ex1').receipt_file_id).toBe(file.id);
-    expect(mockDrive.trashed).toEqual([file2.id]);
+    expect(mockDrive.trashed).toEqual([]);
     mockDb.rpcFailBefore = false;
   });
 

@@ -18604,6 +18604,7 @@ async function applyQuickStatusChange() {
     let msg = `ステータスを ${ctx.current} → ${target} に変更しました`;
     if (j.deleted_invoice_items > 0) msg += `（下書き請求書明細 ${j.deleted_invoice_items} 件を削除）`;
     showToast(msg, 'success');
+    if (j.warning) alert(j.warning);
     try { _cdInvalidateCache(selectedCreativeId); } catch (_) {}
     closeModal('modal-status');
     await refreshCreativeInList(selectedCreativeId);
@@ -49850,6 +49851,7 @@ async function adminJumpStatus(targetStatus, stepLabel) {
     let msg = `ステータスを ${cur} → ${targetStatus} に変更しました`;
     if (j.deleted_invoice_items > 0) msg += `（下書き請求書明細 ${j.deleted_invoice_items} 件を削除）`;
     showToast(msg, 'success');
+    if (j.warning) alert(j.warning);
     try { __cdClearDraft(currentCreativeDetail.id); } catch (_) {}
     __cdSkipDirtyCheck = true;
     const _refreshId = currentCreativeDetail.id; // closeModal 後も確実に参照できるよう退避
