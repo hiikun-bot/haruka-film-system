@@ -27902,7 +27902,8 @@ router.get('/portfolio', requireAuth, async (req, res) => {
 // AI 提案は lib/portfolio-external-ai.js（ENABLE_PORTFOLIO_AI_SUGGEST と月次予算でガード）。
 
 const extUtil = require('../utils/portfolio-external');
-const { safeFetch: extSafeFetch } = require('../utils/safe-outbound-url');
+const { safeFetch: extSafeFetch, discardBody: extDiscardBody } = require('../utils/safe-outbound-url');
+const extShare = require('../utils/portfolio-external-share');
 
 // inspect の結果（サーバーが確かめた source と AI の費用）を短時間覚えておき、登録はこの値を使う
 // （ADR 045 追補 2026-11-24: クライアントが送ってきた drive_file_id や AI の費用を信じない）
@@ -28019,8 +28020,9 @@ async function extFetchHtml(url) {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HARUKA-FILM-SYSTEM/1.0; +portfolio)', 'Accept': 'text/html,*/*;q=0.5' },
     });
     const ct = String(res.headers.get('content-type') || '').toLowerCase();
-    if (!res.ok) return { html: null, contentType: ct, status: res.status };
-    if (!ct.includes('text/html') && !ct.includes('application/xhtml')) return { html: null, contentType: ct, status: res.status };
+    // 読まない本文は閉じる（ソケットを残さない）
+    if (!res.ok) { extDiscardBody(res); return { html: null, contentType: ct, status: res.status }; }
+    if (!ct.includes('text/html') && !ct.includes('application/xhtml')) { extDiscardBody(res); return { html: null, contentType: ct, status: res.status }; }
     const reader = res.body?.getReader?.();
     if (!reader) return { html: await res.text(), contentType: ct, status: res.status };
     const chunks = []; let total = 0;
@@ -28184,12 +28186,8 @@ router.post('/portfolio/external-works/inspect', requireAuth, async (req, res) =
       if (!dm || dm.trashed || !extUtil.isOwnPortfolioUpload(dm, { folderId: ownFolderId, folderIds: altFolderIds, userId })) {
         return res.status(400).json({ error: 'アップロードしたファイルが見つかりません。もう一度ファイルを選んでください' });
       }
-      // 再生用に anyone-reader を付ける（クリエイティブの complete と同じ。失敗しても登録は続ける）
-      try {
-        await drive.permissions.create({ fileId, supportsAllDrives: true, requestBody: { role: 'reader', type: 'anyone' } });
-      } catch (permErr) {
-        console.warn('[portfolio/external] 公開権限付与失敗（閲覧には stream で対応）:', permErr.message);
-      }
+      // 再生用の anyone-reader はここでは付けない。登録が確定したとき（POST）に付ける
+      // （読み取りだけでキャンセル・期限切れになったファイルを公開のまま残さない・#1198 レビュー対応）
       source.source_type = 'upload';
       source.drive_file_id = fileId;
       source.mime_type = dm?.mimeType || String(body.mime_type || '') || null;
@@ -28498,6 +28496,17 @@ router.post('/portfolio/external-works', requireAuth, async (req, res) => {
     _extInspectStore.remove(body.inspect_token);   // 同じ読み取りで二重登録しない
     // 費用は DB（ai_cost_jpy）に載ったので、未登録分の概算から差し引く（予算の二重計上を防ぐ）
     if (aiCost) require('../lib/portfolio-external-ai').settlePendingSpend(aiCost);
+    // HFS の Drive に直送したファイルは、登録が確定したこの時点で再生用の anyone-reader を付ける
+    // （クリエイティブの complete と同じ。付けた権限 ID はファイルに記録し、削除時はその権限だけを外す。
+    //   失敗しても登録は続ける＝閲覧はサムネ代理配信で対応）
+    if (sourceType === 'upload' && driveFileId && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+      try {
+        const g = await extShare.grantPublicRead(await getDriveService(), driveFileId);
+        if (!g.ok) console.warn('[portfolio/external] 公開権限付与失敗（閲覧はサムネ代理配信で対応）:', g.error);
+      } catch (permErr) {
+        console.warn('[portfolio/external] 公開権限付与失敗（閲覧はサムネ代理配信で対応）:', permErr.message);
+      }
+    }
     const roleCodes = await getEffectiveRoleCodes(req);
     const { data: me } = await supabase.from('users').select('id, full_name, nickname').eq('id', req.user.id).maybeSingle();
     res.status(201).json({ ok: true, work: data, item: extToPortfolioItem(data, { ownerUser: me, genreInfo, roleCodes, userId: req.user.id }) });
@@ -28555,14 +28564,42 @@ router.post('/portfolio/external-works/media-size', requireAuth, async (req, res
 });
 
 // DELETE /api/haruka/portfolio/external-works/:id — 論理削除（本人 or admin）。Drive のファイルは消さない
+//   HFS の Drive に直送したファイル（upload）は、登録時に HFS が付けた公開権限を外す（#1198 レビュー対応）。
+//   順番: 先に論理削除 → 同じファイルを使う外部作品（種別を問わず）がもう残っていなければ外す。
+//     同時に 2 件消しても、どちらかが必ず「残り 0 件」を見て外す（外すのは何度やっても同じ結果）。
+//   外せなかったときは論理削除を戻して 502（作品だけ消えて共有が残る状態を作らない・もう一度押せば再試行）。
 router.delete('/portfolio/external-works/:id', requireAuth, async (req, res) => {
   try {
     const work = await extLoadWorkOr404(req.params.id, res);
     if (!work) return;
     const roleCodes = await getEffectiveRoleCodes(req);
     if (!extUtil.canEditExternalWork({ roleCodes, userId: req.user?.id, work })) return res.status(403).json({ error: 'この作品を削除できるのは本人か管理者だけです' });
+    const needsRevoke = work.source_type === 'upload' && !!work.drive_file_id;
+    if (needsRevoke && !process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive の共有を外せないため削除を中止しました（Drive未設定）' });
     const { error } = await supabase.from('portfolio_external_works').update({ deleted_at: new Date().toISOString() }).eq('id', work.id);
     if (error) return res.status(500).json({ error: error.message });
+    if (needsRevoke) {
+      const undo = async () => {
+        const { error: undoErr } = await supabase.from('portfolio_external_works').update({ deleted_at: null }).eq('id', work.id);
+        if (undoErr) console.error('[portfolio/external/delete] 論理削除の取り消しに失敗:', work.id, undoErr.message);
+      };
+      const { data: others, error: othersErr } = await supabase.from('portfolio_external_works')
+        .select('id').eq('drive_file_id', work.drive_file_id).is('deleted_at', null).limit(1);
+      if (othersErr) {
+        await undo();
+        return res.status(500).json({ error: '削除を中止しました（同じファイルを使う作品の確認に失敗）: ' + othersErr.message });
+      }
+      if (!(others || []).length) {
+        let r;
+        try { r = await extShare.revokePublicRead(await getDriveService(), work.drive_file_id); }
+        catch (e) { r = { ok: false, error: e?.message || String(e) }; }
+        if (!r.ok) {
+          console.warn('[portfolio/external/delete] 公開権限の解除に失敗:', work.id, r.error);
+          await undo();
+          return res.status(502).json({ error: 'Drive の共有を外せなかったため、削除を中止しました。少し待ってからもう一度削除してください' });
+        }
+      }
+    }
     res.json({ ok: true });
   } catch (e) {
     console.error('[portfolio/external/delete] failed:', e.message);

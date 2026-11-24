@@ -36,7 +36,7 @@
 - `source_type` ごとの扱い:
   - `youtube` … oEmbed（キー不要）でタイトル・チャンネル名、`i.ytimg.com` のサムネ、Shorts なら縦。ライトボックスは `youtube.com/embed` の iframe。
   - `drive` … 共有 URL のファイル ID を SA で `files.get`。読めなければ「リンクを知っている全員」にするか SA メールへ共有、と**具体的に案内**する（黙って失敗しない）。再生は既存の `/files/:driveId/direct-url` → `/stream`（`creative_files` に無くても Drive 直で動く）。
-  - `upload` … クリエイティブと同じ **ブラウザ → Drive resumable 直送**（`driveUploadToSession` を流用。Railway 5 分 502 を踏まない）。置き場は `<Drive ルート>/🌐 みんなのポートフォリオ/<メンバー名>`。完了後に anyone-reader を付与。
+  - `upload` … クリエイティブと同じ **ブラウザ → Drive resumable 直送**（`driveUploadToSession` を流用。Railway 5 分 502 を踏まない）。置き場は `<Drive ルート>/🌐 みんなのポートフォリオ/<メンバー名>`。登録の確定時に anyone-reader を付与し、作品の削除時に外す（C 節）。
   - `link` … HTML を 512KB まで読んで OGP（`og:title` / `og:image` / `description`）。画像直リンクなら静止画として扱う。カードは画像＋「🔗 リンクを開く」。
 - サムネは `youtube` / `link` は URL をそのまま持ち、`drive` / `upload` は `/portfolio/external-works/:id/thumbnail` で代理配信（既存の `/portfolio/thumbnail/:fileId` と同じ方式: 短命 thumbnailLink の隠蔽＋動画は ffmpeg ポスター）。
 
@@ -113,6 +113,8 @@
 - （レビュー反映）Drive 共有 URL は **共有ドライブのファイルを一律で断る**（サービスアカウントが入っている共有ドライブ＝素材広場など HFS が管理する置き場のため）。**持ち主が申請者以外の HFS メンバー**のファイル（メンバーのマイドライブから SA に共有された請求書フォルダなど）も断る。外の人のマイドライブから共有されたファイルだけを受け付ける。
 - （レビュー反映）AI 提案は **月次予算（`MONTHLY_ANALYSIS_BUDGET_JPY`）が設定されているときだけ**動く（日次件数モードでは上限が効かないため）。読み取っただけで登録されなかった分の費用もプロセス内で概算して予算判定に足す（再起動で消える概算。1 人 1 時間 40 回の上限と併用）。
 - （レビュー反映）YouTube（hqdefault は常に 4:3）とリンク（og:image）はサムネの寸法を作品の実寸として書き戻さない。実寸の書き戻しは drive / upload だけ。
+- （レビュー反映 2026-11-24・#1198 後追い）直送ファイルの **anyone-reader は登録の確定時（POST）に付ける**。読み取り（inspect）では付けない（キャンセル・期限切れで公開が残らない）。付けた権限 ID はファイルの `appProperties.hfs_public_perm_id` に記録し、**作品の削除時はその権限だけを外す**（記録の無い古い登録は `hfs_kind=portfolio_external` のファイルに限り anyone を外す）。外せなければ削除も中止。同じファイルを使う別の外部作品が残っていれば外さない。`utils/portfolio-external-share.js`。
+- （レビュー反映 2026-11-24・#1198 後追い）**DNS rebinding 対策**: 外部 URL の取得はグローバル fetch ではなく node の http / https で行い、ソケットの名前解決（`lookup`）をフックして**実際の接続先アドレス**も同じ基準で確かめる（`createSafeLookup` / `pinnedFetch`）。
 
 ### D. 営業ツールとしての見せ方（次段階・今回は作らない）
 
