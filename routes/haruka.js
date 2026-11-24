@@ -30250,28 +30250,40 @@ router.get('/admin/payouts/cross-duplicates', requireAuth, requirePermission('pa
     const XD = require('../utils/invoice-cross-duplicate');
     const IE = require('../utils/invoice-editor');
     const months = XD.lookbackMonths(ym.year, ym.month, CROSS_DUP_LOOKBACK_MONTHS);
-    const monthKeys = new Set(months.map(m => `${m.year}-${m.month}`));
+    // PostgREST の 1 回 1000 行上限で黙って切れないよう、全件をページングで読む
+    const PAGE = 1000;
+    const fetchAll = async (build) => {
+      const out = [];
+      for (let offset = 0; ; offset += PAGE) {
+        const { data, error } = await build().range(offset, offset + PAGE - 1);
+        if (error) throw new Error(error.message);
+        out.push(...(data || []));
+        if (!data || data.length < PAGE) return out;
+      }
+    };
 
-    const { data: invs, error: iErr } = await supabase
-      .from('invoices')
-      .select('id, invoice_number, issuer_id, year, month, status')
-      .in('status', IE.BILLED_STATUSES)
-      .gte('year', months[0].year).lte('year', ym.year);
-    if (iErr) throw new Error(iErr.message);
-    const invById = new Map((invs || [])
-      .filter(v => v.issuer_id && monthKeys.has(`${v.year}-${v.month}`))
-      .map(v => [v.id, v]));
+    // メンバー請求書だけ（クライアント宛ての請求書は同じ CR・base_fee の行を持つので混ぜない）。月ごとに絞って読む
+    const invs = [];
+    for (const m of months) {
+      invs.push(...await fetchAll(() => onlyMemberInvoices(supabase
+        .from('invoices')
+        .select('id, invoice_number, issuer_id, year, month, status, invoice_type')
+        .in('status', IE.BILLED_STATUSES)
+        .eq('year', m.year).eq('month', m.month))
+        .order('id')));
+    }
+    const invById = new Map(invs.filter(v => v.issuer_id).map(v => [v.id, v]));
 
-    // 明細は請求書 ID を 100 件ずつ（URL 長対策）
+    // 明細は請求書 ID を 100 件ずつ（URL 長対策）＋各かたまりもページング
     const invIds = Array.from(invById.keys());
     const rawItems = [];
     for (let k = 0; k < invIds.length; k += 100) {
-      const { data, error } = await supabase
+      const ids = invIds.slice(k, k + 100);
+      rawItems.push(...await fetchAll(() => supabase
         .from('invoice_items')
         .select('id, invoice_id, creative_id, cost_type, label, creative_label, manual_reason, unit_price, quantity, total_amount')
-        .in('invoice_id', invIds.slice(k, k + 100));
-      if (error) throw new Error(error.message);
-      rawItems.push(...(data || []));
+        .in('invoice_id', ids)
+        .order('id')));
     }
 
     // CR 名（請求書の行に名前が無い古い行の補完・HFS外の行との照合に使う）

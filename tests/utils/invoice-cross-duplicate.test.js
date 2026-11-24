@@ -64,6 +64,24 @@ describe('findCrossMemberDuplicates', () => {
     expect(r[0]).toMatchObject({ level: 'low', b: null, b_issuer_id: 'uB' });
   });
 
+  test('名前で当たった同額の行が何本あっても 1 人 1 件', () => {
+    const many = Array.from({ length: 12 }, (_, k) => line({ issuer_id: 'uB', creative_id: `c${k}`, cost_type: 'base_fee', unit_price: 4000 }));
+    const r = run([line({ issuer_id: 'uA', creative_id: null, cost_type: 'manual', label: 'カット稿（佐藤さん分）', unit_price: 4000 }), ...many]);
+    expect(r).toHaveLength(1);
+    expect(r[0].level).toBe('medium');
+  });
+
+  test('短い名前は「さん／分／様」付きのときだけ（ナナメ構図は「なな」さんに当たらない）', () => {
+    const u = new Map([...users, ['uN', { full_name: '田中 奈々', nickname: 'なな' }]]);
+    const items = [
+      line({ issuer_id: 'uA', creative_id: null, cost_type: 'manual', label: 'ナナメ構図の追加カット', unit_price: 3000 }),
+      line({ issuer_id: 'uN', creative_id: 'c5', cost_type: 'base_fee', unit_price: 3000 }),
+    ];
+    expect(findCrossMemberDuplicates({ items, usersById: u, year: 2026, month: 10 })).toHaveLength(0);
+    items[0].label = 'ななさん分の追加カット';
+    expect(findCrossMemberDuplicates({ items, usersById: u, year: 2026, month: 10 })).toHaveLength(1);
+  });
+
   test('立替経費・作業時間・一式の行は見ない', () => {
     expect(run([
       line({ issuer_id: 'uA', creative_id: null, cost_type: 'expense', label: 'じろうさんとのタクシー', unit_price: 4000 }),

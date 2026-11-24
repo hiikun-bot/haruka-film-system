@@ -59,6 +59,18 @@ function nameTokens(user) {
   return Array.from(out);
 }
 
+/**
+ * 品目名・理由（norm 済み）に、その人を指す書き方があるか。
+ * 短い名前（姓・ニックネーム）は「〇〇さん」「〇〇分」「〇〇様」の形のときだけ（「ナナメ構図」が「なな」さんに当たらないように）。
+ * 3 文字以上の氏名（姓名つなぎ）はそのまま含まれていればよい。norm でひらがなはカタカナになるので「さん」は「サン」で見る。
+ */
+function mentionsUser(text, user) {
+  if (!text || !user) return false;
+  const full = norm(user.full_name);
+  if (full.length >= 3 && String(user.full_name || '').trim().split(/[\s　]+/).filter(Boolean).length >= 2 && text.includes(full)) return true;
+  return nameTokens(user).some(t => ['サン', '分', '様'].some(suf => text.includes(t + suf)));
+}
+
 function ymKey(it) { return `${it.year}-${String(it.month).padStart(2, '0')}`; }
 
 /**
@@ -119,22 +131,27 @@ function findCrossMemberDuplicates(p) {
     const mAmount = itemAmount(m);
     for (const [otherId, otherItems] of byIssuer) {
       if (otherId === m.issuer_id) continue;
-      const nameHit = nameTokens(usersById.get(otherId)).some(t => text.includes(t));
+      const nameHit = mentionsUser(text, usersById.get(otherId));
       let matched = false;
+      let nameAmountHit = null; // 名前だけで当たった同額の行は、1 人につき 1 件にまとめる（同じ単価の行が並ぶ人で増えないように）
       for (const b of otherItems) {
         if (!involvesTarget(m, b)) continue;
         const crName = norm(b.creative_name || b.creative_label || '');
         const crHit = isCrLine(b) && crName.length >= MIN_CR_LABEL_LEN && text.includes(crName);
         const amountEq = mAmount > 0 && mAmount === itemAmount(b);
-        if ((nameHit || crHit) && amountEq) {
+        if (crHit && amountEq) {
           matched = true;
-          push('medium', crHit
-            ? 'HFS外の行に相手のクリエイティブ名があり、金額も同じです'
-            : 'HFS外の行に相手の名前があり、相手の請求に同じ金額の行があります', m, b);
+          push('medium', 'HFS外の行に相手のクリエイティブ名があり、金額も同じです', m, b);
+        } else if (nameHit && amountEq) {
+          matched = true;
+          if (!nameAmountHit) nameAmountHit = b;
         } else if (crHit) {
           matched = true;
           push('low', 'HFS外の行に相手のクリエイティブ名があります（金額は違います）', m, b);
         }
+      }
+      if (nameAmountHit) {
+        push('medium', 'HFS外の行に相手の名前があり、相手の請求に同じ金額の行があります', m, nameAmountHit);
       }
       if (nameHit && !matched && ymKey(m) === target) {
         push('low', 'HFS外の行に別のメンバーの名前があります（その人の分を代わりに請求していないか）', m, null, otherId);
