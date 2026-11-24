@@ -6,7 +6,7 @@
 # 依存パッケージ
 node_modules
 
-# SQLiteデータベース（本番はRailway Volumeで管理）
+# SQLiteデータベース（旧セッションストアの残骸。本番セッションは Supabase http_sessions・ADR 040）
 db/*.db
 db/*.db-shm
 db/*.db-wal
