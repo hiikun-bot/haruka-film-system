@@ -133,7 +133,10 @@ router.get('/bank/connect', (req, res) => {
   req.session.aozoraConnectNonce = nonce;
   req.session.aozoraOidcNonce = oidcNonce;
   const url = aozora.buildAuthorizeUrl({ state, redirectUri, nonce: oidcNonce });
-  req.session.save(() => res.redirect(url));
+  req.session.save((err) => {
+    if (err) { console.warn('[bank-transfer][connect] session save failed:', err.message); return redirectBack(res, req.query.next, { bank_error: 'state' }); }
+    res.redirect(url);
+  });
 });
 
 // GET /api/haruka/admin/bank/callback?code&state

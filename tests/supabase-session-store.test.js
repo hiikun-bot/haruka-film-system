@@ -20,7 +20,9 @@ function makeSupabaseMock() {
         const sidFilter = rec.filters.find(f => f[0] === 'eq' && f[1] === 'sid');
         if (op === 'select') {
           const row = sidFilter ? state.rows.get(sidFilter[2]) : null;
-          return Promise.resolve(result(row ? { sess: row.sess, expired_at: row.expired_at } : null));
+          // 行は呼ばれた時点で読み、応答だけ selectGate まで遅らせられる（DB 待ち中の競合の再現用）
+          const res = result(row ? { sess: JSON.parse(JSON.stringify(row.sess)), expired_at: row.expired_at } : null);
+          return state.selectGate ? state.selectGate.then(() => res) : Promise.resolve(res);
         }
         if (op === 'upsert') { state.rows.set(payload.sid, { ...payload }); return Promise.resolve(result(null)); }
         if (op === 'update') {
@@ -158,6 +160,51 @@ describe('SupabaseSessionStore', () => {
     store.maxCacheEntries = 2;
     for (const sid of ['a', 'b', 'c']) await p(cb => store.set(sid, sessWithMaxAge(60000), cb));
     expect([...store._cache.keys()]).toEqual(['b', 'c']);
+  });
+
+  test('キャッシュヒットしたものは後ろへ回る（よく使うセッションほど捨てられにくい）', async () => {
+    store.maxCacheEntries = 2;
+    await p(cb => store.set('a', sessWithMaxAge(60000), cb));
+    await p(cb => store.set('b', sessWithMaxAge(60000), cb));
+    await p(cb => store.get('a', cb));
+    await p(cb => store.set('c', sessWithMaxAge(60000), cb));
+    expect([...store._cache.keys()]).toEqual(['a', 'c']);
+  });
+
+  test('DB に無い sid は TTL の間「無し」として覚え、select を繰り返さない', async () => {
+    expect(await p(cb => store.get('ghost', cb))).toBeNull();
+    expect(await p(cb => store.get('ghost', cb))).toBeNull();
+    expect(mock.calls.filter(c => c.op === 'select').length).toBe(1);
+    // その後 set されれば普通に返る
+    await p(cb => store.set('ghost', sessWithMaxAge(60000, { a: 1 }), cb));
+    expect((await p(cb => store.get('ghost', cb))).a).toBe(1);
+  });
+
+  test('get の select 待ちの間に destroy されたら、古いセッションをキャッシュに戻さない（logout 直後の競合）', async () => {
+    store.cacheTtlMs = 60 * 1000;
+    mock.state.rows.set('s1', { sess: { cookie: {}, passport: { user: 'u1' } }, expired_at: new Date(Date.now() + 100000).toISOString() });
+    let open;
+    mock.state.selectGate = new Promise(r => { open = r; });
+    const pending = p(cb => store.get('s1', cb)); // 行は読んだが応答待ち
+    await p(cb => store.destroy('s1', cb));        // その間に logout
+    mock.state.selectGate = null;
+    open();
+    await pending;
+    expect(store._cache.has('s1')).toBe(false);
+    expect(await p(cb => store.get('s1', cb))).toBeNull();
+  });
+
+  test('get の select 待ちの間に set されたら、set の内容を古い読み取りで上書きしない（再認証直後の競合）', async () => {
+    store.cacheTtlMs = 60 * 1000;
+    mock.state.rows.set('s1', { sess: { cookie: {}, v: 'old' }, expired_at: new Date(Date.now() + 100000).toISOString() });
+    let open;
+    mock.state.selectGate = new Promise(r => { open = r; });
+    const pending = p(cb => store.get('s1', cb));
+    await p(cb => store.set('s1', sessWithMaxAge(60000, { v: 'new' }), cb));
+    mock.state.selectGate = null;
+    open();
+    await pending;
+    expect((await p(cb => store.get('s1', cb))).v).toBe('new');
   });
 
   test('supabase 未指定はエラー', () => {

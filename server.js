@@ -611,7 +611,11 @@ app.get('/auth/google', (req, res) => {
     prompt: 'select_account',
     state,
   });
-  req.session.save(() => res.redirect(url));
+  // セッション保存（Supabase http_sessions・ADR 040）に失敗したまま Google へ飛ばすと、戻りで必ず google_state になるのでここで止める
+  req.session.save((err) => {
+    if (err) { console.warn('[auth/google] session save failed:', err.message); return googleLoginFail(res, 'google_failed'); }
+    res.redirect(url);
+  });
 });
 
 // ==================== 再認証（ADR 054 §1-3: 総合振込の依頼直前に本人確認） ====================
@@ -645,7 +649,10 @@ app.get('/auth/google/reauth', requireAuth, (req, res) => {
     login_hint: req.user.email || undefined,
     state,
   });
-  req.session.save(() => res.redirect(url));
+  req.session.save((err) => {
+    if (err) { console.warn('[auth/google/reauth] session save failed:', err.message); return reauthRedirect(res, req.query.next, { reauth_error: 'google_failed' }); }
+    res.redirect(url);
+  });
 });
 
 // パスワードで再認証（Google ログイン無効時のフォールバック）。5 回失敗で 15 分ロック
@@ -669,7 +676,11 @@ app.post('/auth/reauth-password', requireAuth, async (req, res) => {
     }
     _reauthPwFailures.delete(uid);
     req.session.reauth_at = Date.now();
-    req.session.save(() => res.json({ ok: true, method: 'password', ...reauthStatus(req) }));
+    req.session.save((err) => {
+      // reauth_at が保存できていないのに ok を返すと、直後の振込依頼が reauth_required で弾かれる
+      if (err) { console.warn('[auth/reauth-password] session save failed:', err.message); return res.status(500).json({ error: '再認証に失敗しました。もう一度お試しください' }); }
+      res.json({ ok: true, method: 'password', ...reauthStatus(req) });
+    });
   } catch (e) {
     console.warn('[auth/reauth-password] 失敗:', e?.message);
     res.status(500).json({ error: '再認証に失敗しました' });
@@ -714,7 +725,10 @@ app.get('/auth/google/callback', async (req, res) => {
         const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
         await supabase.from('user_activity_logs').insert({ user_id: req.user.id, action: 'reauth', ip_address: ip, user_agent: req.headers['user-agent'] || '' });
       } catch (e) { console.warn('[auth/google/reauth] log failed:', e?.message); }
-      return req.session.save(() => reauthRedirect(res, payload.next, { reauth: 'ok' }));
+      return req.session.save((err) => {
+        if (err) { console.warn('[auth/google/reauth] session save failed:', err.message); return reauthRedirect(res, payload.next, { reauth_error: 'google_failed' }); }
+        reauthRedirect(res, payload.next, { reauth: 'ok' });
+      });
     }
 
     const { data: rows, error } = await supabase
