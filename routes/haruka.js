@@ -17,6 +17,16 @@ const { shareForClientReview } = require('../lib/drive-share');
 const { createNotification, extractMentions, loadMentionDirectory } = require('../utils/notification');
 const { resolveUnreadSince } = require('../utils/tweets-unread');
 const { renderFilename } = require('../utils/filename');
+// 素材フォルダURL（creatives.material_folder_url）の検証。画面と同じロジック（/js/drive-folder-url.js）
+const { normalizeDriveFolderUrl } = require('../utils/drive-folder-url');
+// material_folder_url 列が本番 DB に無い（migration 未適用）ときのエラーか。
+// 値を黙って捨てない（silent skip にしない）ため、該当時は 503 で「まだ使えない」と返す。
+function isMissingMaterialFolderUrlColumn(err) {
+  if (!err) return false;
+  const msg = err.message || '';
+  return /material_folder_url/.test(msg) && (/does not exist/.test(msg) || /Could not find/.test(msg) || err.code === 'PGRST204' || err.code === '42703');
+}
+const MATERIAL_FOLDER_URL_NOT_READY = '素材フォルダURLの保存先がまだ準備できていません（DB の更新待ち）。URL を空にすると登録・保存できます';
 const JOIN_REQ = require('../utils/project-join-request');
 const {
   getUserRoleCodes,
@@ -11274,8 +11284,11 @@ router.post('/creatives/bulk', async (req, res) => {
     count, draft_deadline, final_deadline, note,
     product_id, product_code, media_code, creative_fmt, creative_size,
     assignee_id, team_id, talent_flag,
-    serial_start
+    serial_start, material_folder_url
   } = req.body;
+  // 素材フォルダURL（任意・全件共通）: Google ドライブの URL だけ受け付ける
+  const _bulkMatFolder = normalizeDriveFolderUrl(material_folder_url);
+  if (!_bulkMatFolder.ok) return res.status(400).json({ error: _bulkMatFolder.error });
   // 訴求軸（appeal_type_id）は任意化: 未確定状態でも一括登録できるようにする
   if (!project_id || !creative_type || !count) {
     return res.status(400).json({ error: '案件・種別・本数は必須です' });
@@ -11361,10 +11374,13 @@ router.post('/creatives/bulk', async (req, res) => {
       creative_fmt: creative_fmt || null, creative_size: creative_size || null,
       talent_flag: talent_flag === true,
       team_id: team_id || null };
+    // 入力があるときだけ列を送る（未入力の一括登録は migration 前後どちらでも動く）
+    if (_bulkMatFolder.value) insert.material_folder_url = _bulkMatFolder.value;
     inserts.push(insert);
     nextSeq++;
   }
   const { data, error } = await supabase.from('creatives').insert(inserts).select();
+  if (error && isMissingMaterialFolderUrlColumn(error)) return res.status(503).json({ error: MATERIAL_FOLDER_URL_NOT_READY });
   if (error) return res.status(500).json({ error: error.message });
 
   // ADR 031 補強: 成果物グループ(line)を紐付ける。一括登録は担当者未定なので、
@@ -11399,11 +11415,14 @@ router.post('/creatives', async (req, res) => {
     draft_deadline, final_deadline, script_url, note, appeal_type_id,
     product_id, media_code, creative_fmt, creative_size,
     assignee_id, internal_code, production_date, talent_flag, team_id, memo,
-    client_review_url
+    client_review_url, material_folder_url
   } = req.body;
   if (!project_id || !file_name || !creative_type) {
     return res.status(400).json({ error: '案件・ファイル名・種別は必須です' });
   }
+  // 素材フォルダURL（任意）: Google ドライブの URL だけ受け付ける
+  const _matFolder = normalizeDriveFolderUrl(material_folder_url);
+  if (!_matFolder.ok) return res.status(400).json({ error: _matFolder.error });
 
   // team_id は明示指定があればそれを採用、なければ assignee の team_id を派生
   // assignee_id 指定時は team_id と rank を一度に取り、後段の creative_assignments insert と共有する
@@ -11464,6 +11483,8 @@ router.post('/creatives', async (req, res) => {
     client_review_url: (client_review_url && String(client_review_url).trim()) ? client_review_url : null,
   };
   if (initialStatusCode) insertPayload.status_code = initialStatusCode;
+  // 入力があるときだけ列を送る（未入力の登録は migration 前後どちらでも動く）
+  if (_matFolder.value) insertPayload.material_folder_url = _matFolder.value;
 
   let { data, error } = await supabase.from('creatives').insert(insertPayload).select().single();
   // schema-sync 失敗で status_code 列がまだ無い場合のフォールバック
@@ -11472,6 +11493,7 @@ router.post('/creatives', async (req, res) => {
     const retry = await supabase.from('creatives').insert(fallback).select().single();
     data = retry.data; error = retry.error;
   }
+  if (error && isMissingMaterialFolderUrlColumn(error)) return res.status(503).json({ error: MATERIAL_FOLDER_URL_NOT_READY });
   if (error) return res.status(500).json({ error: error.message });
   // 担当者を creative_assignments に登録（assigneeUser は team_id 解決時に取得済み）
   if (assignee_id) {
@@ -11535,6 +11557,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   const {
     file_name, status, deadline, draft_deadline, final_deadline, script_url,
     frameio_url, delivery_url, final_delivery_url, client_review_url,
+    material_folder_url,
     help_flag, talent_flag, note, revision_count,
     director_comment, client_comment, editor_comment,
     creative_type, appeal_type_id, product_id, media_code, creative_fmt, creative_size,
@@ -11633,6 +11656,12 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
     // 空文字 → null として保存（フロントの入力体験に合わせる）
     const trimmed = typeof client_review_url === 'string' ? client_review_url.trim() : client_review_url;
     updateData.client_review_url = trimmed ? trimmed : null;
+  }
+  if (material_folder_url !== undefined) {
+    // 素材フォルダURL（任意）: 空 → null（クリア）。Google ドライブ以外は 400
+    const _mf = normalizeDriveFolderUrl(material_folder_url);
+    if (!_mf.ok) return res.status(400).json({ error: _mf.error });
+    updateData.material_folder_url = _mf.value;
   }
   if (help_flag !== undefined) updateData.help_flag = help_flag;
   if (talent_flag !== undefined) updateData.talent_flag = talent_flag;
@@ -11892,6 +11921,7 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
         .single());
     }
   }
+  if (error && isMissingMaterialFolderUrlColumn(error)) return res.status(503).json({ error: MATERIAL_FOLDER_URL_NOT_READY });
   if (error) return res.status(500).json({ error: error.message });
 
   // ADR 008 Phase 4: file_name 変更を Slack に通知（fire-and-forget）
