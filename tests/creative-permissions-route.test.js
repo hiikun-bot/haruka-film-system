@@ -373,3 +373,69 @@ describe('DELETE /creatives は本体を 1 文で消し、関連行は CASCADE �
     expect(mockDb.tables.creative_deletion_logs).toEqual([]);
   });
 });
+
+describe('制作担当（担当者の欄）は同じ人を 2 行にしない（designer＋editor の二重・2026-11-24）', () => {
+  const workers = () => mockDb.tables.creative_assignments
+    .filter(a => a.creative_id === 'cr1' && ['editor', 'designer', 'director_as_editor'].includes(a.role));
+  beforeEach(() => {
+    // cr1 はデザイナー（designer 行）の作品
+    mockDb.tables.creative_assignments = [{ id: 'g1', creative_id: 'cr1', user_id: 'ed', role: 'designer', rank_applied: 'C' }];
+  });
+  test('デザイナー本人が assignee_id として送られても editor 行を足さない（変更なし）', async () => {
+    for (const h of [ADMIN, DIRECTOR, EDITOR]) {
+      const r = await call('PUT', '/creatives/cr1', h, { assignee_id: 'ed', note: 'n' });
+      expect(r.status).toBe(200);
+    }
+    expect(workers()).toEqual([expect.objectContaining({ id: 'g1', user_id: 'ed', role: 'designer', rank_applied: 'C' })]);
+  });
+  test('別の人に替えると、制作担当は 1 人だけ（役割 designer を引き継ぐ）', async () => {
+    const r = await call('PUT', '/creatives/cr1', DIRECTOR, { assignee_id: 'ed2' });
+    expect(r.status).toBe(200);
+    expect(workers()).toEqual([expect.objectContaining({ user_id: 'ed2', role: 'designer', rank_applied: 'C' })]);
+  });
+  test('担当外の人は同じ人を送っても 403 にならない（変更なし）が、別の人へは 403', async () => {
+    const r = await call('PUT', '/creatives/cr1', OTHER_DIRECTOR, { assignee_id: 'ed', note: 'm' });
+    expect(r.status).toBe(200);
+    const r2 = await call('PUT', '/creatives/cr1', OTHER_DIRECTOR, { assignee_id: 'ed2' });
+    expect(r2.status).toBe(403);
+    expect(workers().map(a => a.id)).toEqual(['g1']);
+  });
+  test('POST /creatives/:id/assignments: 同じ人を別の制作ロール（editor）で足すのは 409', async () => {
+    const r = await call('POST', '/creatives/cr1/assignments', ADMIN, { user_id: 'ed', role: 'editor' });
+    expect(r.status).toBe(409);
+    expect(workers()).toHaveLength(1);
+    // 制作以外の役割（Wチェック等）は今までどおり足せる
+    const r2 = await call('POST', '/creatives/cr1/assignments', ADMIN, { user_id: 'ed', role: 'wcheck' });
+    expect(r2.status).toBe(200);
+  });
+});
+
+describe('GET /creatives/:id の perm（画面の出し分け・サーバーの判定と同じ条件）', () => {
+  // 偽 DB は embed を再現しないので、詳細の creative_assignments を creatives 行に載せておく（本番は PostgREST の embed）
+  beforeEach(() => {
+    for (const c of mockDb.tables.creatives) {
+      c.creative_assignments = mockDb.tables.creative_assignments
+        .filter(a => a.creative_id === c.id).map(a => ({ id: a.id, user_id: a.user_id, role: a.role, users: { id: a.user_id } }));
+    }
+  });
+  const permOf = async (h, id = 'cr1') => {
+    const r = await call('GET', `/creatives/${id}`, h);
+    expect(r.status).toBe(200);
+    return (await r.json()).perm;
+  };
+  test('admin: 全部できる', async () => {
+    expect(await permOf(ADMIN)).toEqual({ can_edit: true, can_edit_assignees: true, can_delete: true });
+  });
+  test('案件の担当 D: 全部できる（納品済みも削除できる）', async () => {
+    expect(await permOf(DIRECTOR, 'cr2')).toEqual({ can_edit: true, can_edit_assignees: true, can_delete: true });
+  });
+  test('担当の編集者: 編集・担当者の欄は出る。削除は納品前だけ', async () => {
+    expect(await permOf(EDITOR)).toEqual({ can_edit: true, can_edit_assignees: true, can_delete: true });
+    expect(await permOf(EDITOR, 'cr2')).toEqual({ can_edit: true, can_edit_assignees: true, can_delete: false });
+  });
+  test('担当外の editor・director: どれも出さない', async () => {
+    for (const h of [OUTSIDER, OTHER_DIRECTOR]) {
+      expect(await permOf(h)).toEqual({ can_edit: false, can_edit_assignees: false, can_delete: false });
+    }
+  });
+});

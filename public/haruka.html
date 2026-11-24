@@ -4691,7 +4691,7 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
           <span id="creative-selected-count" style="font-size:12px;color:var(--text-muted)">0件選択中</span>
           <button class="btn" onclick="openBulkStatusModal()" style="font-size:12px;padding:4px 10px" title="選択したクリエイティブのステータスをまとめて変更（納品含む）">ステータス一括変更</button>
           <button class="btn" onclick="openBulkDeadlineModal()" style="font-size:12px;padding:4px 10px" title="選択したクリエイティブの初稿締切・最終納品日をまとめて変更">📅 予定日一括変更</button>
-          <button class="btn-danger" onclick="deleteSelectedCreatives()" style="font-size:12px;padding:4px 10px">削除</button>
+          <button class="btn-danger" id="creative-bulk-delete-btn" onclick="deleteSelectedCreatives()" style="font-size:12px;padding:4px 10px" title="選んだクリエイティブを削除（選んだ全件を削除できるときだけ表示）">削除</button>
         </span>
         <button class="btn-primary" onclick="openCreateCreative()" style="font-size:12px;padding:6px 12px">＋ 追加</button>
       </div>
@@ -16499,7 +16499,7 @@ function renderCreatives() {
       <td style="white-space:nowrap;font-size:13px;font-weight:500;color:var(--text)">${clientName}</td>
       <td style="font-size:13px;font-weight:500;cursor:pointer;color:var(--em-dark);white-space:nowrap" onclick="openCreativeDetail('${c.id}')" title="${c.file_name}">${c.thumb_file_id ? `<img class="cv-list-thumb" loading="lazy" decoding="async" src="/api/haruka/portfolio/thumbnail/${esc(c.thumb_file_id)}?s=120" alt="" onerror="this.style.display='none'">` : ''}<span style="text-decoration:underline dotted">${c.file_name}</span></td>
       <td class="cv-ed" title="クリックで訴求軸を変更" onclick="cvEditAppeal(event,this,'${c.id}')" style="font-size:12px;white-space:nowrap">${c.appeal_name ? esc(c.appeal_name) : '<span style="color:#B4B2A9">—</span>'}</td>
-      <td class="cv-ed" title="クリックで担当編集者を変更" onclick="cvEditEditor(event,this,'${c.id}')" style="font-size:14px;font-weight:500">${editor?.users ? avatarWithName(editor.users, 36) : '<span style="color:#B4B2A9">未設定</span>'}</td>
+      <td ${crCanEditAssignees(c) ? `class="cv-ed" title="クリックで担当編集者を変更" onclick="cvEditEditor(event,this,'${c.id}')"` : ''} style="font-size:14px;font-weight:500">${editor?.users ? avatarWithName(editor.users, 36) : '<span style="color:#B4B2A9">未設定</span>'}</td>
       <td class="rank-col" style="display:${showRank?'':'none'}">${rank!=='-'?`<span class="rank-chip r-${rank.toLowerCase()}">${rank}</span>`:'-'}</td>
       <td>${team?`<span class="team-badge">${team.team_code}チーム</span>`:'-'}</td>
       <td><span class="status-chip ${statusClass(c.status)} status-chip-clickable" role="button" tabindex="0" title="クリックしてステータスを変更" onclick="event.stopPropagation();openStatusModal('${c.id}')" onkeydown="if(event.key==='Enter'){event.stopPropagation();openStatusModal('${c.id}')}">${c.status}<span class="status-chip-caret">▾</span></span>${c.force_delivered ? `<span title="納品完了モードで登録: ${esc(c.force_delivered_reason||'')}" style="margin-left:4px;font-size:10px;padding:2px 6px;border-radius:6px;background:#DCFCE7;border:0.5px solid #16A34A;color:#15803D;font-weight:600">完了</span>` : ''}</td>
@@ -16721,12 +16721,21 @@ function cvEditFrameio(ev, cell, id) {
   });
 }
 
-// 担当編集者（assignee_id）。PUT が role='editor' の assignment を入れ替え、rank をスナップする。
+// ── 画面の出し分け（担当者の欄・素材フォルダURL の保存・まとめて削除） ──
+// サーバー（GET /creatives・GET /creatives/:id）が返す perm を見る。判定は utils/creative-permissions.js と同じ条件で
+// 実効ロール（VIEW AS）込み。perm が無い古い応答では今までどおり出す（押せばサーバーが判定する）
+function crPermOf(c) { return (c && c.perm && typeof c.perm === 'object') ? c.perm : null; }
+function crCanEditAssignees(c) { const p = crPermOf(c); return p ? p.can_edit_assignees !== false : true; }
+function crCanEdit(c)          { const p = crPermOf(c); return p ? p.can_edit !== false : true; }
+function crCanDelete(c)        { const p = crPermOf(c); return p ? p.can_delete !== false : true; }
+
+// 担当者（assignee_id）。PUT が制作担当（editor / designer / director_as_editor）を選んだ 1 人に合わせ、rank をスナップする。
 function cvEditEditor(ev, cell, id) {
   ev.stopPropagation();
   if (cell.dataset.editing) return;
-  cell.dataset.editing = '1';
   const c = (allCreatives || []).find(x => x && x.id === id);
+  if (!crCanEditAssignees(c)) return; // 担当者を変えられない人には選択欄を出さない
+  cell.dataset.editing = '1';
   const curAssign = (c?.creative_assignments || []).find(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
   const curId = curAssign?.users?.id || '';
   const members = (allMembers || []).filter(m => m.is_active !== false);
@@ -16744,16 +16753,10 @@ function cvEditEditor(ev, cell, id) {
     if ((nv || '') === (curId || '')) { renderCreatives(); return; }
     const ok = await _cvPutField(id, { assignee_id: nv });
     if (ok && c) {
-      // サーバーと同挙動: role='editor' の assignment を差し替え（rank はメンバーの rank をスナップ）
-      c.creative_assignments = (c.creative_assignments || []).filter(a => a.role !== 'editor');
-      if (nv) {
-        const m = members.find(x => x.id === nv);
-        c.creative_assignments.push({
-          role: 'editor', rank_applied: m?.rank || null,
-          users: m ? { id: m.id, full_name: m.full_name, nickname: m.nickname, role: m.role, rank: m.rank, team_id: m.team_id, avatar_url: m.avatar_url } : null,
-        });
-      }
+      // 担当の行（役割・ランク）はサーバーが決める（デザイナーの作品は designer のまま等）ので、この 1 件だけ取り直して表示する
       showToast('担当編集者を保存しました', 'success');
+      await refreshCreativeInList(id);
+      return;
     }
     renderCreatives();
   };
@@ -49119,7 +49122,9 @@ async function openCreativeDetail(id) {
   if (cdTeamSel) {
     cdTeamSel.innerHTML = '<option value="">（未設定）</option>' +
       allTeams.map(t => `<option value="${t.id}">${t.team_code}チーム / ${t.team_name}</option>`).join('');
-    const currentAssignee = (c.creative_assignments || []).find(a => a.role === 'editor');
+    // 制作担当（editor / designer / director_as_editor）を出す。editor だけを見ると、デザイナーの作品で欄が空になり、
+    // 選び直した同じ人が editor として足されていた（同じ人の制作担当が 2 行になる不具合・2026-11-24）
+    const currentAssignee = (c.creative_assignments || []).find(a => ['editor', 'designer', 'director_as_editor'].includes(a.role));
     const assigneeUser = currentAssignee?.users;
     cdTeamSel.value = assigneeUser?.team_id || '';
     cdUpdateAssigneeSelect();
@@ -49752,7 +49757,9 @@ function updateCreativeCommentLabel(status) {
     if (uploadSection)    uploadSection.style.display    = 'none';
     if (noteGroup)        noteGroup.style.display        = 'none';
     if (editorRplyGroup)  editorRplyGroup.style.display  = 'none';
-    if (assigneeSection)  assigneeSection.style.display  = '';
+    // 担当者の欄は、担当者を変えられる人（サーバーの perm.can_edit_assignees）にだけ出す。
+    // 隠しても cd-assignee-id には今の担当が入っているので、「制作中へ進める」は今の担当のまま送れる
+    if (assigneeSection)  assigneeSection.style.display  = crCanEditAssignees(currentCreativeDetail) ? '' : 'none';
     field.readOnly = false;
     field.rows = 3;
     field.placeholder = 'メモを入力...';
@@ -50105,6 +50112,10 @@ async function advanceCreativeStatus() {
   if (currentCreativeDetail.status === '未着手') {
     const assigneeId = document.getElementById('cd-assignee-id')?.value;
     if (!assigneeId) {
+      if (!crCanEditAssignees(currentCreativeDetail)) {
+        showToast('担当者が決まっていないため制作中に進められません。案件の担当ディレクター・プロデューサーか管理者に担当者の設定を依頼してください。', 'warn');
+        return;
+      }
       showToast('担当者を設定してください。担当者なしで制作中には進めません。', 'warn');
       document.getElementById('cd-assignee-id')?.focus();
       return;
@@ -59812,6 +59823,13 @@ function updateCreativeDeleteBar() {
   if (checked.length > 0) {
     bar.style.display = 'flex';
     countEl.textContent = `${checked.length}件選択中`;
+    // 「削除」は選んだ全件を消せるときだけ出す（サーバーは 1 件でも消せないものがあれば何も消さないため）
+    const delBtn = document.getElementById('creative-bulk-delete-btn');
+    if (delBtn) {
+      const byId = new Map((allCreatives || []).filter(Boolean).map(c => [c.id, c]));
+      const allDeletable = Array.from(checked).every(cb => crCanDelete(byId.get(cb.dataset.id)));
+      delBtn.style.display = allDeletable ? '' : 'none';
+    }
   } else {
     bar.style.display = 'none';
   }
@@ -60335,6 +60353,10 @@ function cdRenderMaterialFolder(c) {
   group.style.display = '';
   _cdMaterialFolderSaved = c.material_folder_url || '';
   input.value = _cdMaterialFolderSaved;
+  // 変えられない人（サーバーの perm.can_edit が false）には「開く」だけ。入力欄は読み取り専用・保存ボタンは出さない
+  const canEdit = crCanEdit(c);
+  input.readOnly = !canEdit;
+  input.placeholder = canEdit ? 'https://drive.google.com/drive/folders/...' : '（未設定）';
   cdUpdateMaterialFolderButtons();
 }
 function cdUpdateMaterialFolderButtons() {
@@ -60343,7 +60365,7 @@ function cdUpdateMaterialFolderButtons() {
   const saveBtn = document.getElementById('cd-material-folder-save');
   if (!input) return;
   const cur = input.value.trim();
-  if (saveBtn) saveBtn.style.display = (cur !== (_cdMaterialFolderSaved || '')) ? '' : 'none';
+  if (saveBtn) saveBtn.style.display = (!input.readOnly && cur !== (_cdMaterialFolderSaved || '')) ? '' : 'none';
   if (openBtn) {
     const r = _cdMatCheck(cur);
     openBtn.disabled = !(r.ok && r.value && !r.unchecked);

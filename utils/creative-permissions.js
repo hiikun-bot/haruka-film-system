@@ -182,11 +182,11 @@ function diffAssignmentInput(input, current, userId) {
   const changed = [];
   const selfAdds = [];
   if (input.assignee_id !== undefined) {
-    const want = input.assignee_id ? [input.assignee_id] : [];
-    const have = usersOf('editor');
-    if (!sameUserSet(want, have)) {
+    // 制作担当（editor / designer / director_as_editor）の欄として比べる（planWorkerAssigneeSync と同じ意味）
+    const plan = planWorkerAssigneeSync(workerRowsOf(asn), input.assignee_id);
+    if (plan.changed) {
       changed.push('editor');
-      if (me && has(want, me) && !has(have, me)) selfAdds.push('editor');
+      if (me && plan.insert && sameId(plan.insert.user_id, me)) selfAdds.push('editor');
     }
   }
   for (const [key, role] of [['director_ids', 'director'], ['producer_ids', 'producer'], ['wcheck_ids', 'wcheck']]) {
@@ -229,7 +229,70 @@ function planAssignmentSync(existingRows, desiredIds) {
   return { insertUserIds, deleteRowIds, changed: insertUserIds.length > 0 || deleteRowIds.length > 0 };
 }
 
+// ── 担当者（assignee_id）＝「制作担当」1 人の欄 ──
+// 画面の「担当者」欄は editor / designer / director_as_editor のどれか（最初の 1 行）を表示し、選び直すと assignee_id を送る。
+// 以前のサーバーは role='editor' の行だけを見ていたので、デザイナー（designer 行）の作品で同じ人がそのまま送られると
+// editor 行が増え、同じ人が同じ作品に designer＋editor の 2 行（制作担当の二重）になっていた（2026-11-24 修正）。
+// 今は「選ばれた人がすでに制作担当（どの役割でも）なら editor 行を足さない」。ほかの役割の行は従来どおり触らない
+// （画面は担当者を変えていない保存でも assignee_id を送るため、従来より多く消すと別の担当者が黙って外れる）。
+//   workerRows … 今の制作担当の行 [{ id, user_id, role }]（WORKER_ROLES のもの）
+//   assigneeId … 選ばれた人（null / 空は従来どおり「editor 行を外す」。designer・director_as_editor の行は残す）
+// 返り値: { insert: null | { user_id, role }, deleteRowIds, changed }
+//   ・選ばれた人がすでに制作担当の行を持つ → その行（最初の 1 行）を役割ごと残す。ほかの人の editor 行と、
+//     その人自身の重複行（designer＋editor 等）だけ消す（従来の「editor は選ばれた 1 人」と同じ結果から重複を除いたもの）
+//   ・選ばれた人が制作担当でない → 従来どおり editor 行を入れ替える。ただし editor 行が無く、制作担当が
+//     designer 1 行だけのとき（デザイナーの作品の付け替え）は designer として入れ替える（designer＋editor の 2 人にしない）
+//   ・呼び出し側は「足す → 成功したら消す」の順で書く
+function workerRowsOf(assignments) {
+  return (assignments || []).filter(a => a && WORKER_ROLES.has(a.role));
+}
+
+function planWorkerAssigneeSync(workerRows, assigneeId) {
+  const rows = (workerRows || []).filter(r => r && WORKER_ROLES.has(r.role));
+  const want = normId(assigneeId);
+  const editorRows = rows.filter(r => r.role === 'editor');
+  // changed は「消す行があるか」で決める（権限判定では id を読まない行を渡すことがあるため、id の有無で決めない）
+  const result = (insert, drop) => ({ insert, deleteRowIds: drop.map(r => r.id).filter(Boolean), changed: !!insert || drop.length > 0 });
+  if (!want) return result(null, editorRows);
+  const keep = rows.find(r => sameId(r.user_id, want)) || null;
+  if (keep) {
+    return result(null, rows.filter(r => r !== keep && (r.role === 'editor' || sameId(r.user_id, want))));
+  }
+  if (editorRows.length === 0 && rows.length === 1 && rows[0].role === 'designer') {
+    return result({ user_id: want, role: 'designer' }, rows);
+  }
+  return result({ user_id: want, role: 'editor' }, editorRows);
+}
+
+// 画面の出し分け用（GET /creatives・GET /creatives/:id が返す）。サーバーの判定（judge*）と同じ条件で、
+// 「このボタン・欄を押して通るか」を返す。最終判断はいつもサーバー（PUT・DELETE 側の判定）。
+//   canManageAll … project.create_edit（担当者・中身の編集）
+//   canDeleteAll … project.delete（削除）
+//   creative     … { id, file_name, status, delivered_at, force_delivered }（削除の「納品前だけ」判定に使う）
+// 返り値: { can_edit, can_edit_assignees, can_delete }
+//   can_edit_assignees は「担当者の欄を出すか」。自分を新しく D/P に入れられるかなど、役割ごとの細かい可否は
+//   保存時にサーバーが判定する（ここでは自分を足さない変更が通るか＝selfAdds なしで判定）
+function creativeUiPermissions({ canManageAll, canDeleteAll, userId, project, team, myRoles, creative }) {
+  const base = { canManageAll: !!canManageAll, userId, project, team, myRoles };
+  const can_edit = judgeCreativeEdit(base).allowed;
+  const can_edit_assignees = judgeAssignmentChange({ ...base, canDeleteAll: !!canDeleteAll, myRoleCodes: [], selfAdds: [] }).allowed;
+  let can_delete = false;
+  if (creative && creative.id) {
+    const j = judgeCreativeDelete({
+      canManageAll: !!canDeleteAll, userId, ids: [creative.id],
+      creatives: [{ ...creative, projects: project || null }],
+      myRolesByCreative: new Map([[creative.id, Array.isArray(myRoles) ? myRoles : []]]),
+    });
+    can_delete = j.allowed;
+  }
+  return { can_edit, can_edit_assignees, can_delete };
+}
+
 module.exports = {
+  workerRowsOf,
+  planWorkerAssigneeSync,
+  creativeUiPermissions,
+  WORKER_ROLES,
   normId,
   sameId,
   planAssignmentSync,
