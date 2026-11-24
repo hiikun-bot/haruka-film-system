@@ -10239,10 +10239,11 @@ window.showPage = window.showPage || function stubShowPage(name, btn) {
             ✎ 事後修正
           </button>
           <!-- クリエイティブ削除ボタン: リスト表示のチェックボックス削除と同じ DELETE /api/creatives を1件で呼ぶ。
-               ガント表示・詳細モーダルからも不要クリエイティブを消せるようにするための入口（confirm で誤操作防止）。 -->
+               ガント表示・詳細モーダルからも不要クリエイティブを消せるようにするための入口（confirm で誤操作防止）。
+               権限ありのときだけ表示（GET /api/creatives/:id/delete-eligibility が can_delete=true・refreshCreativeDeleteButton）。 -->
           <button id="cd-delete-btn"
                   onclick="deleteCreativeFromDetail()"
-                  style="flex-shrink:0;background:#fff;border:1px solid #fca5a5;border-radius:6px;padding:4px 10px;font-size:11.5px;color:#dc2626;cursor:pointer;white-space:nowrap;margin-left:6px"
+                  style="display:none;flex-shrink:0;background:#fff;border:1px solid #fca5a5;border-radius:6px;padding:4px 10px;font-size:11.5px;color:#dc2626;cursor:pointer;white-space:nowrap;margin-left:6px"
                   title="このクリエイティブを削除します（Drive ファイルは【削除】リネームのみ）">
             🗑 削除
           </button>
@@ -41545,7 +41546,7 @@ const ROLE_PERM_LIST = [
   { section:'案件管理',       key:'project.client_price',        label:'クライアント単価の閲覧・編集' },
   { section:'案件管理',       key:'project.unit_price_view',     label:'単価設定閲覧' },
   { section:'案件管理',       key:'project.fee_view',            label:'報酬設定閲覧' },
-  { section:'案件管理',       key:'project.delete',              label:'案件削除（完全）' },
+  { section:'案件管理',       key:'project.delete',              label:'案件削除（完全）・担当外のクリエイティブ削除' },
   { section:'クリエイティブ', key:'creative.all_projects_view',  label:'全案件のCL閲覧' },
   { section:'クリエイティブ', key:'creative.rank_price_column',  label:'ランク・単価列表示' },
   { section:'クリエイティブ', key:'creative.csv_import',         label:'一括登録（CSV）' },
@@ -48256,6 +48257,8 @@ async function openCreativeDetail(id) {
   // 事後修正モード: ボタン表示制御 + 編集履歴ロード（モーダル下部の追加情報なので非同期で OK・失敗しても無視）
   refreshCreativePostEditButton(id).catch(() => {});
   refreshCreativeEditHistory(id).catch(() => {});
+  // 🗑 削除ボタン: 権限ありのときだけ表示（失敗時は非表示のまま）
+  refreshCreativeDeleteButton(id).catch(() => {});
 
   // 中身が描画され終わったので render フェーズ done → overlay フェードアウト
   if (!_cdHasCache) _cdMarkPhaseDone('render');
@@ -57870,6 +57873,27 @@ async function refreshCreativePostEditButton(creativeId) {
   }
 }
 
+// 詳細モーダル内で「🗑 削除」ボタンの可視性を更新（権限ありのみ表示）
+// サーバー GET /api/creatives/:id/delete-eligibility が can_delete=true のときだけ出す。
+// 削除できるのは 'project.delete' 権限を持つロール、または案件の担当D/P・そのCRの担当者。
+// apiFetch 経由なので X-View-As が効く（ADR 015）。
+async function refreshCreativeDeleteButton(creativeId) {
+  const btn = document.getElementById('cd-delete-btn');
+  if (!btn) return;
+  btn.style.display = 'none';
+  if (!creativeId) return;
+  try {
+    const res = await apiFetch(`${API}/creatives/${creativeId}/delete-eligibility`);
+    if (!res.ok) return;
+    const j = await res.json();
+    // 応答待ちの間に別のクリエイティブへ切り替わっていたら反映しない
+    if (currentCreativeDetail?.id && currentCreativeDetail.id !== creativeId) return;
+    if (j?.can_delete) btn.style.display = '';
+  } catch (_) {
+    // 失敗時は黙って非表示のまま
+  }
+}
+
 // 詳細モーダル下部の「編集履歴」を再描画
 async function refreshCreativeEditHistory(creativeId) {
   const sec = document.getElementById('cd-edit-history-section');
@@ -58699,8 +58723,8 @@ async function confirmAndDeleteCreatives(ids, targetLabel) {
   }
   const e = await res.json().catch(() => ({}));
   const raw = String(e?.error || '');
-  // 請求書紐付きで 409 が返ったときは複数行の詳細を alert で表示（toast では読めない）
-  if (res.status === 409 && raw.includes('\n')) {
+  // 請求書紐付き(409) / 権限不足(403) で複数行の詳細が返ったときは alert で表示（toast では読めない）
+  if ((res.status === 409 || res.status === 403) && raw.includes('\n')) {
     alert('クリエイティブを削除できません\n\n' + raw);
   } else {
     showToast('削除エラー: ' + translateError(raw), 'error');
