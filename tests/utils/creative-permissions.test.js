@@ -68,10 +68,10 @@ describe('judgeCreativeEdit（素材フォルダURL など）', () => {
 });
 
 describe('judgeAssignmentChange', () => {
-  test('権限者・案件の D/P・チームのリーダー・D/P 担当は何でも可（自分を D に入れるのも可）', () => {
-    expect(P.judgeAssignmentChange({ canManageAll: true, userId: 'x', selfAdds: ['director'] }).allowed).toBe(true);
+  test('権限者（削除権限あり）・案件の D/P・D/P 担当は何でも可（自分を D に入れるのも可）。チームのリーダーは他の人なら可', () => {
+    expect(P.judgeAssignmentChange({ canManageAll: true, canDeleteAll: true, userId: 'x', selfAdds: ['director'] }).allowed).toBe(true);
     expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'dir', project, myRoles: [], selfAdds: ['producer'] }).allowed).toBe(true);
-    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team: { producer_id: 'tl' }, myRoles: [], selfAdds: ['editor'] }).allowed).toBe(true);
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team: { producer_id: 'tl' }, myRoles: [], selfAdds: [] }).allowed).toBe(true);
     expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'd2', project, myRoles: ['director'], selfAdds: ['director'] }).allowed).toBe(true);
   });
   test('担当でも案件の D/P でもない人は、自分を担当に足すことも含めて不可', () => {
@@ -93,11 +93,23 @@ describe('judgeAssignmentChange', () => {
     expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'd', project, myRoles: ['editor'], myRoleCodes: ['director'], selfAdds: ['producer_director'] }).allowed).toBe(false);
     expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'pd', project, myRoles: ['editor'], myRoleCodes: ['producer_director'], selfAdds: ['producer_director'] }).allowed).toBe(true);
   });
-  test('チームのリーダーは他の人の担当は決められるが、実効ロールが D/P でなければ自分を D/P に足せない', () => {
+  test('担当に入っていないチームのリーダーは他の人の担当は決められるが、自分を入れることはできない', () => {
     const team = { director_id: 'tl' };
     expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team, myRoles: [], myRoleCodes: ['editor'], selfAdds: [] }).allowed).toBe(true);
-    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team, myRoles: [], myRoleCodes: ['editor'], selfAdds: ['director'] }).allowed).toBe(false);
-    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team, myRoles: [], myRoleCodes: ['director'], selfAdds: ['director'] }).allowed).toBe(true);
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team, myRoles: [], myRoleCodes: ['director'], selfAdds: ['director'] }).allowed).toBe(false);
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team, myRoles: [], myRoleCodes: ['editor'], selfAdds: ['designer'] }).allowed).toBe(false);
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team, myRoles: [], myRoleCodes: ['editor'], selfAdds: ['editor'] }).allowed).toBe(false);
+  });
+  test('Wチェック担当は自分を制作担当（editor）にできない。デザイナー担当は自分の行の付け替え（editor）なら可', () => {
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'w', project, myRoles: ['wcheck'], myRoleCodes: ['designer'], selfAdds: ['editor'] }))
+      .toEqual({ allowed: false, reason: 'self_add', role: 'editor' });
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'ds', project, myRoles: ['designer'], myRoleCodes: ['designer'], selfAdds: ['editor'] }).allowed).toBe(true);
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'ds', project, myRoles: ['designer'], myRoleCodes: ['designer'], selfAdds: ['wcheck'] }).allowed).toBe(false);
+  });
+  test('案件編集の権限があっても削除の権限が無い人は、実効ロールが D/P でなければ自分を D/P に足せない', () => {
+    expect(P.judgeAssignmentChange({ canManageAll: true, canDeleteAll: false, userId: 's', myRoles: [], myRoleCodes: ['secretary'], selfAdds: ['director'] }).allowed).toBe(false);
+    expect(P.judgeAssignmentChange({ canManageAll: true, canDeleteAll: true, userId: 's', myRoles: [], myRoleCodes: ['secretary'], selfAdds: ['director'] }).allowed).toBe(true);
+    expect(P.judgeAssignmentChange({ canManageAll: true, canDeleteAll: false, userId: 's', myRoles: [], myRoleCodes: ['secretary'], selfAdds: ['editor'] }).allowed).toBe(true);
   });
   test('実効ロールが director の担当者（director_as_editor 等）は自分を D に入れられる。PD は P も可', () => {
     expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'de', project, myRoles: ['director_as_editor'], myRoleCodes: ['director'], selfAdds: ['director'] }).allowed).toBe(true);

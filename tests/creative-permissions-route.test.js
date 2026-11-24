@@ -222,6 +222,19 @@ describe('担当者の変更（自分を担当に足してから削除する抜�
     const d = await call('DELETE', '/creatives', EDITOR, { ids: ['cr2'] });
     expect(d.status).toBe(403);
   });
+  test('同じ人・同じ役割の二重登録は 409。ランクは画面の値ではなくメンバーのランク', async () => {
+    const r = await call('POST', '/creatives/cr1/assignments', ADMIN, { user_id: 'ed', role: 'editor' });
+    expect(r.status).toBe(409);
+    const r2 = await call('POST', '/creatives/cr1/assignments', ADMIN, { user_id: 'ed2', role: 'designer', rank_applied: 'S' });
+    expect(r2.status).toBe(200);
+    expect(mockDb.tables.creative_assignments.find(a => a.user_id === 'ed2').rank_applied).toBe('C');
+  });
+  test('Wチェック担当が自分を制作担当にする付け替えは 403', async () => {
+    mockDb.tables.creative_assignments.push({ id: 'a3', creative_id: 'cr1', user_id: 'ed2', role: 'wcheck' });
+    const r = await call('PUT', '/creatives/cr1', OUTSIDER, { assignee_id: 'ed2' });
+    expect(r.status).toBe(403);
+    expect(mockDb.tables.creative_assignments.find(a => a.id === 'a1')).toBeTruthy();
+  });
   test('担当外の director: 担当者が変わらない保存（同じ assignee_id・空の producer_user_ids）は今までどおり通る', async () => {
     const r = await call('PUT', '/creatives/cr1', OTHER_DIRECTOR, { assignee_id: 'ed', producer_user_ids: [], note: 'メモ' });
     expect(r.status).toBe(200);

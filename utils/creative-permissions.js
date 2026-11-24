@@ -100,22 +100,42 @@ const SELF_LEADER_REQUIRED_CODES = {
   producer: ['producer'],
   producer_director: ['director', 'producer'],
 };
-function judgeAssignmentChange({ canManageAll, userId, project, team, myRoles, myRoleCodes, selfAdds }) {
-  if (canManageAll) return { allowed: true };
+// 自分で入ってよい「制作担当」の役割（担当の付け替えで自分が editor 行になるのは、すでに制作担当のときだけ）
+const WORKER_ROLES = new Set(['editor', 'designer', 'director_as_editor']);
+//   canDeleteAll … 削除の権限（project.delete）。案件編集の権限者でも、これが無ければ自分を D/P に足すのは
+//                  実効ロールが D/P のときだけ（D/P 担当になると削除できてしまうため）
+function judgeAssignmentChange({ canManageAll, canDeleteAll, userId, project, team, myRoles, myRoleCodes, selfAdds }) {
   if (!userId) return { allowed: false, reason: 'not_related' };
   const roles = Array.isArray(myRoles) ? myRoles : [];
+  const codes = new Set(Array.isArray(myRoleCodes) ? myRoleCodes : []);
+  if (codes.has('producer_director')) { codes.add('producer'); codes.add('director'); }
+  const leaderCodesOk = (r) => (SELF_LEADER_REQUIRED_CODES[r] || []).every(c => codes.has(c));
+  if (canManageAll) {
+    for (const r of (selfAdds || [])) {
+      if (roles.includes(r)) continue;
+      if (SELF_LEADER_REQUIRED_CODES[r] && !canDeleteAll && !leaderCodesOk(r)) {
+        return { allowed: false, reason: 'self_leader', role: r };
+      }
+    }
+    return { allowed: true };
+  }
   if (isProjectLeader(project, userId) || roles.some(r => LEADER_ASSIGN_ROLES.has(r))) {
     return { allowed: true };
   }
   if (roles.length === 0 && !isTeamLeader(team, userId)) return { allowed: false, reason: 'not_related' };
-  const codes = new Set(Array.isArray(myRoleCodes) ? myRoleCodes : []);
-  if (codes.has('producer_director')) { codes.add('producer'); codes.add('director'); }
+  // ここから先は「そのクリエイティブの担当者（D/P 以外）」か「担当に入っていないチームのリーダー」。
+  // 他の人の担当は決められるが、自分が新しく入るのは次の場合だけ:
+  //   ・D/P 担当 … すでに担当に入っていて、実効ロールが director / producer（producer_director は両方）
+  //   ・editor 行 … すでに制作担当（編集者・デザイナー等）として入っている（自分の行の付け替え）
+  //   それ以外（担当に入っていないチームのリーダーが自分を入れる、Wチェック担当が自分を制作担当にする等）は不可
   for (const r of (selfAdds || [])) {
     if (roles.includes(r)) continue;
-    const need = SELF_LEADER_REQUIRED_CODES[r];
-    if (need && !need.every(c => codes.has(c))) {
+    if (SELF_LEADER_REQUIRED_CODES[r]) {
+      if (roles.length > 0 && leaderCodesOk(r)) continue;
       return { allowed: false, reason: 'self_leader', role: r };
     }
+    if (r === 'editor' && roles.some(x => WORKER_ROLES.has(x))) continue;
+    return { allowed: false, reason: 'self_add', role: r };
   }
   return { allowed: true };
 }
@@ -133,7 +153,8 @@ function sameUserSet(a, b) {
 }
 
 // PUT /creatives/:id の担当者まわりの入力を、今の担当行と比べて「本当に変わるもの」だけにする。
-//   input   … { assignee_id?, director_ids?, producer_ids?, wcheck_ids?, team_id? }（undefined / null は「送られていない」）
+//   input   … { assignee_id?, director_ids?, producer_ids?, wcheck_ids?, team_id? }
+//             undefined だけが「送られていない」。null / 空文字 / 空配列は「外す」（サーバーの更新処理と同じ）
 //   current … { assignments:[{user_id, role}], team_id }
 //   userId  … ログイン中の人（自分が新しく入る役割 selfAdds を求める）
 // サーバーの更新処理と同じ意味で比べる:

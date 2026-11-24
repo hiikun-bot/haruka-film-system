@@ -59839,7 +59839,8 @@ async function confirmAndDeleteCreatives(ids, targetLabel) {
   const e = await res.json().catch(() => ({}));
   const raw = String(e?.error || '');
   // 請求書紐付き(409) / 権限不足(403) で複数行の詳細が返ったときは alert で表示（toast では読めない）
-  if ((res.status === 409 || res.status === 403) && raw.includes('\n')) {
+  // 見つからない対象が混ざっていた(404)ときも、何も消していないことを alert で確実に伝える
+  if (((res.status === 409 || res.status === 403) && raw.includes('\n')) || (res.status === 404 && raw)) {
     alert('クリエイティブを削除できません\n\n' + raw);
   } else {
     showToast('削除エラー: ' + translateError(raw), 'error');
