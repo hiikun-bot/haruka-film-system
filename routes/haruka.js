@@ -27,6 +27,7 @@ function isMissingMaterialFolderUrlColumn(err) {
   return /material_folder_url/.test(msg) && (/does not exist/.test(msg) || /Could not find/.test(msg) || err.code === 'PGRST204' || err.code === '42703');
 }
 const MATERIAL_FOLDER_URL_NOT_READY = '素材フォルダURLの保存先がまだ準備できていません（DB の更新待ち）。URL を空にすると登録・保存できます';
+const DRIVE_ACCESS = require('../utils/drive-file-access');
 const JOIN_REQ = require('../utils/project-join-request');
 const {
   getUserRoleCodes,
@@ -14905,7 +14906,13 @@ router.post('/creatives/:id/upload-session/init', async (req, res) => {
           'X-Upload-Content-Length': String(fileSize),
           'Origin': browserOrigin,
         },
-        body: JSON.stringify({ name: generated_name, parents: [typeFolderId] }),
+        // appProperties は SA（このアプリ）だけが書ける目印。complete で「この画面から
+        // このクリエイティブ用にアップロードされたファイルか」を確かめるのに使う。
+        body: JSON.stringify({
+          name: generated_name,
+          parents: [typeFolderId],
+          appProperties: { hfs_creative_id: String(creativeId), hfs_uploader_id: String(req.user?.id || '') },
+        }),
       }
     );
     if (!initResp.ok) {
@@ -14953,7 +14960,38 @@ router.post('/creatives/:id/upload-session/complete', async (req, res) => {
     const fileSize = Number(req.body?.fileSize) || null;
 
     if (!driveFileId) return res.status(400).json({ error: 'driveFileId が必要です' });
+    if (!DRIVE_ACCESS.isValidDriveFileId(driveFileId)) return res.status(400).json({ error: 'driveFileId が不正です' });
     if (!Number.isFinite(version)) return res.status(400).json({ error: 'version が必要です' });
+
+    // 権限確認（2026-11-24）: 受け取った driveFileId が「init がこのクリエイティブ用・この人用に
+    // 発行したアップロード先」のファイルかを確かめる。init はファイルに appProperties の目印
+    // （hfs_creative_id / hfs_uploader_id。SA＝このアプリだけが書ける）を付けている。
+    // 目印が一致しないファイル（請求書・契約書・他クリエイティブのファイル・目印の無い古いファイルなど）には
+    // 公開設定も creative_files 登録もしない。
+    {
+      let fmeta = null;
+      try {
+        const vDrive = await getDriveService();
+        ({ data: fmeta } = await vDrive.files.get({
+          fileId: driveFileId, fields: 'id, appProperties', supportsAllDrives: true,
+        }));
+      } catch (e) {
+        const code = e?.code || e?.response?.status;
+        if (code === 404 || code === 403) {
+          driveLog('warn', 'resumable complete: ファイルが見つからない／見えないため拒否', { creativeId, driveFileId });
+          return res.status(403).json({ error: 'このファイルは登録できません' });
+        }
+        driveLog('warn', `resumable complete: ファイル確認に失敗: ${e?.message || e}`, { creativeId, driveFileId });
+        return res.status(502).json({ error: 'アップロードしたファイルの確認に失敗しました。もう一度お試しください' });
+      }
+      const ap = fmeta?.appProperties || {};
+      const placed = ap.hfs_creative_id === String(creativeId)
+        && ap.hfs_uploader_id === String(req.user?.id || '');
+      if (!placed) {
+        driveLog('warn', 'resumable complete: init の目印が一致しないファイルを拒否', { creativeId, driveFileId });
+        return res.status(403).json({ error: 'このファイルは登録できません' });
+      }
+    }
 
     // 公開権限付与 + webViewLink 取得（SA）。失敗しても DB 登録は継続する。
     let driveUrl = null;
@@ -15116,23 +15154,74 @@ router.delete('/creatives/:cid/files/:fid', requireAuth, async (req, res) => {
 // フラグ OFF なら従来と完全に同一の select（r2_* 列を一切参照しない）。
 // フラグ ON でも列未適用（migration 未実行）等で select が失敗したら、従来 select に
 // フォールバックして挙動を変えない（R2 は使われず Drive 配信のまま）。
+// 同じ drive_file_id の行が複数あっても（maybeSingle だとエラー→null になる）1 行は返すよう limit(1)。
 async function fetchCreativeFilePlaybackMeta(driveFileId, baseCols) {
   const r2 = require('../lib/r2');
+  const first = (rows) => (Array.isArray(rows) ? (rows[0] || null) : (rows || null));
   if (r2.isEnabled()) {
     const { data, error } = await supabase
       .from('creative_files')
       .select(`${baseCols}, r2_key, r2_status`)
       .eq('drive_file_id', driveFileId)
-      .maybeSingle();
-    if (!error) return data;
+      .limit(1);
+    if (!error) return first(data);
     console.warn('[r2] r2_* 列付き select 失敗→従来selectへフォールバック:', error.message);
   }
   const { data } = await supabase
     .from('creative_files')
     .select(baseCols)
     .eq('drive_file_id', driveFileId)
+    .limit(1);
+  return first(data);
+}
+
+// 再生系 API（/files/:fileId/stream・/direct-url）の入口チェック。
+// 受け取ったファイル ID が「クリエイティブのファイル（creative_files）」かを DB で確かめ、
+// そのクリエイティブを閲覧してよい人かを確かめる。違えば null（呼び出し側は 404）。
+//   - drive_file_id で引く（作品ギャラリー・ショーケース・請求書エディタ・ファイルプレビューは全部この ID を送る）
+//   - drive_file_id 未保存の旧行は drive_url（…/d/<id>/…）が完全一致するものだけ救う
+// 戻り値の行は fetchCreativeFilePlaybackMeta と同じ列 + creative_id / generated_name / original_name。
+// 動画の Range リクエストは 1 再生で何十回も来るので、「この ID はクリエイティブ X のファイル」という
+// 確認済みの結果だけを短時間プロセス内に覚えておき、creatives の存在確認を毎回はしない。
+const _viewableFileVerdict = new Map(); // `${userId}:${fileId}` -> expiresAt
+const _VIEWABLE_VERDICT_TTL_MS = 5 * 60 * 1000;
+const _VIEWABLE_VERDICT_MAX = 20000;
+async function resolveViewableCreativeFile(req, driveFileId, baseCols) {
+  if (!DRIVE_ACCESS.isValidDriveFileId(driveFileId)) return null;
+  const cols = `${baseCols}, creative_id, generated_name, original_name`;
+  let cf = await fetchCreativeFilePlaybackMeta(driveFileId, cols);
+  if (!cf) {
+    // LIKE の _ は 1 文字ワイルドカードなのでエスケープしてから引き、最後に完全一致で確かめる
+    const { data: legacy } = await supabase
+      .from('creative_files')
+      .select(`${cols}, drive_url`)
+      .is('drive_file_id', null)
+      .like('drive_url', `%/d/${DRIVE_ACCESS.escapeLikePattern(driveFileId)}%`)
+      .limit(20);
+    cf = (legacy || []).find(r => DRIVE_ACCESS.driveUrlHasFileId(r.drive_url, driveFileId)) || null;
+  }
+  if (!cf || !cf.creative_id) return null;
+  const key = `${req.user?.id || ''}:${driveFileId}`;
+  const exp = _viewableFileVerdict.get(key);
+  if (exp && exp > Date.now()) return cf;
+  if (!(await canViewCreative(req, cf.creative_id))) return null;
+  if (_viewableFileVerdict.size >= _VIEWABLE_VERDICT_MAX) _viewableFileVerdict.clear();
+  _viewableFileVerdict.set(key, Date.now() + _VIEWABLE_VERDICT_TTL_MS);
+  return cf;
+}
+
+// クリエイティブを閲覧してよいか。GET /creatives/:id（クリエイティブ詳細）と同じ判定:
+// ログイン済み（router 冒頭の requireAuth）であれば、存在するクリエイティブは誰でも閲覧できる。
+// 詳細 API の判定を変えるときはここも一緒に変えること。
+async function canViewCreative(req, creativeId) {
+  if (!req.user?.id || !creativeId) return false;
+  const { data, error } = await supabase
+    .from('creatives')
+    .select('id')
+    .eq('id', creativeId)
     .maybeSingle();
-  return data;
+  if (error) throw new Error(`creatives 取得失敗: ${error.message}`);
+  return !!data;
 }
 
 // Google Drive ファイルストリーミングプロキシ（Range リクエスト対応・動画シーク可能）
@@ -15148,11 +15237,14 @@ async function fetchCreativeFilePlaybackMeta(driveFileId, baseCols) {
 router.get('/files/:fileId/stream', async (req, res) => {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return res.status(503).json({ error: 'Drive未設定' });
   try {
-    // creative_files から原本のキャッシュとfaststart情報を取得
-    const cf = await fetchCreativeFilePlaybackMeta(
+    // creative_files から原本のキャッシュとfaststart情報を取得。
+    // クリエイティブのファイルでない ID（請求書・契約書など Drive 上の他のファイル）は配信しない。
+    const cf = await resolveViewableCreativeFile(
+      req,
       req.params.fileId,
       'mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status'
     );
+    if (!cf) return res.status(404).json({ error: 'ファイルが見つかりません' });
 
     const wantsOriginal = req.query.original === '1';
 
@@ -15245,6 +15337,7 @@ router.get('/files/:fileId/stream', async (req, res) => {
 //       Browser → Drive (Google CDN) で直接 stream。Railway のプロキシ帯域を消費しない。
 // セキュリティ: 既存 lib/drive-share.js と同じく anyone-with-link reader を idempotent に付与。
 //              元々クライアントレビュー時にも同じ操作をしている運用と整合。
+//              付与する前に resolveViewableCreativeFile で「閲覧してよいクリエイティブの動画・画像」か確かめる。
 // fallback: 失敗時はフロント側で従来の /files/:fileId/stream プロキシに切り替わる。
 //
 // 高速化（ADR 021 緩和策の実装）:
@@ -15265,10 +15358,36 @@ router.get('/files/:fileId/direct-url', requireAuth, async (req, res) => {
     // creative_files から faststart 情報とメタキャッシュを取得（faststart 版があれば優先）
     // ※ permission 付与先（faststart or 原本）はこの結果で決まるため、Drive 呼び出しは
     //    この select の後にしか発行できない（逐次が本質的に必要なのはここだけ）
-    const cf = await fetchCreativeFilePlaybackMeta(
+    //
+    // 権限確認（2026-11-24）: 「リンクを知っている全員」を付ける前に、受け取った ID が
+    // 閲覧してよいクリエイティブのファイル（creative_files）であること、動画・画像であることを確かめる。
+    // それ以外（請求書・契約書など Drive 上の他のファイル）は 404 / 415 で断り、公開設定は一切しない。
+    const cf = await resolveViewableCreativeFile(
+      req,
       req.params.fileId,
       'mime_type, file_size, faststart_drive_file_id, faststart_file_size, faststart_status'
     );
+    if (!cf) return res.status(404).json({ error: 'ファイルが見つかりません' });
+    // 種類の判定: DB の mime_type → ファイル名の拡張子 → Drive の mimeType の順に、どれかが動画・画像なら OK
+    // （application/octet-stream で記録された .mkv / .avi 等も拡張子や Drive 側で救う）
+    let playable = DRIVE_ACCESS.isPlayableMime(cf.mime_type)
+      || DRIVE_ACCESS.isPlayableMime(DRIVE_ACCESS.guessMimeFromName(cf.generated_name)
+        || DRIVE_ACCESS.guessMimeFromName(cf.original_name));
+    if (!playable) {
+      try {
+        const meta = await (await getDriveService()).files.get({
+          fileId: req.params.fileId, fields: 'mimeType', supportsAllDrives: true,
+        });
+        playable = DRIVE_ACCESS.isPlayableMime(meta?.data?.mimeType);
+      } catch (e) {
+        const code = e?.code || e?.response?.status;
+        if (code === 404 || code === 403) return res.status(404).json({ error: 'ファイルが見つかりません' });
+        throw e;
+      }
+    }
+    if (!playable) {
+      return res.status(415).json({ error: '動画・画像以外のファイルは直接再生できません' });
+    }
 
     const wantsOriginal = req.query.original === '1';
 
@@ -15474,6 +15593,9 @@ router.get('/files/:fileId/stream/transcode', async (req, res) => {
   const targetH = validHeights.includes(height) ? height : 720;
 
   try {
+    // /stream と同じく、クリエイティブのファイルでない ID は扱わない
+    const cfRow = await resolveViewableCreativeFile(req, req.params.fileId, 'mime_type');
+    if (!cfRow) return res.status(404).json({ error: 'ファイルが見つかりません' });
     const drive = await getDriveService();
     const meta  = await drive.files.get(
       { fileId: req.params.fileId, fields: 'mimeType,size', supportsAllDrives: true }
