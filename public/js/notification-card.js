@@ -37,6 +37,8 @@ const ICON_BY_TYPE = {
   creative_comment:    '💬',
   // 案件への参加申請 / 承認・見送りの結果（ADR 051）
   project_join_request: '🙋',
+  // 納品完了の取り消し（担当 D/P・管理者・PD が戻したとき。制作担当・下書き請求書の持ち主・管理者向け）
+  delivery_reverted: '↩️',
 };
 
 // HTMLエスケープ — ユーザー入力を安全に埋め込むための関数

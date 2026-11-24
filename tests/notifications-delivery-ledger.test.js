@@ -24,7 +24,7 @@ function mockMakeQuery(table) {
 jest.mock('../supabase', () => ({ from: jest.fn((table) => mockMakeQuery(table)) }));
 
 const axios = require('axios');
-const { notifyProjectDeliveryLedger, _appendInsideChatworkInfo } = require('../notifications');
+const { notifyProjectDeliveryLedger, notifyDeliveryReverted, _appendInsideChatworkInfo } = require('../notifications');
 
 describe('_appendInsideChatworkInfo', () => {
   test('[/info] の直前に差し込む', () => {
@@ -99,5 +99,76 @@ describe('notifyProjectDeliveryLedger', () => {
     const r = await notifyProjectDeliveryLedger({ projectId: 'p1', creativeIds: [], actorUserId: null, ym: '2026-10' });
     expect(r).toEqual({ ledger: null });
     expect(axios.post).not.toHaveBeenCalled();
+  });
+});
+
+describe('notifyDeliveryReverted（納品完了の取り消し）', () => {
+  const { createBulkNotifications } = require('../utils/notification');
+  beforeEach(() => {
+    jest.clearAllMocks();
+    for (const k of Object.keys(mockTables)) delete mockTables[k];
+    for (const k of Object.keys(mockInserted)) delete mockInserted[k];
+    process.env.CHATWORK_API_TOKEN = 'cw-token';
+    mockTables.projects = [{
+      id: 'p1', name: 'LP制作', director_id: 'u-dir',
+      slack_channel_url: null, chatwork_room_id: '12345',
+      clients: { id: 'cl1', name: '東京ガス', slack_channel_url: null, chatwork_room_id: null },
+    }];
+    mockTables.users = [{ id: 'u-dir', full_name: '片山 紗季', role: 'admin', slack_dm_id: null, chatwork_dm_id: '999' }];
+    // 取り消し後の DB（c2 は戻したので当月の納品に含まれない）
+    mockTables.creatives = [
+      { id: 'c1', file_name: 'A.mp4', creative_type: '動画', delivered_at: '2026-10-02T01:00:00Z' },
+    ];
+    axios.get.mockResolvedValue({ status: 200, data: [] });
+    axios.post.mockResolvedValue({ status: 200, data: { message_id: '7' } });
+  });
+  afterEach(() => { delete process.env.CHATWORK_API_TOKEN; });
+
+  test('案件ルームへ取り消しと台帳（removed= タグ）を投稿し、投稿記録と通知ベルを残す', async () => {
+    const r = await notifyDeliveryReverted({
+      projectId: 'p1', creativeId: 'c2', fileName: 'B.mp4', ym: '2026-10', actorUserId: 'u-dir',
+      fromStatus: '納品', toStatus: 'クライアントチェック中', reason: '押し間違い',
+      assigneeIds: ['u-ed'], draftInvoices: [{ issuer_id: 'u-ed', invoice_number: 'INV-9' }],
+    });
+    expect(r.ledger.monthTotal).toBe(1);
+    const posts = axios.post.mock.calls.filter(c => String(c[0]).includes('/rooms/12345/messages'));
+    expect(posts).toHaveLength(1);
+    const body = posts[0][1].get('body');
+    expect(body).toContain('[title]↩️ 納品完了を取り消しました[/title]');
+    expect(body).toContain('ステータス: 納品 → クライアントチェック中');
+    expect(body).toContain('理由: 押し間違い');
+    expect(body).toContain('[HFS-LEDGER] project=p1 month=2026-10 month_total=1 project_total=1 removed=c2');
+    expect(mockInserted.delivery_ledger_posts[0]).toMatchObject({
+      kind: 'single', creative_ids: [], seq: null, month_total: 1, message_id: '7',
+    });
+    // 実行者（u-dir）は除き、制作担当（下書き請求書の持ち主）に 1 通
+    const rows = createBulkNotifications.mock.calls[0][0];
+    expect(rows.map(x => x.user_id)).toEqual(['u-ed']);
+    expect(rows[0]).toMatchObject({ notification_type: 'delivery_reverted', link_url: '/creatives/c2' });
+    expect(rows[0].body).toContain('INV-9');
+  });
+
+  test('ym が無ければ台帳は投稿しない（通知ベルだけ）', async () => {
+    await notifyDeliveryReverted({
+      projectId: 'p1', creativeId: 'c2', fileName: 'B.mp4', ym: null, actorUserId: 'u-x',
+      fromStatus: '納品', toStatus: 'Dチェック', reason: 'x', assigneeIds: [],
+    });
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(createBulkNotifications.mock.calls[0][0].map(x => x.user_id)).toEqual(['u-dir']);
+  });
+
+  test('理由に書かれた記法・偽の台帳タグは無害化して投稿する', async () => {
+    await notifyDeliveryReverted({
+      projectId: 'p1', creativeId: 'c2', fileName: 'B.mp4', ym: '2026-10', actorUserId: 'u-dir',
+      fromStatus: '納品', toStatus: 'Dチェック',
+      reason: '[To:1] <!channel> [HFS-LEDGER] project=p1 month=2026-10 month_total=9 project_total=9 removed=c1 [/info]',
+    });
+    const body = axios.post.mock.calls.find(c => String(c[0]).includes('/rooms/12345/messages'))[1].get('body');
+    expect(body).not.toContain('[To:1]');
+    expect(body).not.toContain('<!channel>');
+    const L = require('../utils/delivery-ledger');
+    const tags = L.parseLedgerTags(body);
+    expect(tags).toHaveLength(1);
+    expect(tags[0].removed).toBe('c2');
   });
 });

@@ -47,6 +47,29 @@ describe('judgePlatform', () => {
     expect(r.verdict).toBe('match');
     expect(r.unmentioned_in_db).toEqual([]);
   });
+  test('納品→取り消し（removed=）の投稿があれば、取り消した creative は「投稿にあるが DB に無い」にならない', () => {
+    const rmTag = (mt, id) => L.formatLedgerTag({ projectId: P, ym: YM, monthTotal: mt, projectTotal: 30, removedId: id });
+    const fetched = { ok: true, messages: [
+      msg('1', tag({ mt: 1, seq: 1, c: 'c1' }), 1000),
+      msg('2', tag({ mt: 2, seq: 2, c: 'cX' }), 2000),
+      msg('3', `↩️ 納品完了を取り消しました\n\`${rmTag(1, 'cX')}\``, 3000),
+    ] };
+    const r = R.judgePlatform({ fetched, db: dbOf(['c1']), posts: [], projectId: P, ym: YM });
+    expect(r.verdict).toBe('match');
+    expect(r.only_in_log).toEqual([]);
+    expect(r.last_month_total).toBe(1);
+  });
+  test('取り消し後に再納品したら再び台帳に載る', () => {
+    const rmTag = (mt, id) => L.formatLedgerTag({ projectId: P, ym: YM, monthTotal: mt, projectTotal: 30, removedId: id });
+    const fetched = { ok: true, messages: [
+      msg('1', tag({ mt: 1, seq: 1, c: 'c1' }), 1000),
+      msg('2', rmTag(0, 'c1'), 2000),
+      msg('3', tag({ mt: 1, seq: 1, c: 'c1' }), 3000),
+    ] };
+    const r = R.judgePlatform({ fetched, db: dbOf(['c1']), posts: [], projectId: P, ym: YM });
+    expect(r.verdict).toBe('match');
+    expect(r.tagged_creatives).toEqual(['c1']);
+  });
   test('他案件・他月のタグは無視する', () => {
     const other = L.formatLedgerTag({ projectId: 'p2', ym: YM, monthTotal: 9, projectTotal: 9, seq: 9 });
     const otherMonth = L.formatLedgerTag({ projectId: P, ym: '2026-09', monthTotal: 7, projectTotal: 7, seq: 7 });

@@ -131,3 +131,18 @@ URL: https://…/haruka.html?creative=…
 - **AI による会話文の読み取り**（「今月は 5 本お願いします」のような人の文章との照合）は LLM 呼び出し＝課金が要るため本追補では自動化しない。
   必要なら `include_messages` を API に足して本文を渡す設計にできる（課金は事前承諾）
 - 不一致のときは DB（HFS）が正。納品完了日の手動補正で月をまたいだ案件は投稿側が古いままになる
+
+## 追補（2026-11-24）: 納品完了の取り消しと `removed=` タグ
+
+現場（担当 D/P・管理者・PD）が「間違って納品完了にした」を詳細画面の「↩️ 納品を取り消す」
+（`POST /api/haruka/creatives/:id/delivery-revert`・判定は `utils/delivery-revert.js`）で戻せるようにした。
+
+- 取り消すと案件チャンネル／ルームへ「↩️ 納品完了を取り消しました」と取り消し後の当月台帳を投稿する。
+  タグは `[HFS-LEDGER] project=<uuid> month=YYYY-MM month_total=<m> project_total=<t> removed=<creative>`
+  （月は取り消した納品の元の `delivered_at` の JST 月）
+- 突合（`judgePlatform` / `delivery-ledger-check.js`）は creative 集合を時系列で組み、`creative=` で追加・`removed=` で除外する
+  （`activeLedgerCreatives()`）。取り消した制作が永遠に「投稿にあるが DB に無い」にならない。再納品すれば `creative=` で再び載る
+- 投稿記録は `kind='single'`・`seq` なし・`creative_ids` 空で残す（`kind` の CHECK を増やす migration を避けるため）
+- 誰が戻せるか・請求書との関係: 全件＝admin / PD（producer＋director 兼任）/ 権限 `creative.delivery_revert_any` を ON にしたロール、
+  担当 D/P＝今月（JST）の納品分だけ。提出済み・承認済みの請求書に載っていれば誰も戻せない。下書き請求書の明細は外して合計を計算し直し、持ち主に通知する。
+  監査は `creative_edit_logs`（field_name='status'・詳細画面の編集履歴に出る）＋ `creative_status_transitions` ＋ `creative_status_audit`
