@@ -75,7 +75,7 @@ beforeAll(async () => {
       global.__lastInit = JSON.parse(opts.body);
       return new Response('', { status: 200, headers: { location: 'https://upload.example/session/1' } });
     }
-    if (u.startsWith('https://thumb.example/')) return new Response('IMG', { status: 200, headers: { 'content-type': 'image/jpeg' } });
+    if (u.startsWith('https://thumb.example/')) return new Response(Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, 0x4A, 0x46, 0x49, 0x46, 0, 1, 1]), { status: 200, headers: { 'content-type': 'image/jpeg' } });
     return realFetch(url, opts);
   });
   const app = express();
