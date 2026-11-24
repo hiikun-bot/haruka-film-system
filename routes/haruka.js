@@ -19914,6 +19914,27 @@ router.delete('/tweets/:id/comments/:commentId', requireAuth, async (req, res) =
 //   ・月は納品完了日（delivered_at）の JST 月（ADR 026。以前は updated_at のサーバー時刻の月で、編集しただけで月が動いた）
 //   ・金額は請求突合チェッカーと同じ決め方（成果物グループのクライアント単価 → 無ければ creatives.client_fee）
 //   ・別のクライアント請求書に入っている制作は billed_invoice_number を付ける（作成時は 409）
+// このクライアントの、対象月に納品された制作のうち、クライアント請求書に入っているもの（請求書の状態・月は問わない）。
+//   exceptInvoiceId … この請求書は数えない（作成直後の再確認用）
+// 返り値: { ok:true, billed: Map<creative_id, invoice_number> } / { ok:false, error }
+async function loadClientBilledCreatives(clientId, jst, exceptInvoiceId = null) {
+  let q = supabase
+    .from('invoice_items')
+    .select('creative_id, invoice_id, invoice:invoices!inner(id, invoice_number, invoice_type), creative:creatives!inner(id, delivered_at, projects!inner(client_id))')
+    .eq('invoice.invoice_type', 'client')
+    .eq('creative.projects.client_id', clientId)
+    .gte('creative.delivered_at', jst.startIso)
+    .lt('creative.delivered_at', jst.endIso);
+  if (exceptInvoiceId) q = q.neq('invoice_id', exceptInvoiceId);
+  const { data, error } = await q;
+  if (error) return { ok: false, error: error.message };
+  const billed = new Map();
+  for (const row of (data || [])) {
+    if (row.creative_id && !billed.has(row.creative_id)) billed.set(row.creative_id, row.invoice?.invoice_number || '(番号なし)');
+  }
+  return { ok: true, billed };
+}
+
 // 返り値: { ok:true, candidates } / { ok:false, status, error }
 async function buildClientInvoiceCandidates(clientId, year, month) {
   const { data: projects, error: pErr } = await supabase.from('projects').select('id').eq('client_id', clientId);
@@ -19938,19 +19959,10 @@ async function buildClientInvoiceCandidates(clientId, year, month) {
   const monthEndStr = jstMonthEndStr(year, month);
 
   // 別のクライアント請求書に入っている制作（請求月を問わない。対象月に納品された制作だけを embed inner で絞る）
-  const billed = new Map();
-  const { data: billedLinks, error: blErr } = await supabase
-    .from('invoice_items')
-    .select('creative_id, invoice:invoices!inner(id, invoice_number, invoice_type), creative:creatives!inner(id, project_id, delivered_at)')
-    .eq('invoice.invoice_type', 'client')
-    .in('creative.project_id', projectIds)
-    .gte('creative.delivered_at', jst.startIso)
-    .lt('creative.delivered_at', jst.endIso);
-  // 読めないまま作ると二重請求を止められないので、作成側は失敗にする
-  if (blErr) return { ok: false, status: 500, error: `請求済みの確認に失敗しました: ${blErr.message}` };
-  for (const row of (billedLinks || [])) {
-    if (row.creative_id && !billed.has(row.creative_id)) billed.set(row.creative_id, row.invoice?.invoice_number || '(番号なし)');
-  }
+  // （案件 id の一覧を URL に並べない＝案件の多いクライアントで URL が長すぎて落ちないよう、クライアントで絞る）
+  const billedQ = await loadClientBilledCreatives(clientId, jst);
+  if (!billedQ.ok) return { ok: false, status: 500, error: `請求済みの確認に失敗しました: ${billedQ.error}` };
+  const billed = billedQ.billed;
 
   const candidates = list.map(c => {
     const lineId = resolveCreativeLineForPricing(c, pricingCtx, monthEndStr);
@@ -20045,6 +20057,20 @@ router.post('/client-invoice/generate', requireAuth, async (req, res) => {
     // 明細が入らなかった請求書は残さない（0 円の請求書が一覧に残るのを防ぐ）
     await supabase.from('invoices').delete().eq('id', invoice.id);
     return res.status(500).json({ error: itemsErr.message });
+  }
+
+  // 同時に作られた別のクライアント請求書と同じ制作が重なっていないか、入れたあとにもう一度確かめる。
+  // 重なっていたら（または確かめられなければ）この請求書を消して 409／500（両方が同時に消えることはあっても、二重には残らない）
+  {
+    const re = await loadClientBilledCreatives(client_id, jstMonthRangeIso(ym.year, ym.month), invoice.id);
+    const mine = new Set(rows.map(r => String(r.creative_id)));
+    const clash = re.ok ? [...re.billed.entries()].filter(([cid]) => mine.has(String(cid))) : [];
+    if (!re.ok || clash.length > 0) {
+      await supabase.from('invoices').delete().eq('id', invoice.id);
+      if (!re.ok) return res.status(500).json({ error: `請求済みの確認に失敗しました: ${re.error}` });
+      const nums = [...new Set(clash.map(([, n]) => n))].join('、');
+      return res.status(409).json({ error: `同じ制作が別のクライアント請求書（${nums}）に入りました。画面を開き直してください`, code: 'CLIENT_INVOICE_MISMATCH' });
+    }
   }
 
   // invoice_item_details（後方互換）

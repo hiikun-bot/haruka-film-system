@@ -39489,7 +39489,7 @@ async function loadClientInvoiceItems() {
         <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">案件</th>
         <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text-muted)">ファイル名</th>
         <th style="padding:8px 10px;text-align:center;font-size:11px;font-weight:600;color:var(--text-muted)">担当者</th>
-        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:160px">報酬（税込・円）</th>
+        <th style="padding:8px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--em-dark);width:160px">請求額（円）</th>
       </tr>
     </thead>
     <tbody>
@@ -39501,7 +39501,7 @@ async function loadClientInvoiceItems() {
         const rowBg = i % 2 === 0 ? '' : 'background:#FAFEFE';
         const note = billed
           ? `<div style="font-size:10px;color:var(--text-muted)">請求済み（${esc(item.billed_invoice_number)}）</div>`
-          : (!hasFee ? '<div style="font-size:10px;color:#E24B4A">単価が未設定</div>' : '');
+          : (!hasFee ? '<div style="font-size:10px;color:#E24B4A" title="案件編集の「成果物グループ」でクライアント単価を入れると請求できます">単価が未設定（案件の成果物グループで設定）</div>' : '');
         return `<tr style="${rowBg};border-bottom:0.5px solid var(--border)${selectable ? '' : ';opacity:0.55'}">
           <td style="padding:8px 10px;text-align:center">
             <input type="checkbox" class="ci-item-check" data-id="${item.id}" data-idx="${i}" ${selectable?'checked':'disabled'} onchange="updateClientInvoiceTotal()" style="cursor:pointer;width:15px;height:15px">

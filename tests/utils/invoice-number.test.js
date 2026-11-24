@@ -49,9 +49,16 @@ function fakeDb(existing, { failSelect = false, beforeInsert = null } = {}) {
         select() {
           return {
             like(_col, pattern) {
-              if (failSelect) return Promise.resolve({ data: null, error: { message: 'boom' } });
               const prefix = pattern.replace(/%$/, '');
-              return Promise.resolve({ data: rows.filter(r => r.invoice_number.startsWith(prefix)).map(r => ({ ...r })), error: null });
+              const q = {
+                order() { return q; },
+                range(from, to) {
+                  if (failSelect) return Promise.resolve({ data: null, error: { message: 'boom' } });
+                  const hit = rows.filter(r => r.invoice_number.startsWith(prefix)).map(r => ({ ...r }));
+                  return Promise.resolve({ data: hit.slice(from, to + 1), error: null });
+                },
+              };
+              return q;
             },
           };
         },
@@ -108,6 +115,14 @@ describe('insertInvoiceWithNumber', () => {
     expect(r.error && r.error.code).toBe('23505');
     expect(db.inserted).toHaveLength(0);
     expect(db.rows).toHaveLength(MAX_ATTEMPTS);
+  });
+
+  test('1000 件を超える月もページを送って最大を読む（1 ページ目だけで決めない）', async () => {
+    const existing = Array.from({ length: 1500 }, (_, i) => `INV-202612-${String(i + 1).padStart(3, '0')}`);
+    const db = fakeDb(existing);
+    const r = await insertInvoiceWithNumber(db, () => ({}), { now });
+    expect(r.error).toBeNull();
+    expect(r.invoiceNumber).toBe('INV-202612-1501');
   });
 
   test('番号の読み出しに失敗したら入れない', async () => {
