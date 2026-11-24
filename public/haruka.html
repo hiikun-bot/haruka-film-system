@@ -59983,7 +59983,7 @@ async function applyBulkStatusChange() {
   const btn = document.getElementById('bulk-status-apply-btn');
   btn.disabled = true;
   let done = 0;
-  const okIds = [], failed = [];
+  const okIds = [], failed = [], warned = [];
   const runOne = async ({ c, plan }) => {
     try {
       const res = (plan.mode === 'direct' || plan.mode === 'clientcheck')
@@ -59992,6 +59992,9 @@ async function applyBulkStatusChange() {
       if (res.ok) {
         okIds.push(c.id);
         try { _cdInvalidateCache(c.id); } catch (_) {}
+        // admin-status: 下書きの請求書から明細を外したが合計を直せなかった等の注意
+        const j = await res.json().catch(() => ({}));
+        if (j && j.warning) warned.push({ c, msg: String(j.warning).split('\n')[0] });
       } else {
         const e = await res.json().catch(() => ({}));
         failed.push({ c, msg: String(e?.error || `HTTP ${res.status}`).split('\n')[0] });
@@ -60078,10 +60081,11 @@ async function applyBulkStatusChange() {
   if (skipped.length) msg += ` ／ スキップ ${skipped.length} 件`;
   showToast(msg, failed.length ? 'warn' : 'success');
   // 失敗・スキップの内訳は toast では読めないので alert で明細表示（削除の409と同じ流儀）
-  if (failed.length || skipped.length) {
+  if (failed.length || skipped.length || warned.length) {
     const lines = [];
     failed.forEach(f => lines.push(`✕ ${f.c.file_name || f.c.id}: ${f.msg}`));
     skipped.forEach(s => lines.push(`− ${s.c.file_name || s.c.id}: ${s.plan.reason}`));
+    warned.forEach(w => lines.push(`⚠ ${w.c.file_name || w.c.id}: ${w.msg}`));
     alert(`一括ステータス変更の結果\n\n成功: ${okIds.length} 件\n\n${lines.join('\n')}`);
   }
   const allChk = document.getElementById('creative-check-all');

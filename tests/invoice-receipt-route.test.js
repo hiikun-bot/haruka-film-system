@@ -78,6 +78,8 @@ async function mockRpc(name, args) {
   mockDb.rpcCalls = (mockDb.rpcCalls || 0) + 1;
   if (mockDb.rpcMissing) return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.attach_invoice_item_receipt' } };
   if (mockDb.rpcFailBefore) return { data: null, error: { message: 'connection refused' } };
+  // DB がエラーを返した（SQLSTATE つき＝取り消し済み）
+  if (mockDb.rpcDbError) return { data: null, error: { code: '40001', message: 'could not serialize access' } };
   if (mockDb.onRpc) mockDb.onRpc(args);
   const inv = (mockDb.tables.invoices || []).find(r => r.id === args.p_invoice_id);
   if (!inv) return { data: { result: 'invoice_not_found' }, error: null };
@@ -366,6 +368,17 @@ describe('領収書のアップロード', () => {
     expect(item('ex1').receipt_file_id).toBe(file.id);
     expect(mockDrive.trashed).toEqual([]);
     mockDb.rpcFailBefore = false;
+  });
+
+  test('DB がエラーを返した（取り消し済みと分かる）ときは、置いたファイルをゴミ箱へ戻す', async () => {
+    mockDb.rpcDbError = true;
+    const r = await upload('ex1', JPEG);
+    expect(r.status).toBe(500);
+    expect(r.body.code).toBeUndefined();
+    const file = mockDrive.created.find(c => c.mimeType === 'image/jpeg');
+    expect(item('ex1').receipt_file_id || null).toBeNull();
+    expect(mockDrive.trashed).toEqual([file.id]);
+    mockDb.rpcDbError = false;
   });
 
   test('差し替えでゴミ箱へ送るのは、書き込んだ時点で行に入っていたファイル', async () => {

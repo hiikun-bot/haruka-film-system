@@ -13724,22 +13724,30 @@ router.post('/creatives/:id/share-client-review', requireAuth, requirePermission
 // 下書き請求書の明細を外し、その請求書の合計を計算し直す（admin-status と delivery-revert で共用）。
 // 下書きは集計・振込に出ないので外してよいが、合計を直さないと請求書の金額と明細がずれる。
 // editableStatuses: 外してよい請求書の状態。消す直前に読み直し、その間に提出された請求書の明細は残す
-// （提出済みの請求書の明細・合計を書き換えない）。戻り値の skippedInvoiceIds が残した分。
-async function removeDraftInvoiceItems(itemIds, invoiceIds, { editableStatuses = ['draft'] } = {}) {
-  if (!itemIds || itemIds.length === 0) return { ok: true, skippedInvoiceIds: [] };
+// （提出済みの請求書の明細・合計を書き換えない）。戻り値の skippedInvoiceIds が残した分（状態が変わった請求書だけ。
+// その間に消された請求書は含めない）。
+// allOrNothing: true なら、1 件でも状態が変わった請求書があれば何も消さずに { ok:false, code:'NOT_EDITABLE' } を返す
+// （admin-status: 一部の下書きから明細だけ消えてステータスは変わらない、という半端な状態を作らない）。
+// recalcFailedInvoiceIds: 明細は外したが合計を計算し直せなかった請求書（読めない・書けない）。
+async function removeDraftInvoiceItems(itemIds, invoiceIds, { editableStatuses = ['draft'], allOrNothing = false } = {}) {
+  if (!itemIds || itemIds.length === 0) return { ok: true, skippedInvoiceIds: [], recalcFailedInvoiceIds: [] };
   const wanted = [...new Set((invoiceIds || []).filter(Boolean))];
   const { data: invNow, error: invErr } = await supabase
     .from('invoices').select('id, status').in('id', wanted);
   if (invErr) return { ok: false, error: invErr.message };
   const allowed = (invNow || []).filter(r => editableStatuses.includes(r.status)).map(r => r.id);
-  const skippedInvoiceIds = wanted.filter(id => !allowed.includes(id));
-  if (allowed.length === 0) return { ok: true, skippedInvoiceIds };
+  const skippedInvoiceIds = (invNow || []).filter(r => !editableStatuses.includes(r.status)).map(r => r.id);
+  if (allOrNothing && skippedInvoiceIds.length) {
+    return { ok: false, code: 'NOT_EDITABLE', error: 'invoice no longer editable', skippedInvoiceIds };
+  }
+  if (allowed.length === 0) return { ok: true, skippedInvoiceIds, recalcFailedInvoiceIds: [] };
   const { data: targetItems, error: tiErr } = await supabase
     .from('invoice_items').select('id').in('id', itemIds).in('invoice_id', allowed);
   if (tiErr) return { ok: false, error: tiErr.message };
   const targetIds = (targetItems || []).map(r => r.id);
-  if (targetIds.length === 0) return { ok: true, skippedInvoiceIds };
-  await supabase.from('invoice_item_details').delete().in('invoice_item_id', targetIds);
+  if (targetIds.length === 0) return { ok: true, skippedInvoiceIds, recalcFailedInvoiceIds: [] };
+  const { error: detErr } = await supabase.from('invoice_item_details').delete().in('invoice_item_id', targetIds);
+  if (detErr) return { ok: false, error: detErr.message };
   const { error: delErr } = await supabase.from('invoice_items').delete().in('id', targetIds);
   if (delErr) return { ok: false, error: delErr.message };
 
@@ -13750,11 +13758,12 @@ async function removeDraftInvoiceItems(itemIds, invoiceIds, { editableStatuses =
       supabase.from('invoices').select('tax_mode, withholding_enabled').eq('id', invId).maybeSingle(),
     ]);
     // 読み取りに失敗したのに「明細なし」として計算し直すと、下書きの合計が 0 円になる。読めなければ合計は触らずに知らせる
-    if (remErr || invRowErr || !invRow) {
-      console.warn('[removeDraftInvoiceItems] 合計の再計算を省略（明細・請求書を読めない）:', invId, (remErr || invRowErr)?.message || 'invoice not found');
+    if (remErr || invRowErr) {
+      console.warn('[removeDraftInvoiceItems] 合計の再計算を省略（明細・請求書を読めない）:', invId, (remErr || invRowErr).message);
       recalcFailed.push(invId);
       continue;
     }
+    if (!invRow) continue; // その間に請求書ごと消された（直す合計が無い）
     const patch = { updated_at: new Date().toISOString() };
     if (invRow && invRow.tax_mode === 'exclusive') {
       // 新方式（ADR 046）は小計〜差引をまとめて計算し直す。total_amount だけ直すと差引お振込額とずれ、
@@ -13767,7 +13776,11 @@ async function removeDraftInvoiceItems(itemIds, invoiceIds, { editableStatuses =
     } else {
       patch.total_amount = (rem || []).reduce((s, x) => s + (x.total_amount || 0), 0);
     }
-    await supabase.from('invoices').update(patch).eq('id', invId).in('status', editableStatuses);
+    const { error: upErr } = await supabase.from('invoices').update(patch).eq('id', invId).in('status', editableStatuses);
+    if (upErr) {
+      console.warn('[removeDraftInvoiceItems] 合計の書き込みに失敗:', invId, upErr.message);
+      recalcFailed.push(invId);
+    }
   }
   return { ok: true, skippedInvoiceIds, removedItemIds: targetIds, recalcFailedInvoiceIds: recalcFailed };
 }
@@ -13838,13 +13851,13 @@ router.post('/creatives/:id/admin-status', requireAuth, async (req, res) => {
   const affectedInvoiceIds = Array.from(new Set(draftItems.map(i => i.invoice_id)));
   const adminStatusWarnings = [];
   if (deletedItemIds.length > 0) {
-    const rm = await removeDraftInvoiceItems(deletedItemIds, affectedInvoiceIds);
-    if (!rm.ok) return res.status(500).json({ error: rm.error });
-    if (rm.skippedInvoiceIds && rm.skippedInvoiceIds.length) {
-      // 確認から削除までのあいだに提出された請求書。明細・合計は書き換えずに残し、ステータスも変えない
-      const nums = [...new Set(draftItems.filter(i => rm.skippedInvoiceIds.includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
+    // allOrNothing: 確認から削除までのあいだに提出された請求書が 1 件でもあれば、どの下書きからも消さずに止める
+    const rm = await removeDraftInvoiceItems(deletedItemIds, affectedInvoiceIds, { allOrNothing: true });
+    if (!rm.ok && rm.code === 'NOT_EDITABLE') {
+      const nums = [...new Set(draftItems.filter(i => (rm.skippedInvoiceIds || []).includes(i.invoice_id)).map(i => i.invoice.invoice_number || '(番号なし)'))];
       return res.status(409).json({ error: `変更の途中で請求書が提出されたため、ステータスを変更しませんでした（${nums.join('、')}）。先に請求書を差し戻してください` });
     }
+    if (!rm.ok) return res.status(500).json({ error: rm.error });
     if (rm.recalcFailedInvoiceIds && rm.recalcFailedInvoiceIds.length) {
       adminStatusWarnings.push('下書きの請求書から明細を外しましたが、合計を計算し直せませんでした。請求書を開いて保存し直してください');
     }
@@ -20617,6 +20630,13 @@ function ieMarkReceiptCols(ok) { ieReceiptCols.ok = !!ok; ieReceiptCols.checkedA
 /** 直近の読み出しで領収書の列があったか（提出時の必須チェック・画面の入力欄の出し分けに使う） */
 function ieReceiptSupported() { return ieReceiptCols.ok === true; }
 
+// DB（SQLSTATE 5 文字）か PostgREST（PGRSTnnn）が返したエラーか。これらはトランザクションが取り消されたあとに返るので
+// 「書かれていない」と分かる。コードの無いエラー（fetch failed・タイムアウト・ゲートウェイの HTML 応答など）は結果不明
+function ieIsDefiniteDbError(err) {
+  const code = String((err && err.code) || '');
+  return /^[0-9A-Z]{5}$/.test(code) || /^PGRST\d+$/.test(code);
+}
+
 // 関数がまだ本番 DB に無い（migration 未適用 / スキーマキャッシュ未更新）ことによるエラーか
 function ieIsMissingRpcError(err) {
   if (!err) return false;
@@ -20638,10 +20658,12 @@ async function ieAttachReceipt({ invoiceId, itemId, fileId, fileName, mime }) {
   });
   if (!error) {
     const r = (Array.isArray(data) ? data[0] : data) || {};
-    if (!r.result) return { error: new Error('領収書の記録結果を読めませんでした') };
+    if (!r.result) return { error: new Error('領収書の記録結果を読めませんでした'), unknown: true };
     return { result: r.result, prev_file_id: r.prev_file_id || null, uploaded_at: r.uploaded_at || new Date().toISOString() };
   }
-  if (!ieIsMissingRpcError(error)) return { error };
+  // DB / PostgREST が返したエラー（SQLSTATE か PGRSTnnn のコードつき）は取り消し済み＝書かれていないと分かる。
+  // コードの無いエラー（通信の切断・タイムアウト・ゲートウェイの応答）は、DB 側で確定したかどうか分からない
+  if (!ieIsMissingRpcError(error)) return { error, unknown: !ieIsDefiniteDbError(error) };
   // 関数がまだ無い環境: 従来どおり「状態を読み直してから書く」（確認と保存のあいだの提出は防げない）
   console.warn('[invoice-receipt] attach_invoice_item_receipt が未作成のため従来の手順で記録:', error.message);
   const { data: cur, error: curErr } = await supabase.from('invoices').select('id, status').eq('id', invoiceId).maybeSingle();
@@ -20657,7 +20679,7 @@ async function ieAttachReceipt({ invoiceId, itemId, fileId, fileName, mime }) {
     receipt_status: IE.RECEIPT_ATTACHED, receipt_missing_reason: null,
     receipt_file_id: fileId, receipt_file_name: fileName, receipt_mime_type: mime, receipt_uploaded_at: uploadedAt,
   }).eq('id', itemId).eq('invoice_id', invoiceId).select('id');
-  if (upErr) return { error: upErr };
+  if (upErr) return { error: upErr, unknown: !ieIsDefiniteDbError(upErr) };
   if (!upd || !upd.length) return { result: 'item_not_found' };
   return { result: 'ok', prev_file_id: prevRow.receipt_file_id || null, uploaded_at: uploadedAt };
 }
@@ -21674,12 +21696,18 @@ router.post('/invoice-editor/:id/items/:itemId/receipt', requireAuth, receiptUpl
     // 「請求書がまだ下書き／差し戻し中か」の確認と行への書き込みを、DB の 1 つの処理で行う（ieAttachReceipt）。
     // Drive に置いているあいだ・確認と保存のあいだに提出された請求書には付けない（今置いたファイルはゴミ箱へ戻して 409）
     const att = await ieAttachReceipt({ invoiceId: inv.id, itemId: item.id, fileId, fileName, mime });
+    if (att.error && !att.unknown) {
+      // DB がエラーを返した（取り消し済み）＝行には書かれていないと分かるので、置いたファイルはゴミ箱へ戻す
+      await ieTrashReceiptFiles([fileId], 'upload-error');
+      return res.status(500).json({ error: `領収書を保存できませんでした（${att.error.message}）` });
+    }
     if (att.error) {
       // 記録の結果が分からない（通信の切断・タイムアウトなど）。DB の確定がここで読み直すより後になることがあり、
       // 読み直して「まだ記録されていない」と見えても、あとから「添付あり」で確定しうる。そこでファイルをゴミ箱へ送ると
       // 「添付あり」なのに開けない行になるので、結果が分からないときは消さずに残す。
-      // 行が指さなかったファイルは「領収書」サブフォルダに残るだけで、振込管理のスキャンにも請求額にも入らない
-      console.warn(`[invoice-receipt] 記録の結果が不明のため ${fileId} をゴミ箱へ送らずに残す（invoice=${inv.id} item=${item.id}）: ${att.error.message}`);
+      // 行が指さなかったファイルは「領収書」サブフォルダに残るだけで、振込管理のスキャンにも請求額にも入らない。
+      // 記録が済んでいた場合、差し替え前の写真（prev）はここでは分からないのでゴミ箱へ送れない（ログに残す）
+      console.warn(`[invoice-receipt] 記録の結果が不明のため ${fileId} をゴミ箱へ送らずに残す（invoice=${inv.id} item=${item.id} 読んだ時点の写真=${item.receipt_file_id || 'なし'}）: ${att.error.message}`);
       return res.status(500).json({
         error: `領収書を保存できたか確認できませんでした。再読み込みして、付いていなければもう一度選んでください（${att.error.message}）`,
         code: 'RECEIPT_RESULT_UNKNOWN',
