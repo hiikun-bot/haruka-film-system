@@ -210,9 +210,28 @@ describe('担当者の変更（自分を担当に足してから削除する抜�
     const r = await call('PUT', '/creatives/cr1', OTHER_DIRECTOR, { assignee_id: 'ed2' });
     expect(r.status).toBe(200);
   });
-  test('存在しない担当行の DELETE は 404', async () => {
-    const r = await call('DELETE', '/assignments/nope', ADMIN);
-    expect(r.status).toBe(404);
+  test('既に無い担当行の DELETE は成功扱い（ダブルクリック等）', async () => {
+    const r = await call('DELETE', '/assignments/nope', OUTSIDER);
+    expect(r.status).toBe(200);
+  });
+  test('editor（担当）: role=producer_director で自分を足す抜け道も 403。知らない role は 400', async () => {
+    const r = await call('POST', '/creatives/cr2/assignments', EDITOR, { user_id: 'ed', role: 'producer_director' });
+    expect(r.status).toBe(403);
+    const r2 = await call('POST', '/creatives/cr2/assignments', ADMIN, { user_id: 'ed', role: 'boss' });
+    expect(r2.status).toBe(400);
+    const d = await call('DELETE', '/creatives', EDITOR, { ids: ['cr2'] });
+    expect(d.status).toBe(403);
+  });
+  test('担当外の director: 担当者が変わらない保存（同じ assignee_id・空の producer_user_ids）は今までどおり通る', async () => {
+    const r = await call('PUT', '/creatives/cr1', OTHER_DIRECTOR, { assignee_id: 'ed', producer_user_ids: [], note: 'メモ' });
+    expect(r.status).toBe(200);
+    expect(mockDb.tables.creatives[0].note).toBe('メモ');
+  });
+  test('チームのリーダーでも、担当外のクリエイティブを自分のチームへ付け替えることはできない', async () => {
+    mockDb.tables.teams = [{ id: 't9', director_id: 'dir2', producer_id: null }];
+    const r = await call('PUT', '/creatives/cr1', OTHER_DIRECTOR, { team_id: 't9' });
+    expect(r.status).toBe(403);
+    expect(mockDb.tables.creatives[0].team_id).toBeNull();
   });
 });
 

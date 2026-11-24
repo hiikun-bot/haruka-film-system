@@ -34,7 +34,7 @@ function isDeliveredCreative(c) {
 
 // 削除してよい ids の検証。文字列で、空でなく、重複を除いた一覧を返す。
 // 1 件でもおかしな値があれば ok:false（何も消さない）。
-function normalizeCreativeIds(ids, { max = 500 } = {}) {
+function normalizeCreativeIds(ids, { max = Infinity } = {}) {
   if (!Array.isArray(ids) || ids.length === 0) return { ok: false, error: 'ids は必須です' };
   const out = [];
   const seen = new Set();
@@ -92,23 +92,79 @@ function judgeCreativeEdit({ canManageAll, userId, project, team, myRoles }) {
 //     ただし自分を D/P 担当に足せるのは、自分の実効ロールが director / producer のときだけ
 //     （D/P 担当になると納品後も削除できるため。編集者が自分を D に入れて削除する抜け道を塞ぐ）
 //   ・それ以外（担当でも案件の D/P でもない人）… 不可（自分を担当に足すこともできない）
+//   ・チームのリーダーは他の人の担当は決められるが、自分を D/P に足すときは担当者と同じ制限
+//     （チームのリーダーには削除の権限が無いので、D/P 担当を経由して削除できるようにしない）
+// 自分を D/P 担当に足すのに必要な実効ロール（producer_director は両方）
+const SELF_LEADER_REQUIRED_CODES = {
+  director: ['director'],
+  producer: ['producer'],
+  producer_director: ['director', 'producer'],
+};
 function judgeAssignmentChange({ canManageAll, userId, project, team, myRoles, myRoleCodes, selfAdds }) {
   if (canManageAll) return { allowed: true };
   if (!userId) return { allowed: false, reason: 'not_related' };
   const roles = Array.isArray(myRoles) ? myRoles : [];
-  if (isProjectLeader(project, userId) || isTeamLeader(team, userId) || roles.some(r => LEADER_ASSIGN_ROLES.has(r))) {
+  if (isProjectLeader(project, userId) || roles.some(r => LEADER_ASSIGN_ROLES.has(r))) {
     return { allowed: true };
   }
-  if (roles.length === 0) return { allowed: false, reason: 'not_related' };
+  if (roles.length === 0 && !isTeamLeader(team, userId)) return { allowed: false, reason: 'not_related' };
   const codes = new Set(Array.isArray(myRoleCodes) ? myRoleCodes : []);
   if (codes.has('producer_director')) { codes.add('producer'); codes.add('director'); }
   for (const r of (selfAdds || [])) {
     if (roles.includes(r)) continue;
-    if ((r === 'director' || r === 'producer') && !codes.has(r)) {
+    const need = SELF_LEADER_REQUIRED_CODES[r];
+    if (need && !need.every(c => codes.has(c))) {
       return { allowed: false, reason: 'self_leader', role: r };
     }
   }
   return { allowed: true };
+}
+
+// creative_assignments.role として受け付ける値（creative_assignments_role_check と同じ並び）
+const ASSIGNMENT_ROLES = new Set(['editor', 'designer', 'director', 'producer', 'producer_director', 'director_as_editor', 'wcheck']);
+
+// 同じ顔ぶれか（順番・重複・空値は無視）
+function sameUserSet(a, b) {
+  const sa = new Set((a || []).filter(Boolean));
+  const sb = new Set((b || []).filter(Boolean));
+  if (sa.size !== sb.size) return false;
+  for (const v of sa) if (!sb.has(v)) return false;
+  return true;
+}
+
+// PUT /creatives/:id の担当者まわりの入力を、今の担当行と比べて「本当に変わるもの」だけにする。
+//   input   … { assignee_id?, director_ids?, producer_ids?, wcheck_ids?, team_id? }（undefined / null は「送られていない」）
+//   current … { assignments:[{user_id, role}], team_id }
+//   userId  … ログイン中の人（自分が新しく入る役割 selfAdds を求める）
+// サーバーの更新処理と同じ意味で比べる:
+//   assignee_id … role='editor' の行を入れ替える（空なら外す）
+//   director / producer / wcheck … 配列の顔ぶれに同期する（空配列は全員外す）
+function diffAssignmentInput(input, current, userId) {
+  const asn = (current && current.assignments) || [];
+  const usersOf = (role) => asn.filter(a => a.role === role).map(a => a.user_id);
+  const changed = [];
+  const selfAdds = [];
+  if (input.assignee_id !== undefined) {
+    const want = input.assignee_id ? [input.assignee_id] : [];
+    const have = usersOf('editor');
+    if (!sameUserSet(want, have)) {
+      changed.push('editor');
+      if (userId && want.includes(userId) && !have.includes(userId)) selfAdds.push('editor');
+    }
+  }
+  for (const [key, role] of [['director_ids', 'director'], ['producer_ids', 'producer'], ['wcheck_ids', 'wcheck']]) {
+    const want = input[key];
+    if (!Array.isArray(want)) continue;
+    const have = usersOf(role);
+    if (!sameUserSet(want, have)) {
+      changed.push(role);
+      if (userId && want.includes(userId) && !have.includes(userId)) selfAdds.push(role);
+    }
+  }
+  if (input.team_id !== undefined && (input.team_id || null) !== ((current && current.team_id) || null)) {
+    changed.push('team');
+  }
+  return { changed, selfAdds };
 }
 
 module.exports = {
@@ -120,4 +176,7 @@ module.exports = {
   judgeCreativeDelete,
   judgeCreativeEdit,
   judgeAssignmentChange,
+  ASSIGNMENT_ROLES,
+  sameUserSet,
+  diffAssignmentInput,
 };

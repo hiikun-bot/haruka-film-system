@@ -88,8 +88,48 @@ describe('judgeAssignmentChange', () => {
       .toEqual({ allowed: false, reason: 'self_leader', role: 'director' });
     expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'ed', project, myRoles: ['designer'], myRoleCodes: ['designer'], selfAdds: ['producer'] }).allowed).toBe(false);
   });
+  test('producer_director として自分を足すには director・producer の両方が要る', () => {
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'ed', project, myRoles: ['editor'], myRoleCodes: ['editor'], selfAdds: ['producer_director'] }).allowed).toBe(false);
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'd', project, myRoles: ['editor'], myRoleCodes: ['director'], selfAdds: ['producer_director'] }).allowed).toBe(false);
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'pd', project, myRoles: ['editor'], myRoleCodes: ['producer_director'], selfAdds: ['producer_director'] }).allowed).toBe(true);
+  });
+  test('チームのリーダーは他の人の担当は決められるが、実効ロールが D/P でなければ自分を D/P に足せない', () => {
+    const team = { director_id: 'tl' };
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team, myRoles: [], myRoleCodes: ['editor'], selfAdds: [] }).allowed).toBe(true);
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team, myRoles: [], myRoleCodes: ['editor'], selfAdds: ['director'] }).allowed).toBe(false);
+    expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'tl', project, team, myRoles: [], myRoleCodes: ['director'], selfAdds: ['director'] }).allowed).toBe(true);
+  });
   test('実効ロールが director の担当者（director_as_editor 等）は自分を D に入れられる。PD は P も可', () => {
     expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'de', project, myRoles: ['director_as_editor'], myRoleCodes: ['director'], selfAdds: ['director'] }).allowed).toBe(true);
     expect(P.judgeAssignmentChange({ canManageAll: false, userId: 'pd', project, myRoles: ['editor'], myRoleCodes: ['producer_director'], selfAdds: ['producer'] }).allowed).toBe(true);
+  });
+});
+
+describe('diffAssignmentInput（PUT の担当者入力を今の担当行と比べる）', () => {
+  const current = {
+    team_id: 't1',
+    assignments: [
+      { user_id: 'ed', role: 'editor' },
+      { user_id: 'dir', role: 'director' },
+    ],
+  };
+  test('同じ担当者・同じ顔ぶれ・同じチームを送っても変更なし', () => {
+    expect(P.diffAssignmentInput({ assignee_id: 'ed', director_ids: ['dir', 'dir'], team_id: 't1' }, current, 'x'))
+      .toEqual({ changed: [], selfAdds: [] });
+  });
+  test('P 担当がいないときの空配列は変更なし。D がいるときの空配列は「全員外す」変更', () => {
+    expect(P.diffAssignmentInput({ producer_ids: [] }, current, 'x').changed).toEqual([]);
+    expect(P.diffAssignmentInput({ director_ids: [] }, current, 'x').changed).toEqual(['director']);
+  });
+  test('担当者の入れ替え・チームの付け替えは変更。自分が新しく入る役割を selfAdds に出す', () => {
+    expect(P.diffAssignmentInput({ assignee_id: 'me' }, current, 'me')).toEqual({ changed: ['editor'], selfAdds: ['editor'] });
+    expect(P.diffAssignmentInput({ assignee_id: null }, current, 'me')).toEqual({ changed: ['editor'], selfAdds: [] });
+    expect(P.diffAssignmentInput({ director_ids: ['dir', 'me'], wcheck_ids: ['me'] }, current, 'me'))
+      .toEqual({ changed: ['director', 'wcheck'], selfAdds: ['director', 'wcheck'] });
+    expect(P.diffAssignmentInput({ team_id: 't2' }, current, 'me').changed).toEqual(['team']);
+    expect(P.diffAssignmentInput({ team_id: '' }, { assignments: [], team_id: null }, 'me').changed).toEqual([]);
+  });
+  test('送られていない項目（undefined）は比べない', () => {
+    expect(P.diffAssignmentInput({}, current, 'me')).toEqual({ changed: [], selfAdds: [] });
   });
 });

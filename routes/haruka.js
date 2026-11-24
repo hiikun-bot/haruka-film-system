@@ -11640,29 +11640,35 @@ router.put('/creatives/:id', requireAuth, async (req, res) => {
   //           そのクリエイティブの担当者（編集者・デザイナー等）は Dチェック／Pチェック／Wチェックの依頼先や付け替えは可だが、
   //           自分を D/P 担当に足せるのは実効ロールが director / producer のときだけ。それ以外の人は不可。
   //   素材フォルダURL: 上と同じ顔ぶれ（そのクリエイティブを編集できる人）だけ。
+  //   チーム（team_id）の付け替えも担当者の変更と同じ扱い（チームのリーダーになりすます抜け道を塞ぐ）。
+  //   画面は保存のたびに同じ担当者・空配列を送ることがあるので、今の担当行と比べて本当に変わるときだけ判定する。
   {
-    const _me = req.user?.id || null;
-    const _hasMe = (arr) => Array.isArray(arr) && !!_me && arr.includes(_me);
     const _dirIn = Array.isArray(director_user_ids) ? director_user_ids
-      : (director_user_id !== undefined ? (director_user_id ? [director_user_id] : []) : null);
+      : (director_user_id !== undefined ? (director_user_id ? [director_user_id] : []) : undefined);
     const _wcIn = Array.isArray(wcheck_user_ids) ? wcheck_user_ids
-      : (wcheck_user_id !== undefined ? (wcheck_user_id ? [wcheck_user_id] : []) : null);
-    const _touchAssign = assignee_id !== undefined || _dirIn !== null || Array.isArray(producer_user_ids) || _wcIn !== null;
+      : (wcheck_user_id !== undefined ? (wcheck_user_id ? [wcheck_user_id] : []) : undefined);
+    const _asnInput = {
+      assignee_id,
+      director_ids: _dirIn,
+      producer_ids: Array.isArray(producer_user_ids) ? producer_user_ids : undefined,
+      wcheck_ids: _wcIn,
+      team_id,
+    };
+    const _mayTouchAssign = assignee_id !== undefined || _dirIn !== undefined || Array.isArray(producer_user_ids)
+      || _wcIn !== undefined || team_id !== undefined;
     const _touchMatFolder = material_folder_url !== undefined;
-    if (_touchAssign || _touchMatFolder) {
+    if (_mayTouchAssign || _touchMatFolder) {
       const _ctx = await loadCreativePermContext(req, req.params.id);
       if (!_ctx.ok) return res.status(_ctx.status).json({ error: _ctx.error });
       const _base = { canManageAll: _ctx.canManageAll, userId: _ctx.userId, project: _ctx.project, team: _ctx.team, myRoles: _ctx.myRoles };
       if (_touchMatFolder && !CREATIVE_PERM.judgeCreativeEdit(_base).allowed) {
         return res.status(403).json({ error: CREATIVE_EDIT_FORBIDDEN });
       }
-      if (_touchAssign) {
-        const selfAdds = [];
-        if (assignee_id !== undefined && assignee_id && assignee_id === _me) selfAdds.push('editor');
-        if (_hasMe(_dirIn)) selfAdds.push('director');
-        if (_hasMe(producer_user_ids)) selfAdds.push('producer');
-        if (_hasMe(_wcIn)) selfAdds.push('wcheck');
-        const _j = CREATIVE_PERM.judgeAssignmentChange({ ..._base, myRoleCodes: _ctx.codes, selfAdds });
+      const _diff = _mayTouchAssign
+        ? CREATIVE_PERM.diffAssignmentInput(_asnInput, { assignments: _ctx.assignments, team_id: _ctx.teamId }, _ctx.userId)
+        : { changed: [], selfAdds: [] };
+      if (_diff.changed.length > 0) {
+        const _j = CREATIVE_PERM.judgeAssignmentChange({ ..._base, myRoleCodes: _ctx.codes, selfAdds: _diff.selfAdds });
         if (!_j.allowed) {
           return res.status(403).json({
             error: _j.reason === 'self_leader' ? creativeAssignSelfLeaderMessage(_j.role) : CREATIVE_ASSIGN_FORBIDDEN,
@@ -14432,21 +14438,29 @@ async function evaluateCreativeDeletePermission(req, ids) {
   const codes = await getEffectiveRoleCodes(req);
   const canManageAll = await roleCodesHavePermission(codes, 'project.delete');
   const userId = req.user?.id;
-  const { data: cRows, error: cErr } = await supabase
+  // .in() に大量の id を載せると URL 長超過で落ちるので 100 件ずつ読む（1 つでも失敗したら全体を止める）
+  const CHUNK = 100;
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK));
+  const cResults = await Promise.all(chunks.map(part => supabase
     .from('creatives')
     .select('id, file_name, status, delivered_at, force_delivered, projects:project_id(director_id, producer_id, sub_director_ids, sub_producer_ids)')
-    .in('id', ids);
-  if (cErr) return { ok: false, status: 500, error: cErr.message };
+    .in('id', part)));
+  const cFail = cResults.find(r => r.error);
+  if (cFail) return { ok: false, status: 500, error: cFail.error.message };
+  const cRows = cResults.flatMap(r => r.data || []);
   // creative_id → 自分の担当行の role 一覧
   const myRoles = new Map();
-  if (!canManageAll && userId && (cRows || []).length > 0) {
-    const { data: myAsn, error: aErr } = await supabase
+  if (!canManageAll && userId && cRows.length > 0) {
+    const aResults = await Promise.all(chunks.map(part => supabase
       .from('creative_assignments')
       .select('creative_id, role')
-      .in('creative_id', ids)
-      .eq('user_id', userId);
-    if (aErr) return { ok: false, status: 500, error: aErr.message };
-    for (const a of (myAsn || [])) {
+      .in('creative_id', part)
+      .eq('user_id', userId)));
+    const aFail = aResults.find(r => r.error);
+    if (aFail) return { ok: false, status: 500, error: aFail.error.message };
+    const myAsn = aResults.flatMap(r => r.data || []);
+    for (const a of myAsn) {
       if (!myRoles.has(a.creative_id)) myRoles.set(a.creative_id, []);
       myRoles.get(a.creative_id).push(a.role);
     }
@@ -14463,32 +14477,33 @@ async function evaluateCreativeDeletePermission(req, ids) {
 // 1 件のクリエイティブについて、権限判定に使う情報（案件の D/P・チームのリーダー・自分の担当行・実効ロール）を読む。
 // 担当者の変更・素材フォルダURL の変更の判定（utils/creative-permissions.js）で共用する。
 // 判定は roleCodesHavePermission（実効ロールの集合判定・X-View-As 尊重）。req.user.role は見ない。
+//   assignments … このクリエイティブの全担当行（user_id, role）。PUT の「本当に変わるか」の比較に使う
 async function loadCreativePermContext(req, creativeId) {
   const codes = await getEffectiveRoleCodes(req);
   const canManageAll = await roleCodesHavePermission(codes, 'project.create_edit');
   const userId = req.user?.id || null;
-  const { data: c, error: cErr } = await supabase
-    .from('creatives')
-    .select('id, team_id, projects:project_id(director_id, producer_id, sub_director_ids, sub_producer_ids)')
-    .eq('id', creativeId)
-    .maybeSingle();
-  if (cErr) return { ok: false, status: 500, error: cErr.message };
+  const [cRes, asnRes] = await Promise.all([
+    supabase
+      .from('creatives')
+      .select('id, team_id, projects:project_id(director_id, producer_id, sub_director_ids, sub_producer_ids)')
+      .eq('id', creativeId)
+      .maybeSingle(),
+    supabase.from('creative_assignments').select('user_id, role').eq('creative_id', creativeId),
+  ]);
+  if (cRes.error) return { ok: false, status: 500, error: cRes.error.message };
+  if (asnRes.error) return { ok: false, status: 500, error: asnRes.error.message };
+  const c = cRes.data;
   if (!c) return { ok: false, status: 404, error: 'クリエイティブが見つかりません' };
+  const assignments = asnRes.data || [];
   let team = null;
-  let myRoles = [];
-  if (!canManageAll && userId) {
-    const [teamRes, asnRes] = await Promise.all([
-      c.team_id
-        ? supabase.from('teams').select('id, director_id, producer_id').eq('id', c.team_id).maybeSingle()
-        : Promise.resolve({ data: null, error: null }),
-      supabase.from('creative_assignments').select('role').eq('creative_id', creativeId).eq('user_id', userId),
-    ]);
-    if (teamRes.error) return { ok: false, status: 500, error: teamRes.error.message };
-    if (asnRes.error) return { ok: false, status: 500, error: asnRes.error.message };
-    team = teamRes.data || null;
-    myRoles = (asnRes.data || []).map(a => a.role);
+  if (!canManageAll && userId && c.team_id) {
+    const { data: t, error: tErr } = await supabase
+      .from('teams').select('id, director_id, producer_id').eq('id', c.team_id).maybeSingle();
+    if (tErr) return { ok: false, status: 500, error: tErr.message };
+    team = t || null;
   }
-  return { ok: true, canManageAll, userId, codes, project: c.projects || null, team, myRoles };
+  const myRoles = userId ? assignments.filter(a => a.user_id === userId).map(a => a.role) : [];
+  return { ok: true, canManageAll, userId, codes, project: c.projects || null, team, teamId: c.team_id || null, myRoles, assignments };
 }
 
 const CREATIVE_ASSIGN_FORBIDDEN =
@@ -15788,6 +15803,9 @@ router.post('/creatives/:id/special-payable', async (req, res) => {
 router.post('/creatives/:id/assignments', async (req, res) => {
   const { user_id, role, rank_applied } = req.body;
   if (!user_id || !role) return res.status(400).json({ error: 'ユーザー・役割は必須です' });
+  if (typeof user_id !== 'string' || !CREATIVE_PERM.ASSIGNMENT_ROLES.has(role)) {
+    return res.status(400).json({ error: 'ユーザー・役割の指定が正しくありません' });
+  }
   // 権限ガード（ADR 015）: 担当者を変えられるのは 案件編集の権限者・案件の D/P・チームのリーダー・そのクリエイティブの担当者だけ。
   // 従来はログインしていれば誰でも自分を担当に足せた（→ 担当者として削除できてしまう）。
   const _asnDeny = await checkCreativeAssignmentChange(req, req.params.id, user_id === req.user?.id ? [role] : []);
@@ -15809,12 +15827,14 @@ router.post('/creatives/:id/assignments', async (req, res) => {
 // アサイン削除
 router.delete('/assignments/:id', async (req, res) => {
   // 削除前に creative_id を控えておく（DELETE 後の同期に必要）
-  const { data: prev } = await supabase
+  const { data: prev, error: prevErr } = await supabase
     .from('creative_assignments')
     .select('creative_id')
     .eq('id', req.params.id)
     .maybeSingle();
-  if (!prev?.creative_id) return res.status(404).json({ error: '担当が見つかりません' });
+  if (prevErr) return res.status(500).json({ error: prevErr.message });
+  // 既に無い（ダブルクリック・他の人が先に外した）なら、望む結果になっているので成功扱い
+  if (!prev?.creative_id) return res.json({ ok: true });
   // 権限ガード（ADR 015）: 追加と同じ判定（担当者を外すのも担当者の変更）
   const _asnDeny = await checkCreativeAssignmentChange(req, prev.creative_id, []);
   if (_asnDeny) return res.status(_asnDeny.status).json({ error: _asnDeny.error });
