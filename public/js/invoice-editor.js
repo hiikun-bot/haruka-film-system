@@ -468,6 +468,7 @@
       <div class="ie-t-main"><span>ご請求金額（税込）</span><b>${yen(t.grand_total)}</b></div>
       <div><span>源泉徴収税額（10.21%）</span><b>${t.withholding ? '-' + yen(t.withholding) : '0'}</b></div>
       <div class="ie-t-main"><span>差引お振込額</span><b>${yen(t.payout)}</b></div>
+      ${t.subtotal < 0 ? '<div class="ie-t-warn">過払いの調整を引くと報酬がマイナスになるため、このままでは提出できません。引ききれない分は翌月以降の請求で差し引いてください</div>' : ''}
       ${t.withholding_over_limit ? '<div class="ie-t-warn">小計が100万円を超えています。源泉は10.21%一律で計算しています</div>' : ''}`;
   }
 
@@ -974,7 +975,7 @@
     if (!editable()) return;
     // 立替経費は領収書ごとに金額が違うので、まとめ入力の対象にしない
     const idx = selectedIdx().filter(i => ed.rows[i].kind !== 'fixed' && ed.rows[i].kind !== 'expense' && ed.rows[i].kind !== 'adjustment');
-    if (!idx.length) { showToast('先に左のチェックで行を選んでください（立替経費・金額固定の行はまとめて入力できません）', 'warn'); return; }
+    if (!idx.length) { showToast('先に左のチェックで行を選んでください（立替経費・過払いの調整・金額固定の行はまとめて入力できません）', 'warn'); return; }
     const raw = window.prompt(`選んだ ${idx.length} 行に入れる税抜単価（円）`, '');
     if (raw === null) return;
     const p = C().parseMoney(raw);
@@ -1255,7 +1256,7 @@
     const rows = ed.rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td>
       <td class="c">${r.kind === 'cr' ? slashDate(r.billing_date) : ''}</td>
-      <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.is_expense ? C().expenseItemLabel(r) + C().receiptNoteOf(r) : (r.kind === 'fixed' ? (r.creative_label || r.label) : r.label))}</td>
+      <td>${r.kind === 'cr' ? h(C().crItemLabel(r.client_name, r.creative_label, r.cost_type, r.label)) : h(r.is_expense ? C().expenseItemLabel(r) + C().receiptNoteOf(r) : (r.kind === 'fixed' ? (r.creative_label || r.label) : (r.kind === 'adjustment' ? C().adjustmentItemLabel(r) : r.label)))}</td>
       <td class="r">${r.unit_price == null ? '' : yen(r.kind === 'adjustment' ? C().lineAmount(r) : r.unit_price)}</td>
       <td class="c">${r.kind === 'manual' ? h(r.quantity) : 1}</td>
       <td class="r">${r.unit_price == null ? '' : yen(C().lineAmount(r))}</td>

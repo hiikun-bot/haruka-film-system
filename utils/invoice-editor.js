@@ -355,9 +355,11 @@
       if (isExpenseLine(it)) expense += lineAmount(it);
       else subtotal += lineAmount(it);
     }
-    const tax = Math.floor((subtotal * TAX_NUM) / TAX_DEN);
+    // 過払いの調整で小計がマイナスになった下書き（提出は NEGATIVE_SUBTOTAL で止める）でも、消費税・源泉をマイナスにしない
+    const taxBase = Math.max(subtotal, 0);
+    const tax = Math.floor((taxBase * TAX_NUM) / TAX_DEN);
     const total = subtotal + tax;
-    const withholding = withholding_enabled ? Math.floor((subtotal * WH_NUM) / WH_DEN) : 0;
+    const withholding = withholding_enabled ? Math.floor((taxBase * WH_NUM) / WH_DEN) : 0;
     const grandTotal = total + expense;
     const payout = grandTotal - withholding;
     return {
@@ -456,7 +458,9 @@
     const out = [];
     if (!item) return out;
     if (item.unit_price === null || item.unit_price === undefined || item.unit_price === '') {
-      out.push({ code: 'PRICE_MISSING', message: '単価が未入力です（0円で出す場合は 0 を入れてください）' });
+      out.push({ code: 'PRICE_MISSING', message: isAdjustmentLine(item)
+        ? '差し引く金額が未入力です（正の数で入れてください。例: 4000）'
+        : '単価が未入力です（0円で出す場合は 0 を入れてください）' });
     }
     if (isCrLine(item)) {
       const ref = Number(refPrice) || 0;
@@ -471,7 +475,8 @@
     } else if (isAdjustmentLine(item)) {
       if (!String(item.label || '').trim()) out.push({ code: 'LABEL_MISSING', message: '調整の内容を入力してください（例: 10月分 過払い調整（カット稿））' });
       if (!String(item.manual_reason || '').trim()) out.push({ code: 'ADJUSTMENT_NO_REASON', message: '過払いの調整は理由が必要です（例: 10月分で同じ作業を二重に受け取ったため）' });
-      if (Number(item.unit_price) === 0) out.push({ code: 'ADJUSTMENT_ZERO', message: '差し引く金額を入力してください' });
+      const entered = !(item.unit_price === null || item.unit_price === undefined || item.unit_price === '');
+      if (entered && Number(item.unit_price) === 0) out.push({ code: 'ADJUSTMENT_ZERO', message: '差し引く金額を入れてください（0円の調整は出せません）' });
     } else if (isManualLine(item)) {
       if (!String(item.manual_reason || '').trim()) out.push({ code: 'MANUAL_NO_REASON', message: 'HFS外の行は理由が必要です' });
       if (!String(item.label || '').trim()) out.push({ code: 'LABEL_MISSING', message: '品目を入力してください' });
@@ -538,6 +543,13 @@
   function crItemLabel(clientName, creativeLabel, costType, roleLabel) {
     const role = costType === 'base_fee' ? '' : (roleLabel || '');
     return `${clientName || ''}${clientName ? '｜' : ''}${creativeLabel || ''}${role ? `（${role}）` : ''}`;
+  }
+
+  /** 過払いの調整の行の品目名（提出時の PDF と エディタの「PDFを見る」で同じ表記）。「【過払いの調整】品目（理由）」 */
+  function adjustmentItemLabel(item) {
+    const name = String((item && item.label) || '').trim();
+    const why = String((item && item.manual_reason) || '').trim();
+    return `【過払いの調整】${name}${why ? `（${why}）` : ''}`;
   }
 
   /**
@@ -607,7 +619,7 @@
     issuerCostRoles, issuerRankApplied, billedKey,
     parseMoney, isCrLine, isFixedLine, isManualLine, isExpenseLine, isManualExpenseLine, isAdjustmentLine, lineKind,
     lineAmount, computeTotals, expenseOfInvoice, defaultWithholding,
-    lineIssues, checkInvoiceForSubmit, crItemLabel, expenseItemLabel,
+    lineIssues, checkInvoiceForSubmit, crItemLabel, expenseItemLabel, adjustmentItemLabel,
     searchNorm, matchesSearch, SORT_MODES, sortRows,
   };
 });

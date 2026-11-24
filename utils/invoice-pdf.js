@@ -476,7 +476,7 @@ function buildExclusiveInvoicePdfModel(inv, { now = new Date() } = {}) {
       // 「＋ 立替経費」の行は領収書の有無を小さく添える（写真そのものは PDF に入れない・追補 2026-11-23）
       label = IE.expenseItemLabel(it) + IE.receiptNoteOf(it);
     } else if (kind === 'adjustment') {
-      label = `【過払いの調整】${it.label || ''}${it.manual_reason ? `（${it.manual_reason}）` : ''}`;
+      label = IE.adjustmentItemLabel(it);
     } else {
       label = it.label || '明細';
     }
