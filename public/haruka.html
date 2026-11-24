@@ -60363,10 +60363,16 @@ async function cdSaveMaterialFolderUrl() {
       showToast('保存エラー: ' + (typeof translateError === 'function' ? translateError(body?.error) : (body?.error || '不明なエラー')), 'error');
       return;
     }
+    try { _cdInvalidateCache(id); } catch (_) {}
+    // 保存中に別のクリエイティブを開いていたら、画面（欄・保存値）には反映しない。
+    // 反映すると前のクリエイティブの URL が今開いている方の欄に出てしまう。
+    if (!currentCreativeDetail || currentCreativeDetail.id !== id) {
+      showToast('前に開いていたクリエイティブの素材フォルダURLを保存しました', 'success');
+      return;
+    }
+    currentCreativeDetail.material_folder_url = body?.material_folder_url || null;
     _cdMaterialFolderSaved = body?.material_folder_url || '';
     input.value = _cdMaterialFolderSaved;
-    if (currentCreativeDetail && currentCreativeDetail.id === id) currentCreativeDetail.material_folder_url = body?.material_folder_url || null;
-    try { _cdInvalidateCache(id); } catch (_) {}
     cdUpdateMaterialFolderButtons();
     showToast(r.value ? '素材フォルダURLを保存しました' : '素材フォルダURLを消しました', 'success');
   } finally {
