@@ -29,7 +29,9 @@ class Query {
   select() { if (this.op === 'select') this.op = 'select'; this.returning = true; return this; }
   insert(row) { this.op = 'insert'; this.payload = row; return this; }
   update(patch) { this.op = 'update'; this.payload = patch; return this; }
+  upsert(row, opts = {}) { this.op = 'upsert'; this.payload = row; this.conflictKey = opts.onConflict || 'id'; return this; }
   eq(c, v) { this.filters.push(r => r[c] === v); return this; }
+  in(c, vs) { this.filters.push(r => vs.includes(r[c])); return this; }
   is(c, v) { this.filters.push(r => (v === null ? r[c] == null : r[c] === v)); return this; }
   not(c, op, v) {
     if (op !== 'is' || v !== null) throw new Error('fake: unsupported not()');
@@ -46,6 +48,12 @@ class Query {
       const r = { id: `log${list.length + 1}`, ...this.payload };
       list.push(r);
       return this.shape([r]);
+    }
+    if (this.op === 'upsert') {
+      const k = this.conflictKey;
+      const hit = list.find(r => r[k] === this.payload[k]);
+      if (hit) Object.assign(hit, this.payload); else list.push({ ...this.payload });
+      return this.shape([{ ...(hit || this.payload) }]);
     }
     let matched = list.filter(r => this.filters.every(f => f(r)));
     if (this.op === 'update') {

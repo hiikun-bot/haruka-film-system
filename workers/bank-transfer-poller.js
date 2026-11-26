@@ -59,6 +59,47 @@ async function loadActiveBatches() {
   return data || [];
 }
 
+// ---------- 未接続で照会できないとき（トークン期限切れの自動解除など） ----------
+const DISCONNECTED_LAST_ERROR = '銀行 API が未接続のため状態を照会できません（トークン期限切れ等）。振込管理から再接続してください';
+const DISCONNECTED_NOTICE_KEY = 'bank_disconnected_notice_last_date'; // 'YYYY-MM-DD'（JST）＝最後に知らせた日
+
+/** 今日（JST）まだ知らせていなければ true（純関数・テスト用。1 日 1 回の再送ガード） */
+function shouldNotifyDisconnected(lastDate, today) {
+  return !lastDate || String(lastDate) < String(today);
+}
+
+function buildDisconnectedNotice(batches) {
+  const lines = batches.slice(0, 10).map(b => `・${b.year}年${b.month}月分 ${b.total_count ?? '-'}件（${b.status}）`);
+  if (batches.length > 10) lines.push(`ほか ${batches.length - 10} 件`);
+  return `[info][title]🏦 銀行API未接続のため振込依頼の状態を確認できません[/title]進行中の振込依頼が ${batches.length} 件ありますが、銀行 API の接続が切れています（トークン期限切れ等）。\n振込管理から再接続してください。\n${lines.join('\n')}[/info]`;
+}
+
+async function handleDisconnected(batches, { now = new Date() } = {}) {
+  // 1) 進行中の依頼に理由を残す（画面の依頼履歴に出る）
+  const ids = batches.filter(b => b.last_error !== DISCONNECTED_LAST_ERROR).map(b => b.id);
+  if (ids.length) {
+    const { error } = await supabase.from('payout_transfer_batches')
+      .update({ last_error: DISCONNECTED_LAST_ERROR, updated_at: now.toISOString() })
+      .in('id', ids);
+    if (error) console.warn('[bank-transfer-poller] last_error の記録に失敗:', error.message);
+  }
+  // 2) 管理者マイチャットへ 1 日 1 回まで
+  try {
+    const today = bt.todayJst(now);
+    const { data } = await supabase.from('system_settings').select('value').eq('key', DISCONNECTED_NOTICE_KEY).maybeSingle();
+    if (!shouldNotifyDisconnected(data?.value, today)) return;
+    const r = await bt.sendAdminMyChat(buildDisconnectedNotice(batches));
+    if (r && r.ok === false) return; // 送れなかったら記録せず次の tick でもう一度
+    const { error } = await supabase.from('system_settings').upsert(
+      { key: DISCONNECTED_NOTICE_KEY, value: today, updated_at: now.toISOString() },
+      { onConflict: 'key' },
+    );
+    if (error) console.warn('[bank-transfer-poller] 未接続通知日の記録に失敗:', error.message);
+  } catch (e) {
+    console.warn('[bank-transfer-poller] 未接続の通知に失敗:', e.message);
+  }
+}
+
 async function tick() {
   if (isRunning) return;
   isRunning = true;
@@ -70,6 +111,7 @@ async function tick() {
     const conn = await aozora.loadActiveConnection();
     if (!conn) {
       console.warn(`[bank-transfer-poller] 照会対象 ${batches.length} 件ありますが銀行 API が未接続のためスキップ`);
+      await handleDisconnected(batches);
       return;
     }
     let changed = 0;
@@ -128,6 +170,10 @@ module.exports = {
   tick,
   shouldPoll,
   shouldRetryRequesting,
+  shouldNotifyDisconnected,
+  buildDisconnectedNotice,
+  handleDisconnected,
+  DISCONNECTED_LAST_ERROR,
   ACTIVE_STATUSES,
   TICK_MS,
 };

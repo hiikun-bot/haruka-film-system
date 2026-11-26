@@ -1,4 +1,4 @@
-// utils/aozora-token-expiry.js — 銀行 API トークンの有効期限切れ削除（ADR 054 追補）
+// utils/aozora-token-expiry.js — 銀行 API トークンの有効期限切れ削除（ADR 054 §3-3）
 // =============================================================
 // 有効期限を過ぎたアクセストークン／リフレッシュトークンの暗号文（*_enc / *_iv / *_tag）を
 // bank_api_connections から物理的に消す（列を NULL にする）。
@@ -12,18 +12,22 @@
 //   - アクセストークン: access_token_expires_at（ISO / TIMESTAMPTZ）を epoch ms で now と比べる。
 //     列が無い（NULL）のに暗号文がある行は「期限不明＝期限切れ」とみなす（tokenNeedsRefresh と同じ扱い）
 //   - リフレッシュトークン: 認可仕様（認可編 1.8.0 p.6〜7）では再発行時の応答が新規発行と同一で
-//     refresh_token が必ず返る＝更新のたびに新しいリフレッシュトークンへ置き換わる。
-//     発行時刻 = updated_at（トークン保存時に必ず更新される列）。無ければ connected_at。
-//     有効期間は仕様書に明記が無いため AOZORA_REFRESH_TOKEN_TTL_DAYS（既定 90 日）で持つ。
-//     実際の期間が分かったら環境変数で合わせる（短めにしておけば「早めに消えて再接続が要る」側に倒れる）
+//     refresh_token が返る＝更新のたびに新しいリフレッシュトークンへ置き換わる。
+//     発行時刻 = updated_at（リフレッシュトークンを保存したときだけ動かす列）。無ければ connected_at。
+//     有効期間は仕様書に明記が無いため AOZORA_REFRESH_TOKEN_TTL_DAYS（既定 90 日）で「推定」する。
+//     推定期限を過ぎても即は消さず、一度だけリフレッシュを試す（tryRefresh）:
+//       受け付けられた → 新しいトークンで継続 / invalid_grant → 消す / 通信失敗など → 次の回にもう一度。
+//     銀行で確かめられないまま推定期限から REFRESH_GRACE_MS（7 日）たったら、確かめられなくても消す
 //   - 銀行のトークンエンドポイントが invalid_grant を返した＝そのリフレッシュトークンは銀行側で無効。
-//     その場で期限切れとして消す（aozora-api.js の refreshConnectionTokens から呼ぶ）
+//     行を読み直し、refresh_token_enc が「送ったトークン」のままのときだけ消す（aozora-api.js の refreshConnectionTokens）。
+//     この経路では revoked_at を立てない（未接続化は通常の判定＝enforceRow に任せる）
 //   - アクセストークンだけ切れてリフレッシュトークンが有効なら接続は維持（次の利用時に refresh で取り直す）
-//   - 両方とも無くなったら revoked_at を立てて「未接続」に戻す（画面は再接続ボタンを出す・API は 未接続 で止まる）
+//   - 両方とも無くなったら revoked_at を立てて「未接続」に戻す（画面は再接続ボタンを出す・API は 未接続 で止まる）。
+//     自動で未接続にしたら管理者マイチャットへ一報（トークン値は出さない）
 //   - revoked_at 済みの行にトークンが残っていれば消す
 //
-// 注意: ここでの更新は updated_at を動かさない（updated_at がリフレッシュトークンの発行時刻の目安なので、
-//       アクセストークンだけ消したときに更新すると期限が延びてしまう）。
+// 注意: アクセストークンだけ消すときは updated_at を動かさない（updated_at がリフレッシュトークンの発行時刻の目安なので、
+//       動かすと推定期限が延びてしまう）。
 // 時刻はすべて epoch ms / ISO（UTC）で比較する。JST への変換は表示側の仕事。
 // =============================================================
 
@@ -31,6 +35,9 @@ const supabase = require('../supabase');
 
 const DAY_MS = 86_400_000;
 const DEFAULT_REFRESH_TOKEN_TTL_DAYS = 90;
+const REFRESH_GRACE_MS = 7 * DAY_MS; // 推定期限後、銀行で確かめられないまま待つ上限
+const AUDIT_ACTION = 'disconnect';   // 既存 CHECK 制約の範囲で「トークン破棄」を表す。区別は detail.event / detail.revoked
+const PURGE_EVENT = 'expired_token_purged';
 const TOKEN_COLUMNS = {
   access: ['access_token_enc', 'access_token_iv', 'access_token_tag'],
   refresh: ['refresh_token_enc', 'refresh_token_iv', 'refresh_token_tag'],
@@ -67,39 +74,56 @@ function isAccessTokenExpired(conn, now = Date.now()) {
   return exp == null || exp <= now;
 }
 
-function isRefreshTokenExpired(conn, now = Date.now(), ttlMs = refreshTokenTtlMs()) {
+/** 推定期限を過ぎたか（＝消す前に一度リフレッシュを試す段階） */
+function isRefreshTokenStale(conn, now = Date.now(), ttlMs = refreshTokenTtlMs()) {
   if (!conn?.refresh_token_enc) return false;
   const exp = refreshTokenExpiresAtMs(conn, ttlMs);
   return exp == null || exp <= now;
 }
 
+/** 推定期限＋猶予も過ぎたか（銀行で確かめられなくても消す） */
+function isRefreshTokenHardExpired(conn, now = Date.now(), ttlMs = refreshTokenTtlMs(), graceMs = REFRESH_GRACE_MS) {
+  if (!conn?.refresh_token_enc) return false;
+  const exp = refreshTokenExpiresAtMs(conn, ttlMs);
+  return exp == null || exp + graceMs <= now;
+}
+
 /**
- * 1 行について何を消すかを決める（純関数）。消すものが無ければ null。
+ * 1 行について何を消すかを決める（純関数）。何もしなくてよければ null。
  * @param {object} conn bank_api_connections 行
- * @param {{ now?: number, ttlMs?: number, refreshRejected?: boolean }} [opts]
+ * @param {{ now?: number, ttlMs?: number, graceMs?: number, refreshRejected?: boolean, noRevoke?: boolean }} [opts]
  *   refreshRejected: 銀行が invalid_grant を返した（リフレッシュトークンは期限に関係なく無効）
- * @returns {null | { purgeAccess: boolean, purgeRefresh: boolean, revoke: boolean, reason: string }}
+ *   noRevoke: 未接続化（revoked_at）はしない（invalid_grant 経路用）
+ * @returns {null | { purgeAccess: boolean, purgeRefresh: boolean, revoke: boolean, checkRefresh: boolean, reason: string }}
+ *   checkRefresh: リフレッシュトークンが推定期限切れ → 消す前に一度リフレッシュを試す（これだけなら書き込まない）
  */
-function planTokenPurge(conn, { now = Date.now(), ttlMs = refreshTokenTtlMs(), refreshRejected = false } = {}) {
+function planTokenPurge(conn, { now = Date.now(), ttlMs = refreshTokenTtlMs(), graceMs = REFRESH_GRACE_MS, refreshRejected = false, noRevoke = false } = {}) {
   if (!conn) return null;
   const hasAccess = !!conn.access_token_enc;
   const hasRefresh = !!conn.refresh_token_enc;
   if (conn.revoked_at) {
     if (!hasAccess && !hasRefresh) return null;
-    return { purgeAccess: hasAccess, purgeRefresh: hasRefresh, revoke: false, reason: 'revoked' };
+    return { purgeAccess: hasAccess, purgeRefresh: hasRefresh, revoke: false, checkRefresh: false, reason: 'revoked' };
   }
   const purgeAccess = isAccessTokenExpired(conn, now);
-  const purgeRefresh = hasRefresh && (refreshRejected || isRefreshTokenExpired(conn, now, ttlMs));
+  const purgeRefresh = hasRefresh && (refreshRejected || isRefreshTokenHardExpired(conn, now, ttlMs, graceMs));
+  const checkRefresh = hasRefresh && !purgeRefresh && isRefreshTokenStale(conn, now, ttlMs);
   const accessLeft = hasAccess && !purgeAccess;
   const refreshLeft = hasRefresh && !purgeRefresh;
-  const revoke = !accessLeft && !refreshLeft;
-  if (!purgeAccess && !purgeRefresh && !revoke) return null;
+  const revoke = !noRevoke && !accessLeft && !refreshLeft;
+  if (!purgeAccess && !purgeRefresh && !revoke && !checkRefresh) return null;
   let reason;
   if (refreshRejected && purgeRefresh) reason = 'refresh_rejected';
   else if (purgeRefresh) reason = 'refresh_token_expired';
   else if (purgeAccess) reason = 'access_token_expired';
-  else reason = 'no_tokens';
-  return { purgeAccess, purgeRefresh, revoke, reason };
+  else if (revoke) reason = 'no_tokens';
+  else reason = 'refresh_token_stale';
+  return { purgeAccess, purgeRefresh, revoke, checkRefresh, reason };
+}
+
+/** 列を書き換える計画か（checkRefresh だけなら書き込まない） */
+function planWrites(plan) {
+  return !!plan && (plan.purgeAccess || plan.purgeRefresh || plan.revoke);
 }
 
 /** planTokenPurge の結果から UPDATE の patch を作る（純関数） */
@@ -116,17 +140,20 @@ function buildPurgePatch(plan, nowIso = new Date().toISOString()) {
   return patch;
 }
 
-/** 監査ログの action（既存の CHECK 制約の範囲で選ぶ）と detail（秘密情報なし） */
+/**
+ * 監査ログの action と detail（秘密情報なし）。
+ * action は既存 CHECK 制約の 'disconnect'（トークン破棄）に揃え、detail.event='expired_token_purged' と
+ * detail.revoked（接続が使えなくなったか）で区別する（migration を増やさないため・ADR 054 §3-3）。
+ */
 function buildAuditEntry(conn, plan, { source, now = Date.now(), ttlMs = refreshTokenTtlMs() } = {}) {
   const purged = [];
   if (plan.purgeAccess || (plan.revoke && conn.access_token_enc)) purged.push('access_token');
   if (plan.purgeRefresh || (plan.revoke && conn.refresh_token_enc)) purged.push('refresh_token');
   const refreshExp = conn.refresh_token_enc ? refreshTokenExpiresAtMs(conn, ttlMs) : null;
   return {
-    // 接続が使えなくなる（revoke）／切断済み行の掃除 → disconnect、接続を維持したままの削除 → token_refresh
-    action: plan.revoke || plan.reason === 'revoked' ? 'disconnect' : 'token_refresh',
+    action: AUDIT_ACTION,
     detail: {
-      event: 'expired_token_purged',
+      event: PURGE_EVENT,
       reason: plan.reason,
       purged,
       revoked: !!plan.revoke,
@@ -138,29 +165,49 @@ function buildAuditEntry(conn, plan, { source, now = Date.now(), ttlMs = refresh
   };
 }
 
-async function writeAudit(connId, entry) {
+/** bank_api_audit_logs へ 1 行（失敗してもログだけ・actor なし＝自動処理） */
+async function audit({ connectionId, action, detail }) {
   try {
     const { error } = await supabase.from('bank_api_audit_logs').insert({
       actor_user_id: null,
-      action: entry.action,
-      connection_id: connId,
+      action,
+      connection_id: connectionId,
       batch_id: null,
-      detail: entry.detail,
+      detail: detail || null,
     });
-    if (error) console.warn(`[aozora-token-expiry] 監査ログの保存に失敗 connection=${connId}: ${error.message}`);
+    if (error) console.warn(`[aozora-token-expiry] 監査ログの保存に失敗 connection=${connectionId}: ${error.message}`);
   } catch (e) {
-    console.warn(`[aozora-token-expiry] 監査ログの保存に失敗 connection=${connId}: ${e.message}`);
+    console.warn(`[aozora-token-expiry] 監査ログの保存に失敗 connection=${connectionId}: ${e.message}`);
+  }
+}
+
+/** 自動で未接続にしたときの管理者マイチャット文面（トークン値・口座番号は出さない） */
+function buildRevokedNotice(conn, plan) {
+  const env = conn.environment === 'production' ? '本番' : '開発';
+  const why = plan.reason === 'refresh_rejected' ? '銀行側でトークンが無効になった' : 'トークンの有効期限が切れた';
+  return `[info][title]🏦 銀行API接続が期限切れで切れました[/title]${why}ため、あおぞら銀行 API（${env}）の接続を自動で解除しました。\n振込管理の画面から再接続してください。[/info]`;
+}
+
+/** 既定の通知先: 管理者マイチャット（utils/bank-transfer.js#sendAdminMyChat・循環 require を避けて遅延読み込み） */
+async function defaultNotifyRevoked(conn, plan) {
+  try {
+    const bt = require('./bank-transfer');
+    await bt.sendAdminMyChat(buildRevokedNotice(conn, plan));
+  } catch (e) {
+    console.warn(`[aozora-token-expiry] 未接続化の通知に失敗 connection=${conn.id}: ${e.message}`);
   }
 }
 
 /**
  * 1 行に削除を適用する。読んだ時点から別プロセスがトークンを更新していたら何もしない
- * （access_token_expires_at と refresh_token_enc の compare-and-set）。
+ * （access_token_expires_at と refresh_token_enc の compare-and-set。リフレッシュの HTTP 中の行も、
+ *  終わってトークンが置き換われば refresh_token_enc が変わるので上書きしない）。
+ * checkRefresh だけの計画（推定期限切れ）は書き込まない＝呼び出し側（enforceRow）が先にリフレッシュを試す。
  * @returns {Promise<{ applied: boolean, plan: object|null }>}
  */
-async function applyTokenPurge(conn, { now = Date.now(), ttlMs = refreshTokenTtlMs(), refreshRejected = false, source } = {}) {
-  const plan = planTokenPurge(conn, { now, ttlMs, refreshRejected });
-  if (!plan) return { applied: false, plan: null };
+async function applyTokenPurge(conn, { now = Date.now(), ttlMs = refreshTokenTtlMs(), graceMs = REFRESH_GRACE_MS, refreshRejected = false, noRevoke = false, source, notifyRevoked = defaultNotifyRevoked } = {}) {
+  const plan = planTokenPurge(conn, { now, ttlMs, graceMs, refreshRejected, noRevoke });
+  if (!planWrites(plan)) return { applied: false, plan };
   const patch = buildPurgePatch(plan, new Date(now).toISOString());
   let q = supabase.from('bank_api_connections').update(patch).eq('id', conn.id);
   q = conn.revoked_at ? q.not('revoked_at', 'is', null) : q.is('revoked_at', null);
@@ -170,15 +217,50 @@ async function applyTokenPurge(conn, { now = Date.now(), ttlMs = refreshTokenTtl
   if (error) throw new Error(`bank_api_connections 期限切れトークンの削除に失敗: ${error.message}`);
   if (!data) return { applied: false, plan }; // 競合（別プロセスが更新・削除済み）
   console.log(`[aozora-token-expiry] 期限切れトークンを削除しました connection=${conn.id} reason=${plan.reason} revoked=${plan.revoke}`);
-  await writeAudit(conn.id, buildAuditEntry(conn, plan, { source, now, ttlMs }));
+  await audit({ connectionId: conn.id, ...buildAuditEntry(conn, plan, { source, now, ttlMs }) });
+  if (plan.revoke && typeof notifyRevoked === 'function') await notifyRevoked(conn, plan);
   return { applied: true, plan };
+}
+
+async function reloadRow(id) {
+  const { data, error } = await supabase.from('bank_api_connections').select(SWEEP_COLUMNS).eq('id', id).maybeSingle();
+  if (error) throw new Error(`bank_api_connections 再読込に失敗: ${error.message}`);
+  return data || null;
+}
+
+/**
+ * 1 行の期限を通常の判定で処理する（定期処理・接続取得時の共通入口）。
+ *   1) リフレッシュトークンが推定期限切れなら、消す前に tryRefresh で一度だけ試す
+ *      （'refreshed' → 新トークンで継続 / 'rejected' → invalid_grant 経路で消えている / 'error' → 今回は消さない）
+ *   2) 読み直して、期限切れの削除・両方なければ未接続化
+ * @param {object} conn
+ * @param {{ tryRefresh?: (conn:object)=>Promise<'refreshed'|'rejected'|'error'>, notifyRevoked?: Function, source?: string, now?: number, ttlMs?: number, graceMs?: number }} [opts]
+ * @returns {Promise<{ row: object|null, applied: boolean, revoked: boolean, refreshed: boolean }>}
+ */
+async function enforceRow(conn, opts = {}) {
+  const { tryRefresh, now = Date.now(), ttlMs = refreshTokenTtlMs(), graceMs = REFRESH_GRACE_MS } = opts;
+  let row = conn;
+  let refreshed = false;
+  const first = planTokenPurge(row, { now, ttlMs, graceMs });
+  if (!first) return { row, applied: false, revoked: false, refreshed };
+  if (first.checkRefresh && typeof tryRefresh === 'function') {
+    const outcome = await tryRefresh(row);
+    refreshed = outcome === 'refreshed';
+    row = await reloadRow(row.id);
+    if (!row) return { row: null, applied: false, revoked: false, refreshed };
+  }
+  const r = await applyTokenPurge(row, { ...opts, now, ttlMs, graceMs });
+  if (r.applied) row = await reloadRow(row.id);
+  return { row, applied: r.applied, revoked: !!(r.applied && r.plan?.revoke), refreshed };
 }
 
 /**
  * トークンが残っている全行を見て、期限切れを削除する（定期処理）。
- * @returns {Promise<{ checked: number, purged: number, revoked: number }>}
+ * @param {object} [opts] enforceRow と同じ（tryRefresh / notifyRevoked / source / now / ttlMs）
+ * @returns {Promise<{ checked: number, purged: number, revoked: number, refreshed: number }>}
  */
-async function purgeExpiredTokens({ now = Date.now(), ttlMs = refreshTokenTtlMs(), source = 'sweeper' } = {}) {
+async function purgeExpiredTokens(opts = {}) {
+  const { now = Date.now(), ttlMs = refreshTokenTtlMs(), source = 'sweeper' } = opts;
   const { data, error } = await supabase
     .from('bank_api_connections')
     .select(SWEEP_COLUMNS)
@@ -187,30 +269,37 @@ async function purgeExpiredTokens({ now = Date.now(), ttlMs = refreshTokenTtlMs(
   const rows = data || [];
   let purged = 0;
   let revoked = 0;
+  let refreshed = 0;
   for (const row of rows) {
     try {
-      const r = await applyTokenPurge(row, { now, ttlMs, source });
-      if (r.applied) {
-        purged++;
-        if (r.plan.revoke) revoked++;
-      }
+      const r = await enforceRow(row, { ...opts, now, ttlMs, source });
+      if (r.applied) purged++;
+      if (r.revoked) revoked++;
+      if (r.refreshed) refreshed++;
     } catch (e) {
       console.warn(`[aozora-token-expiry] connection=${row.id} の削除に失敗: ${e.message}`);
     }
   }
-  return { checked: rows.length, purged, revoked };
+  return { checked: rows.length, purged, revoked, refreshed };
 }
 
 module.exports = {
   DEFAULT_REFRESH_TOKEN_TTL_DAYS,
+  REFRESH_GRACE_MS,
+  AUDIT_ACTION,
+  PURGE_EVENT,
   refreshTokenTtlMs,
   refreshTokenIssuedAtMs,
   refreshTokenExpiresAtMs,
   isAccessTokenExpired,
-  isRefreshTokenExpired,
+  isRefreshTokenStale,
+  isRefreshTokenHardExpired,
   planTokenPurge,
   buildPurgePatch,
   buildAuditEntry,
+  buildRevokedNotice,
+  audit,
   applyTokenPurge,
+  enforceRow,
   purgeExpiredTokens,
 };

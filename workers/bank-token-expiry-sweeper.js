@@ -9,7 +9,7 @@
 //   - 削除ごとに bank_api_audit_logs へ記録
 //
 // 起動条件: server.js で ENABLE_AOZORA_TRANSFER=true のときだけ start する（bank-transfer-poller と同じ流儀）。
-// 深夜帯も止めない（DB だけの処理で銀行 API は呼ばない）。
+// 深夜帯も止めない。銀行 API を呼ぶのは「推定期限切れのリフレッシュトークンで一度だけ refresh を試す」ときだけ。
 // =============================================================
 
 const aozora = require('../utils/aozora-api');
@@ -27,8 +27,9 @@ async function tick({ now = Date.now() } = {}) {
   isRunning = true;
   try {
     if (!aozora.isEnabled()) return null;
-    const r = await tokenExpiry.purgeExpiredTokens({ now, source: 'sweeper' });
-    if (r.purged) console.log(`[bank-token-expiry-sweeper] ${r.checked} 件確認・${r.purged} 件削除（うち ${r.revoked} 件は未接続に戻した）`);
+    // 推定期限切れのリフレッシュトークンは、消す前に一度だけ refresh を試す（受け付けられれば継続）
+    const r = await tokenExpiry.purgeExpiredTokens({ now, source: 'sweeper', tryRefresh: aozora.tryRefreshOnce });
+    if (r.purged || r.refreshed) console.log(`[bank-token-expiry-sweeper] ${r.checked} 件確認・${r.purged} 件削除（うち ${r.revoked} 件は未接続に戻した）・${r.refreshed} 件更新`);
     return r;
   } catch (e) {
     console.error('[bank-token-expiry-sweeper] tick 失敗:', e.message);

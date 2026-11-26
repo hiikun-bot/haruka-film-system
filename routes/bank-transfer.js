@@ -187,7 +187,8 @@ router.get('/bank/callback', async (req, res) => {
 // POST /api/haruka/admin/bank/disconnect
 router.post('/bank/disconnect', async (req, res) => {
   try {
-    const conn = await aozora.loadActiveConnection();
+    // 期限判定なしで読む（期限切れの自動処理で先に未接続化されて 404 にならないように・押した管理者を監査ログに残す）
+    const conn = await aozora.selectActiveConnection();
     if (!conn) return res.status(404).json({ error: '接続がありません' });
     await aozora.revokeConnection(conn.id);
     await bt.audit({ actorUserId: req.user.id, action: 'disconnect', connectionId: conn.id, detail: { environment: conn.environment }, req });
