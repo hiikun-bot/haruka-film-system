@@ -490,15 +490,15 @@ const rateLimitUtil = require('./utils/rate-limit');
 const loginRateLimit = rateLimitUtil.createLoginRateLimit();
 const registerRateLimit = rateLimitUtil.createRegisterRateLimit();
 const reauthPwRateLimit = rateLimitUtil.createReauthPasswordRateLimit();
-// 超過時は既存の検証済み経路（googleLoginFail / reauthRedirect / verifyState）で戻す。
+// Google は開始（/auth/google・IP ごと）と再認証（/auth/google/reauth・ユーザーごと）だけ数え、戻り（callback）には掛けない。
+// 超過時は既存の検証済み経路（googleLoginFail / reauthRedirect）で戻す。
 // これらはこの下で定義されるので、リクエスト時に参照する（ここで直接渡すと TDZ になる）
-const googleLoginRateLimit = rateLimitUtil.createGoogleLoginRateLimit({
-  onLimit: rateLimitUtil.buildGoogleLoginOnLimit({
-    loginFail: (res, code, next) => googleLoginFail(res, code, next),
-    reauthRedirect: (res, next, params) => reauthRedirect(res, next, params),
-    verifyState: (state) => googleLogin.verifyState(state, googleLogin.getStateSecret()),
-  }),
+const googleLimitOnLimit = rateLimitUtil.buildGoogleLoginOnLimit({
+  loginFail: (res, code, next) => googleLoginFail(res, code, next),
+  reauthRedirect: (res, next, params) => reauthRedirect(res, next, params),
 });
+const googleLoginRateLimit = rateLimitUtil.createGoogleLoginRateLimit({ onLimit: googleLimitOnLimit });
+const googleReauthRateLimit = rateLimitUtil.createGoogleReauthRateLimit({ onLimit: googleLimitOnLimit });
 
 // reason: 'locked'（失敗が続いて 15 分）/ 'busy'（同一メール・IP の照合が同時に重なりすぎ）
 function loginLockResponse(res, { reason, retryAfterSec }) {
@@ -661,7 +661,7 @@ app.get('/auth/reauth/status', requireAuth, (req, res) => {
 });
 
 // Google で再認証: 成功時は next（/haruka.html 始まりのみ）へ ?reauth=ok、失敗時は ?reauth_error=<code> を付けて戻す
-app.get('/auth/google/reauth', googleLoginRateLimit, requireAuth, (req, res) => {
+app.get('/auth/google/reauth', requireAuth, googleReauthRateLimit, (req, res) => {
   if (!googleLogin.isEnabled()) return reauthRedirect(res, req.query.next, { reauth_error: 'google_disabled' });
   const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
   if (!callbackUrl) return reauthRedirect(res, req.query.next, { reauth_error: 'google_host' });
@@ -714,13 +714,13 @@ app.post('/auth/reauth-password', requireAuth, reauthPwRateLimit, async (req, re
   }
 });
 
-app.get('/auth/google/callback', googleLoginRateLimit, async (req, res) => {
+app.get('/auth/google/callback', async (req, res) => {
   // 再認証モード（/auth/google/reauth から来た）: ログイン中ユーザーと Google のメールが一致したら reauth_at を立てて戻す
   const reauthUserId = req.session?.googleReauthUserId || null;
   if (req.session) delete req.session.googleReauthUserId;
   // state を先に検証して next を取り出す（Google 側でキャンセルされても元の画面へ戻せるように。レビュー #9）
   const payload = googleLogin.verifyState(String(req.query.state || ''), googleLogin.getStateSecret());
-  const fail = (code) => (reauthUserId ? reauthRedirect(res, payload?.next, { reauth_error: code }) : googleLoginFail(res, code));
+  const fail = (code) => (reauthUserId ? reauthRedirect(res, payload?.next, { reauth_error: code }) : googleLoginFail(res, code, payload?.next));
 
   if (!googleLogin.isEnabled()) return fail('google_disabled');
   if (req.query.error) return fail(req.query.error === 'access_denied' ? 'google_cancel' : 'google_failed');

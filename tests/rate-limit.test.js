@@ -23,19 +23,22 @@ beforeAll(async () => {
 
   const login = rl.createLoginRateLimit({ limit: 3 });
   const reauthPw = rl.createReauthPasswordRateLimit({ limit: 2 });
-  const google = rl.createGoogleLoginRateLimit({
-    limit: 2,
-    onLimit: rl.buildGoogleLoginOnLimit({
-      loginFail: (res, code, next) => { calls.push({ kind: 'loginFail', code, next }); res.redirect(`/login.html?error=${code}`); },
-      reauthRedirect: (res, next, params) => { calls.push({ kind: 'reauth', next, params }); res.redirect('/haruka.html?reauth_error=' + params.reauth_error); },
-      verifyState: (state) => (state === 'good' ? { next: '/haruka.html?page=payout' } : null),
-    }),
+  const googleOnLimit = rl.buildGoogleLoginOnLimit({
+    loginFail: (res, code, next) => { calls.push({ kind: 'loginFail', code, next }); res.redirect(`/login.html?error=${code}`); },
+    reauthRedirect: (res, next, params) => { calls.push({ kind: 'reauth', next, params }); res.redirect('/haruka.html?reauth_error=' + params.reauth_error); },
   });
+  const google = rl.createGoogleLoginRateLimit({ limit: 2, onLimit: googleOnLimit });
+  const googleReauth = rl.createGoogleReauthRateLimit({ limit: 2, onLimit: googleOnLimit });
+  const needUser = (req, res, next) => (req.user ? next() : res.status(401).end());
   app.post('/auth/login', login, (req, res) => (req.body?.ok ? res.json({ ok: true }) : res.status(401).json({ error: 'ng' })));
   app.post('/auth/reauth-password', (req, res, next) => (req.user ? next() : res.status(401).end()), reauthPw, (_req, res) => res.status(401).json({ error: 'ng' }));
   app.get('/auth/google', google, (_req, res) => res.json({ ok: true }));
-  app.get('/auth/google/reauth', google, (_req, res) => res.json({ ok: true }));
-  app.get('/auth/google/callback', google, (_req, res) => res.json({ ok: true }));
+  app.get('/auth/google/reauth', needUser, googleReauth, (_req, res) => res.json({ ok: true }));
+  // 本番と同じく callback には掛けない
+  app.get('/auth/google/callback', (_req, res) => res.json({ ok: true }));
+  // IP が判定できないとき用（req.ip を消してから通す）
+  const loginNoIp = rl.createLoginRateLimit({ limit: 1 });
+  app.post('/no-ip', (req, _res, next) => { Object.defineProperty(req, 'ip', { value: '' }); Object.defineProperty(req, 'socket', { value: {} }); next(); }, loginNoIp, (_req, res) => res.status(401).json({ error: 'ng' }));
   app.get('/api/haruka/creatives', (_req, res) => res.json({ ok: true }));
 
   await new Promise((r) => { server = app.listen(0, r); });
@@ -102,7 +105,7 @@ describe('パスワード再認証の回数制限（ユーザーごと・IP 共�
 });
 
 describe('Google ログインの回数制限', () => {
-  test('通常ログインは loginFail に next を渡し、進行中の状態を消す', async () => {
+  test('開始（/auth/google）は loginFail に next を渡し、進行中の状態を消す', async () => {
     const ip = '198.51.100.1';
     sessions.set('s1', { googleLoginNonce: 'n', googleReauthUserId: 'leftover' });
     for (let i = 0; i < 2; i++) expect((await call('/auth/google', { xff: ip })).status).toBe(200);
@@ -114,47 +117,42 @@ describe('Google ログインの回数制限', () => {
     expect(sessions.get('s1')).toEqual({});
   });
 
-  test('再認証は reauthRedirect に req.query.next を渡す', async () => {
-    const ip = '198.51.100.2';
-    for (let i = 0; i < 2; i++) await call('/auth/google/reauth', { xff: ip });
-    const res = await call('/auth/google/reauth?next=%2Fharuka.html%3Fpage%3Dpayout', { xff: ip });
-    expect(res.status).toBe(302);
-    expect(calls).toEqual([{ kind: 'reauth', next: '/haruka.html?page=payout', params: { reauth_error: 'rate_limited' } }]);
+  test('戻り（callback）には掛けない（Google で認証を終えた人を捨てない）', async () => {
+    const ip = '198.51.100.1'; // 上のテストで開始の枠を使い切った IP
+    for (let i = 0; i < 10; i++) expect((await call('/auth/google/callback', { xff: ip })).status).toBe(200);
   });
 
-  test('戻り（callback）は検証済み state の next を使い、再認証中なら reauthRedirect', async () => {
-    const ip = '198.51.100.3';
-    for (let i = 0; i < 2; i++) await call('/auth/google/callback', { xff: ip });
-    sessions.set('s2', { googleLoginNonce: 'n', googleReauthUserId: 'u1' });
-    await call('/auth/google/callback?state=good&next=%2Fevil', { xff: ip, session: 's2' });
+  test('再認証はユーザーごとの別枠で、reauthRedirect に req.query.next を渡す', async () => {
+    const ip = '198.51.100.2';
+    sessions.set('s2', { googleLoginNonce: 'n', googleReauthUserId: 'r1' });
+    for (let i = 0; i < 2; i++) expect((await call('/auth/google/reauth', { xff: ip, user: 'r1' })).status).toBe(200);
+    const res = await call('/auth/google/reauth?next=%2Fharuka.html%3Fpage%3Dpayout', { xff: ip, user: 'r1', session: 's2' });
+    expect(res.status).toBe(302);
     expect(calls).toEqual([{ kind: 'reauth', next: '/haruka.html?page=payout', params: { reauth_error: 'rate_limited' } }]);
     expect(sessions.get('s2')).toEqual({});
-    calls.length = 0;
-    await call('/auth/google/callback?state=bad&next=%2Fharuka.html%3Fx', { xff: ip });
-    expect(calls).toEqual([{ kind: 'loginFail', code: 'rate_limited', next: undefined }]);
+    // 同じ IP の別ユーザー・同じ IP の Google ログイン開始は影響なし
+    expect((await call('/auth/google/reauth', { xff: ip, user: 'r2' })).status).toBe(200);
+    expect((await call('/auth/google', { xff: ip })).status).toBe(200);
   });
 });
 
 describe('振込 onLimit（銀行接続の判定）', () => {
-  const handler = (opts) => rl.buildBankOnLimit({
-    redirectBack: (res, next, params) => res.out = { next, params },
-    verifyState: (s) => (s === 'good' ? { next: '/haruka.html?page=payout&x=1' } : null),
-  })(opts.req, opts.res, 60000);
+  const handler = (req, res) => rl.buildBankOnLimit({
+    redirectBack: (r, next, params) => { r.out = { next, params }; },
+  })(req, res, 60000);
   const fakeRes = () => ({ headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; } });
 
-  test.each([
-    ['/connect', { next: '/haruka.html?page=payout' }, '/haruka.html?page=payout'],
-    ['/connect/', { next: '/haruka.html?page=payout' }, '/haruka.html?page=payout'],
-    ['/callback', { state: 'good', next: '/evil' }, '/haruka.html?page=payout&x=1'],
-  ])('GET /bank%s は redirectBack', (p, query, expected) => {
+  test.each(['/connect', '/connect/'])('GET /bank%s は接続中の状態を消して redirectBack に next を渡す', (p) => {
     const res = fakeRes();
-    handler({ req: { method: 'GET', baseUrl: '/api/haruka/admin/bank', path: p, query }, res });
-    expect(res.out).toEqual({ next: expected, params: { bank_error: 'rate_limited' } });
+    const session = { aozoraConnectNonce: 'a', aozoraOidcNonce: 'b', other: 1 };
+    handler({ method: 'GET', baseUrl: '/api/haruka/admin/bank', path: p, query: { next: '/haruka.html?page=payout' }, session }, res);
+    expect(res.out).toEqual({ next: '/haruka.html?page=payout', params: { bank_error: 'rate_limited' } });
+    expect(session).toEqual({ other: 1 });
   });
 
   test('それ以外は JSON の 429', () => {
     const res = fakeRes();
-    handler({ req: { method: 'GET', baseUrl: '/api/haruka/admin/bank', path: '/connection', query: {} }, res });
+    handler({ method: 'GET', baseUrl: '/api/haruka/admin/bank', path: '/connection', query: {} }, res);
     expect(res.code).toBe(429);
     expect(res.body.code).toBe('rate_limited');
   });
@@ -162,9 +160,11 @@ describe('振込 onLimit（銀行接続の判定）', () => {
 
 describe('既定の上限（普通の使い方では届かない緩さ）', () => {
   test('値', () => {
-    expect(rl.LIMITS.login).toEqual({ windowMs: 15 * 60 * 1000, limit: 100 });
+    expect(rl.LIMITS.login).toEqual({ windowMs: 15 * 60 * 1000, limit: 300 });
+    expect(rl.LIMITS.register).toEqual({ windowMs: 15 * 60 * 1000, limit: 100 });
     expect(rl.LIMITS.reauthPw).toEqual({ windowMs: 15 * 60 * 1000, limit: 30 });
     expect(rl.LIMITS.googleLogin).toEqual({ windowMs: 15 * 60 * 1000, limit: 200 });
+    expect(rl.LIMITS.googleReauth).toEqual({ windowMs: 15 * 60 * 1000, limit: 30 });
     expect(rl.LIMITS.bank).toEqual({ windowMs: 60 * 1000, limit: 60 });
   });
 
@@ -174,6 +174,15 @@ describe('既定の上限（普通の使い方では届かない緩さ）', () =
     expect(rl.ipKey({ ip: '2001:db8:abcd:1200::1' })).not.toBe(rl.ipKey({ ip: '2001:db8:abcd:1201::1' }));
     expect(rl.userKey({ user: { id: 7 }, ip: '1.2.3.4' })).toBe('u:7');
     expect(rl.userKey({ ip: '1.2.3.4' })).toBe('ip:1.2.3.4');
+    expect(rl.ipKey({ ip: '', socket: {} })).toBeNull();
+    expect(rl.userKey({ ip: '' })).toBeNull();
+  });
+
+  test('IP が判定できないときは共有の鍵にまとめず、警告して制限をスキップ', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    for (let i = 0; i < 5; i++) expect((await call('/no-ip', { method: 'POST' })).status).toBe(401);
+    expect(warn.mock.calls.some((c) => /制限をスキップ/.test(String(c[0])))).toBe(true);
+    warn.mockRestore();
   });
 
   test('ログイン系以外の API には掛けていない', async () => {

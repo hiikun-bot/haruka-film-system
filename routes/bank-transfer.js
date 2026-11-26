@@ -46,13 +46,13 @@ router.use(PATHS, (req, res, next) => {
 router.use(PATHS, requireAuth, requirePermission('payout.transfer'), requireSuperAdmin);
 // アクセス回数制限（同じユーザーで 1 分に 60 回。上限と根拠は utils/rate-limit.js 先頭）。
 // PATHS（/bank・/payouts/transfer）だけに掛かり、/admin/payouts* などこのルーターを素通りする API には掛からない
-// 超過時、接続（connect / callback）は既存の redirectBack で next を検証して振込管理へ戻す
+// GET /bank/callback（銀行からの一回きりの戻り）は数えない。超過時、接続（connect）は既存の redirectBack で
+// next を検証して振込管理へ戻す
 {
   const rl = require('../utils/rate-limit');
   router.use(PATHS, rl.createBankRateLimit({
     onLimit: rl.buildBankOnLimit({
       redirectBack: (res, next, params) => bt.reauthRedirect(res, next, params),
-      verifyState: (state) => googleLogin.verifyState(state, googleLogin.getStateSecret()),
     }),
   }));
 }

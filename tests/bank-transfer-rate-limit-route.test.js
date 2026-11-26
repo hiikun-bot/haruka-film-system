@@ -71,6 +71,12 @@ test('同じユーザーは 1 分に上限回数まで、超えると 429。同�
   expect(evil.headers.get('location')).toBe('/haruka.html?bank_error=rate_limited');
   // 別ユーザー
   expect((await get('/api/haruka/admin/bank/connection', 'admin2')).status).toBe(200);
+  // 銀行からの戻り（callback）は数えない: 枠を使い切ったユーザーでも制限ではなく通常の処理（ここでは state 不一致）になる
+  for (let i = 0; i < 3; i++) {
+    const cb = await get('/api/haruka/admin/bank/callback?state=x&code=y', 'admin1');
+    expect(cb.status).toBe(302);
+    expect(cb.headers.get('location')).toContain('bank_error=state');
+  }
 });
 
 test('振込以外の /admin/payouts* には掛からない（上限を使い切ったユーザーでも通る）', async () => {
