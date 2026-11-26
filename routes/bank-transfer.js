@@ -30,6 +30,7 @@ const crypto = require('crypto');
 const supabase = require('../supabase');
 const { requireAuth, requirePermission, requireSuperAdmin } = require('../auth');
 const aozora = require('../utils/aozora-api');
+const tokenExpiry = require('../utils/aozora-token-expiry');
 const bt = require('../utils/bank-transfer');
 const plan = require('../utils/bank-transfer-plan');
 const googleLogin = require('../utils/google-login');
@@ -98,7 +99,11 @@ function parseYearMonth(body) {
 router.get('/bank/connection', async (req, res) => {
   try {
     const c = aozora.getConfig();
-    const conn = await aozora.loadActiveConnection();
+    // 状態表示は副作用なし: 期限判定だけして表示する（削除・未接続化・銀行通信・通知は定期処理と銀行を呼ぶルートに任せる）。
+    // トークンが両方使えない接続は「未接続」として返す（画面は再接続ボタンを出す）
+    const row = await aozora.selectActiveConnection();
+    const tokenStatus = tokenExpiry.describeTokenStatus(row);
+    const conn = row && tokenStatus.usable ? row : null;
     let connectedByName = null;
     if (conn?.connected_by) {
       const { data: u } = await supabase.from('users').select('id, full_name, nickname').eq('id', conn.connected_by).maybeSingle();
@@ -121,7 +126,8 @@ router.get('/bank/connection', async (req, res) => {
         account_label: conn.account_label,
         scopes: conn.scopes,
         access_token_expires_at: conn.access_token_expires_at,
-        has_refresh_token: !!conn.refresh_token_enc,
+        has_refresh_token: !!conn.refresh_token_enc && tokenStatus.refresh_token !== 'expired',
+        token_status: { access_token: tokenStatus.access_token, refresh_token: tokenStatus.refresh_token },
         connected_by: conn.connected_by,
         connected_by_name: connectedByName,
         connected_at: conn.connected_at,
@@ -199,7 +205,8 @@ router.get('/bank/callback', async (req, res) => {
 // POST /api/haruka/admin/bank/disconnect
 router.post('/bank/disconnect', async (req, res) => {
   try {
-    const conn = await aozora.loadActiveConnection();
+    // 期限判定なしで読む（期限切れの自動処理で先に未接続化されて 404 にならないように・押した管理者を監査ログに残す）
+    const conn = await aozora.selectActiveConnection();
     if (!conn) return res.status(404).json({ error: '接続がありません' });
     await aozora.revokeConnection(conn.id);
     await bt.audit({ actorUserId: req.user.id, action: 'disconnect', connectionId: conn.id, detail: { environment: conn.environment }, req });

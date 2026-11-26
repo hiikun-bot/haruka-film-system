@@ -18,6 +18,7 @@ jest.mock('../utils/aozora-api', () => {
     ...actual,
     isEnabled: () => true,
     loadActiveConnection: async () => null,
+    selectActiveConnection: async () => null, // GET /bank/connection・切断は期限判定なしの読み出しを使う
     configProblems: () => [],
     getScopes: () => [],
   };

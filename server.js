@@ -1160,6 +1160,13 @@ const runSchemaSync = require('./db/migrate');
       } catch (e) {
         console.error('[startup] bank-transfer-poller 起動失敗:', e.message);
       }
+      // 期限切れの銀行 API トークンを 1 時間ごとに DB から消す（接続取得時にも同じ判定で消す）
+      try {
+        const { startBankTokenExpirySweeper } = require('./workers/bank-token-expiry-sweeper');
+        startBankTokenExpirySweeper();
+      } catch (e) {
+        console.error('[startup] bank-token-expiry-sweeper 起動失敗:', e.message);
+      }
     }
     // 源泉所得税（ADR 054 §5）: 毎月1日 JST 10時以降に前月分の集計を管理者のマイチャットへ 1 通
     try {
@@ -1252,6 +1259,12 @@ const runSchemaSync = require('./db/migrate');
       stopBankTransferPoller();
     } catch (e) {
       console.error('[shutdown] bank-transfer-poller 停止失敗:', e.message);
+    }
+    try {
+      const { stopBankTokenExpirySweeper } = require('./workers/bank-token-expiry-sweeper');
+      stopBankTokenExpirySweeper();
+    } catch (e) {
+      console.error('[shutdown] bank-token-expiry-sweeper 停止失敗:', e.message);
     }
     // 新規接続の受付を止め、処理中のリクエスト完了を待って終了
     server.close((err) => {
