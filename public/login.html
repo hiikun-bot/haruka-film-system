@@ -256,6 +256,7 @@ const LOGIN_ERROR_MESSAGES = {
   not_registered: 'このGoogleアカウントのメールアドレスはHARUKA FILMに登録されていません。招待されたメールアドレスのGoogleアカウントでログインしてください。',
   ambiguous: '同じメールアドレスのアカウントが複数あります。管理者に連絡してください。',
   inactive: 'このアカウントは無効化されています。',
+  rate_limited: 'アクセスが集中しています。しばらく待ってからやり直してください。',
 };
 if (params.get('error')) {
   showError(LOGIN_ERROR_MESSAGES[params.get('error')] || 'ログインエラーが発生しました');

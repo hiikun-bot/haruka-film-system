@@ -187,7 +187,10 @@ app.use(session({
   },
 }));
 
-// プロキシ（Railway/CloudFlare等）経由のため、X-Forwarded-* を信頼
+// 本番は CNAME で Railway に直結（間に CDN・プロキシ無し）。Railway のエッジ 1 段だけを信頼し、
+// req.ip ＝ エッジが X-Forwarded-For の末尾に付けた接続元にする。
+// ★ 前段に CDN／プロキシ（Cloudflare 等）を足したら、この段数と utils/rate-limit.js・utils/login-guard.js の
+//   IP 単位の制限を必ず見直すこと（段数がずれると全員が同じ IP 扱いになり、ログインが止まる）
 app.set('trust proxy', 1);
 
 app.use(passportInstance.initialize());
@@ -481,6 +484,21 @@ app.use(express.static(path.join(__dirname, 'public'), {
 const loginGuardUtil = require('./utils/login-guard');
 const rolesUtil = require('./utils/roles');
 const loginGuard = loginGuardUtil.createLoginGuard();
+// 3) アクセス回数制限（utils/rate-limit.js・メモリ保持）: ログイン系だけに掛ける。上限と根拠は同ファイル先頭。
+//    失敗ロックとは別枠で、普通の使い方（現場 Wi-Fi から大勢が一斉ログイン等）では届かない緩さにしてある
+const rateLimitUtil = require('./utils/rate-limit');
+const loginRateLimit = rateLimitUtil.createLoginRateLimit();
+const registerRateLimit = rateLimitUtil.createRegisterRateLimit();
+const reauthPwRateLimit = rateLimitUtil.createReauthPasswordRateLimit();
+// Google は開始（/auth/google・IP ごと）と再認証（/auth/google/reauth・ユーザーごと）だけ数え、戻り（callback）には掛けない。
+// 超過時は既存の検証済み経路（googleLoginFail / reauthRedirect）で戻す。
+// これらはこの下で定義されるので、リクエスト時に参照する（ここで直接渡すと TDZ になる）
+const googleLimitOnLimit = rateLimitUtil.buildGoogleLoginOnLimit({
+  loginFail: (res, code, next) => googleLoginFail(res, code, next),
+  reauthRedirect: (res, next, params) => reauthRedirect(res, next, params),
+});
+const googleLoginRateLimit = rateLimitUtil.createGoogleLoginRateLimit({ onLimit: googleLimitOnLimit });
+const googleReauthRateLimit = rateLimitUtil.createGoogleReauthRateLimit({ onLimit: googleLimitOnLimit });
 
 // reason: 'locked'（失敗が続いて 15 分）/ 'busy'（同一メール・IP の照合が同時に重なりすぎ）
 function loginLockResponse(res, { reason, retryAfterSec }) {
@@ -529,7 +547,7 @@ async function applySessionLifetime(req, user) {
 }
 
 // メール＋パスワード ログイン
-app.post('/auth/login', (req, res, next) => {
+app.post('/auth/login', loginRateLimit, (req, res, next) => {
   // 認証（passport-local は body → query の順で拾う）とロック判定が同じ入力を見るよう、ここで body に 1 本化し query 側は消す
   const input = loginGuardUtil.resolveLoginInput(req);
   if (!input.ok) return res.status(400).json({ error: 'メールアドレスとパスワードを入力してください' });
@@ -588,8 +606,11 @@ app.post('/auth/login', (req, res, next) => {
 const googleLogin = require('./utils/google-login');
 const { google } = require('googleapis');
 
-function googleLoginFail(res, code) {
-  return res.redirect(`/login.html?error=${encodeURIComponent(code)}`);
+// next は safeNext を通したものだけ付ける（既定の /haruka.html なら付けない）。login.html も ?next= を同じ規則で検証する
+function googleLoginFail(res, code, next) {
+  const safe = next ? googleLogin.safeNext(next) : '/haruka.html';
+  const nextQs = safe !== '/haruka.html' ? `&next=${encodeURIComponent(safe)}` : '';
+  return res.redirect(`/login.html?error=${encodeURIComponent(code)}${nextQs}`);
 }
 
 // ブラウザが開いているホスト（Railway は Host ヘッダをそのまま渡す）。許可リスト外は resolveCallbackUrl が弾く
@@ -603,7 +624,7 @@ app.get('/auth/google/status', (req, res) => {
   res.json({ enabled });
 });
 
-app.get('/auth/google', (req, res) => {
+app.get('/auth/google', googleLoginRateLimit, (req, res) => {
   if (!googleLogin.isEnabled()) return googleLoginFail(res, 'google_disabled');
   const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
   if (!callbackUrl) return googleLoginFail(res, 'google_host');
@@ -640,7 +661,7 @@ app.get('/auth/reauth/status', requireAuth, (req, res) => {
 });
 
 // Google で再認証: 成功時は next（/haruka.html 始まりのみ）へ ?reauth=ok、失敗時は ?reauth_error=<code> を付けて戻す
-app.get('/auth/google/reauth', requireAuth, (req, res) => {
+app.get('/auth/google/reauth', requireAuth, googleReauthRateLimit, (req, res) => {
   if (!googleLogin.isEnabled()) return reauthRedirect(res, req.query.next, { reauth_error: 'google_disabled' });
   const callbackUrl = googleLogin.resolveCallbackUrl(googleLoginHost(req));
   if (!callbackUrl) return reauthRedirect(res, req.query.next, { reauth_error: 'google_host' });
@@ -662,7 +683,7 @@ app.get('/auth/google/reauth', requireAuth, (req, res) => {
 });
 
 // パスワードで再認証（Google ログイン無効時のフォールバック）。5 回失敗で 15 分ロック
-app.post('/auth/reauth-password', requireAuth, async (req, res) => {
+app.post('/auth/reauth-password', requireAuth, reauthPwRateLimit, async (req, res) => {
   const uid = req.user.id;
   const now = Date.now();
   const st = _reauthPwFailures.get(uid) || { count: 0, lockedUntil: 0 };
@@ -699,7 +720,7 @@ app.get('/auth/google/callback', async (req, res) => {
   if (req.session) delete req.session.googleReauthUserId;
   // state を先に検証して next を取り出す（Google 側でキャンセルされても元の画面へ戻せるように。レビュー #9）
   const payload = googleLogin.verifyState(String(req.query.state || ''), googleLogin.getStateSecret());
-  const fail = (code) => (reauthUserId ? reauthRedirect(res, payload?.next, { reauth_error: code }) : googleLoginFail(res, code));
+  const fail = (code) => (reauthUserId ? reauthRedirect(res, payload?.next, { reauth_error: code }) : googleLoginFail(res, code, payload?.next));
 
   if (!googleLogin.isEnabled()) return fail('google_disabled');
   if (req.query.error) return fail(req.query.error === 'access_denied' ? 'google_cancel' : 'google_failed');
@@ -861,7 +882,7 @@ app.get('/api/invitations/verify/:token', async (req, res) => {
 });
 
 // 招待経由の新規登録
-app.post('/api/invitations/register', async (req, res) => {
+app.post('/api/invitations/register', registerRateLimit, async (req, res) => {
   const { token, name, password } = req.body;
   if (!token || !name || !password) return res.status(400).json({ error: '名前・パスワード・トークンは必須です' });
   const invalidPassword = validateNewPassword(password);
