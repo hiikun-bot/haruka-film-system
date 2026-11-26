@@ -33586,6 +33586,7 @@ const PO_BANK_ERROR_TEXT = {
   id_token: '銀行からの本人情報を検証できませんでした',
   no_account: '口座情報を取得できませんでした',
   bank_failed: '銀行側でエラーが返されました',
+  rate_limited: 'アクセスが集中しています。しばらく待ってからやり直してください',
 };
 
 // ?page=payout&bank=connected / &bank_error=<code>&bank_error_detail=… / &reauth=ok / &reauth_error=… で戻ってきたときの処理。
@@ -33619,7 +33620,8 @@ function poHandleBankReturn(ret, opts) {
   }
   if (ret.reauth_error) {
     poTrLoadPending(); // 退避データは破棄
-    showToast(`本人確認に失敗しました（${ret.reauth_error}）。もう一度依頼からやり直してください`, 'error');
+    if (ret.reauth_error === 'rate_limited') showToast('アクセスが集中しています。しばらく待ってから、もう一度依頼からやり直してください', 'error');
+    else showToast(`本人確認に失敗しました（${ret.reauth_error}）。もう一度依頼からやり直してください`, 'error');
   }
   if (noPage) poTrLoadPending();
 }

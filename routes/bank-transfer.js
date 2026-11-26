@@ -44,6 +44,9 @@ router.use(PATHS, (req, res, next) => {
   next();
 });
 router.use(PATHS, requireAuth, requirePermission('payout.transfer'), requireSuperAdmin);
+// アクセス回数制限（同じユーザーで 1 分に 60 回。上限と根拠は utils/rate-limit.js 先頭）。
+// PATHS（/bank・/payouts/transfer）だけに掛かり、/admin/payouts* などこのルーターを素通りする API には掛からない
+router.use(PATHS, require('../utils/rate-limit').createBankRateLimit());
 
 // HMAC 鍵・再認証の判定・戻り先の組み立ては utils 側と 1 本化（レビュー #11 / #12）
 const stateSecret = () => googleLogin.getStateSecret();
