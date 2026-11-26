@@ -141,14 +141,16 @@ RLS は全テーブル ENABLE（ADR 048・service_role のみアクセス）。
 
 - **行は消さず列だけ NULL**: `payout_transfer_batches` / `bank_api_audit_logs` が `connection_id` で参照しており、行を消すと「どの接続で依頼したか」の履歴が切れるため
 - **アクセストークン**: `access_token_expires_at <= now`（epoch 比較・列が NULL なら期限切れ扱い）で消す。リフレッシュトークンが有効なら接続は維持し、次の利用時に refresh で取り直す
-- **リフレッシュトークン**: 認可編では再発行の応答が新規発行と同一（`refresh_token` 必須）＝更新のたびに置き換わるので、発行時刻 = `updated_at`（無ければ `connected_at`）とする。`updated_at` は応答に `refresh_token` が含まれて保存したときだけ進め、アクセストークンだけ消すときは動かさない。有効期間は仕様書に明記が無いため `AOZORA_REFRESH_TOKEN_TTL_DAYS`（既定 90 日）で「推定」し、銀行に確認できたら合わせる
+- **リフレッシュトークン**: 認可編では再発行の応答が新規発行と同一（`refresh_token` 必須）＝更新のたびに置き換わるので、発行時刻（または有効と確認できた時刻）= `updated_at`（無ければ `connected_at`）とする。`updated_at` は応答に `refresh_token` が含まれて保存したとき、または推定期限切れのリフレッシュトークンを銀行が受け付けたとき（`refresh_token` の有無を問わない＝ローテーションしない銀行でも強制 refresh を繰り返さない）に進める。通常のアクセストークン更新で `refresh_token` が無いとき・アクセストークンだけ消すときは動かさない。有効期間は仕様書に明記が無いため `AOZORA_REFRESH_TOKEN_TTL_DAYS`（既定 90 日）で「推定」し、銀行に確認できたら合わせる
   - 推定期限を過ぎても即は消さず、**一度だけ refresh を試す**: 受け付けられれば新トークンで継続／`invalid_grant` なら消す／通信失敗なら次の回にもう一度。銀行で確かめられないまま推定期限から 7 日たったら消す
   - `invalid_grant` のときは行を読み直し、`refresh_token_enc` が「送ったトークン」のままのときだけ消す（送っている間に別プロセスがローテーションした新トークンは捨てない）。この経路では `revoked_at` を立てず、未接続化は通常の判定に任せる
   - 定期処理・接続取得時の削除は `access_token_expires_at` と `refresh_token_enc` の compare-and-set で書く（リフレッシュの HTTP 中の行を、終わったあとの新トークンごと消さない）
 - **両方なくなったら `revoked_at` を立てて未接続に戻す**（画面は再接続ボタン・API は「未接続」で止まる）。自動で未接続にしたら管理者マイチャットへ一報（トークン値は出さない）。切断済み行にトークンが残っていれば消す。再接続で古い行を revoke するときもトークン列を NULL にする。読み直した行が revoked なら、再接続でできた新しい接続をもう一度探して返す
 - 未接続のまま進行中の依頼があるときは、ワーカがその batch の `last_error` に理由を入れ、管理者マイチャットへ 1 日 1 回まで知らせる（`system_settings.bank_disconnected_notice_last_date`・JST の日付）
 - 切断ボタン（`POST /bank/disconnect`）は期限判定なしで接続を読む（期限切れの自動処理で 404 にせず、押した管理者を監査ログに残す）
-- **二段構え**: `workers/bank-token-expiry-sweeper.js`（1 時間ごと・`ENABLE_AOZORA_TRANSFER=true` のときだけ起動）と、`loadActiveConnection()`／refresh 時の判定
+- 状態表示（`GET /bank/connection`）は副作用なし: `selectActiveConnection()` と期限判定（`describeTokenStatus`）だけで表示し、両方使えない接続は未接続として返す。削除・未接続化・銀行通信・通知は定期処理と実際に銀行を呼ぶルートに任せる
+- 未接続のまま進行中の依頼があるときの `last_error` は、空の batch にだけ入れる（再送失敗などの既存の理由は上書きしない）。1 日 1 回ガードは送信日の読み出しに失敗したら送らず、記録に失敗してもプロセス内の控えで同じ日には再送しない
+- **二段構え**: `workers/bank-token-expiry-sweeper.js`（1 時間ごと・`ENABLE_AOZORA_TRANSFER=true` のときだけ起動）と、`loadActiveConnection()`／refresh 時の判定。sweeper の「試しに refresh」は今の provider × `AOZORA_ENV` の行だけ（他環境の行は銀行に通信せず、期限切れアクセストークンと猶予後のリフレッシュトークンの削除だけ）。期限処理が失敗したときは手元の古い行を返さず読み直す
 - **監査ログ**（migration 不要・既存の CHECK 制約の範囲）: トークンの削除はすべて `action = 'disconnect'`（トークン破棄）で記録し、**`detail.event = 'expired_token_purged'` で手動の切断と区別**する。`detail.revoked`（接続が使えなくなったか）・`reason`（`access_token_expired` / `refresh_token_expired` / `refresh_rejected` / `no_tokens` / `revoked`）・`purged`・`source`（`sweeper` / `on_use` / `refresh_rejected`）を入れる（トークン値は入れない）。推定期限切れで試した refresh が通ったときは通常どおり `token_refresh`
 
 ### 4. 口座情報の変換と検証（`utils/zengin-format.js`・純関数）

@@ -121,6 +121,20 @@ function planTokenPurge(conn, { now = Date.now(), ttlMs = refreshTokenTtlMs(), g
   return { purgeAccess, purgeRefresh, revoke, checkRefresh, reason };
 }
 
+/**
+ * 画面表示用のトークン状態（純関数・副作用なし）。GET /bank/connection はこれだけで表示し、
+ * 削除・未接続化・銀行通信・通知は定期処理と実際に銀行を呼ぶルートに任せる。
+ * @returns {{ usable: boolean, access_token: 'valid'|'expired'|'none', refresh_token: 'valid'|'stale'|'expired'|'none' }}
+ */
+function describeTokenStatus(conn, { now = Date.now(), ttlMs = refreshTokenTtlMs(), graceMs = REFRESH_GRACE_MS } = {}) {
+  if (!conn) return { usable: false, access_token: 'none', refresh_token: 'none' };
+  const p = planTokenPurge(conn, { now, ttlMs, graceMs });
+  const access = !conn.access_token_enc ? 'none' : (p && p.purgeAccess ? 'expired' : 'valid');
+  let refresh = 'none';
+  if (conn.refresh_token_enc) refresh = p && p.purgeRefresh ? 'expired' : (p && p.checkRefresh ? 'stale' : 'valid');
+  return { usable: !conn.revoked_at && !(p && p.revoke), access_token: access, refresh_token: refresh };
+}
+
 /** 列を書き換える計画か（checkRefresh だけなら書き込まない） */
 function planWrites(plan) {
   return !!plan && (plan.purgeAccess || plan.purgeRefresh || plan.revoke);
@@ -256,15 +270,18 @@ async function enforceRow(conn, opts = {}) {
 
 /**
  * トークンが残っている全行を見て、期限切れを削除する（定期処理）。
- * @param {object} [opts] enforceRow と同じ（tryRefresh / notifyRevoked / source / now / ttlMs）
+ * @param {object} [opts] enforceRow と同じ（tryRefresh / notifyRevoked / source / now / ttlMs）＋ only（provider × 環境で絞る）
  * @returns {Promise<{ checked: number, purged: number, revoked: number, refreshed: number }>}
  */
 async function purgeExpiredTokens(opts = {}) {
-  const { now = Date.now(), ttlMs = refreshTokenTtlMs(), source = 'sweeper' } = opts;
-  const { data, error } = await supabase
+  const { now = Date.now(), ttlMs = refreshTokenTtlMs(), source = 'sweeper', only } = opts;
+  // only: { provider, environment } … この provider × 環境の行だけ見る（銀行に通信する tryRefresh 付きの回で使う）
+  let q = supabase
     .from('bank_api_connections')
     .select(SWEEP_COLUMNS)
     .or('access_token_enc.not.is.null,refresh_token_enc.not.is.null');
+  if (only) q = q.eq('provider', only.provider).eq('environment', only.environment);
+  const { data, error } = await q;
   if (error) throw new Error(`bank_api_connections 取得失敗: ${error.message}`);
   const rows = data || [];
   let purged = 0;
@@ -295,6 +312,7 @@ module.exports = {
   isRefreshTokenStale,
   isRefreshTokenHardExpired,
   planTokenPurge,
+  describeTokenStatus,
   buildPurgePatch,
   buildAuditEntry,
   buildRevokedNotice,

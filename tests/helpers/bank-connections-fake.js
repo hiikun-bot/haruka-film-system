@@ -5,7 +5,19 @@
 
 const tables = {};
 
-function reset() { for (const k of Object.keys(tables)) delete tables[k]; }
+// 失敗の注入: failOn('system_settings', 'select') で、その表の次の 1 回の操作を { error } にする
+const failures = [];
+//   failOn(table, op, { after: n }) … n 回は成功させてから失敗させる
+function failOn(table, op, { after = 0 } = {}) { failures.push({ table, op, after }); }
+function takeFailure(table, op) {
+  const i = failures.findIndex(f => f.table === table && f.op === op);
+  if (i < 0) return false;
+  if (failures[i].after > 0) { failures[i].after--; return false; }
+  failures.splice(i, 1);
+  return true;
+}
+
+function reset() { for (const k of Object.keys(tables)) delete tables[k]; failures.length = 0; }
 function seed(rows, table = 'bank_api_connections') { tables[table] = rows.map(r => ({ ...r })); }
 function rows(table) { return tables[table] || []; }
 
@@ -43,6 +55,7 @@ class Query {
   maybeSingle() { this.mode = 'maybe'; return this; }
   single() { this.mode = 'single'; return this; }
   run() {
+    if (takeFailure(this.table, this.op)) return { data: null, error: { message: `fake failure ${this.table}.${this.op}` } };
     const list = tables[this.table] || (tables[this.table] = []);
     if (this.op === 'insert') {
       const r = { id: `log${list.length + 1}`, ...this.payload };
@@ -72,4 +85,4 @@ class Query {
 
 const supabase = { from: (t) => new Query(t) };
 
-module.exports = { supabase, reset, seed, rows };
+module.exports = { supabase, reset, seed, rows, failOn };

@@ -27,8 +27,12 @@ async function tick({ now = Date.now() } = {}) {
   isRunning = true;
   try {
     if (!aozora.isEnabled()) return null;
-    // 推定期限切れのリフレッシュトークンは、消す前に一度だけ refresh を試す（受け付けられれば継続）
-    const r = await tokenExpiry.purgeExpiredTokens({ now, source: 'sweeper', tryRefresh: aozora.tryRefreshOnce });
+    // 1) 今の provider × 環境の行: 推定期限切れのリフレッシュトークンは、消す前に一度だけ refresh を試す（受け付けられれば継続）
+    const only = { provider: aozora.PROVIDER, environment: aozora.getConfig().environment };
+    const a = await tokenExpiry.purgeExpiredTokens({ now, source: 'sweeper', only, tryRefresh: (row) => aozora.tryRefreshOnce(row) });
+    // 2) 全行（他環境・切断済みを含む）: 銀行には通信しない。期限切れのアクセストークン・猶予後のリフレッシュトークン・切断済み行の残りだけ消す
+    const b = await tokenExpiry.purgeExpiredTokens({ now, source: 'sweeper' });
+    const r = { checked: b.checked, purged: a.purged + b.purged, revoked: a.revoked + b.revoked, refreshed: a.refreshed };
     if (r.purged || r.refreshed) console.log(`[bank-token-expiry-sweeper] ${r.checked} 件確認・${r.purged} 件削除（うち ${r.revoked} 件は未接続に戻した）・${r.refreshed} 件更新`);
     return r;
   } catch (e) {

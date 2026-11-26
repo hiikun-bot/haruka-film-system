@@ -108,6 +108,22 @@ describe('planTokenPurge: 何を消すか', () => {
   });
 });
 
+describe('describeTokenStatus（GET /bank/connection の表示用・副作用なし）', () => {
+  test('有効 / アクセス切れ / 推定期限切れ / 両方切れ / 接続なし', () => {
+    expect(expiry.describeTokenStatus(conn(), { now: NOW, ttlMs: TTL })).toEqual({ usable: true, access_token: 'valid', refresh_token: 'valid' });
+    expect(expiry.describeTokenStatus(conn({ access_token_expires_at: iso(NOW - 1) }), { now: NOW, ttlMs: TTL })).toEqual({ usable: true, access_token: 'expired', refresh_token: 'valid' });
+    expect(expiry.describeTokenStatus(conn({ updated_at: STALE }), { now: NOW, ttlMs: TTL })).toEqual({ usable: true, access_token: 'valid', refresh_token: 'stale' });
+    expect(expiry.describeTokenStatus(conn({ access_token_expires_at: iso(NOW - 1), updated_at: HARD_OLD }), { now: NOW, ttlMs: TTL })).toEqual({ usable: false, access_token: 'expired', refresh_token: 'expired' });
+    expect(expiry.describeTokenStatus(null)).toEqual({ usable: false, access_token: 'none', refresh_token: 'none' });
+  });
+  test('判定だけで DB には書かない', async () => {
+    fake.seed([conn({ access_token_expires_at: iso(NOW - 1), updated_at: HARD_OLD })]);
+    expiry.describeTokenStatus(fake.rows('bank_api_connections')[0], { now: NOW, ttlMs: TTL });
+    expect(fake.rows('bank_api_connections')[0]).toMatchObject({ access_token_enc: 'A', revoked_at: null });
+    expect(fake.rows('bank_api_audit_logs')).toHaveLength(0);
+  });
+});
+
 describe('buildPurgePatch / buildAuditEntry / 通知文面', () => {
   test('アクセスだけ消すときは updated_at を動かさない（リフレッシュの期限が延びない）', () => {
     const patch = expiry.buildPurgePatch({ purgeAccess: true, purgeRefresh: false, revoke: false }, iso(NOW));
@@ -322,6 +338,58 @@ describe('aozora-api: 接続取得時・トークン利用時', () => {
     expect(c).not.toBeNull();
     expect(c.refresh_token_enc).not.toBeNull();
   });
+  test('推定期限切れ: refresh_token の無い応答でも銀行が受け付けたら updated_at を進め、強制 refresh を繰り返さない', async () => {
+    fake.seed([withRefresh({ updated_at: STALE })]);
+    axios.post.mockResolvedValue({ status: 200, data: { access_token: 'new-access', expires_in: 2592000 } });
+    const c1 = await aozora.loadActiveConnection();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(c1.updated_at).not.toBe(STALE);
+    expect(c1.refresh_token_enc).not.toBeNull();
+    const c2 = await aozora.loadActiveConnection();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(c2.refresh_token_enc).toBe(c1.refresh_token_enc);
+  });
+  test('他の環境（production）の行は今の設定（staging）で銀行に通信しない', async () => {
+    const row = withRefresh({ environment: 'production', updated_at: STALE });
+    expect(await aozora.tryRefreshOnce(row)).toBe('skipped');
+    expect(await aozora.tryRefreshOnce({ ...row, environment: 'staging', provider: 'other' })).toBe('skipped');
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+  test('sweeper: 他環境の行は銀行に通信せず、猶予後のハード期限切れだけ消す', async () => {
+    process.env.ENABLE_AOZORA_TRANSFER = 'true';
+    try {
+      fake.seed([
+        withRefresh({ id: 'p-stale', environment: 'production', updated_at: STALE }),
+        withRefresh({ id: 'p-hard', environment: 'production', updated_at: HARD_OLD, access_token_expires_at: iso(NOW - 1) }),
+        withRefresh({ id: 's-stale', environment: 'staging', updated_at: STALE }),
+      ]);
+      axios.post.mockResolvedValue({ status: 200, data: { access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 2592000 } });
+      const sweeper = require('../workers/bank-token-expiry-sweeper');
+      const r = await sweeper.tick({ now: NOW });
+      expect(axios.post).toHaveBeenCalledTimes(1); // staging の行だけ
+      expect(r).toMatchObject({ refreshed: 1, revoked: 1 });
+      const byId = Object.fromEntries(fake.rows('bank_api_connections').map(x => [x.id, x]));
+      expect(byId['p-stale']).toMatchObject({ revoked_at: null, updated_at: STALE });
+      expect(byId['p-stale'].refresh_token_enc).not.toBeNull();
+      expect(byId['p-hard']).toMatchObject({ refresh_token_enc: null, access_token_enc: null });
+      expect(byId['p-hard'].revoked_at).not.toBeNull();
+    } finally {
+      delete process.env.ENABLE_AOZORA_TRANSFER;
+    }
+  });
+  test('期限処理が失敗したら手元の古い行は返さず読み直す。読み直しも失敗したら null', async () => {
+    fake.seed([conn()]);
+    // 期限処理の途中で失敗し、その間に DB の行が更新されていた → 返るのは読み直した新しい行
+    const spy = jest.spyOn(expiry, 'enforceRow').mockImplementationOnce(async () => {
+      Object.assign(fake.rows('bank_api_connections')[0], { access_token_enc: 'A-new' });
+      throw new Error('boom');
+    });
+    const c = await aozora.loadActiveConnection();
+    expect(c.access_token_enc).toBe('A-new');
+    spy.mockRejectedValueOnce(new Error('boom'));
+    fake.failOn('bank_api_connections', 'select', { after: 1 }); // 1 回目（loadActiveConnection の select）は通し、読み直しで失敗
+    expect(await aozora.loadActiveConnection()).toBeNull();
+  });
   test('refresh 応答に refresh_token が無ければ updated_at（発行時刻の目印）を進めない', async () => {
     const row = withRefresh({ access_token_expires_at: iso(NOW + 60_000) });
     fake.seed([row]);
@@ -334,6 +402,31 @@ describe('aozora-api: 接続取得時・トークン利用時', () => {
 
 describe('bank-transfer-poller: 未接続で照会できないとき', () => {
   const poller = require('../workers/bank-transfer-poller');
+  beforeEach(() => poller._resetDisconnectedNoticeForTest());
+  test('既存の last_error（再送失敗など）は上書きしない', async () => {
+    const batches = [
+      { id: 'b1', year: 2026, month: 10, total_count: 1, status: 'requesting', last_error: '応答がありませんでした' },
+      { id: 'b2', year: 2026, month: 10, total_count: 1, status: 'processing', last_error: null },
+    ];
+    fake.seed(batches, 'payout_transfer_batches');
+    await poller.handleDisconnected(batches, { now: new Date(NOW) });
+    expect(fake.rows('payout_transfer_batches').map(b => b.last_error)).toEqual(['応答がありませんでした', poller.DISCONNECTED_LAST_ERROR]);
+  });
+  test('送信日の読み出しに失敗したら送らない', async () => {
+    const batches = [{ id: 'b1', year: 2026, month: 10, total_count: 1, status: 'processing', last_error: null }];
+    fake.seed(batches, 'payout_transfer_batches');
+    fake.failOn('system_settings', 'select');
+    await poller.handleDisconnected(batches, { now: new Date(NOW) });
+    expect(bt.sendAdminMyChat).not.toHaveBeenCalled();
+  });
+  test('送信日の記録に失敗しても、同じ日には再送しない', async () => {
+    const batches = [{ id: 'b1', year: 2026, month: 10, total_count: 1, status: 'processing', last_error: null }];
+    fake.seed(batches, 'payout_transfer_batches');
+    fake.failOn('system_settings', 'upsert');
+    await poller.handleDisconnected(batches, { now: new Date(NOW) });
+    await poller.handleDisconnected(batches, { now: new Date(NOW + 600_000) });
+    expect(bt.sendAdminMyChat).toHaveBeenCalledTimes(1);
+  });
   test('1 日 1 回の再送ガード（JST の日付）', () => {
     expect(poller.shouldNotifyDisconnected(null, '2026-11-27')).toBe(true);
     expect(poller.shouldNotifyDisconnected('2026-11-26', '2026-11-27')).toBe(true);

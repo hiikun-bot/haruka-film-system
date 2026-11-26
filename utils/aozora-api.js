@@ -229,11 +229,12 @@ async function loadActiveConnection(env = process.env) {
 /**
  * 期限切れのトークンを消してから最新の行を返す（推定期限切れのリフレッシュトークンは消す前に一度だけ refresh を試す）。
  * 読み直した行が revoked なら、再接続で別の行ができていないか selectActiveConnection をもう一度見る（無ければ null）。
- * 削除に失敗しても接続の読み出しは止めない（定期処理が次の回で消す）。
+ * 削除に失敗しても接続の読み出しは止めない（定期処理が次の回で消す）。ただし手元の古い行は返さず、
+ * selectActiveConnection で読み直した行を返す（それも失敗したら null）。
  */
 async function enforceTokenExpiry(conn, opts = {}, env = process.env, depth = 0) {
   try {
-    const r = await tokenExpiry.enforceRow(conn, { tryRefresh: tryRefreshOnce, ...opts });
+    const r = await tokenExpiry.enforceRow(conn, { tryRefresh: (row) => tryRefreshOnce(row, env), ...opts });
     if (!r.applied && !r.refreshed && r.row === conn) return conn;
     const latest = await reloadConnection(conn.id);
     if (latest && !latest.revoked_at) return latest;
@@ -243,15 +244,27 @@ async function enforceTokenExpiry(conn, opts = {}, env = process.env, depth = 0)
     return enforceTokenExpiry(next, opts, env, depth + 1);
   } catch (e) {
     console.warn(`[aozora] 期限切れトークンの削除に失敗 connection=${conn.id}: ${e.message}`);
-    return conn;
+    try {
+      return await selectActiveConnection(env);
+    } catch (e2) {
+      console.warn(`[aozora] 接続の読み直しにも失敗: ${e2.message}`);
+      return null;
+    }
   }
+}
+
+/** この行が今の設定（provider × AOZORA_ENV）で銀行に通信してよい行か */
+function isCurrentEnvRow(conn, env = process.env) {
+  return !!conn && conn.provider === PROVIDER && conn.environment === getConfig(env).environment;
 }
 
 /**
  * 推定期限を過ぎたリフレッシュトークンで一度だけ refresh を試す（定期処理・接続取得時から）。
- * @returns {Promise<'refreshed'|'rejected'|'error'>} rejected = invalid_grant（refreshConnectionTokens 側で消している）
+ * 今の provider × 環境の行だけ。他環境の行は銀行に通信しない（'skipped'＝猶予後のハード期限切れでだけ消える）。
+ * @returns {Promise<'refreshed'|'rejected'|'error'|'skipped'>} rejected = invalid_grant（refreshConnectionTokens 側で消している）
  */
-async function tryRefreshOnce(conn) {
+async function tryRefreshOnce(conn, env = process.env) {
+  if (!isCurrentEnvRow(conn, env)) return 'skipped';
   try {
     const r = await runRefresh(conn, {
       force: true,
@@ -314,11 +327,14 @@ async function saveConnection({ tokens, accountId, accountLabel, connectedBy, en
  * 読んだときの access_token_expires_at と一致する行だけ更新し、別プロセスが先に更新していれば null を返す
  * （負けた側は再読込して相手のトークンを使う。古いトークンでの上書きを防ぐ）。
  */
-async function persistRefreshedTokens(conn, tokens) {
-  // updated_at はリフレッシュトークンの発行時刻の目安（utils/aozora-token-expiry.js）。
-  // 応答に refresh_token が含まれた（＝新しいリフレッシュトークンを保存した）ときだけ進める
+async function persistRefreshedTokens(conn, tokens, { refreshTokenConfirmed = false } = {}) {
+  // updated_at はリフレッシュトークンの「発行（または有効と確認できた）時刻」の目安（utils/aozora-token-expiry.js）。
+  //   - 応答に refresh_token が含まれた（＝新しいリフレッシュトークンを保存した）→ 進める
+  //   - 推定期限切れで試しに refresh して銀行が受け付けた（refreshTokenConfirmed）→ refresh_token が無くても進める
+  //     （ローテーションしない銀行だと、進めないかぎり強制 refresh が繰り返され、最後に有効なトークンを消してしまう）
+  //   - 通常のアクセストークン更新で refresh_token が無い → 動かさない
   const patch = { ...encryptTokens(tokens) };
-  if (tokens.refresh_token) patch.updated_at = new Date().toISOString();
+  if (tokens.refresh_token || refreshTokenConfirmed) patch.updated_at = new Date().toISOString();
   let q = supabase.from('bank_api_connections').update(patch).eq('id', conn.id).is('revoked_at', null);
   q = conn.access_token_expires_at ? q.eq('access_token_expires_at', conn.access_token_expires_at) : q.is('access_token_expires_at', null);
   const { data, error } = await q.select(CONNECTION_COLUMNS).maybeSingle();
@@ -380,7 +396,8 @@ async function refreshConnectionTokens(conn, opts = {}) {
     if (e instanceof AozoraApiError && e.errorCode === 'invalid_grant') await purgeRejectedRefreshToken(fresh);
     throw e;
   }
-  const saved = await persistRefreshedTokens(fresh, tokens);
+  // 推定期限切れのリフレッシュトークンを銀行が受け付けた＝有効と確認できた（強制 refresh でも通常の更新でも同じ）
+  const saved = await persistRefreshedTokens(fresh, tokens, { refreshTokenConfirmed: tokenExpiry.isRefreshTokenStale(fresh) });
   if (saved) {
     console.log(`[aozora] アクセストークンを更新しました connection=${fresh.id} expires_in=${tokens.expires_in}`);
     if (typeof opts.onRefreshed === 'function') {

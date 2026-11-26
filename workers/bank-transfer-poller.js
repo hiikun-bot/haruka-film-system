@@ -74,27 +74,34 @@ function buildDisconnectedNotice(batches) {
   return `[info][title]🏦 銀行API未接続のため振込依頼の状態を確認できません[/title]進行中の振込依頼が ${batches.length} 件ありますが、銀行 API の接続が切れています（トークン期限切れ等）。\n振込管理から再接続してください。\n${lines.join('\n')}[/info]`;
 }
 
+// プロセス内の控え（system_settings への記録に失敗しても同じ日に再送しない）
+let _lastDisconnectedNoticeDate = null;
+
 async function handleDisconnected(batches, { now = new Date() } = {}) {
-  // 1) 進行中の依頼に理由を残す（画面の依頼履歴に出る）
-  const ids = batches.filter(b => b.last_error !== DISCONNECTED_LAST_ERROR).map(b => b.id);
+  // 1) 進行中の依頼に理由を残す（画面の依頼履歴に出る）。既存の last_error（再送失敗など）は上書きしない
+  const ids = batches.filter(b => !b.last_error).map(b => b.id);
   if (ids.length) {
     const { error } = await supabase.from('payout_transfer_batches')
       .update({ last_error: DISCONNECTED_LAST_ERROR, updated_at: now.toISOString() })
-      .in('id', ids);
+      .in('id', ids)
+      .is('last_error', null);
     if (error) console.warn('[bank-transfer-poller] last_error の記録に失敗:', error.message);
   }
-  // 2) 管理者マイチャットへ 1 日 1 回まで
+  // 2) 管理者マイチャットへ 1 日 1 回まで（判定できないときは送らない）
   try {
     const today = bt.todayJst(now);
-    const { data } = await supabase.from('system_settings').select('value').eq('key', DISCONNECTED_NOTICE_KEY).maybeSingle();
-    if (!shouldNotifyDisconnected(data?.value, today)) return;
+    if (_lastDisconnectedNoticeDate && !shouldNotifyDisconnected(_lastDisconnectedNoticeDate, today)) return;
+    const { data, error: selErr } = await supabase.from('system_settings').select('value').eq('key', DISCONNECTED_NOTICE_KEY).maybeSingle();
+    if (selErr) { console.warn('[bank-transfer-poller] 未接続通知日の読み出しに失敗（今回は送らない）:', selErr.message); return; }
+    if (!shouldNotifyDisconnected(data?.value, today)) { _lastDisconnectedNoticeDate = data.value; return; }
     const r = await bt.sendAdminMyChat(buildDisconnectedNotice(batches));
     if (r && r.ok === false) return; // 送れなかったら記録せず次の tick でもう一度
+    _lastDisconnectedNoticeDate = today;
     const { error } = await supabase.from('system_settings').upsert(
       { key: DISCONNECTED_NOTICE_KEY, value: today, updated_at: now.toISOString() },
       { onConflict: 'key' },
     );
-    if (error) console.warn('[bank-transfer-poller] 未接続通知日の記録に失敗:', error.message);
+    if (error) console.warn('[bank-transfer-poller] 未接続通知日の記録に失敗（このプロセスでは今日はもう送らない）:', error.message);
   } catch (e) {
     console.warn('[bank-transfer-poller] 未接続の通知に失敗:', e.message);
   }
@@ -173,6 +180,7 @@ module.exports = {
   shouldNotifyDisconnected,
   buildDisconnectedNotice,
   handleDisconnected,
+  _resetDisconnectedNoticeForTest: () => { _lastDisconnectedNoticeDate = null; },
   DISCONNECTED_LAST_ERROR,
   ACTIVE_STATUSES,
   TICK_MS,
