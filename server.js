@@ -187,7 +187,10 @@ app.use(session({
   },
 }));
 
-// プロキシ（Railway/CloudFlare等）経由のため、X-Forwarded-* を信頼
+// 本番は CNAME で Railway に直結（間に CDN・プロキシ無し）。Railway のエッジ 1 段だけを信頼し、
+// req.ip ＝ エッジが X-Forwarded-For の末尾に付けた接続元にする。
+// ★ 前段に CDN／プロキシ（Cloudflare 等）を足したら、この段数と utils/rate-limit.js・utils/login-guard.js の
+//   IP 単位の制限を必ず見直すこと（段数がずれると全員が同じ IP 扱いになり、ログインが止まる）
 app.set('trust proxy', 1);
 
 app.use(passportInstance.initialize());
@@ -485,7 +488,17 @@ const loginGuard = loginGuardUtil.createLoginGuard();
 //    失敗ロックとは別枠で、普通の使い方（現場 Wi-Fi から大勢が一斉ログイン等）では届かない緩さにしてある
 const rateLimitUtil = require('./utils/rate-limit');
 const loginRateLimit = rateLimitUtil.createLoginRateLimit();
-const googleLoginRateLimit = rateLimitUtil.createGoogleLoginRateLimit();
+const registerRateLimit = rateLimitUtil.createRegisterRateLimit();
+const reauthPwRateLimit = rateLimitUtil.createReauthPasswordRateLimit();
+// 超過時は既存の検証済み経路（googleLoginFail / reauthRedirect / verifyState）で戻す。
+// これらはこの下で定義されるので、リクエスト時に参照する（ここで直接渡すと TDZ になる）
+const googleLoginRateLimit = rateLimitUtil.createGoogleLoginRateLimit({
+  onLimit: rateLimitUtil.buildGoogleLoginOnLimit({
+    loginFail: (res, code, next) => googleLoginFail(res, code, next),
+    reauthRedirect: (res, next, params) => reauthRedirect(res, next, params),
+    verifyState: (state) => googleLogin.verifyState(state, googleLogin.getStateSecret()),
+  }),
+});
 
 // reason: 'locked'（失敗が続いて 15 分）/ 'busy'（同一メール・IP の照合が同時に重なりすぎ）
 function loginLockResponse(res, { reason, retryAfterSec }) {
@@ -593,8 +606,11 @@ app.post('/auth/login', loginRateLimit, (req, res, next) => {
 const googleLogin = require('./utils/google-login');
 const { google } = require('googleapis');
 
-function googleLoginFail(res, code) {
-  return res.redirect(`/login.html?error=${encodeURIComponent(code)}`);
+// next は safeNext を通したものだけ付ける（既定の /haruka.html なら付けない）。login.html も ?next= を同じ規則で検証する
+function googleLoginFail(res, code, next) {
+  const safe = next ? googleLogin.safeNext(next) : '/haruka.html';
+  const nextQs = safe !== '/haruka.html' ? `&next=${encodeURIComponent(safe)}` : '';
+  return res.redirect(`/login.html?error=${encodeURIComponent(code)}${nextQs}`);
 }
 
 // ブラウザが開いているホスト（Railway は Host ヘッダをそのまま渡す）。許可リスト外は resolveCallbackUrl が弾く
@@ -667,7 +683,7 @@ app.get('/auth/google/reauth', googleLoginRateLimit, requireAuth, (req, res) => 
 });
 
 // パスワードで再認証（Google ログイン無効時のフォールバック）。5 回失敗で 15 分ロック
-app.post('/auth/reauth-password', loginRateLimit, requireAuth, async (req, res) => {
+app.post('/auth/reauth-password', requireAuth, reauthPwRateLimit, async (req, res) => {
   const uid = req.user.id;
   const now = Date.now();
   const st = _reauthPwFailures.get(uid) || { count: 0, lockedUntil: 0 };
@@ -866,7 +882,7 @@ app.get('/api/invitations/verify/:token', async (req, res) => {
 });
 
 // 招待経由の新規登録
-app.post('/api/invitations/register', loginRateLimit, async (req, res) => {
+app.post('/api/invitations/register', registerRateLimit, async (req, res) => {
   const { token, name, password } = req.body;
   if (!token || !name || !password) return res.status(400).json({ error: '名前・パスワード・トークンは必須です' });
   const invalidPassword = validateNewPassword(password);
