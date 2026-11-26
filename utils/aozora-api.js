@@ -25,6 +25,8 @@
 //   AOZORA_ACCOUNT_ID                   任意。口座 ID を固定する（指定時は private:account を要求しない）
 //   AOZORA_SCOPES                       任意。スコープを丸ごと上書き（スペース区切り）
 //   AOZORA_CANCEL_TARGET_KEY_CLASS      任意。総合振込取消依頼の取消対象キー区分（既定 4=ビジネスID管理未利用）
+//   AOZORA_REFRESH_TOKEN_TTL_DAYS       任意。リフレッシュトークンの有効期間（日・既定 90）。期限切れのトークンは
+//                                       utils/aozora-token-expiry.js が DB から消す（定期処理＋接続取得時）
 //
 // ログにトークン・口座番号・受取人名を出さない（口座番号は下4桁のみ）。
 // =============================================================
@@ -33,6 +35,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const supabase = require('../supabase');
 const { createCipher } = require('./crypto-aes');
+const tokenExpiry = require('./aozora-token-expiry');
 
 const PROVIDER = 'gmo_aozora';
 const TOKEN_KEY_ENV = 'AOZORA_TOKEN_ENCRYPTION_KEY';
@@ -215,8 +218,31 @@ function decryptRefreshToken(conn) {
   return cipher.decrypt({ ciphertext: conn.refresh_token_enc, iv: conn.refresh_token_iv, authTag: conn.refresh_token_tag });
 }
 
-/** 有効な接続（revoked_at IS NULL・現在の環境）。無ければ null */
+/** 有効な接続（revoked_at IS NULL・現在の環境）。無ければ null。
+ *  期限切れのトークンは返す前に DB から消す（両方切れていれば未接続に戻して null を返す） */
 async function loadActiveConnection(env = process.env) {
+  const row = await selectActiveConnection(env);
+  if (!row) return null;
+  return enforceTokenExpiry(row, { source: 'on_use' });
+}
+
+/**
+ * 期限切れのトークンを消してから最新の行を返す。接続が使えなくなった（revoked）なら null。
+ * 削除に失敗しても接続の読み出しは止めない（定期処理が次の回で消す）。
+ */
+async function enforceTokenExpiry(conn, opts = {}) {
+  try {
+    const r = await tokenExpiry.applyTokenPurge(conn, opts);
+    if (!r.plan) return conn;
+    const latest = await reloadConnection(conn.id);
+    return latest && !latest.revoked_at ? latest : null;
+  } catch (e) {
+    console.warn(`[aozora] 期限切れトークンの削除に失敗 connection=${conn.id}: ${e.message}`);
+    return conn;
+  }
+}
+
+async function selectActiveConnection(env = process.env) {
   const c = getConfig(env);
   const { data, error } = await supabase
     .from('bank_api_connections')
@@ -235,9 +261,14 @@ async function loadActiveConnection(env = process.env) {
 async function saveConnection({ tokens, accountId, accountLabel, connectedBy, env = process.env }) {
   const c = getConfig(env);
   const nowIso = new Date().toISOString();
+  // 置き換わる古い接続は、トークン列も同時に空にする（切断と同じ扱い）
   await supabase
     .from('bank_api_connections')
-    .update({ revoked_at: nowIso, updated_at: nowIso })
+    .update({
+      revoked_at: nowIso, updated_at: nowIso,
+      access_token_enc: null, access_token_iv: null, access_token_tag: null,
+      refresh_token_enc: null, refresh_token_iv: null, refresh_token_tag: null,
+    })
     .eq('provider', PROVIDER).eq('environment', c.environment).is('revoked_at', null);
   const row = {
     provider: PROVIDER,
@@ -310,10 +341,26 @@ async function refreshConnectionTokens(conn, opts = {}) {
   const fresh = (await reloadConnection(conn.id)) || conn;
   if (fresh.revoked_at) throw new AozoraApiError({ status: 401, errorCode: 'revoked', errorMessage: '銀行 API の接続が切断されています', phase: 'token' });
   if (!tokenNeedsRefresh(fresh)) return { connection: fresh, refreshed: false };
+  const noRefreshError = () => new AozoraApiError({ status: 401, errorCode: 'no_refresh_token', errorMessage: 'リフレッシュトークンがありません（有効期限切れを含む）。銀行 API を接続し直してください', phase: 'token' });
+  // 期限切れのリフレッシュトークンは使わずに消す
+  if (tokenExpiry.isRefreshTokenExpired(fresh)) {
+    await enforceTokenExpiry(fresh, { source: 'on_use' });
+    throw noRefreshError();
+  }
   const refreshToken = decryptRefreshToken(fresh);
-  if (!refreshToken) throw new AozoraApiError({ status: 401, errorCode: 'no_refresh_token', errorMessage: 'リフレッシュトークンがありません。銀行 API を接続し直してください', phase: 'token' });
+  if (!refreshToken) throw noRefreshError();
   // 2) refresh → compare-and-set で保存
-  const tokens = await refreshAccessToken(refreshToken);
+  let tokens;
+  try {
+    tokens = await refreshAccessToken(refreshToken);
+  } catch (e) {
+    // invalid_grant = 銀行側でこのリフレッシュトークンは無効（期限切れ・失効）。その場で消す。
+    // 別プロセスが先にローテーションしていた場合は refresh_token_enc の compare-and-set で何もしない
+    if (e instanceof AozoraApiError && e.errorCode === 'invalid_grant') {
+      await enforceTokenExpiry(fresh, { refreshRejected: true, source: 'refresh_rejected' });
+    }
+    throw e;
+  }
   const saved = await persistRefreshedTokens(fresh, tokens);
   if (saved) {
     console.log(`[aozora] アクセストークンを更新しました connection=${fresh.id} expires_in=${tokens.expires_in}`);

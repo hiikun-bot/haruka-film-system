@@ -135,6 +135,18 @@ RLS は全テーブル ENABLE（ADR 048・service_role のみアクセス）。
 各 `payout_records` を `status='paid', paid_via='aozora_api', paid_at=振込日` に更新して、既存の `buildPayoutMessage` で本人へ通知
 （現在の「振込完了→送信」と同じ文面・同じ経路）。`expired` になったら管理者マイチャットへ知らせる。
 
+### 3-3. 有効期限切れトークンの削除（2026-11-27 追補）
+
+有効期限を過ぎたアクセストークン／リフレッシュトークンは、暗号文（`*_enc` / `*_iv` / `*_tag`）を NULL にして DB から消す（`utils/aozora-token-expiry.js`）。
+
+- **行は消さず列だけ NULL**: `payout_transfer_batches` / `bank_api_audit_logs` が `connection_id` で参照しており、行を消すと「どの接続で依頼したか」の履歴が切れるため
+- **アクセストークン**: `access_token_expires_at <= now`（epoch 比較・列が NULL なら期限切れ扱い）で消す。リフレッシュトークンが有効なら接続は維持し、次の利用時に refresh で取り直す
+- **リフレッシュトークン**: 認可編では再発行の応答が新規発行と同一（`refresh_token` 必須）＝更新のたびに置き換わるので、発行時刻 = `updated_at`（無ければ `connected_at`）とする。有効期間は仕様書に明記が無いため `AOZORA_REFRESH_TOKEN_TTL_DAYS`（既定 90 日）で持ち、銀行に確認できたら合わせる。トークンエンドポイントが `invalid_grant` を返したときも、その場で消す（別プロセスが先にローテーションしていた場合は `refresh_token_enc` の compare-and-set で何もしない）
+- アクセストークンだけ消すときは `updated_at` を動かさない（リフレッシュトークンの期限が延びないように）
+- **両方なくなったら `revoked_at` を立てて未接続に戻す**（画面は再接続ボタン・API は「未接続」で止まる）。切断済み行にトークンが残っていれば消す。再接続で古い行を revoke するときもトークン列を NULL にする
+- **二段構え**: `workers/bank-token-expiry-sweeper.js`（1 時間ごと・`ENABLE_AOZORA_TRANSFER=true` のときだけ起動）と、`loadActiveConnection()`／refresh 直前の判定
+- 監査ログは既存の action の範囲で記録（migration 不要）: 接続維持のまま消した → `token_refresh`、未接続化・切断済み行の掃除 → `disconnect`。`detail.event = 'expired_token_purged'`・`reason`・`purged`・`source`（トークン値は入れない）
+
 ### 4. 口座情報の変換と検証（`utils/zengin-format.js`・純関数）
 
 - 銀行コード: 数字4桁に前ゼロ／支店コード: 数字3桁に前ゼロ／口座番号: 数字7桁に前ゼロ（8桁以上はエラー）
