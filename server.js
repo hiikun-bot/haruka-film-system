@@ -8,6 +8,9 @@
 require('dns').setDefaultResultOrder('ipv4first');
 
 require('dotenv').config();
+// 手元（NODE_ENV≠production）なのに本番DBを向いていたら大きな警告を出す（止めない・docs/dev-db-setup.md）。
+// 本番の判定は PROD_SUPABASE_PROJECT_REF。ALLOW_PROD_DB_FROM_LOCAL=1 で黙る。schema-sync より前に出す。
+require('./utils/prod-db-guard').warnIfLocalPointsToProd(process.env, console);
 const { logEnvCredentialsHealth } = require('./lib/google-service-account');
 const harukaRouter = require('./routes/haruka');
 // 案件収支機能（feature flag: ENABLE_PROJECT_ACCOUNTING）— Step B

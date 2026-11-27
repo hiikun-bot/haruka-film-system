@@ -34,6 +34,7 @@ migration-merge-guard が pass → auto-merge / 通常マージOK
 
 1. `migrations/YYYY-MM-DD_<topic>.sql` を作成
 2. **同じ定義を `supabase_schema.sql` にも追記**（完成形を維持するため）
+2.5 **先に開発用DBで流して確認する**（開発DB → 本番 の順。手順は [dev-db-setup.md](dev-db-setup.md) §8）
 3. PR を作成 → CI が `needs-db-migration` ラベルを自動付与してくれる
 4. （任意）`auto-merge` ラベルも付ける
 5. Supabase SQL Editor で migration を流す
@@ -64,4 +65,5 @@ migration-merge-guard が pass → auto-merge / 通常マージOK
 - `.github/workflows/migration-merge-guard.yml` — `migration-applied` チェック
 - `scripts/check-schema-sync.sh` — `migrations/` と `supabase_schema.sql` の整合チェック（参考情報）
 - `migrations/` — 差分 SQL の置き場
+- `scripts/dev-db/` — 開発用DBへのスキーマ複製・ダミーデータ投入（[dev-db-setup.md](dev-db-setup.md)）
 - `supabase_schema.sql` — 完成形のスキーマ
