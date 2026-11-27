@@ -2,6 +2,10 @@
 .env
 .env.local
 .env.production
+# .env.development / .env.production-readonly など .env.* の実ファイルもすべて除外（ひな形 *.example だけ管理する）
+.env.*
+!.env.example
+!.env.*.example
 
 # 依存パッケージ
 node_modules
@@ -31,3 +35,6 @@ pending-migrations/*
 
 # Claude Code のサブエージェント worktree（ローカル作業用、共有しない）
 .claude/worktrees/
+
+# 開発用DBスクリプトの出力（本番スキーマのダンプ・エラーログ。docs/dev-db-setup.md）
+scripts/dev-db/.out/
