@@ -58,3 +58,23 @@ Supabase の Security Advisor（2026-10-03 診断、10-07 03:24 JST にメール
 2. 同ファイル末尾の確認クエリで 0 行を確認。
 3. 本番サイトでログイン → 一覧・詳細・つぶやき・通知ベルが従来どおり動くことを確認。
 4. PR に `db-migration-applied` ラベルを付けてマージ。
+
+## 追補 2026-11-27: 残り Warning の対応（関数の search_path と SECURITY DEFINER 関数の権限）
+
+RLS 有効化後も Security Advisor に Warning が残っていた。
+
+| lint | 対象 |
+|---|---|
+| `function_search_path_mutable` | search_path を固定していない関数 25 本（リポジトリ定義 20 本＋下の 5 本） |
+| SECURITY DEFINER 関数を anon / authenticated が実行できる | `get_my_role` / `get_my_job_type` / `is_active_user` / `is_admin_or_producer` / `is_director_or_above` |
+
+対応は `migrations/2026-11-27_function_search_path_and_revoke_definer.sql`（`supabase_schema.sql` 末尾にも同内容）。
+
+1. **リポジトリで定義している関数 20 本に `SET search_path = public, pg_temp` を付ける。** 本体が参照するのは public のテーブルと pg_catalog の組み込み（`now()` / `jsonb_build_object` 等）だけなので解決先は変わらない。存在確認は `to_regprocedure`。対象: トリガ関数 19 本（`contract_*` / 案件収支の `sync_*`・`delete_*` / `notify_ball_returned` / `update_*_count` / `*_updated_at` 系）と `validate_filename_template_tokens(jsonb)`。
+2. **5 本の SECURITY DEFINER 関数は、PUBLIC / anon / authenticated から EXECUTE を外し、service_role だけに残す。** あわせて search_path も固定する。5 本はダッシュボードで作られたものでリポジトリに定義が無く、引数型が分からないため `pg_proc` から名前で全オーバーロードを拾う。
+   - **Realtime 対象テーブル（`supabase_realtime` publication）のポリシーが呼んでいる関数は外さない。** Realtime は購読者のロール（anon）でポリシーを評価するので、外すと購読がエラーになる。リポジトリ上の `notification_logs` / `tweets` 系のポリシーは `auth.uid()` 比較だけで 5 本を呼んでいないが、ダッシュボードで足されたポリシーがあり得るので migration 側で検査して NOTICE で知らせる。
+   - 本体が `auth.` を付けずに `uid()` を呼んでいる場合は、search_path を固定すると解決できなくなるので固定しない（NOTICE）。
+3. HFS は service_role だけで DB を使い、Supabase Auth を使っていない（`auth.uid()` は常に NULL）ため、5 本はアプリからは使われていない。外してもアプリの動作は変わらない。
+4. **今後の関数は、作る migration で `SET search_path = public, pg_temp` を付け、アプリ専用なら `REVOKE ALL ... FROM PUBLIC, anon, authenticated` ＋ `GRANT EXECUTE ... TO service_role` まで書く**（2026-11 の請求書エディタ系関数が先例）。
+
+戻し方: `ALTER FUNCTION <関数> RESET search_path;` / `GRANT EXECUTE ON FUNCTION <関数> TO PUBLIC, anon, authenticated;`

@@ -4287,3 +4287,110 @@ COMMENT ON FUNCTION invoice_remove_items_recalc(JSONB, TEXT[], BOOLEAN) IS
 COMMENT ON FUNCTION invoice_delete_editable(UUID, TEXT[], UUID) IS
   'ADR046追補: 下書き・差し戻し中の請求書を明細ごと消す。invoice_editor_submit と同じ順でロックし、状態を確かめてから消す。領収書ファイル id を返す';
 
+
+-- ==================== ADR 048 追補（2026-11-27）: 関数の search_path 固定と SECURITY DEFINER 関数の EXECUTE 整理 ====================
+-- 正は migrations/2026-11-27_function_search_path_and_revoke_definer.sql（同内容）。
+-- 新しく関数を作るときは SET search_path = public, pg_temp を付け、アプリ専用なら EXECUTE を service_role だけに絞る。
+-- ============================== STEP 1 ==============================
+DO $$
+DECLARE
+  sig  text;
+  fn   regprocedure;
+  n    integer := 0;
+BEGIN
+  PERFORM set_config('lock_timeout', '5s', true);
+  FOREACH sig IN ARRAY ARRAY[
+    'public.contract_deny_modification()',
+    'public.contract_version_guard()',
+    'public.delete_cost_entry_from_invoice_item()',
+    'public.delete_revenue_entry_from_invoice()',
+    'public.notify_ball_returned()',
+    'public.set_creative_cost_overrides_updated_at()',
+    'public.sync_cost_entry_from_invoice_item()',
+    'public.sync_revenue_entry_from_invoice()',
+    'public.touch_filename_templates_updated_at()',
+    'public.trg_creative_round_replies_updated_at()',
+    'public.trg_member_working_hours_daily_updated_at()',
+    'public.trg_member_working_hours_profile_updated_at()',
+    'public.trg_set_user_oauth_tokens_updated_at()',
+    'public.trg_set_vfot_updated_at()',
+    'public.trg_set_vous_updated_at()',
+    'public.update_post_comment_count()',
+    'public.update_post_reaction_count()',
+    'public.update_tweet_comment_count()',
+    'public.update_tweet_reaction_count()',
+    'public.validate_filename_template_tokens(jsonb)'
+  ]
+  LOOP
+    fn := to_regprocedure(sig);
+    IF fn IS NULL THEN
+      RAISE NOTICE 'スキップ（関数が無い）: %', sig;
+      CONTINUE;
+    END IF;
+    EXECUTE format('ALTER FUNCTION %s SET search_path = public, pg_temp', fn);
+    n := n + 1;
+  END LOOP;
+  RAISE NOTICE 'STEP 1: search_path を固定した関数 % 本', n;
+END
+$$;
+
+-- ============================== STEP 2 ==============================
+DO $$
+DECLARE
+  r          record;
+  fname      text;
+  in_policy  text;
+  n_path     integer := 0;
+  n_revoke   integer := 0;
+BEGIN
+  PERFORM set_config('lock_timeout', '5s', true);
+  FOREACH fname IN ARRAY ARRAY[
+    'get_my_role',
+    'get_my_job_type',
+    'is_active_user',
+    'is_admin_or_producer',
+    'is_director_or_above'
+  ]
+  LOOP
+    FOR r IN
+      SELECT p.oid::regprocedure AS fn, p.prosrc, p.prosecdef
+        FROM pg_proc p
+        JOIN pg_namespace ns ON ns.oid = p.pronamespace
+       WHERE ns.nspname = 'public' AND p.proname = fname
+    LOOP
+      -- (a) search_path 固定（auth. を付けずに uid() を呼んでいる本体は固定すると解決できなくなるので触らない）
+      IF r.prosrc ~* '(^|[^.a-z0-9_"])uid\s*\(' THEN
+        RAISE NOTICE 'スキップ（本体が auth. なしで uid() を呼んでいる）search_path: %', r.fn;
+      ELSE
+        EXECUTE format('ALTER FUNCTION %s SET search_path = public, pg_temp', r.fn);
+        n_path := n_path + 1;
+      END IF;
+
+      -- (b) Realtime 対象テーブルのポリシーから呼ばれていれば anon / authenticated の EXECUTE は残す
+      SELECT string_agg(DISTINCT pol.tablename || '.' || pol.policyname, ', ')
+        INTO in_policy
+        FROM pg_policies pol
+        JOIN pg_publication_tables pt
+          ON pt.schemaname = pol.schemaname AND pt.tablename = pol.tablename
+       WHERE pt.pubname = 'supabase_realtime'
+         AND (COALESCE(pol.qual, '') ~* ('\m' || fname || '\s*\(')
+           OR COALESCE(pol.with_check, '') ~* ('\m' || fname || '\s*\('));
+
+      IF in_policy IS NOT NULL THEN
+        RAISE NOTICE 'スキップ（Realtime 対象のポリシー % が呼んでいる）REVOKE: %', in_policy, r.fn;
+      ELSE
+        EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', r.fn);
+        EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM anon, authenticated', r.fn);
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role', r.fn);
+        n_revoke := n_revoke + 1;
+      END IF;
+
+      IF NOT r.prosecdef THEN
+        RAISE NOTICE '参考: % は SECURITY DEFINER ではない', r.fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RAISE NOTICE 'STEP 2: search_path 固定 % 本 / EXECUTE を外した関数 % 本', n_path, n_revoke;
+END
+$$;
+
